@@ -36,6 +36,7 @@ How `table` is put together, and what its authority row says. Short on purpose: 
 | `engine.ls` | what is done with one row: counted, ragged (never used), kept by `--where`, then written or added to its group. Both reads call the same functions |
 | `agg.ls` | groups and their sums, in bounded memory; the output order is the key order or `--sort` |
 | `scan.ls`, `par.ls` | `--threads`: ranges of the file read by threads, each assuming it starts at a record; the parent takes them in file order and reads again any it cannot trust, so the answer is the one-core answer |
+| `sorter.ls` | `--order-by`: the rows held, their keys and an index sorted by a stable merge; with `--top` or a page it keeps only the best rows, and past `--max-sort-rows` it refuses. Its state is the grouping's value, used for rows; it reads on one core |
 | `writer.ls` | the fields as CSV (minimal quoting) or JSON |
 | `generated/table/built.ls` | the authority, the schema and the compiler pin, embedded in the binary; written by `scripts/manifest.py` |
 
@@ -50,7 +51,7 @@ lex-sys programs get their capabilities (files, directories, standard streams, t
 | `args` | the flags and the file name |
 | `file_read` | reading the input file |
 | `fs_read("")` | the path is only known at run time, so the row cannot name it; `table introspect` lists this under `not_narrowable` |
-| `dir_read` | directory access used to open the path (`--root` confinement) |
+| `dir_read` | read through a directory handle: a label that names no path, because the handle is the authority (lex-sys `docs/directory-handles.md`); a row with `dir_read` and not `fs_read` can reach only what handles it was given |
 | `heap` | memory for the record, the page and the groups |
 | `io_write` | standard output |
 | `err_write` | standard error |

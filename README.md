@@ -115,6 +115,20 @@ id,customer
 ```
 <!-- /gen:t-filter -->
 
+### Sort rows
+
+`--order-by` takes keys: `-` before a name is descending, `:int` compares whole numbers, and rows that tie keep their order in the file. With `--limit` or `--top` it keeps only the best rows, so memory stays flat. A full sort holds every row, up to `--max-sort-rows` (1,000,000 by default); past that it refuses and suggests `--top`, a smaller `--limit` or a `--where`. There is no sort that spills to disk.
+
+<!-- gen:t-sort -->
+```console
+$ table --where "bytes != ''" --order-by -bytes:int,status --limit 3 --select id,customer,bytes --format csv orders.csv
+id,customer,bytes
+3,"Doe, Jane",2048
+1,"Doe, Jane",512
+4,Acme,128
+```
+<!-- /gen:t-sort -->
+
 ### Count and sum by a key
 
 `count`, `sum`, `min`, `max` and `distinct`. Sums are exact whole numbers; one that would not fit in 64 bits is refused, not wrapped.
@@ -188,8 +202,8 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## What it cannot do yet
 
-* **Whole numbers only.** A decimal in a number column is refused. Decimals, as exact numbers and never as floats, are on the [backlog](docs/backlog.md).
-* **No row sort yet.** You can sort the groups of a count or a sum, not the rows. A row sort is in progress.
+* **Whole numbers only.** A decimal in a number column is refused. Exact decimals and floats are decided and planned ([docs/numbers.md](docs/numbers.md)); they are not built.
+* **One core for a sort.** `--threads` is accepted with `--order-by`, and gives the same bytes, but the sort runs on one core. There is no sort that spills to disk.
 * **No joins**, and **one input file** at a time, named on the command line (no standard input).
 * **No JSON lines**, no Parquet. Only CSV and TSV (comma, tab or semicolon).
 * **No guessing.** Every column is text unless you say `:int`. No mean, no computed or renamed column, no `or` in a filter.
@@ -211,7 +225,7 @@ Time to answer on the same 1,000,000-row, 32 MB CSV, in seconds (lower is better
 
 Apple-silicon Mac, 16 cores. Best of five runs, output thrown away, every answer checked against a Python answer first. csvtk 0.38.0 on one core (its filter is `filter` piped to `grep`); DuckDB 1.5.6; DuckDB's 16-core times for filter and pick-2-columns are from an earlier run on the same machine. Miller is not installed on the Mac; on a different machine (Linux, 6 shared cores) it took 0.300 s to filter, 0.438 s to count and 0.649 s to sum, against `table`'s 0.074, 0.128 and 0.140 s there.
 
-**Where it is slower:** a group-by with a million distinct keys is 3.4 times slower than DuckDB on one core and 9.4 times slower than DuckDB on 16 (Mac); `distinct` over a column of unique values is 1.4 times slower on one core; and there is no row sort yet. All the tables, the harder cases and how to rerun them: [docs/benchmarks.html](https://alpibrusl.github.io/lexsys-table/benchmarks.html).
+**Where it is slower:** a group-by with a million distinct keys is 3.4 times slower than DuckDB on one core and 9.4 times slower than DuckDB on 16 (Mac); `distinct` over a column of unique values is 1.4 times slower on one core; and sorting 1,000,000 rows takes 0.41 s on one core (about the same as DuckDB on one core, 0.43 s) against DuckDB's 0.12 s on all 16, because the sort runs on one core. All the tables, the harder cases and how to rerun them: [docs/benchmarks.html](https://alpibrusl.github.io/lexsys-table/benchmarks.html).
 
 ## Learn more
 

@@ -69,6 +69,7 @@ DEMOS = {
     "page1": "table --select id,customer --limit 2 orders.csv",
     "page2": "table --select id,customer --limit 2 --from 2 orders.csv",
     "csv": """table --where "status = 200" --format csv orders.csv""",
+    "sort": """table --where "bytes != ''" --order-by -bytes:int,status --limit 3 --select id,customer,bytes --format csv orders.csv""",
     "cores": "table --threads 4 --group status --agg count --format csv orders.csv",
     "notint": """table --where "bytes:int > 100" --select id orders.csv""",
     "flow_bad": """table --where "status = 200" --select Customer,bytes orders.csv""",
@@ -78,7 +79,7 @@ DEMOS = {
 SUMMARY = {"flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"]}
 # task name -> the demos shown for it
 TASKS = {
-    "select": ["select"], "filter": ["where"], "group": ["group"], "page": ["page1", "page2"],
+    "select": ["select"], "filter": ["where"], "sort": ["sort"], "group": ["group"], "page": ["page1", "page2"],
     "csv": ["csv"], "cores": ["cores"], "refuse": ["notint"],
 }
 QS = ["shape", "select", "group"]
@@ -220,8 +221,8 @@ def cut(s, n):
     return s if len(s) <= n else s[: n - 1] + "\u2026"
 
 
-SAMPLE_RULES = ["args.unknown-flag", "select.unknown-column", "value.not-integer", "limit.line-too-long", "limit.too-many-groups"]
-SAMPLE_FLAGS = ["--root", "--select", "--where", "--group", "--agg", "--threads"]
+SAMPLE_RULES = ["args.unknown-flag", "select.unknown-column", "value.not-integer", "limit.line-too-long", "limit.too-many-groups", "limit.too-many-sort-rows"]
+SAMPLE_FLAGS = ["--root", "--select", "--where", "--order-by", "--group", "--agg", "--threads"]
 
 
 def agentio(ctx):
@@ -237,7 +238,7 @@ def agentio(ctx):
             f = flags[n]
             L.append("  %-10s %-5s %s" % (n, f["kind"], cut(f["help"], 62)))
         L.append("limits      %d, for example" % len(d["limits"]))
-        for n in ("max-rows", "max-groups", "max-state-bytes", "threads"):
+        for n in ("max-rows", "max-groups", "max-sort-rows", "max-state-bytes", "threads"):
             L.append("  --%-16s default %-12s ceiling %s" % (n, format(lim[n]["default"], ","), format(lim[n]["ceiling"], ",")))
         L.append("rules       %d, for example" % len(d["rules"]))
         for n in SAMPLE_RULES:
