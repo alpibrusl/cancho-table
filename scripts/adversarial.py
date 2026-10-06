@@ -188,6 +188,22 @@ def cells(table, nthreads):
         A3["duckdb default"] = duck(f2, "SELECT * FROM @ ORDER BY u DESC LIMIT 1000")
     out["A3"] = ("the first 1000 of 1M rows by an integer column, descending", f2, rows_by("u", desc=True, as_int=True, first=1000), A3, "rows")
 
+    # A4: many ties (v has about 10 rows per value). The incumbents break ties in their own ways, so the answer is checked as
+    # "ordered by v, and the same rows"; `table`'s stable order is the oracle of the tests and equals `sort -s` byte for byte.
+    A4 = {"table -t1": (tbl(f2, "--order-by", "v:int", *sortargs), None),
+          "csvtk sort": (["csvtk", "-j", "1", "sort", "-k", "v:n", f2], None),
+          "sh sort -s -n": (sh("tail -n +2 %s | LC_ALL=C sort -s -t, -k6,6n" % f2), None)}
+    if shutil.which("mlr"):
+        A4["mlr sort"] = (["mlr", "--icsv", "--ocsv", "sort", "-nf", "v", f2], None)
+    if shutil.which("duckdb"):
+        A4["duckdb -t1"] = duck(f2, "SELECT * FROM @ ORDER BY v", 1)
+        A4["duckdb default"] = duck(f2, "SELECT * FROM @ ORDER BY v")
+
+    def ties():
+        header, rows = python_rows(f2)
+        return sorted(rows, key=lambda r: int(r[5]))
+    out["A4"] = ("sort 1M rows by an integer column with about 10 rows to a value", f2, ties, A4, "rowsties")
+
     def group_cell(cid, title, path, col, agg, valcol=None, kind="count", extra_args=()):
         ex = {}
         a = ["--group", col, "--format", "csv", *big]
@@ -370,6 +386,13 @@ def check(kind, expected, text):
         if rows and rows[0] == ["id", "s", "k100k", "k1m", "u", "v"]:
             rows = rows[1:]
         return rows == expected()
+    if kind == "rowsties":  # ordered by column v (index 5), and the same rows
+        rows = [r for r in csv.reader(io.StringIO(text, newline="")) if r]
+        if rows and rows[0] == ["id", "s", "k100k", "k1m", "u", "v"]:
+            rows = rows[1:]
+        want = expected()
+        vs = [int(r[5]) for r in rows]
+        return vs == [int(r[5]) for r in want] and sorted(map(tuple, rows)) == sorted(map(tuple, want))
     if kind == "linecount":
         return len(text.splitlines()) - 1 == expected()
     if kind == "pairs":
