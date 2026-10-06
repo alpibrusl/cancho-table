@@ -2,22 +2,88 @@
 
 [![ci](https://github.com/alpibrusl/lexsys-table/actions/workflows/ci.yml/badge.svg)](https://github.com/alpibrusl/lexsys-table/actions/workflows/ci.yml)
 
-**Ask a CSV a question. Get an exact answer.** `table` picks columns, filters rows, and counts or sums by a key, in one pass over a CSV or TSV file. Memory stays small however big the file is, whole-number sums are exact, and a bad request is refused with a named rule and, where there is one, a repair. One small binary, written in [lex-sys](https://github.com/alpibrusl/lex-sys). The [project page](https://alpibrusl.github.io/lexsys-table/) has the same in pages.
+**A deterministic data primitive for AI agents.** `table` queries CSV and TSV data with explicit semantics, bounded resources, structured refusals and machine-verifiable capabilities. It is a command line, not a chat box: you (or an agent) give it flags, it gives back exact answers or a named refusal with a repair. For a person with a CSV and a question: ask it, get an exact answer. One small binary, written in [lex-sys](https://github.com/alpibrusl/lex-sys). The [project page](https://alpibrusl.github.io/lexsys-table/) has the same in pages.
 
 **Status: early.** It works and is tested; what it cannot do yet is listed below.
 
-## What you can do now
+## One complete flow
 
-Every example runs on this five-line file, saved as `orders.csv`, and the output is what the program prints.
+Ask, get refused with a repair, run the repair. The repair is the corrected command, and the output below is what the built program prints.
 
-```csv
+<!-- gen:flow -->
+```console
+# Ask: the customer and bytes of the orders with status 200
+$ table --where "status = 200" --select Customer,bytes orders.csv
+{"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "status = 200", "--select", "customer,bytes", "orders.csv"]}]}}
+# exit status 3; the rule, hint, repair of the JSON line it prints
+# The tool offered the corrected command. Run it:
+$ table --where 'status = 200' --select customer,bytes orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["customer","bytes"],"rows":[["Doe, Jane","512"],["Doe, Jane","2048"],["Zed","64"]],"row_count":3,"truncated":false,"next":null},"meta":{"version":"0.3.0"}}
+```
+<!-- /gen:flow -->
+
+## Why table?
+
+Most data tools optimise for flexibility. `table` optimises for predictability.
+
+* **Explicit types.** A column is text unless you write `:int`; then it is an exact 64-bit integer, and a cell that is not one is refused. [docs/filter.md](docs/filter.md)
+* **Explicit operations.** One plan from flags, no expressions or functions. [docs/filter.md](docs/filter.md)
+* **Bounded resource use.** Rows, line and record size, groups, distinct values and group state each have a limit with its own rule. Peak memory is about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). `table introspect` lists the limits; [benchmarks](https://alpibrusl.github.io/lexsys-table/benchmarks.html)
+* **No implicit network access.** The authority row, derived by `lex-sys authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, and nothing written to disk. CI fails if the binary differs from the committed [`manifests/table.authority.json`](manifests/table.authority.json). [docs/architecture.md](docs/architecture.md)
+* **Machine-readable errors.** One JSON line against a schema (`table.v2`); a refusal is `{code, rule, message, hint, repair, detail}`. [docs/refusals.md](docs/refusals.md)
+* **Repair hints.** A refusal says how to fix the request: a command to run, a choice of commands, or why there is none. [docs/refusals.md](docs/refusals.md)
+* **Capability introspection.** `table introspect` prints the flags, limits, rules and authority; `table skill` prints a guide for an agent. Both come from the tables the parser runs on.
+* **The same bytes on any number of cores.** `--threads N` gives the one-core answer, refusals included. [docs/parallel.md](docs/parallel.md)
+
+## Two-minute quick start
+
+You need `git`, Rust, `clang` and `python3`. On a 16-core Mac with Rust installed and its dependencies already downloaded, the compiler built in 19 seconds and `table` in 3; the clones and a first-time dependency download are extra, so allow a few minutes the first time.
+
+```sh
+git clone https://github.com/alpibrusl/lex-sys                           # the compiler
+git clone https://github.com/alpibrusl/lexsys-table && cd lexsys-table
+REV=$(sed -n 's/^lex-sys *= *"\([0-9a-f]*\)".*/\1/p' lex-sys.toml)        # the compiler these sources need
+(cd ../lex-sys && git fetch -q origin && git checkout "$REV" && cargo build --release -p lex-sys)
+export PATH=$PWD/../lex-sys/target/release:$PWD/build:$PATH
+lex-sys build                                                            # builds build/table
+
+cat > orders.csv <<'EOF'
 id,customer,status,bytes
 1,"Doe, Jane",200,512
 2,Acme,404,
 3,"Doe, Jane",200,2048
 4,Acme,500,128
 5,Zed,200,64
+EOF
 ```
+
+Three commands, then a refusal:
+
+<!-- gen:qs -->
+```console
+$ table orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"headers":["id","customer","status","bytes"],"column_count":4,"row_count":5,"truncated":false},"meta":{"version":"0.3.0"}}
+$ table --select customer,bytes --format csv orders.csv
+customer,bytes
+"Doe, Jane",512
+Acme,
+"Doe, Jane",2048
+Acme,128
+Zed,64
+$ table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv
+customer,count,sum:bytes
+"Doe, Jane",2,2560
+Acme,1,128
+Zed,1,64
+$ table --where "status = 200" --select Customer,bytes orders.csv
+{"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "status = 200", "--select", "customer,bytes", "orders.csv"]}]}}
+# exit status 3; the rule, hint, repair of the JSON line it prints
+```
+<!-- /gen:qs -->
+
+## What you can do now
+
+Every example runs on the five-line file above, and the output is what the program prints.
 
 ### Pick some columns
 
@@ -106,15 +172,19 @@ status,count
 
 ### See what a bad request looks like
 
-Every refusal has a fixed rule name, an exit status and, where one exists, a repair: here, the command with the right spelling. A cell that is not a whole number, an empty one too, is refused with its row, line and column.
+Every refusal has a fixed rule name, an exit status and, where one exists, a repair. A cell that is not a whole number, an empty one too, is refused with its row, line and column; there is no repair here, because what the cell was meant to be is not known.
 
 <!-- gen:t-refuse -->
 ```console
-$ table --select Status orders.csv
-{"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--select", "status", "orders.csv"]}]}}
-# exit status 3; the rule, the hint and the repair from the JSON line it prints
+$ table --where "bytes:int > 100" --select id orders.csv
+{"rule": "value.not-integer", "hint": "keep out the rows with such a cell with --where, or do not ask for an integer of this column", "detail": {"path": "orders.csv", "context": "where", "column": "bytes", "row": 2, "line": 3, "value": "", "value_truncated": false}}
+# exit status 8; the rule, hint, detail of the JSON line it prints
 ```
 <!-- /gen:t-refuse -->
+
+## Built to be read by an agent
+
+`table introspect` and `table skill` are generated from the same tables the code parses its flags with, so they cannot disagree with the program. See [docs/refusals.md](docs/refusals.md) for how an agent should act on each kind of refusal, and [the project page](https://alpibrusl.github.io/lexsys-table/#agent) for excerpts of both.
 
 ## What it cannot do yet
 
@@ -128,7 +198,7 @@ JSON lines, joins, `mean`, decimals and standard input are on the [backlog](docs
 
 ## How fast
 
-A *core* is one of the independent workers inside a processor. By default `table` uses one; `--threads 16` uses sixteen. [DuckDB](https://duckdb.org) is a full database engine and a popular, fast way to query a CSV, so it is a fair yardstick. On these four questions one core of `table` is about as fast as, or faster than, DuckDB on all sixteen. With many distinct keys in a group-by, DuckDB on all cores wins.
+Supporting evidence, not the point: the predictability costs little speed. A *core* is one of the independent workers inside a processor. By default `table` uses one; `--threads 16` uses sixteen. [DuckDB](https://duckdb.org) is a full database engine and a popular, fast way to query a CSV, so it is a fair yardstick. On these four questions one core of `table` is about as fast as, or faster than, DuckDB on all sixteen. With many distinct keys in a group-by, DuckDB on all cores wins.
 
 Time to answer on the same 1,000,000-row, 32 MB CSV, in seconds (lower is better):
 
@@ -143,29 +213,16 @@ Apple-silicon Mac, 16 cores. Best of five runs, output thrown away, every answer
 
 **Where it is slower:** a group-by with a million distinct keys is 3.4 times slower than DuckDB on one core and 9.4 times slower than DuckDB on 16 (Mac); `distinct` over a column of unique values is 1.4 times slower on one core; and there is no row sort yet. All the tables, the harder cases and how to rerun them: [docs/benchmarks.html](https://alpibrusl.github.io/lexsys-table/benchmarks.html).
 
-## Install
-
-You need `git`, Rust, `clang` and `python3`. The compiler is the commit `lex-sys.toml` pins:
-
-```sh
-git clone https://github.com/alpibrusl/lex-sys                           # the compiler
-git clone https://github.com/alpibrusl/lexsys-table && cd lexsys-table
-REV=$(sed -n 's/^lex-sys *= *"\([0-9a-f]*\)".*/\1/p' lex-sys.toml)        # the compiler these sources need
-(cd ../lex-sys && git fetch -q origin && git checkout "$REV" && cargo build --release -p lex-sys)
-export PATH=$PWD/../lex-sys/target/release:$PWD/build:$PATH
-lex-sys build                                                            # builds build/table
-```
-
-`table introspect` lists every flag, rule and limit; `table skill` prints a short guide for an agent.
-
 ## Learn more
 
 | | |
 |---|---|
-| [project page](https://alpibrusl.github.io/lexsys-table/) | what you can do, in pages, with the refusal rules and the limits |
-| [docs/select.md](docs/select.md), [docs/filter.md](docs/filter.md) | how `--select`, `--where`, `--group` and `--agg` behave, and why |
+| [project page](https://alpibrusl.github.io/lexsys-table/) | the flow, the agent view and the examples, in pages |
+| [docs/refusals.md](docs/refusals.md) | the refusal and repair protocol: `{code, rule, message, hint, repair, detail}`, what each repair kind means, every rule |
+| [docs/architecture.md](docs/architecture.md) | the pieces, and the capability model: what the authority row says and why each label is there |
+| [docs/select.md](docs/select.md), [docs/filter.md](docs/filter.md) | how `--select`, `--where`, `--group` and `--agg` behave |
 | [docs/parallel.md](docs/parallel.md) | `--threads`: how it gives the one-core answer |
-| [docs/benchmarks.html](https://alpibrusl.github.io/lexsys-table/benchmarks.html) | the latest timings, with conditions, and how to rerun them |
+| [benchmarks](https://alpibrusl.github.io/lexsys-table/benchmarks.html) | the latest timings, with conditions, and how to rerun them |
 | [docs/backlog.md](docs/backlog.md) | what is not done yet |
 | [docs/reference.md](docs/reference.md) | the long description of every flag and of the layout |
 | [docs/history.md](docs/history.md), [docs/adversarial.md](docs/adversarial.md) | for contributors: what was measured and changed, and the harder cases |
