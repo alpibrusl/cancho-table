@@ -99,12 +99,13 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `io.read-failed` | 1 | never | the operating system failed a read |
 | `limit.line-too-long` | 8 | sometimes | a line longer than --max-line-bytes |
 | `limit.header-too-large` | 8 | never | the header record holds more than --max-line-bytes bytes |
-| `limit.record-too-large` | 8 | never | a record read for --select, --where or --group holds more than --max-line-bytes bytes |
+| `limit.record-too-large` | 8 | never | a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes |
 | `limit.output-too-large` | 8 | never | the first row of a page is longer than --max-bytes |
 | `limit.too-many-rows` | 8 | never | --format csv reached --max-rows with rows left unread |
+| `limit.too-many-sort-rows` | 8 | never | --order-by would hold more than --max-sort-rows rows to sort |
 | `limit.too-many-groups` | 8 | never | more groups than --max-groups |
 | `limit.too-many-distinct` | 8 | never | more distinct values than --max-distinct |
-| `limit.state-too-large` | 8 | never | the keys and values kept for groups hold more than --max-state-bytes bytes |
+| `limit.state-too-large` | 8 | never | the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes |
 | `parse.csv-ragged-row` | 8 | never | a row has a different number of fields than the header |
 | `parse.csv-bad-quote` | 8 | never | a closing quote is followed by something other than the delimiter or the end of the record |
 | `parse.csv-unterminated-quote` | 8 | never | a quoted field is still open at the end of the input |
