@@ -305,6 +305,52 @@ all seven are killed. The older `select_mutants.py` and `filter_mutants.py` no l
 sites moved to `engine.ls` and `scan.ls` when the parallel read was written, and `agg.ls` now has two copies of two
 of them); that was already so on `main`; it is in the backlog.
 
+# The mutation scripts (branch `mutants-repair`)
+
+The scripts that mutate the source one defect at a time (`select_mutants.py`, `filter_mutants.py`, `parallel_mutants.py`,
+`cellcost_mutants.py`) are a gate that cannot be seen failing: a mutant whose text no longer occurs in the source tests
+nothing, and when the engine was split out of `table.ls` in the parallel round, 22 of the 66 mutants of the select and filter scripts
+stopped applying (and two more now matched twice). The old runner noticed only when it *reached* one, after the unmutated build, and stopped there: nobody ran them again.
+
+**The runner is one shared module now** (`scripts/mutlib.py`; each script is a list of mutants and the tests that judge them):
+
+* `--check` verifies, with no compiler and no build, that every mutant's text occurs exactly once in its file, and exits 1
+  with one line for each that does not (`mutant X: pattern not found in F`, or `occurs N times`, or `replacement equals the
+  pattern`, or `named twice`, or `no such file`). A real run does the same check first, for the whole list, before it builds
+  anything: a mutant that cannot apply is a failure, never a skip, and so is a name given on the command line that matches none.
+* CI runs `--check` for every script (no build: seconds), and the conformance suite has the same test
+  (`test_mutants_apply.py`), which also tests the check itself against a missing pattern, a repeated one, a no-op and a
+  missing file.
+
+**The repair.** 24 sites no longer matched: 22 not at all (15 in the select script, 7 in the filter script) and 2 that now
+occur twice, because the in-place add of the cell-cost round copied `add`'s min and first-value lines. Each was re-pointed
+at the current source (the formatter had turned `else { if }` into `else if`, and the sites had moved to `engine.ls`,
+`scan.ls`, `writer.ls`, `reader.ls`); where one function became several (the refusals of a grouping are written in three
+places now), each place has its own mutant. A mutant's text is matched as a substring, so a site that was meant for one function can
+quietly land in another: that is how "the budget is not kept" had been mutating the *grouping's* page budget, not the
+select's, and survived.
+
+**What the first complete run found.** On the Mac and on Linux, all four scripts: 143 mutants, and the survivors were
+real test gaps, not equivalents:
+
+* the select page budget (`engine.emit_buf`'s `have + need + 1 > budget`) and the grouping's page budget (the same test in
+  `finish_groups`) were not tested for groups at all: `--group` with a small `--max-bytes` was never run. A test now pages
+  300 groups through a 400-byte budget, with the `next` of each page, and the first row longer than the budget refused;
+* a sum that overflows was refused only on the in-place path, since the cell-cost round, and the old way (`add`, taken for a
+  quoted key with a quote in it, or with `distinct` beside the sum) had no test of its own: two tests now;
+* `a page holds one row more` (an early stop, in `table.ls` and `scan.ls`) is **equivalent**: the row that would reach
+  `engine.process_rows_buf` is stopped by its own `emitted >= limit`, with the same `more` and `next`; the early test only saves
+  splitting the record. It is said so in the script.
+
+**Totals, after:**
+
+| script | mutants | Mac | Linux |
+|---|---:|---|---|
+| `select_mutants.py` | 28 (+1 equivalent, explained) | all killed | all killed |
+| `filter_mutants.py` | 44 | all killed | all killed |
+| `parallel_mutants.py` | 27 (+ the equivalents its header lists) | all killed | all killed |
+| `cellcost_mutants.py` | 44 (+3 equivalents, explained) | all killed | all killed |
+
 # The row sort (branch `row-sort`, docs/sort.md)
 
 *A finding on the way, for the next change to the read's loop:* the first version of the sort added a case to the loop (write a row,
