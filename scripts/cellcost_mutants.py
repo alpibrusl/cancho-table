@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Mutation check of the cell-cost paths (docs/history.md, "cell cost"): the walk of short fields, the one-pass
+quoting test, the add-in-place path and its cache of hot groups, the integer read without checks, the next line
+taken in place. Each mutant is one source file of tools/table with one deliberate defect, rebuilt, and run against
+test_cellcost, then the filter, select, parallel, limit and differential tests, stopping at the first failure. A mutant is killed when a test
+fails or the build refuses it. The files are restored after every mutant, whatever
+happens.
+
+    python3 scripts/cellcost_mutants.py [name-substring ...]
+
+Run where a compiler is (`lex-sys` on PATH, or LEX_SYS; LEX_SYS_ARGS="--ignore-compiler-rev"
+for a compiler of another revision). Exit status 1 if one survives. Do not edit
+tools/table while it runs.
+"""
+import os
+import pathlib
+import signal
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+SRC = ROOT / "tools" / "table"
+COMPILER = os.environ.get("LEX_SYS", "lex-sys")
+EXTRA = os.environ.get("LEX_SYS_ARGS", "").split()
+TESTS = ["test_cellcost", "test_filter", "test_select", "test_parallel", "test_limits"]
+
+# (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file.
+# Three mutants are not here, because they are equivalent, and were run to see:
+#  * "an unquoted field is quoted for a delimiter it cannot hold" (writer.must_quote tests the delimiter and
+#    LF for an unquoted field too): an unquoted field never holds a delimiter or an LF, or it would be two
+#    fields or two lines; the answer is the same.
+#  * "the length of a long key loses its second byte" (agg.add_fast writes `n >> 9` for `n >> 8`): the key
+#    built there is only looked for, never stored; a wrong one is not found, and the row takes the way that
+#    builds the right one. The answer is the same, and only the time shows it.
+#  * "a distinct count is added in place" (the check in agg.add_fast removed, or engine.fast_ok answering true):
+#    a distinct aggregate is kept from the fast way twice, by `fast_ok` in the callers and by the same test in
+#    `add_fast`; either alone is enough, so removing one changes nothing a test can see.
+MUTANTS = [
+    # reader.seek: the walk and the hand over to memchr
+    ("seek answers the stopping place without testing its byte", "reader.ls", "    if q < stop {\n        return q;\n    }", "    if q <= stop {\n        return q;\n    }"),
+    ("seek forgets how far the walk got", "reader.ls", "    return q + more;", "    return q + more + 1;"),
+    ("seek hands over to memchr one byte early", "reader.ls", "    let more = index_of_byte(line[q..end], byte_of(b));", "    let more = index_of_byte(line[q + 1..end], byte_of(b));"),
+    ("seek finds a quote where it was asked for a delimiter", "reader.ls", "            let q = seek(line, p, end, delim);", "            let q = seek(line, p, end, 34);"),
+    ("the closing quote is looked for from the opening one", "reader.ls", "                let at = seek(line, q, end, 34);", "                let at = seek(line, p, end, 34);"),
+    # writer.must_quote
+    ("a CR does not make a short field quoted", "writer.ls", "            if c == 34 || c == 13 {\n                return true;", "            if c == 34 {\n                return true;"),
+    ("a quote does not make a short field quoted", "writer.ls", "            if c == 34 || c == 13 {\n                return true;", "            if c == 13 {\n                return true;"),
+    ("an LF in a short quoted field is not quoted again", "writer.ls", "            if all == 1 && (c == delim || c == 10) {", "            if all == 1 && c == delim {"),
+    ("a delimiter in a short quoted field is not quoted again", "writer.ls", "            if all == 1 && (c == delim || c == 10) {", "            if all == 1 && c == 10 {"),
+    ("a long field is not tested for an LF", "writer.ls", "    return all == 1 && (has(data, delim) || has(data, 10));", "    return all == 1 && has(data, delim);"),
+    ("a long field is not tested for a delimiter", "writer.ls", "    return all == 1 && (has(data, delim) || has(data, 10));", "    return all == 1 && has(data, 10);"),
+    ("a long field is not tested for a CR", "writer.ls", "    if has(data, 34) || has(data, 13) {\n        return true;\n    }\n    return all", "    if has(data, 34) {\n        return true;\n    }\n    return all"),
+    # agg.add_fast
+    ("a cached group is believed without comparing its key", "agg.ls", "if length_at(key, p) != n || !bytes.equal(key[p + 4..p + 4 + n], record[first..first + n]) {", "if false && length_at(key, p) != n || !bytes.equal(key[p + 4..p + 4 + n], record[first..first + n]) {"),
+    ("a cached group is believed whatever its bytes", "agg.ls", "if length_at(key, p) != n || !bytes.equal(key[p + 4..p + 4 + n], record[first..first + n]) {", "if length_at(key, p) != n {"),
+    ("a cached key is compared for one column only", "agg.ls", "            while j < ng && entry >= 0 {", "            while j < 1 && entry >= 0 {"),
+    ("a quoted key with a quote is keyed as written", "agg.ls", "        if cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {\n            return (0 - 1, 0);", "        if false && cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {\n            return (0 - 1, 0);"),
+    ("a key longer than the room is written anyway", "agg.ls", "        if len(buffer.room(g.keyb)) < need {\n            return (0 - 1, 0);", "        if false && len(buffer.room(g.keyb)) < need {\n            return (0 - 1, 0);"),
+    ("a group that is not there is counted anyway", "agg.ls", "        entry = map.find(g.index, buffer.bytes(g.keyb));\n        if entry < 0 {", "        entry = map.find(g.index, buffer.bytes(g.keyb));\n        if false && entry < 0 {"),
+    ("the key is written one byte short", "agg.ls", "            copy_into(room[at + 4..at + 4 + n], record[first..first + n]);", "            copy_into(room[at + 4..at + 3 + n], record[first..first + n - 1]);"),
+    ("a row counts twice in place", "agg.ls", "    vec.set(g.acc, slot, before + 1);", "    vec.set(g.acc, slot, before + 2);"),
+    ("an in-place sum that overflows is not noticed", "agg.ls", "                if !fits {\n                    return (6, k);", "                if false && !fits {\n                    return (6, k);"),
+    ("an in-place integer past 64 bits is a text", "agg.ls", "            if bad == 2 {\n                return (5, k);", "            if bad == 2 {\n                return (4, k);"),
+    ("an in-place text is a number", "agg.ls", "            if bad == 1 {\n                return (4, k);", "            if false && bad == 1 {\n                return (4, k);"),
+    ("an in-place minimum is a maximum", "agg.ls", "            } else if function == 2 && v < now {\n                vec.set(g.acc, slot + 1 + k, v);", "            } else if function == 2 && v > now {\n                vec.set(g.acc, slot + 1 + k, v);"),
+    ("the first value of an in-place group is not its minimum", "agg.ls", "            } else if before == 0 {\n                vec.set(g.acc, slot + 1 + k, v);", "            } else if before == 1 {\n                vec.set(g.acc, slot + 1 + k, v);"),
+    ("the second aggregate is the first in place", "agg.ls", "            let column = cols[query.agg_at(tree, k, 1)];\n            let now = vec.get(g.acc, slot + 1 + k);", "            let column = cols[query.agg_at(tree, 0, 1)];\n            let now = vec.get(g.acc, slot + 1 + k);"),
+    ("a built key is not committed before `add` takes it", "agg.ls", "    buffer.filled(g.keyb, need);", "    buffer.filled(g.keyb, 0);"),
+    ("the rows that wait for the fast way are dropped", "agg.ls", "        contents(g.memo)[rest_at] = waiting - 1;\n        return (0 - 1, 0);", "        contents(g.memo)[rest_at] = waiting - 1;\n        return (0, 0);"),
+    ("a new group is taken for one that is there", "agg.ls", "            return (0 - 2, 0);\n        }\n        if contents", "            return (0, 0);\n        }\n        if contents"),
+    # engine
+    ("a refusal in place is numbered one low", "engine.ls", "    a[k_abort()] = 12 + status;\n    let column = cols[query.agg_at(tree, k, 1)];\n    a[k_err_col()] = column;\n    a[k_err_fn()] = query.agg_at(tree, k, 0);\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return keep_value", "    a[k_abort()] = 11 + status;\n    let column = cols[query.agg_at(tree, k, 1)];\n    a[k_err_col()] = column;\n    a[k_err_fn()] = query.agg_at(tree, k, 0);\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return keep_value"),
+    ("the aggregate that refused is lost in the answer", "engine.ls", "    return 16 + 8 * k + status;", "    return 16 + status;"),
+    ("a refusal is decoded with the wrong radix", "engine.ls", "    let status = (answer - 16) % 8;", "    let status = (answer - 16) % 7;"),
+    # scan.next_fast
+    ("a line is taken before looking for its end", "scan.ls", "    if found < 0 || found > r.cap {\n        return 9;\n    }", "    if found > r.cap {\n        return 9;\n    }"),
+    ("the rest of a line held over is a line", "scan.ls", "    if r.over > 0 || buffer.size(r.held) > 0 {\n        return 9;\n    }", "    if r.over > 0 {\n        return 9;\n    }"),
+    ("a line that is too long is a line", "scan.ls", "    if r.over > 0 || buffer.size(r.held) > 0 {\n        return 9;\n    }", "    if buffer.size(r.held) > 0 {\n        return 9;\n    }"),
+    ("a line longer than the cap is a line", "scan.ls", "    if found < 0 || found > r.cap {", "    if found < 0 || found > r.cap + 1000000 {"),
+    ("a line does not move the offset by its newline", "scan.ls", "    r.seen = r.seen + (k + 1 - at);", "    r.seen = r.seen + (k - at);"),
+    ("a line is counted twice", "scan.ls", "    r.count = r.count + 1;", "    r.count = r.count + 2;"),
+    ("the next line starts at the newline", "scan.ls", "    r.pos = k + 1;", "    r.pos = k;"),
+    ("the line starts one byte late", "scan.ls", "    r.view_from = at;", "    r.view_from = at + 1;"),
+    # query.parse_int
+    ("an integer of 19 digits is read without the check", "query.ls", "    if len(data) - at <= 18 {", "    if len(data) - at <= 19 {"),
+    ("a negative integer is positive on the short way", "query.ls", "        if negative {\n            return (0 - plain, 0);", "        if false && negative {\n            return (0 - plain, 0);"),
+    ("a digit is read one low on the short way", "query.ls", "            plain = plain * 10 + c - '0';", "            plain = plain * 10 + c - '1';"),
+    ("a letter is a digit on the short way", "query.ls", "            if c < '0' || c > '9' {\n                return (0, 1);\n            }\n            plain", "            if c < '0' || c > 'z' {\n                return (0, 1);\n            }\n            plain"),
+]
+
+FILES = {n: (SRC / n).read_text() for n in {m[1] for m in MUTANTS}}
+
+
+def restore(*_):
+    for n, text in FILES.items():
+        (SRC / n).write_text(text)
+
+
+def build_and_test():
+    b = subprocess.run([COMPILER, "build", "--bin", "table", *EXTRA], cwd=ROOT, capture_output=True, text=True)
+    if b.returncode:
+        return "does not build", b.stderr.strip()[-140:]
+    p = subprocess.run([sys.executable, "-W", "ignore", "-m", "unittest", "-f", *TESTS], cwd=ROOT / "tests" / "conformance",
+                       capture_output=True, text=True, timeout=1800)
+    failed = sorted({l.split(" ")[1] for l in (p.stdout + p.stderr).splitlines() if l.startswith(("FAIL:", "ERROR:"))})
+    return ("killed" if p.returncode else "SURVIVED"), ", ".join(failed[:3])
+
+
+def main():
+    signal.signal(signal.SIGTERM, lambda *a: (restore(), sys.exit(143)))
+    wanted = sys.argv[1:]
+    chosen = [m for m in MUTANTS if not wanted or any(w in m[0] for w in wanted)]
+    verdict, _ = build_and_test()
+    print("unmutated:", "pass" if verdict == "SURVIVED" else verdict, flush=True)
+    if verdict != "SURVIVED":
+        return 1
+    survivors = []
+    for name, file, old, new in chosen:
+        if FILES[file].count(old) != 1:
+            print("!! %s: the site occurs %d times in %s" % (name, FILES[file].count(old), file))
+            return 1
+        try:
+            (SRC / file).write_text(FILES[file].replace(old, new, 1))
+            verdict, why = build_and_test()
+        finally:
+            restore()
+        print("%-14s %s  [%s]" % (verdict, name, why), flush=True)
+        if verdict == "SURVIVED":
+            survivors.append(name)
+    for n, text in FILES.items():
+        assert (SRC / n).read_text() == text
+    print("%d of %d killed" % (len(chosen) - len(survivors), len(chosen)))
+    return 1 if survivors else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

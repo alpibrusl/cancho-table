@@ -18,7 +18,7 @@ import unittest
 import test_plan as tp
 from harness import Scratch, run_argv, binary
 
-THREADS = (2, 3, 4, 8, 16)
+THREADS = (2, 3, 4, 8, 16, 64)
 CHUNKS = (1, 7, 64, 1000)
 
 
