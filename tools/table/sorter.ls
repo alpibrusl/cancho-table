@@ -4,6 +4,14 @@ module sorter;
 
 // `--order-by`: the rows of the answer, held and sorted (docs/sort.md).
 //
+// The state is an `agg.Groups`, the same value the grouping holds, used for another purpose (the read gives rows to
+// `engine.process_groups`, which hands them to `order_row` here when the plan has order keys). Why that and not a
+// `Sorter` of its own: a third thing to do with a row in the read's loop, next to "write it" and "group it", made the
+// compiler give up specialising the loop for the first two, and `--select` and `--where` were 15 percent slower (a branch that
+// is never taken, at that place, did the same: docs/sort.md). So `keyb` is the data, `dkey` the side buffer, `acc` the
+// index, `stride` the number of keys, `pairs` the number of rows held, and `memo` (a box of integers) the plan: `memo[0]`
+// the rows wanted (0 for all), `memo[1]` 1 once the last of them is known, and from `memo[4]` three integers for each key.
+//
 // A row is kept as the record was read, in `data`; the index `rows` has `stride` integers a row: where the
 // record begins in `data`, its length, its number in the file, then for each key two integers: for an
 // integer key its value and 0; for a text key where its bytes are and how long they are, in `data` (an
@@ -14,7 +22,7 @@ module sorter;
 // held in, which is the order of the file (rows are appended as they are read, and a cut back keeps the sorted order),
 // because the merge sort is stable.
 //
-// `keys` (the plan's, built once) has three integers a key: the column, 1 for descending, 1 for an integer.
+// The three integers of a key are the column, 1 for descending, 1 for an integer.
 //
 // With `cap` above 0 only the `cap` first rows are wanted: once `2 * cap + 1` are held they are sorted and
 // cut to `cap`, and a row that is not strictly before the last of those is not kept at all (`reject`: equal keys lose to the earlier row): memory is
@@ -23,32 +31,27 @@ module sorter;
 import std.buffer;
 import std.bytes;
 import std.vec;
+import agg;
 import query;
 
-pub res struct Sorter {
-    data: buffer.Buffer,
-    side: buffer.Buffer,
-    rows: vec.Vec[int],
-    nk: int,
-    count: int,
-    cap: int,
-    cut: int,
+// Make the groups into a sorter of `nk` keys for `cap` wanted rows (0: all), the keys' columns and flags in `keys`.
+pub fn configure[&k](g: agg.Groups, nk: int, cap: int, keys: &k [int]) -> [] agg.Groups {
+    let agg.Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
+    borrow mut memo as &!mw in {
+        let m = contents(mw);
+        m[0] = cap;
+        m[1] = 0;
+        var j = 0;
+        while j < 3 * nk {
+            m[4 + j] = keys[j];
+            j = j + 1;
+        }
+    }
+    return agg.Groups { index: index, acc: acc, seen: seen, keyb: keyb, dkey: dkey, held: held, pairs: 0, stride: nk, memo: memo };
 }
 
-pub fn start[&h](heap: &!h Heap, nk: int, cap: int) -> [heap] Sorter {
-    return Sorter { data: buffer.empty(heap, 4096), side: buffer.empty(heap, 64), rows: vec.empty(heap, 1024, 0), nk: nk, count: 0, cap: cap, cut: 0 };
-}
-
-pub fn drop[&h](heap: &!h Heap, s: Sorter) -> [heap] int {
-    let Sorter { data, side, rows, nk, count, cap, cut } = s;
-    buffer.drop(heap, data);
-    buffer.drop(heap, side);
-    vec.drop(heap, rows);
-    return 0;
-}
-
-pub fn held[&s](s: &s Sorter) -> [] int {
-    return s.count;
+pub fn held[&s](s: &s agg.Groups) -> [] int {
+    return s.pairs;
 }
 
 fn stride_of(nk: int) -> [] int {
@@ -56,22 +59,22 @@ fn stride_of(nk: int) -> [] int {
 }
 
 // The bytes of a held row's record.
-pub fn record_of[&s](s: &s Sorter, row: int) -> [] &s [byte] {
-    let at = row * stride_of(s.nk);
-    let off = vec.get(s.rows, at);
-    return buffer.bytes(s.data)[off..off + vec.get(s.rows, at + 1)];
+pub fn record_of[&s](s: &s agg.Groups, row: int) -> [] &s [byte] {
+    let at = row * stride_of(s.stride);
+    let off = vec.get(s.acc, at);
+    return buffer.bytes(s.keyb)[off..off + vec.get(s.acc, at + 1)];
 }
 
 // The bytes of key `j` of a held row.
-fn key_bytes[&s](s: &s Sorter, row: int, j: int) -> [] &s [byte] {
-    let at = row * stride_of(s.nk) + 2 + 2 * j;
-    let off = vec.get(s.rows, at);
-    let n = vec.get(s.rows, at + 1);
+fn key_bytes[&s](s: &s agg.Groups, row: int, j: int) -> [] &s [byte] {
+    let at = row * stride_of(s.stride) + 2 + 2 * j;
+    let off = vec.get(s.acc, at);
+    let n = vec.get(s.acc, at + 1);
     if off >= 0 {
-        return buffer.bytes(s.data)[off..off + n];
+        return buffer.bytes(s.keyb)[off..off + n];
     }
     let o = 0 - off - 1;
-    return buffer.bytes(s.side)[o..o + n];
+    return buffer.bytes(s.dkey)[o..o + n];
 }
 
 // -1, 0 or 1: the bytes of a candidate's key against a held row's, or its integer.
@@ -89,16 +92,17 @@ fn sign(c: int) -> [] int {
 // before that one, or it cannot be told here), 1 no (it is not before it: equal keys lose to the earlier row).
 // Nothing is changed and nothing is parsed that `add` would not parse again; a cell that is not an integer
 // answers 0, and `add` refuses it.
-pub fn reject[&s, &k, &d, &c](s: &s Sorter, keys: &k [int], record: &d [byte], cells: &c [int]) -> [] int {
-    if s.cut == 0 {
+pub fn reject[&s, &d, &c](s: &s agg.Groups, record: &d [byte], cells: &c [int]) -> [] int {
+    if contents(s.memo)[1] == 0 {
         return 0;
     }
-    let last = s.cap - 1;
+    let keys = contents(s.memo)[4..4 + 3 * s.stride];
+    let last = contents(s.memo)[0] - 1;
     // 0 not decided yet, 1 keep it, 2 drop it. Every integer key is read either way: a cell that is not an integer is a
     // refusal whether the row would have been kept or not (the answer must not depend on the other rows).
     var decided = 0;
     var j = 0;
-    while j < s.nk {
+    while j < s.stride {
         let column = keys[3 * j];
         let first = cells[3 * column];
         let end = cells[3 * column + 1];
@@ -112,7 +116,7 @@ pub fn reject[&s, &k, &d, &c](s: &s Sorter, keys: &k [int], record: &d [byte], c
                 return 0;
             }
             if decided == 0 {
-                let held_v = vec.get(s.rows, last * stride_of(s.nk) + 2 + 2 * j);
+                let held_v = vec.get(s.acc, last * stride_of(s.stride) + 2 + 2 * j);
                 if v < held_v {
                     c = 0 - 1;
                 } else if v > held_v {
@@ -142,11 +146,13 @@ pub fn reject[&s, &k, &d, &c](s: &s Sorter, keys: &k [int], record: &d [byte], c
 
 // One more row: 0 held; 1 `max_rows` would be passed; 2 `max_state` bytes would be; 3 a cell of an integer key is not an
 // integer, 4 it does not fit 64 bits (`which` is the key). `scratch` is for unquoting.
-pub fn add[&h, &k, &d, &c](heap: &!h Heap, s: Sorter, keys: &k [int], record: &d [byte], cells: &c [int], scratch: buffer.Buffer, max_rows: int, max_state: int) -> [heap] (Sorter, buffer.Buffer, int, int) {
-    let Sorter { data, side, rows, nk, count, cap, cut } = s;
-    var d2 = data;
-    var s2 = side;
-    var r2 = rows;
+pub fn add[&h, &d, &c](heap: &!h Heap, s: agg.Groups, record: &d [byte], cells: &c [int], scratch: buffer.Buffer, max_rows: int, max_state: int) -> [heap] (agg.Groups, buffer.Buffer, int, int) {
+    let agg.Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = s;
+    var d2 = keyb;
+    var s2 = dkey;
+    var r2 = acc;
+    let count = pairs;
+    let nk = stride;
     var scr = scratch;
     var status = 0;
     var which = 0;
@@ -156,14 +162,14 @@ pub fn add[&h, &k, &d, &c](heap: &!h Heap, s: Sorter, keys: &k [int], record: &d
             size = buffer.size(dr) + buffer.size(sr);
         }
     }
-    let stride = stride_of(nk);
+    let width = stride_of(nk);
     if count >= max_rows {
         status = 1;
-    } else if size + len(record) + 8 * stride * (count + 1) > max_state {
+    } else if size + len(record) + 8 * width * (count + 1) > max_state {
         status = 2;
     }
     if status != 0 {
-        return (Sorter { data: d2, side: s2, rows: r2, nk: nk, count: count, cap: cap, cut: cut }, scr, status, which);
+        return (agg.Groups { index: index, acc: r2, seen: seen, keyb: d2, dkey: s2, held: held, pairs: count, stride: nk, memo: memo }, scr, status, which);
     }
     var at = 0;
     borrow d2 as &dr in {
@@ -174,11 +180,16 @@ pub fn add[&h, &k, &d, &c](heap: &!h Heap, s: Sorter, keys: &k [int], record: &d
     r2 = vec.push(heap, r2, len(record));
     var j = 0;
     while j < nk && status == 0 {
-        let column = keys[3 * j];
+        var column = 0;
+        var as_int = 0;
+        borrow memo as &mr in {
+            column = contents(mr)[4 + 3 * j];
+            as_int = contents(mr)[6 + 3 * j];
+        }
         let first = cells[3 * column];
         let end = cells[3 * column + 1];
         let unquote = cells[3 * column + 2] == 1 && index_of_byte(record[first..end], byte_of(34)) >= 0;
-        if keys[3 * j + 2] == 1 {
+        if as_int == 1 {
             var v = 0;
             var bad = 0;
             if unquote {
@@ -228,12 +239,12 @@ pub fn add[&h, &k, &d, &c](heap: &!h Heap, s: Sorter, keys: &k [int], record: &d
         // A row that is refused is not kept: the read stops, and what is held is not used.
         added = count;
     }
-    return (Sorter { data: d2, side: s2, rows: r2, nk: nk, count: added, cap: cap, cut: cut }, scr, status, which);
+    return (agg.Groups { index: index, acc: r2, seen: seen, keyb: d2, dkey: s2, held: held, pairs: added, stride: nk, memo: memo }, scr, status, which);
 }
 
 // Whether held row `x` is before held row `y` by the keys (equal keys: neither is before the other). `pre` is the first
 // key's integer, or the first seven bytes of its text as one number, which settle most pairs.
-fn before[&s, &k, &p, &q](s: &s Sorter, keys: &k [int], pre: &p [int], pre2: &q [int], x: int, y: int) -> [] bool {
+fn before[&s, &k, &p, &q](s: &s agg.Groups, keys: &k [int], pre: &p [int], pre2: &q [int], x: int, y: int) -> [] bool {
     if pre[x] != pre[y] {
         if keys[1] == 1 {
             return pre[x] > pre[y];
@@ -246,13 +257,13 @@ fn before[&s, &k, &p, &q](s: &s Sorter, keys: &k [int], pre: &p [int], pre2: &q 
         }
         return pre2[x] < pre2[y];
     }
-    let stride = stride_of(s.nk);
+    let stride = stride_of(s.stride);
     var j = 0;
-    while j < s.nk {
+    while j < s.stride {
         var c = 0;
         if keys[3 * j + 2] == 1 {
-            let vx = vec.get(s.rows, x * stride + 2 + 2 * j);
-            let vy = vec.get(s.rows, y * stride + 2 + 2 * j);
+            let vx = vec.get(s.acc, x * stride + 2 + 2 * j);
+            let vy = vec.get(s.acc, y * stride + 2 + 2 * j);
             if vx < vy {
                 c = 0 - 1;
             } else if vx > vy {
@@ -287,15 +298,15 @@ fn prefix_of[&k](key: &k [byte], from: int) -> [] int {
 
 // The held rows' numbers (their places in the index) in order: `order[0..count]`, by a bottom-up merge sort through a
 // spare, O(n log n).
-fn sort_into[&s, &k, &o, &t, &p, &q](s: &s Sorter, keys: &k [int], order: &!o [int], spare: &!t [int], pre: &!p [int], pre2: &!q [int]) -> [] int {
-    let n = s.count;
-    let stride = stride_of(s.nk);
+fn sort_into[&s, &k, &o, &t, &p, &q](s: &s agg.Groups, keys: &k [int], order: &!o [int], spare: &!t [int], pre: &!p [int], pre2: &!q [int]) -> [] int {
+    let n = s.pairs;
+    let stride = stride_of(s.stride);
     var i = 0;
     while i < n {
         order[i] = i;
-        if s.nk > 0 {
+        if s.stride > 0 {
             if keys[2] == 1 {
-                pre[i] = vec.get(s.rows, i * stride + 2);
+                pre[i] = vec.get(s.acc, i * stride + 2);
             } else {
                 let kb = key_bytes(s, i, 0);
                 pre[i] = prefix_of(kb, 0);
@@ -342,8 +353,9 @@ fn sort_into[&s, &k, &o, &t, &p, &q](s: &s Sorter, keys: &k [int], order: &!o [i
 }
 
 // The held rows' places, in order, as a box the caller frees.
-pub fn order[&h, &s, &k](heap: &!h Heap, s: &s Sorter, keys: &k [int]) -> [heap] Box[[int]] {
-    let n = s.count;
+pub fn order[&h, &s](heap: &!h Heap, s: &s agg.Groups) -> [heap] Box[[int]] {
+    let keys = contents(s.memo)[4..4 + 3 * s.stride];
+    let n = s.pairs;
     let ord = box_slice(heap, n + 1, 0);
     let spare = box_slice(heap, n + 1, 0);
     let pre = box_slice(heap, n + 1, 0);
@@ -365,15 +377,22 @@ pub fn order[&h, &s, &k](heap: &!h Heap, s: &s Sorter, keys: &k [int]) -> [heap]
 
 // Sort what is held and keep the first `cap`: the rows of the answer that are wanted, in order, and the last of them
 // is what `reject` compares with from now on.
-pub fn cut_back[&h, &k](heap: &!h Heap, s: Sorter, keys: &k [int]) -> [heap] Sorter {
-    let Sorter { data, side, rows, nk, count, cap, cut } = s;
-    let old = Sorter { data: data, side: side, rows: rows, nk: nk, count: count, cap: cap, cut: cut };
-    let stride = stride_of(nk);
+pub fn cut_back[&h](heap: &!h Heap, old: agg.Groups) -> [heap] agg.Groups {
+    var nk = 0;
+    var count = 0;
+    var cap = 0;
+    borrow old as &o0 in {
+        nk = o0.stride;
+        count = o0.pairs;
+        cap = contents(o0.memo)[0];
+    }
+    let width = stride_of(nk);
     var fresh_data = buffer.empty(heap, 4096);
     var fresh_side = buffer.empty(heap, 64);
     var fresh_rows = vec.empty(heap, 1024, 0);
     borrow old as &or in {
-        let ord = order(heap, or, keys);
+        let keys = contents(or.memo)[4..4 + 3 * or.stride];
+        let ord = order(heap, or);
         var i = 0;
         while i < cap && i < count {
             var x = 0;
@@ -384,14 +403,14 @@ pub fn cut_back[&h, &k](heap: &!h Heap, s: Sorter, keys: &k [int]) -> [heap] Sor
             borrow fresh_data as &dr in {
                 at = buffer.size(dr);
             }
-            let old_off = vec.get(or.rows, x * stride);
+            let old_off = vec.get(or.acc, x * width);
             fresh_data = buffer.append(heap, fresh_data, record_of(or, x));
             fresh_rows = vec.push(heap, fresh_rows, at);
-            fresh_rows = vec.push(heap, fresh_rows, vec.get(or.rows, x * stride + 1));
+            fresh_rows = vec.push(heap, fresh_rows, vec.get(or.acc, x * width + 1));
             var j = 0;
             while j < nk {
-                let a = vec.get(or.rows, x * stride + 2 + 2 * j);
-                let b = vec.get(or.rows, x * stride + 3 + 2 * j);
+                let a = vec.get(or.acc, x * width + 2 + 2 * j);
+                let b = vec.get(or.acc, x * width + 3 + 2 * j);
                 if keys[3 * j + 2] == 1 {
                     fresh_rows = vec.push(heap, fresh_rows, a);
                     fresh_rows = vec.push(heap, fresh_rows, b);
@@ -417,6 +436,12 @@ pub fn cut_back[&h, &k](heap: &!h Heap, s: Sorter, keys: &k [int]) -> [heap] Sor
     if kept_count > cap {
         kept_count = cap;
     }
-    drop(heap, old);
-    return Sorter { data: fresh_data, side: fresh_side, rows: fresh_rows, nk: nk, count: kept_count, cap: cap, cut: 1 };
+    let agg.Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = old;
+    buffer.drop(heap, keyb);
+    buffer.drop(heap, dkey);
+    vec.drop(heap, acc);
+    borrow mut memo as &!mw in {
+        contents(mw)[1] = 1;
+    }
+    return agg.Groups { index: index, acc: fresh_rows, seen: seen, keyb: fresh_data, dkey: fresh_side, held: held, pairs: kept_count, stride: stride, memo: memo };
 }

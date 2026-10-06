@@ -435,7 +435,7 @@ fn start_output[&h](heap: &!h Heap, rows: buffer.Buffer, lead: buffer.Buffer) ->
 // The sorted rows of `--order-by`, written as `--select` writes them: the rows from `from` on, up to `limit` and `top`, as
 // csv written out or as json kept (a page that stops short because of the byte budget or the limit says where the next one
 // begins: `next` is a place in the sorted answer).
-fn finish_sort[&h, &i, &s, &k, &l, &c, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, held: &s sorter.Sorter, keys: &k [int], sel: &l [int], cells: &!c [int], picked: int, as_csv: bool, delim: int, from: int, limit: int, top: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer) {
+fn finish_sort[&h, &i, &s, &l, &c, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, held: &s agg.Groups, sel: &l [int], cells: &!c [int], picked: int, as_csv: bool, delim: int, from: int, limit: int, top: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer) {
     let n = sorter.held(held);
     var end = n;
     if top > 0 && top < n {
@@ -443,7 +443,7 @@ fn finish_sort[&h, &i, &s, &k, &l, &c, &a](heap: &!h Heap, io: &!i Io, rows: buf
     }
     var pending = rows;
     var row = scratch;
-    let ord = sorter.order(heap, held, keys);
+    let ord = sorter.order(heap, held);
     var pos = from;
     var going = true;
     while pos < end && going {
@@ -482,7 +482,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     let table = flag_table();
     let cap = cli.nat(args, parsed, table, "max-line-bytes");
     let most = cli.nat(args, parsed, table, "max-rows");
-    let max_groups = cli.nat(args, parsed, table, "max-groups");
+    var max_groups = cli.nat(args, parsed, table, "max-groups");
     let max_distinct = cli.nat(args, parsed, table, "max-distinct");
     let max_state = cli.nat(args, parsed, table, "max-state-bytes");
     let threads = cli.nat(args, parsed, table, "threads");
@@ -496,6 +496,13 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     let fast_ok = engine.fast_ok(tree);
     let ordering = query.count_of(tree, 4) > 0;
     let max_sort_rows = cli.nat(args, parsed, table, "max-sort-rows");
+    // `--order-by` goes where the grouping goes: the rows are held in the groups' place (sorter.ls), and the bound on the groups is
+    // the bound on the rows. The loop below is not told: a third thing to do with a row, there, made it 15 percent slower for the other two.
+    var row_mode = mode;
+    if ordering {
+        row_mode = 2;
+        max_groups = max_sort_rows;
+    }
     // The rows of the answer that are wanted, when they are not all of them: a page (the one past it says there is
     // more) or `--top`. 0 is all of them, and also when twice that and one is past `--max-sort-rows`.
     var wanted = 0;
@@ -525,8 +532,6 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     var escr = buffer.empty(heap, 16);
     var kept = buffer.empty(heap, 64);
     var groups = agg.start(heap, query.agg_count(tree));
-    var srt = sorter.start(heap, 0, 0);
-    var okeys = box_slice(heap, 1, 0);
     var rec = buffer.empty(heap, 256);
     var cols = box_slice(heap, 1, 0);
     var cells = box_slice(heap, 3, 0);
@@ -627,14 +632,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                             borrow cells as &cr in {
                                 borrow sel as &sr in {
                                     borrow cols as &kr in {
-                                        if ordering {
-                                            borrow okeys as &okr in {
-                                                let (h2, e2, k2) = engine.order_row(heap, srt, escr, kept, tree, contents(kr), contents(okr), line, contents(cr), number, max_sort_rows, max_state, a);
-                                                srt = h2;
-                                                escr = e2;
-                                                kept = k2;
-                                            }
-                                        } else if mode == 1 {
+                                        if row_mode == 1 {
                                             let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), line, contents(cr), contents(sr), picked, delim, as_csv, budget, number, limit, a);
                                             rows = r2;
                                             scratch = s2;
@@ -751,8 +749,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                     a[engine.k_sort_desc()] = fdesc;
                                     if ordering && fabort == 0 {
                                         let nk = query.order_count(tree);
-                                        unbox_slice(heap, okeys);
-                                        okeys = box_slice(heap, 3 * nk + 1, 0);
+                                        var okeys = box_slice(heap, 3 * nk + 1, 0);
                                         borrow mut okeys as &!ow in {
                                             borrow cols as &cr in {
                                                 var j = 0;
@@ -764,8 +761,10 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                                 }
                                             }
                                         }
-                                        sorter.drop(heap, srt);
-                                        srt = sorter.start(heap, nk, wanted);
+                                        borrow okeys as &okr in {
+                                            groups = sorter.configure(groups, nk, wanted, contents(okr));
+                                        }
+                                        unbox_slice(heap, okeys);
                                     }
                                     if fabort != 0 {
                                         a[engine.k_abort()] = fabort;
@@ -861,14 +860,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                         borrow cells as &cr in {
                                             borrow sel as &sr in {
                                                 borrow cols as &kr in {
-                                                    if ordering {
-                                                        borrow okeys as &okr in {
-                                                            let (h2, e2, k2) = engine.order_row(heap, srt, escr, kept, tree, contents(kr), contents(okr), record, contents(cr), opened, max_sort_rows, max_state, a);
-                                                            srt = h2;
-                                                            escr = e2;
-                                                            kept = k2;
-                                                        }
-                                                    } else if mode == 1 {
+                                                    if row_mode == 1 {
                                                         let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), record, contents(cr), contents(sr), picked, delim, as_csv, budget, opened, limit, a);
                                                         rows = r2;
                                                         scratch = s2;
@@ -937,21 +929,17 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
             }
         }
         if ordering && a[engine.k_abort()] == 0 {
-            borrow srt as &hr in {
-                borrow okeys as &okr in {
-                    borrow mut cells as &!cw in {
-                        borrow sel as &sr in {
-                            let (r2, s2) = finish_sort(heap, io, finished, spare, hr, contents(okr), contents(sr), contents(cw), picked, as_csv, delim, from, limit, top, budget, a);
-                            finished = r2;
-                            spare = s2;
-                        }
+            borrow groups as &hr in {
+                borrow mut cells as &!cw in {
+                    borrow sel as &sr in {
+                        let (r2, s2) = finish_sort(heap, io, finished, spare, hr, contents(sr), contents(cw), picked, as_csv, delim, from, limit, top, budget, a);
+                        finished = r2;
+                        spare = s2;
                     }
                 }
             }
         }
         agg.drop(heap, groups);
-        sorter.drop(heap, srt);
-        unbox_slice(heap, okeys);
         buffer.drop(heap, escr);
         buffer.drop(heap, spare);
         buffer.drop(heap, out_rows);
