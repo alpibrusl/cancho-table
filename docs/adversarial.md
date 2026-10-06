@@ -251,17 +251,17 @@ the soak running, no DuckDB there):
 
 | cell | `table` | csvtk | Miller | DuckDB 1 thread / default | `sort` |
 |---|---:|---:|---:|---:|---:|
-| A1 text, Mac | 0.465 | 0.806 | | 0.482 / 0.134 | 1.86 |
-| A1 text, Linux | 1.077 | 2.342 | 5.789 | | 1.030 |
-| A2 integer, Mac | 0.435 | 1.830 | | 0.414 / 0.119 | 1.74 |
-| A2 integer, Linux | 0.895 | 4.095 | 4.682 | | 0.892 |
-| A3 top 1000, Mac | 0.064 | 1.919 | | 0.197 / 0.084 | 1.80 |
-| A3 top 1000, Linux | 0.152 | 4.764 | 3.903 | | 0.965 |
-| A4 ties, Mac | 0.563 | 2.164 | | 0.430 / 0.132 | 2.22 |
-| A4 ties, Linux | 1.117 | 4.353 | 2.265 | | 0.658 |
+| A1 text, Mac | 0.483 | 0.789 | | 0.522 / 0.143 | 1.56 |
+| A1 text, Linux | 0.912 | 2.014 | 4.936 | | 0.881 |
+| A2 integer, Mac | 0.413 | 1.882 | | 0.429 / 0.123 | 1.87 |
+| A2 integer, Linux | 0.958 | 4.420 | 4.377 | | 0.926 |
+| A3 top 1000, Mac | 0.063 | 1.898 | | 0.196 / 0.082 | 1.60 |
+| A3 top 1000, Linux | 0.115 | 4.324 | 3.958 | | 0.909 |
+| A4 ties, Mac | 0.487 | 2.246 | | 0.432 / 0.125 | 2.00 |
+| A4 ties, Linux | 1.080 | 4.714 | 2.626 | | 0.743 |
 
-Losses, by the registered definition: against DuckDB's default **3.5x (A1), 3.7x (A2), 4.3x (A4)** (the sort is
-sequential; its default uses 16 cores), **1.05x (A2) and 1.31x (A4) against DuckDB at one thread**, and on Linux **1.7x against
-`sort -s -n` with ties** and 1.05x on a text key (`sort` uses the cores it is given). Wins: 1.7x to 4.6x against csvtk, 2x to
-5.4x against Miller, 3.1x against DuckDB at one thread and 1.3x against its default on the top 1000, which `table` does in
-2 MB. The text cell was 1.7x behind DuckDB at one thread before round S1.
+Losses, by the registered definition: against DuckDB's default **3.4x (A1, A2), 3.9x (A4)** (the sort is sequential; its
+default uses 16 cores), **1.13x against DuckDB at one thread with ties**, and on Linux **1.45x against `sort -s -n` with ties**
+and 1.04x on a text key (`sort` uses the cores it is given). Wins: 1.6x to 4.6x against csvtk, 2.4x to 5.4x against Miller,
+1.04x to 1.08x against DuckDB at one thread on A1 and A2, and on the top 1000 3.1x against DuckDB at one thread and 1.3x against
+its default, in 2 MB. The text cell was 1.7x behind DuckDB at one thread before round S1 of `docs/sort.md`.

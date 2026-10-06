@@ -133,26 +133,26 @@ ways, is compared as "ordered by `v`, and the same rows"; `table`'s order on tie
 
 | cell | `table` | csvtk | Miller | DuckDB 1 thread / default | `sort` |
 |---|---:|---:|---:|---:|---:|
-| **A1** text key, 1M rows, Mac | **0.465** | 0.806 | n/a | 0.482 / 0.134 | 1.86 |
-| A1, Linux | **1.077** | 2.342 | 5.789 | n/a | 1.030 |
-| **A2** integer key, Mac | **0.435** | 1.830 | n/a | 0.414 / 0.119 | 1.74 (`-n`) |
-| A2, Linux | **0.895** | 4.095 | 4.682 | n/a | 0.892 (`-n`) |
-| **A3** first 1000 by an integer, descending, Mac | **0.064** | 1.919 | n/a | 0.197 / 0.084 | 1.80 |
-| A3, Linux | **0.152** | 4.764 | 3.903 | n/a | 0.965 |
-| **A4** integer key with ties, Mac | **0.563** | 2.164 | n/a | 0.430 / 0.132 | 2.22 (`-s -n`) |
-| A4, Linux | **1.117** | 4.353 | 2.265 | n/a | 0.658 (`-s -n`) |
+| **A1** text key, 1M rows, Mac | **0.483** | 0.789 | n/a | 0.522 / 0.143 | 1.56 |
+| A1, Linux | **0.912** | 2.014 | 4.936 | n/a | 0.881 |
+| **A2** integer key, Mac | **0.413** | 1.882 | n/a | 0.429 / 0.123 | 1.87 (`-n`) |
+| A2, Linux | **0.958** | 4.420 | 4.377 | n/a | 0.926 (`-n`) |
+| **A3** first 1000 by an integer, descending, Mac | **0.063** | 1.898 | n/a | 0.196 / 0.082 | 1.60 |
+| A3, Linux | **0.115** | 4.324 | 3.958 | n/a | 0.909 |
+| **A4** integer key with ties, Mac | **0.487** | 2.246 | n/a | 0.432 / 0.125 | 2.00 (`-s -n`) |
+| A4, Linux | **1.080** | 4.714 | 2.626 | n/a | 0.743 (`-s -n`) |
 
-Peak memory: 173 to 181 MB (Mac) and 98 to 101 MB (Linux) for a full sort of 1M rows, against csvtk's 250 to 270 MB and
+Peak memory: 173 to 181 MB (Mac) and 98 to 101 MB (Linux) for a full sort of 1M rows, against csvtk's 250 to 280 MB and
 Miller's 1.1 to 1.5 GB; **2.1 to 2.3 MB for the top 1000** (DuckDB: 64 to 69 MB).
 
-**The ratios, with the losses.** Against csvtk `table` is 1.7x (text) to 4.2x (integer) faster on the Mac and 2.2x to 4.6x on
-Linux, and 30x on a top-1000. Against Miller 2x to 5.4x. Against DuckDB at **one thread** it is level on the text key
-(0.97x: 0.465 against 0.482) and **1.05x slower on the integer key** (0.435 against 0.414), **1.31x slower with ties**
-(0.563 against 0.430), and 3.1x *faster* on the top 1000. Against DuckDB's **default** (all its threads, on a 16-core
-Mac) `table` is **3.5x (A1), 3.7x (A2) and 4.3x (A4) slower** and 1.3x faster on the top 1000. That is a loss and it is the
-known one: the sort is sequential, DuckDB's is parallel (see below). Against the shell's `sort` on Linux, which uses all
-the cores it is given, `table` is level on an integer key (0.895 against 0.892), 1.05x slower on text, **1.7x slower** on
-the ties (`sort -s -n` 0.658 against 1.117), and 6.3x faster for the top 1000.
+**The ratios, with the losses.** Against csvtk `table` is 1.6x (text) to 4.6x (integer) faster on the Mac and 2.2x to 4.6x on
+Linux, and 30x to 38x on a top-1000. Against Miller 2.4x to 5.4x. Against DuckDB at **one thread** it is ahead on
+the text key (1.08x: 0.483 against 0.522) and the integer key (1.04x), **1.13x slower with ties** (0.487 against 0.432), and 3.1x
+*faster* on the top 1000. Against DuckDB's **default** (all its threads, on a 16-core Mac) `table` is **3.4x (A1 and A2) and
+3.9x (A4) slower** and 1.3x faster on the top 1000. That is the loss and it is the known one: the sort is sequential,
+DuckDB's is parallel (see below). Against the shell's `sort` on Linux, which uses all the cores it is given, `table` is
+level on an integer key (0.958 against 0.926) and on text (1.04x slower), **1.45x slower** on the ties (`sort -s -n`
+0.743 against 1.080), and 7.9x faster for the top 1000.
 
 ### Rounds
 
@@ -161,10 +161,11 @@ plans against Python, are the gate), or reverted with its number.
 
 | # | idea | result | kept |
 |---|---|---|---|
-| S0 | the first version: 7-byte prefix of the first text key, `(prefix, rows)` merge sort | A1 0.807 s, A2 0.487 s on the Mac (A1 1.0x csvtk, 1.7x DuckDB t1; A2 4.6x csvtk, 1.1x DuckDB t1) | |
+| S0 | the first version: 7-byte prefix of the first text key, a merge sort of the rows' places | A1 0.807 s, A2 0.487 s on the Mac (A1 1.0x csvtk, 1.7x DuckDB t1; A2 4.6x csvtk, 1.1x DuckDB t1) | |
 | S1 | **a second 7-byte word** of the first text key (bytes 7 to 13): the keys of A1 (`key0000001`) share their first four digits, so the first word settled one pair in a hundred and the rest went to a full byte compare | A1 **0.807 to 0.455 (-44%)**, descending 0.903 to 0.508; A2 unchanged | yes |
 | S2 | insertion sort of runs of 8 before the merge (three fewer passes) | A1 0.464 to 0.450, A2 0.452 to 0.445 (-3%, -1.5%) | **no, reverted**: under the line, and more code |
 | S3 | the prefix travels with the row index in the merge (pairs), so the merge reads it in order and not at random | A1 0.396 to 0.392, A2 0.386 to 0.372 (-1%, -3.6%) | **no, reverted** |
+| S4 | the state moves from a `Sorter` of its own, with a case in the read loop, to the grouping's value and call (the loop made `--select` and `--where` 15% slower, above) | A1 0.437 to 0.507, A2 0.441 to 0.487, top-1000 0.061 to 0.060 with the rows held in place (`sorter.hook`); select and filter 0.97x to 1.00x of `main`. Before the in-place hook: A1 0.491, A2 0.497, top-1000 **0.099** | yes: a few percent of the sort for the other cells' 15% |
 
 What is left in the integer sort: the same file already in order takes 0.197 s, the random one 0.43 to 0.50: the extra
 is the random access of the merge and of writing the rows out in the order of the sort (a cache miss for each of a

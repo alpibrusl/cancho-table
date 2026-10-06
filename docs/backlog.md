@@ -80,7 +80,7 @@ otherwise said to be inferred.
   half of the same fact: the in-place paths (`group_plain`, `group_fast`) exist because moving the 40-word `Groups` per row
   cost a quarter of a group-count.
 * **The row sort is sequential.** `--threads` with `--order-by` runs the sequential read and gives the same bytes. DuckDB's
-  default is 3.5x to 4.3x ahead of it on 1M rows (the shell's `sort` on Linux uses its cores too). The design that fits:
+  default is 3.4x to 3.9x ahead of it on 1M rows (the shell's `sort` on Linux uses its cores too). The design that fits:
   each range keeps its rows sorted (the bounded top-N already does that for a page), the parent merges the runs in file
   order (equal keys: the earlier range first, which is the stable order), the way the groups are merged now. It needs a
   serialised form of a held row, which the groups' blob has the pieces of. Worth it only with the hash-partitioned merge
