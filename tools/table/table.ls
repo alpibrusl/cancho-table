@@ -1109,6 +1109,7 @@ fn add_order_keys[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, 
     let n = len(given);
     var i = 0;
     var at_start = true;
+    var minus_done = false;
     var flag = 0;
     while i <= n {
         var c = -1;
@@ -1121,12 +1122,15 @@ fn add_order_keys[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, 
             flags = vec.push(heap, flags, flag);
             flag = 0;
             at_start = true;
+            minus_done = false;
             if c == ',' {
                 cleaned = buffer.push(heap, cleaned, byte_of(','));
             }
             i = i + 1;
-        } else if was_start && c == '-' {
+        } else if was_start && c == '-' && !minus_done {
             flag = 1;
+            minus_done = true;
+            at_start = true;
             i = i + 1;
         } else if c == '\\' && i + 1 < n {
             let d = int_of(given[i + 1]);

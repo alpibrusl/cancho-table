@@ -94,42 +94,48 @@ pub fn reject[&s, &k, &d, &c](s: &s Sorter, keys: &k [int], record: &d [byte], c
         return 0;
     }
     let last = s.cap - 1;
+    // 0 not decided yet, 1 keep it, 2 drop it. Every integer key is read either way: a cell that is not an integer is a
+    // refusal whether the row would have been kept or not (the answer must not depend on the other rows).
+    var decided = 0;
     var j = 0;
     while j < s.nk {
         let column = keys[3 * j];
         let first = cells[3 * column];
         let end = cells[3 * column + 1];
         var c = 0;
+        if cells[3 * column + 2] == 1 && index_of_byte(record[first..end], byte_of(34)) >= 0 {
+            return 0;
+        }
         if keys[3 * j + 2] == 1 {
-            if cells[3 * column + 2] == 1 && index_of_byte(record[first..end], byte_of(34)) >= 0 {
-                return 0;
-            }
             let (v, bad) = query.parse_int(record[first..end]);
             if bad != 0 {
                 return 0;
             }
-            let held_v = vec.get(s.rows, last * stride_of(s.nk) + 3 + 2 * j);
-            if v < held_v {
-                c = 0 - 1;
-            } else if v > held_v {
-                c = 1;
+            if decided == 0 {
+                let held_v = vec.get(s.rows, last * stride_of(s.nk) + 3 + 2 * j);
+                if v < held_v {
+                    c = 0 - 1;
+                } else if v > held_v {
+                    c = 1;
+                }
             }
-        } else {
-            if cells[3 * column + 2] == 1 && index_of_byte(record[first..end], byte_of(34)) >= 0 {
-                return 0;
-            }
+        } else if decided == 0 {
             c = bytes.compare(record[first..end], key_bytes(s, last, j));
         }
-        if keys[3 * j + 1] == 1 {
-            c = 0 - c;
-        }
-        if c < 0 {
-            return 0;
-        }
-        if c > 0 {
-            return 1;
+        if decided == 0 {
+            if keys[3 * j + 1] == 1 {
+                c = 0 - c;
+            }
+            if c < 0 {
+                decided = 1;
+            } else if c > 0 {
+                decided = 2;
+            }
         }
         j = j + 1;
+    }
+    if decided == 1 {
+        return 0;
     }
     return 1;
 }
