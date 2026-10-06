@@ -46,27 +46,76 @@ def generate(path, rows):
             f.write(f"{i},{random.choice([200, 200, 200, 301, 404, 500])},{random.randint(0, 99999)},/p/{random.randint(0, 999)},\"a,b {i % 7}\"\n")
 
 
-def scenarios(table, data, rows):
+def truth(data):
+    """What every contender must answer, computed here, independently: the ids of
+    the rows the filter keeps, and the count and the sum of `bytes` by status."""
+    import csv
+    ids, count, total = [], {}, {}
+    with open(data, newline="") as f:
+        r = csv.reader(f)
+        next(r)
+        for row in r:
+            status, size = int(row[1]), int(row[2])
+            count[status] = count.get(status, 0) + 1
+            total[status] = total.get(status, 0) + size
+            if status == 404 and size > 50000:
+                ids.append(row[0])
+    return ids, count, total
+
+
+def pairs(stdout, pattern):
+    out = {}
+    for line in stdout.splitlines():
+        m = re.match(pattern, line)
+        if m:
+            out[int(m.group(1))] = int(m.group(2))
+    return out
+
+
+def scenarios(table, data, rows, expected):
     """name -> {contender -> (argv, a check of its stdout)}. Each scenario asks
     every contender the same question."""
+    ids, count, total = expected
     root = ["--root", str(data.parent)]
-    have = {n: shutil.which(n) for n in ("csvtk", "mlr", "wc")}
+    have = {n: shutil.which(n) for n in ("csvtk", "mlr", "wc", "awk", "sh")}
+    f = str(data)
     shape = {"table": ([table, *root, data.name], lambda s: json.loads(s)["data"]["row_count"] == rows)}
     cut = {"table": ([table, *root, "--select", "status,bytes", "--format", "csv", data.name], lambda s: s.count("\n") == rows + 1)}
     head = {"table": ([table, *root, "--select", "status,bytes", "--limit", "1000", data.name], lambda s: json.loads(s)["data"]["row_count"] == 1000)}
+    def kept(s):
+        lines = s.splitlines()
+        return lines[0].startswith("id,status") and [l.split(",", 1)[0] for l in lines[1:]] == ids
+    filt = {"table": ([table, *root, "--where", "status=404 and bytes:int>50000", "--format", "csv", data.name], kept)}
+    freq = {"table": ([table, *root, "--group", "status", "--format", "csv", data.name], lambda s: pairs(s, r"^(\d+),(\d+)$") == count)}
+    summ = {"table": ([table, *root, "--group", "status", "--agg", "sum:bytes", "--format", "csv", data.name], lambda s: pairs(s, r"^(\d+),(\d+)(?:\.0+)?$") == total)}
     if have["csvtk"]:
-        shape["csvtk -j 1"] = (["csvtk", "-j", "1", "nrow", str(data)], lambda s: s.split()[-1] == str(rows))
-        cut["csvtk -j 1"] = (["csvtk", "-j", "1", "cut", "-f", "status,bytes", str(data)], lambda s: s.count("\n") == rows + 1)
-        head["csvtk -j 1"] = (["csvtk", "-j", "1", "head", "-n", "1000", str(data)], lambda s: s.count("\n") == 1001)
+        shape["csvtk -j 1"] = (["csvtk", "-j", "1", "nrow", f], lambda s: s.split()[-1] == str(rows))
+        cut["csvtk -j 1"] = (["csvtk", "-j", "1", "cut", "-f", "status,bytes", f], lambda s: s.count("\n") == rows + 1)
+        head["csvtk -j 1"] = (["csvtk", "-j", "1", "head", "-n", "1000", f], lambda s: s.count("\n") == 1001)
+        filt["csvtk -j 1 filter2"] = (["csvtk", "-j", "1", "filter2", "-f", "$status==404 && $bytes>50000", f], kept)
+        filt["csvtk -j 1 filter|grep"] = (["sh", "-c", "csvtk -j 1 filter -f 'bytes>50000' %s | csvtk -j 1 grep -f status -p 404" % f], kept)
+        freq["csvtk -j 1 freq"] = (["csvtk", "-j", "1", "freq", "-f", "status", f], lambda s: pairs(s, r"^(\d+),(\d+)$") == count)
+        summ["csvtk -j 1 summary"] = (["csvtk", "-j", "1", "summary", "-g", "status", "-f", "bytes:sum", f], lambda s: pairs(s, r"^(\d+),(\d+)(?:\.0+)?$") == total)
     if have["mlr"]:
-        shape["mlr"] = (["mlr", "--icsv", "--ojson", "count", str(data)], lambda s: str(rows) in s)
-        cut["mlr"] = (["mlr", "--icsv", "--ocsv", "cut", "-f", "status,bytes", str(data)], lambda s: s.count("\n") == rows + 1)
-        head["mlr"] = (["mlr", "--icsv", "--ojson", "head", "-n", "1000", "then", "cut", "-f", "status,bytes", str(data)], lambda s: s.count('"status"') == 1000)
+        shape["mlr"] = (["mlr", "--icsv", "--ojson", "count", f], lambda s: str(rows) in s)
+        cut["mlr"] = (["mlr", "--icsv", "--ocsv", "cut", "-f", "status,bytes", f], lambda s: s.count("\n") == rows + 1)
+        head["mlr"] = (["mlr", "--icsv", "--ojson", "head", "-n", "1000", "then", "cut", "-f", "status,bytes", f], lambda s: s.count('"status"') == 1000)
+        filt["mlr filter"] = (["mlr", "--icsv", "--ocsv", "filter", "$status==404 && $bytes>50000", f], kept)
+        freq["mlr count-distinct"] = (["mlr", "--icsv", "--ocsv", "count-distinct", "-f", "status", f], lambda s: pairs(s, r"^(\d+),(\d+)$") == count)
+        summ["mlr stats1"] = (["mlr", "--icsv", "--ocsv", "stats1", "-a", "sum", "-f", "bytes", "-g", "status", f], lambda s: pairs(s, r"^(\d+),(\d+)(?:\.0+)?$") == total)
+    if have["awk"] and have["sh"]:
+        # A reference floor where CSV quoting does not matter: it is not equivalent
+        # on the quoted column (awk -F, would split `"a,b 1"`), which no condition here reads.
+        filt["awk -F, (floor, not CSV)"] = (["awk", "-F,", "NR==1{print;next} $2==404 && $3>50000", f], kept)
+        freq["cut|sort|uniq -c (floor, not CSV)"] = (["sh", "-c", "cut -d, -f2 %s | LC_ALL=C sort | uniq -c" % f], lambda s: pairs(s, r"^\s*(\d+) (\d+)$") == {k: v for k, v in count.items()} or {v: k for k, v in pairs(s, r"^\s*(\d+) (\d+)$").items()} == count)
     if have["wc"]:
-        shape["wc -l (floor)"] = (["wc", "-l", str(data)], lambda s: s.split()[0] == str(rows + 1))
+        shape["wc -l (floor)"] = (["wc", "-l", f], lambda s: s.split()[0] == str(rows + 1))
     return {"shape: table FILE / csvtk nrow / mlr count": shape,
             "cut: table --select status,bytes --format csv / csvtk cut / mlr cut": cut,
-            "first 1000 rows of two columns: table --select ... --limit 1000 (json) / csvtk head / mlr head": head}
+            "first 1000 rows of two columns: table --select ... --limit 1000 (json) / csvtk head / mlr head": head,
+            "filter: status=404 and bytes>50000, all columns as csv": filt,
+            "group-count by status": freq,
+            "group sum of bytes by status": summ}
 
 
 def once(argv):
@@ -110,16 +159,16 @@ def run_scenario(title, contenders, runs, size):
     peaks = {n: rss(contenders[n][0]) for n in names}
     print(title)
     print("%-16s %9s %9s %10s %12s" % ("tool", "min s", "median s", "MB/s", "peak RSS MB"))
-    best = min(min(v) for n, v in times.items() if not n.startswith("wc"))
-    ref = min(times["csvtk -j 1"]) if "csvtk -j 1" in times else None
+    best = min(min(v) for n, v in times.items() if not n.startswith(("wc", "awk", "cut|")))
+    ref = min(min(times[n]) for n in times if n.startswith("csvtk -j 1")) if any(n.startswith("csvtk -j 1") for n in times) else None
     for n in names:
         lo = min(times[n])
         peak = peaks[n]
         note = ""
-        if not n.startswith("wc"):
+        if not n.startswith(("wc", "awk", "cut|")):
             note = "%.2fx the fastest" % (lo / best)
-            if ref and n != "csvtk -j 1":
-                note += ", %.2fx csvtk -j 1" % (lo / ref)
+            if ref and n.startswith("table"):
+                note += ", %.2fx the best csvtk -j 1" % (lo / ref)
         print("%-16s %9.4f %9.4f %10.0f %12s   %s" % (
             n, lo, statistics.median(times[n]), size / 1e6 / lo,
             "%.1f" % (peak / 1024) if peak is not None else "n/a", note))
@@ -139,7 +188,7 @@ def main():
         data.parent.mkdir(parents=True, exist_ok=True)
         generate(data, args.rows)
     size = data.stat().st_size
-    plan = scenarios(os.path.abspath(args.bin), data, args.rows)
+    plan = scenarios(os.path.abspath(args.bin), data, args.rows, truth(data))
     for title, contenders in plan.items():
         for name, (argv, check) in contenders.items():
             p = subprocess.run(argv, capture_output=True, text=True)

@@ -24,6 +24,17 @@ LOCAL = {
     "limit.too-many-rows": (8, "never", "--max-rows"),
     "select.unknown-column": (3, "sometimes", "not a column"),
     "select.ambiguous-column": (8, "never", "more than one column"),
+    "limit.too-many-groups": (8, "never", "--max-groups"),
+    "limit.too-many-distinct": (8, "never", "--max-distinct"),
+    "limit.state-too-large": (8, "never", "--max-state-bytes"),
+    "column.unknown": (3, "never", "--where, --group or --agg"),
+    "column.ambiguous": (8, "never", "more than one column"),
+    "where.syntax": (2, "never", "offset"),
+    "agg.bad-spec": (2, "never", "count, sum:COL"),
+    "sort.unknown-key": (2, "never", "no output column"),
+    "value.not-integer": (8, "never", "exact integer"),
+    "value.integer-overflow": (8, "never", "64 bits"),
+    "agg.sum-overflow": (8, "never", "64 bits"),
 }
 LINUX_ONLY = {"io.read-failed"}
 
@@ -39,6 +50,10 @@ class Rules(unittest.TestCase):
         """(rule, argv, preexec) for every rule."""
         s.write("ok.csv", "a,b\n1,2\n")
         s.write("rec.csv", 'a,b\n1,"' + "x\n" * 600 + '"\n')
+        s.write("many.csv", "a\n1\n2\n3\n")
+        s.write("text.csv", "a,b\n1,x\n")
+        s.write("big.csv", "a\n99999999999999999999\n")
+        s.write("sum.csv", "a\n9223372036854775807\n1\n")
         s.write("dup.csv", "a,a\n1,2\n")
         s.write("ragged.csv", "a,b\n1,2\n3\n")
         s.write("quote.csv", 'a,b\n"x"y,1\n')
@@ -50,7 +65,7 @@ class Rules(unittest.TestCase):
         os.symlink(s.dir / "secret.csv", s.dir / "link.csv")
         root = ["--root", s.dir]
         out = [
-            ("args.unknown-flag", root + ["--nope", "ok.csv"], None),
+            ("args.unknown-flag", root + ["--max-rowz", "5", "ok.csv"], None),
             ("args.missing-value", root + ["ok.csv", "--max-rows"], None),
             ("args.bad-value", root + ["--max-rows", "many", "ok.csv"], None),
             ("args.duplicate-flag", root + ["--max-rows", "1", "--max-rows", "2", "ok.csv"], None),
@@ -77,6 +92,17 @@ class Rules(unittest.TestCase):
             ("limit.too-many-rows", root + ["--select", "a", "--format", "csv", "--max-rows", "1", "ragged.csv"], None),
             ("select.unknown-column", root + ["--select", "A", "ok.csv"], None),
             ("select.ambiguous-column", root + ["--select", "a", "dup.csv"], None),
+            ("limit.too-many-groups", root + ["--group", "a", "--max-groups", "1", "many.csv"], None),
+            ("limit.too-many-distinct", root + ["--agg", "distinct:a", "--max-distinct", "1", "many.csv"], None),
+            ("limit.state-too-large", root + ["--group", "a", "--max-state-bytes", "1", "many.csv"], None),
+            ("column.unknown", root + ["--where", "zz = 1", "ok.csv"], None),
+            ("column.ambiguous", root + ["--where", "a = 1", "dup.csv"], None),
+            ("where.syntax", root + ["--where", "a =", "ok.csv"], None),
+            ("agg.bad-spec", root + ["--group", "a", "--agg", "avg:a", "ok.csv"], None),
+            ("sort.unknown-key", root + ["--group", "a", "--sort", "zz", "ok.csv"], None),
+            ("value.not-integer", root + ["--where", "b:int > 0", "text.csv"], None),
+            ("value.integer-overflow", root + ["--where", "a:int > 0", "big.csv"], None),
+            ("agg.sum-overflow", root + ["--agg", "sum:a", "sum.csv"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")

@@ -20,6 +20,7 @@ import std.json;
 import std.map;
 import std.vec;
 import toolbox.fail;
+import query;
 import toolbox.text;
 
 // The ceiling on how many columns one `--select` names.
@@ -180,11 +181,11 @@ fn same_letters[&a, &b](a: &a [byte], b: &b [byte]) -> [] bool {
 
 // The list with name `k` replaced by `name`, written so that `parse` reads it
 // back: a comma, a backslash and a leading `#` escaped.
-pub fn rewritten[&h, &t, &e, &k, &n](heap: &!h Heap, toks: &t buffer.Buffer, ends: &e vec.Vec[int], kinds: &k vec.Vec[int], replaced: int, name: &n [byte]) -> [heap] buffer.Buffer {
+pub fn rewritten[&h, &t, &e, &k, &n](heap: &!h Heap, toks: &t buffer.Buffer, ends: &e vec.Vec[int], kinds: &k vec.Vec[int], replaced: int, upto: int, name: &n [byte]) -> [heap] buffer.Buffer {
     var out = buffer.empty(heap, 64);
     var i = 0;
     var from = 0;
-    while i < vec.size(ends) {
+    while i < upto {
         let to = vec.get(ends, i);
         if i > 0 {
             out = buffer.push(heap, out, byte_of(','));
@@ -229,7 +230,7 @@ fn text_nat[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buf
 // choice of the invocation with that column's name written as the header has
 // it. `at_arg` is where NAMES is in argv (-1 when it is not an argument of its
 // own, and then there is no repair to offer).
-pub fn refusal[&h, &g, &n, &e, &t, &k, &j, &s](heap: &!h Heap, errs: fail.Errors, extra: &static [byte], rule: &static [byte], message: &static [byte], hint: &static [byte], args: &g Args, at_arg: int, header: &n buffer.Buffer, header_ends: &e vec.Vec[int], toks: &t buffer.Buffer, ends: &k vec.Vec[int], kinds: &j vec.Vec[int], bad: int, shown: &s [byte]) -> [heap, args] fail.Errors {
+pub fn refusal[&h, &g, &n, &e, &t, &k, &j, &s](heap: &!h Heap, errs: fail.Errors, extra: &static [byte], rule: &static [byte], message: &static [byte], hint: &static [byte], args: &g Args, at_arg: int, header: &n buffer.Buffer, header_ends: &e vec.Vec[int], toks: &t buffer.Buffer, ends: &k vec.Vec[int], kinds: &j vec.Vec[int], bad: int, upto: int, flag: &static [byte], shown: &s [byte]) -> [heap, args] fail.Errors {
     var begin = 0;
     if bad > 0 {
         begin = vec.get(ends, bad - 1);
@@ -268,7 +269,7 @@ pub fn refusal[&h, &g, &n, &e, &t, &k, &j, &s](heap: &!h Heap, errs: fail.Errors
                 start = vec.get(header_ends, column - 1);
             }
             let spelled = buffer.bytes(header)[start..vec.get(header_ends, column)];
-            let list = rewritten(heap, toks, ends, kinds, bad, spelled);
+            let list = rewritten(heap, toks, ends, kinds, bad, upto, spelled);
             o = json.begin_object(heap, o);
             o = json.put_key(heap, o, "argv");
             o = json.begin_array(heap, o);
@@ -297,6 +298,8 @@ pub fn refusal[&h, &g, &n, &e, &t, &k, &j, &s](heap: &!h Heap, errs: fail.Errors
     w = fail.detail_open(heap, w);
     w = json.put_key(heap, w, "path");
     w = text.put(heap, w, shown);
+    w = json.put_key(heap, w, "flag");
+    w = json.put_string(heap, w, flag);
     w = json.put_key(heap, w, "name");
     w = text.put(heap, w, wanted);
     w = json.put_key(heap, w, "columns");
@@ -315,4 +318,19 @@ pub fn refusal[&h, &g, &n, &e, &t, &k, &j, &s](heap: &!h Heap, errs: fail.Errors
     w = json.put_key(heap, w, "available_truncated");
     w = json.put_bool(heap, w, vec.size(header_ends) > 50);
     return fail.add(heap, errs, w);
+}
+
+// Every name of a list `parse` read, added to the plan as it said.
+pub fn fill[&h, &t, &e, &k](heap: &!h Heap, tree: query.Query, toks: &t buffer.Buffer, ends: &e vec.Vec[int], kinds: &k vec.Vec[int]) -> [heap] query.Query {
+    var q = tree;
+    var i = 0;
+    var from = 0;
+    while i < vec.size(ends) {
+        let to = vec.get(ends, i);
+        let (q2, at) = query.add_name(heap, q, buffer.bytes(toks)[from..to], vec.get(kinds, i));
+        q = q2;
+        from = to;
+        i = i + 1;
+    }
+    return q;
 }

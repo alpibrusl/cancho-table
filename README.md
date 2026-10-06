@@ -1,7 +1,8 @@
 # table
 
 A command-line tool for AI agents that reads a CSV or TSV file and answers
-with a document: the file's **shape**, or some of its **columns**. Written in
+with a document: the file's **shape**, some of its **columns**, the **rows** that satisfy
+a condition, or **counts and sums by group**. Written in
 [lex-sys](https://github.com/alpibrusl/lex-sys), as one of the
 [lexsys-tools](https://github.com/alpibrusl/lexsys-tools) family (JSON out
 against a schema, every error a named rule, a self-description from
@@ -17,6 +18,12 @@ $ table --root data --select note,id --format csv orders.csv | head -3
 note,id
 "a,b 0",0
 "a,b 1",1
+$ table --root data --where 'status=404 and bytes:int>50000' --select id,bytes --limit 2 orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["id","bytes"],"rows":[["6","99913"],["21","84186"]],"row_count":2,"truncated":true,"next":{"from":21}},"meta":{"version":"0.3.0"}}
+$ table --root data --group status --agg count,sum:bytes --sort -count --top 2 --format csv orders.csv
+status,count,sum:bytes
+200,500269,25023279627
+404,166893,8343911780
 ```
 
 ## What it is, and is not
@@ -37,6 +44,21 @@ note,id
   `select.unknown-column`, listing the header, with a `choose` repair when only the
   case differs. The choices and what each rests on are in
   [`docs/select.md`](docs/select.md);
+* **filter rows**: `--where EXPR`, conditions joined by `and`: `= != < <= > >=`,
+  `contains`, `in (...)`. Text compares bytewise; **`COLUMN:int` compares as an exact
+  64-bit integer** (a cell that is not one, an empty cell included, is a refusal naming
+  its row and column, never a coercion or a float); conditions stop at the first false,
+  so `x != '' and x:int > 5` guards an empty cell. A malformed expression is
+  `where.syntax` with the byte offset of the error. It composes with `--select` and
+  paging, and is applied before grouping;
+* **group and aggregate**: `--group NAMES --agg count,sum:COL,min:COL,max:COL,distinct:COL
+  [--sort [-]COLUMN] [--top N]`, as json (`table.v2` rows plus `group_count`) or csv.
+  Sums, minima and maxima are exact integers and a sum past 64 bits is
+  `agg.sum-overflow`, never a wrap. Groups come out in key order (bytewise, field by
+  field), or `--sort` order with ties by key, so the same rows give the same bytes
+  in any order. Bounded by `--max-groups`, `--max-distinct` and `--max-state-bytes`,
+  each its own rule. All of it is one plan (`tools/table/query.ls`); design and
+  deviations from the design document in [`docs/filter.md`](docs/filter.md);
 * an RFC 4180 reader of its own ([`tools/table/`](tools/table)): quoted fields,
   doubled quotes, delimiters and newlines (LF or CRLF) inside quotes, a leading
   UTF-8 byte order mark, blank lines between records skipped;
@@ -61,12 +83,14 @@ note,id
 
 * **not pandas.** Arbitrary pandas is arbitrary code, and giving that up is what
   keeps these tools bounded.
-* **not yet the declarative core** the
+* **not yet all of the declarative core** the
   [design](https://github.com/alpibrusl/lexsys-tools/blob/next-tools-design/docs/next-tools.md)
-  (section 5) plans: filter rows (`status>=400`), group and aggregate (`count`,
-  `sum`, `min`, `max`, `distinct`, `mean`), sort, top-N, `describe`, and the same
-  plan as one `--query` string. **None of that is built.** There is no stdin, no
-  type inference, no NDJSON output, no way to rename or compute a column.
+  (section 5) plans. **Not built:** `mean` (an exact fixed-point mean needs a stated
+  rounding rule and a scale), `describe`, a second sort key, `or`, expressions and
+  functions in `--where` (the design excludes them from v1), decimals (a decimal in an
+  `:int` column is a refusal), and the same plan as one `--query` string. There is no
+  stdin, no type inference (a column is text unless `:int` says otherwise), no NDJSON
+  output, no join, no way to rename or compute a column.
 * not a validator of every CSV dialect: the delimiter is one of comma, tab or
   semicolon; a lone CR is a byte of a field, not a line break (Python's `csv`
   ends a record there; the two can differ on a file that is already damaged); a
@@ -115,6 +139,7 @@ python3 scripts/schemas.py --check      # the schema is generated, not edited
 python3 scripts/manifest.py --check     # authority = the compiler's, embedded, within tools.toml
 python3 -W ignore -m unittest discover -s tests/conformance -v   # needs jsonschema, cc; strace on Linux
 python3 scripts/select_mutants.py       # mutation check of --select (slow: one build and a test run each)
+python3 scripts/filter_mutants.py       # the same for --where, --group, --agg
 ```
 
 The conformance tests, in [`tests/conformance`](tests/conformance):
@@ -147,52 +172,65 @@ compiler it pins.
 
 `python3 scripts/bench.py` generates the file of the design's benchmark (1,000,000
 rows of `id,status,bytes,path,note`, the last quoted; seeded; 31,667,311 bytes) and
-times each tool answering the same question, with output to `/dev/null` and the
-output checked first. Minimum of 5 interleaved runs; peak RSS from `/usr/bin/time`.
-Three questions: the shape (a row count), the selection of two columns as CSV (the
-first benchmark in which the incumbents do the same work as `table`: they read, parse,
-select, quote and write), and the first 1000 rows of two columns.
+times each tool answering the same question, with output to `/dev/null`. **Before any
+timing every contender's answer is checked** against one computed independently in
+Python (the ids of the filtered rows; the count and the sum of `bytes` per status), and
+a contender that disagrees stops the run. Minimum of 5 interleaved runs; peak RSS from
+`/usr/bin/time`. Six questions; the first three are the earlier ones (`docs/history.md`).
 
-**Linux x86-64** (the pinned compiler; 6 cores of a shared box, niced, with a soak
-running; csvtk 0.38.0, Miller 6.22.0):
+**Linux x86-64** (the pinned compiler; 6 cores of a shared box, niced, a soak running;
+csvtk 0.38.0, Miller 6.22.0). Seconds, peak RSS:
 
-| question | `table` | `csvtk -j 1` | `mlr` |
+| question | `table` | `csvtk -j 1` | `mlr` | reference floor |
+|---|---:|---:|---:|---:|
+| shape | 0.055 s, 1.9 MB | 0.395 s, 21.7 MB | 0.237 s, 122 MB | `wc -l` 0.006 s |
+| cut two columns, csv | 0.112 s, 2.0 MB | 0.489 s, 21.3 MB | 0.716 s, 342 MB | |
+| first 1000 rows | 0.0015 s | 0.0088 s | 0.0229 s | |
+| **filter** `status=404 and bytes>50000`, csv | **0.100 s, 2.2 MB** | 0.797 s (`filter` then `grep`, two processes) / 7.99 s (`filter2`, one) | 0.397 s, 127 MB | `awk -F,` 0.611 s |
+| **group-count** by status | **0.177 s, 1.9 MB** | 0.397 s (`freq`) | 0.371 s (`count-distinct`), 140 MB | `cut\|sort\|uniq -c` 0.176 s |
+| **group sum** of bytes by status | **0.220 s, 1.9 MB** | 1.103 s (`summary`), 118 MB | 0.549 s (`stats1`), 301 MB | |
+
+**Apple silicon Mac** (16 cores, load 4 to 5 from other work; csvtk 0.38.0; no `mlr`
+there; `table` built by the compiler at `db7d5bc`, the pinned one's fix):
+
+| question | `table` | `csvtk -j 1` | reference floor |
 |---|---:|---:|---:|
-| shape: `table FILE` / `csvtk nrow` / `mlr count` | 0.061 s, 1.8 MB | 0.507 s, 21.4 MB | 0.328 s, 110 MB |
-| cut: `--select status,bytes --format csv` / `csvtk cut -f` / `mlr --icsv --ocsv cut -f` | **0.137 s, 1.9 MB** | 0.628 s, 21.7 MB | 0.906 s, 329 MB |
-| first 1000 rows of two columns (json) / `csvtk head` / `mlr head then cut` | 0.0016 s, 1.8 MB | 0.0114 s, 17.0 MB | 0.0299 s, 31.2 MB |
+| shape | 0.029 s | 0.172 s | `wc -l` 0.025 s |
+| cut two columns, csv | 0.054 s | 0.174 s | |
+| first 1000 rows | 0.0019 s | 0.0059 s | |
+| **filter** | **0.047 s** | 0.288 s (`filter`\|`grep`) / 2.63 s (`filter2`) | `awk -F,` 0.577 s |
+| **group-count** | **0.104 s** | 0.179 s | `cut\|sort\|uniq -c` 0.293 s |
+| **group sum** | **0.113 s** | 0.398 s (`summary`) | |
 
-`table`'s CSV is byte for byte `csvtk`'s and `mlr`'s (md5 of the three). `wc -l`
-reads the file in 0.007 s.
+Ratios against the best `csvtk -j 1` invocation: filter 6.1x (Mac) and 8.0x (Linux)
+faster, group-count 1.7x and 2.2x, group sum 3.5x and 5.0x. Against Miller on Linux:
+filter 4.0x, group-count 2.1x, group sum 2.5x, at a hundredth of the memory. `table`
+was not worse than `csvtk -j 1` anywhere, so no tuning round was needed for the new
+operations; one round was needed for a regression it introduced in the old ones, and is
+in [`docs/history.md`](docs/history.md).
 
-**Apple silicon Mac** (16 cores, load average 5 to 8 from other work; csvtk 0.38.0;
-no `mlr` there). `table` was built by the compiler at `db7d5bc` (the pinned one's
-fix, another revision):
-
-| question | `table` | `csvtk -j 1` |
-|---|---:|---:|
-| shape | 0.032 s, 1.5 MB | 0.203 s, 24.1 MB |
-| cut as CSV | **0.057 s, 1.7 MB** | 0.202 s, 23.8 MB |
-| first 1000 rows | 0.0025 s, 1.5 MB | 0.0078 s, 19.1 MB |
-
-So on the cut, `table` is 4.6x faster than `csvtk -j 1` on Linux and 3.5x on the
-Mac, and uses a tenth of the memory. This is for two columns of five that are not
-the quoted one, on one file; it is not a claim about every question, and `table`
-does far less (no types, no filter, no sort). The rounds, and why none was needed to
-close a gap, are in [`docs/history.md`](docs/history.md).
+What these numbers are not: a claim about every question. Everything here is one
+file, two integer columns and one low-cardinality group column; `table` does less than
+the incumbents (no types, one sort key, integers only: `csvtk summary` computes floats
+and `mlr` is a whole language). The `awk` and `uniq` rows are floors where CSV quoting
+does not matter and are not equivalent on the quoted column; the `uniq` pipeline is
+three processes running in parallel on the Linux box's other cores, which is why it
+matches `table` there.
 
 ## Layout
 
 ```
 tools/table/        the program: table.ls (flags, the read, the answers), reader.ls
-                    (RFC 4180), writer.ls (csv and json fields), plan.ls (--select)
-docs/               select.md (the design), history.md (the measurements)
+                    (RFC 4180), writer.ls (csv and json fields), plan.ls (name lists),
+                    query.ls (the plan), expr.ls (--where), agg.ls (groups), frame.ls
+                    (the plan against the header)
+docs/               select.md, filter.md (the designs), history.md (the measurements)
 generated/table/    the embedded manifest (written by scripts/manifest.py)
 manifests/          the authority, as the compiler reports it
 schemas/            table.v2.json (written by scripts/schemas.py)
 tools.toml          the authority ceiling a person writes and reviews
 tests/conformance/  the gates, run against build/table
-scripts/            manifest.py, schemas.py, bench.py, select_mutants.py
+scripts/            manifest.py, schemas.py, bench.py, select_mutants.py, filter_mutants.py
 ```
 
 Licence: EUPL-1.2, as lexsys-tools.
