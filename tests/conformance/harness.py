@@ -68,7 +68,7 @@ def run_argv(argv, cwd=None, timeout=120):
 def schema():
     global _schema
     if _schema is None:
-        _schema = json.loads((ROOT / "schemas" / "table.v1.json").read_text())
+        _schema = json.loads((ROOT / "schemas" / "table.v2.json").read_text())
     return _schema
 
 

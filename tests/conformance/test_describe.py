@@ -11,9 +11,9 @@ class Describe(unittest.TestCase):
         d = introspect()
         self.assertEqual(d["tool"], "table")
         flags = {f["name"] for f in d["flags"]}
-        self.assertEqual(flags, {"--root", "--delimiter", "--max-rows", "--max-line-bytes", "--format"})
+        self.assertEqual(flags, {"--root", "--delimiter", "--select", "--limit", "--from", "--max-bytes", "--max-rows", "--max-line-bytes", "--format"})
         self.assertEqual({l["name"]: (l["default"], l["ceiling"]) for l in d["limits"]},
-                         {"max-rows": (10000000, 1000000000), "max-line-bytes": (1048576, 16777216)})
+                         {"limit": (1000, 1000000), "max-bytes": (1048576, 67108864), "max-rows": (10000000, 1000000000), "max-line-bytes": (1048576, 16777216)})
         self.assertTrue(d["guarantees"]["bounded_memory"])
         self.assertTrue(d["guarantees"]["deterministic"])
         self.assertFalse(d["guarantees"]["atomic"])

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Write schemas/table.v1.json, the JSON Schema (Draft 2020-12) of `table`.
+"""Write schemas/table.v2.json, the JSON Schema (Draft 2020-12) of `table`: the
+shape of a file, or a page of selected columns (v1, of the shape alone, is retired).
 
 Adapted from lexsys-tools' scripts/schemas.py: the parts every tool shares --
 the envelope, the error object, the repair kinds, `text_or_bytes` -- are
@@ -67,7 +68,7 @@ def document(tool, data):
     props = {
         "ok": {"type": "boolean"},
         "command": {"const": tool},
-        "schema": {"const": tool + ".v1"},
+        "schema": {"const": tool + ".v2"},
         "data": {"$ref": "#/$defs/data"},
         "error": {"$ref": "#/$defs/error"},
         "errors": {"type": "array", "items": {"$ref": "#/$defs/error"}, "minItems": 1},
@@ -77,8 +78,8 @@ def document(tool, data):
     defs["data"] = data
     return {
         "$schema": DIALECT,
-        "$id": "https://github.com/alpibrusl/lexsys-table/schemas/%s.v1.json" % tool,
-        "title": "%s.v1" % tool,
+        "$id": "https://github.com/alpibrusl/lexsys-table/schemas/%s.v2.json" % tool,
+        "title": "%s.v2" % tool,
         "description": "One JSON object on one line. ok is false exactly when errors is present; error is its first element. data is absent when the read stopped before the end of the input.",
         "type": "object",
         "properties": props,
@@ -96,12 +97,24 @@ def document(tool, data):
 TB = {"$ref": "#/$defs/text_or_bytes"}
 
 SCHEMAS = {
-    "table": document("table", obj({
-        "headers": {"type": "array", "items": TB},
-        "columns": NAT,
-        "rows": NAT,
-        "truncated": {"type": "boolean"},
-    })),
+    "table": document("table", {"oneOf": [
+        # `table FILE`: the shape.
+        obj({
+            "headers": {"type": "array", "items": TB},
+            "column_count": NAT,
+            "row_count": NAT,
+            "truncated": {"type": "boolean"},
+        }),
+        # `table --select NAMES FILE`: a page of rows, each the selected fields in
+        # the order named; `next` resumes with `--from`.
+        obj({
+            "columns": {"type": "array", "items": TB},
+            "rows": {"type": "array", "items": {"type": "array", "items": TB}},
+            "row_count": NAT,
+            "truncated": {"type": "boolean"},
+            "next": {"oneOf": [{"type": "null"}, obj({"from": NAT})]},
+        }),
+    ]}),
 }
 
 
@@ -115,7 +128,7 @@ def main():
     out.mkdir(exist_ok=True)
     stale = []
     for tool, schema in SCHEMAS.items():
-        path = out / ("%s.v1.json" % tool)
+        path = out / ("%s.v2.json" % tool)
         text = render(schema)
         if check:
             if not path.exists() or path.read_text() != text:

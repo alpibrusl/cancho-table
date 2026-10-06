@@ -31,7 +31,7 @@ class Limits(unittest.TestCase):
         self.assertEqual(repair["kind"], "retry")
         again = run_argv(repair["argv"])
         self.assertEqual(again.status, 0)
-        self.assertEqual(again.data()["rows"], 2)
+        self.assertEqual(again.data()["row_count"], 2)
 
     def test_the_ceiling(self):
         got = self.s.table("c.csv", b"a\n1\n", "--max-line-bytes", "16777217")
@@ -56,7 +56,7 @@ class Limits(unittest.TestCase):
         data = b'a,b\n1,"' + (b"y" * 99 + b"\n") * 200000 + b'"\n2,3\n'
         got = self.s.table("span.csv", data)
         self.assertEqual(validate(got), [])
-        self.assertEqual((got.data()["rows"], got.data()["columns"]), (2, 2))
+        self.assertEqual((got.data()["row_count"], got.data()["column_count"]), (2, 2))
 
     def test_max_rows_truncates(self):
         data = "a,b\n" + "".join("%d,x\n" % i for i in range(1000))
@@ -65,11 +65,11 @@ class Limits(unittest.TestCase):
                 got = self.s.table("m.csv", data, "--max-rows", most)
                 self.assertEqual(validate(got), [])
                 self.assertEqual(got.status, 0)
-                self.assertEqual((got.data()["rows"], got.data()["truncated"]), (rows, truncated))
+                self.assertEqual((got.data()["row_count"], got.data()["truncated"]), (rows, truncated))
 
     def test_max_rows_zero_on_a_header_only_file_is_not_truncated(self):
         got = self.s.table("m.csv", "a,b\n", "--max-rows", 0)
-        self.assertEqual((got.data()["rows"], got.data()["truncated"]), (0, False))
+        self.assertEqual((got.data()["row_count"], got.data()["truncated"]), (0, False))
 
     def test_the_read_stops_at_max_rows(self):
         # Beyond the bound nothing is read: a bad quote after it is not seen.
@@ -82,7 +82,7 @@ class Limits(unittest.TestCase):
         err = got.error()
         self.assertEqual(err["rule"], "parse.csv-ragged-row")
         self.assertEqual(err["detail"], {"path": "r.csv", "ragged_rows": 2, "first_row": 2, "first_line": 3, "expected": 2, "found": 1})
-        self.assertEqual(got.data()["rows"], 4)
+        self.assertEqual(got.data()["row_count"], 4)
 
     def test_delimiters(self):
         for flag, data in (("tab", "a\tb\n1\t2\n"), ("\t", "a\tb\n1\t2\n"), (";", "a;b\n1;2\n"), (",", "a,b\n1,2\n")):
@@ -90,7 +90,7 @@ class Limits(unittest.TestCase):
                 got = self.s.table("d.csv", data, "--delimiter", flag)
                 self.assertEqual(got.data()["headers"], ["a", "b"])
         got = self.s.table("d.csv", "a;b\n1;2\n")
-        self.assertEqual(got.data()["columns"], 1)
+        self.assertEqual(got.data()["column_count"], 1)
         got = self.s.table("d.csv", "a|b\n", "--delimiter", "|")
         self.assertEqual((got.status, got.first_rule()), (2, "args.bad-value"))
 
@@ -99,7 +99,7 @@ class Limits(unittest.TestCase):
         # (a CR before it is dropped), so a CR alone is a byte of a field.
         got = self.s.table("cr.csv", b"a,b\r1,2\r")
         self.assertEqual(validate(got), [])
-        self.assertEqual((got.data()["rows"], got.data()["columns"]), (0, 3))
+        self.assertEqual((got.data()["row_count"], got.data()["column_count"]), (0, 3))
         self.assertEqual([name_text(n) for n in got.data()["headers"]], [b"a", b"b\r1", b"2"])
 
     def test_text_format(self):

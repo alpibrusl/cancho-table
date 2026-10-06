@@ -13,7 +13,7 @@ For every [[bin]] in lex-sys.toml:
    leaving out most of the program;
 2. write manifests/<tool>.authority.json (the committed record) and
    generated/<tool>/built.ls, which holds the authority, the tool's schema
-   (schemas/<tool>.v1.json) and the compiler pin as string literals;
+   (schemas/<tool>.v2.json) and the compiler pin as string literals;
 3. pass 2: derive again with the new generated file and require the same
    report -- the fixed point;
 4. require every derived label to be within the tool's ceiling in tools.toml,
@@ -184,7 +184,7 @@ def main():
         tool = entry["name"]
         files = sources(entry) + deps
         first = derive(files)
-        schema = json.loads((ROOT / "schemas" / ("%s.v1.json" % tool)).read_text())
+        schema = json.loads((ROOT / "schemas" / ("%s.v2.json" % tool)).read_text())
         record = ROOT / "manifests" / ("%s.authority.json" % tool)
         built = ROOT / "generated" / tool / "built.ls"
         record_text = json.dumps(first, indent=2) + "\n"

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Benchmark: `table` against `csvtk -j 1` (and `mlr`, if installed) on the file
-of lexsys-tools' docs/next-tools.md section 5: 1,000,000 rows, about 31 MB,
+of lexsys-tools' docs/next-tools.md section 5, in three scenarios: the shape
+(a row count), `cut -f status,bytes` as csv, and the first 1000 rows of two
+columns: 1,000,000 rows, about 31 MB,
 columns id,status,bytes,path,note with the last one quoted.
 
     python3 scripts/bench.py [--rows N] [--runs N] [--bin PATH] [--file PATH]
@@ -44,20 +46,27 @@ def generate(path, rows):
             f.write(f"{i},{random.choice([200, 200, 200, 301, 404, 500])},{random.randint(0, 99999)},/p/{random.randint(0, 999)},\"a,b {i % 7}\"\n")
 
 
-def tools(table, data, rows):
-    """name -> (argv, a check of its output against the row count)."""
-    out = {}
-    out["table"] = ([table, "--root", str(data.parent), data.name],
-                    lambda s: json.loads(s)["data"]["rows"] == rows)
-    if shutil.which("csvtk"):
-        out["csvtk -j 1"] = (["csvtk", "-j", "1", "nrow", str(data)],
-                             lambda s: s.split()[-1] == str(rows))
-    if shutil.which("mlr"):
-        out["mlr"] = (["mlr", "--icsv", "--ojson", "count", str(data)],
-                      lambda s: str(rows) in s)
-    if shutil.which("wc"):
-        out["wc -l (floor)"] = (["wc", "-l", str(data)], lambda s: s.split()[0] == str(rows + 1))
-    return out
+def scenarios(table, data, rows):
+    """name -> {contender -> (argv, a check of its stdout)}. Each scenario asks
+    every contender the same question."""
+    root = ["--root", str(data.parent)]
+    have = {n: shutil.which(n) for n in ("csvtk", "mlr", "wc")}
+    shape = {"table": ([table, *root, data.name], lambda s: json.loads(s)["data"]["row_count"] == rows)}
+    cut = {"table": ([table, *root, "--select", "status,bytes", "--format", "csv", data.name], lambda s: s.count("\n") == rows + 1)}
+    head = {"table": ([table, *root, "--select", "status,bytes", "--limit", "1000", data.name], lambda s: json.loads(s)["data"]["row_count"] == 1000)}
+    if have["csvtk"]:
+        shape["csvtk -j 1"] = (["csvtk", "-j", "1", "nrow", str(data)], lambda s: s.split()[-1] == str(rows))
+        cut["csvtk -j 1"] = (["csvtk", "-j", "1", "cut", "-f", "status,bytes", str(data)], lambda s: s.count("\n") == rows + 1)
+        head["csvtk -j 1"] = (["csvtk", "-j", "1", "head", "-n", "1000", str(data)], lambda s: s.count("\n") == 1001)
+    if have["mlr"]:
+        shape["mlr"] = (["mlr", "--icsv", "--ojson", "count", str(data)], lambda s: str(rows) in s)
+        cut["mlr"] = (["mlr", "--icsv", "--ocsv", "cut", "-f", "status,bytes", str(data)], lambda s: s.count("\n") == rows + 1)
+        head["mlr"] = (["mlr", "--icsv", "--ojson", "head", "-n", "1000", "then", "cut", "-f", "status,bytes", str(data)], lambda s: s.count('"status"') == 1000)
+    if have["wc"]:
+        shape["wc -l (floor)"] = (["wc", "-l", str(data)], lambda s: s.split()[0] == str(rows + 1))
+    return {"shape: table FILE / csvtk nrow / mlr count": shape,
+            "cut: table --select status,bytes --format csv / csvtk cut / mlr cut": cut,
+            "first 1000 rows of two columns: table --select ... --limit 1000 (json) / csvtk head / mlr head": head}
 
 
 def once(argv):
@@ -88,26 +97,10 @@ def version(argv):
         return "?"
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--rows", type=int, default=1_000_000)
-    ap.add_argument("--runs", type=int, default=5)
-    ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
-    ap.add_argument("--file", default=str(ROOT / "build" / "bench" / "data.csv"))
-    args = ap.parse_args()
-    data = pathlib.Path(args.file).resolve()
-    if not data.exists() or data.stat().st_size == 0:
-        data.parent.mkdir(parents=True, exist_ok=True)
-        generate(data, args.rows)
-    size = data.stat().st_size
-    contenders = tools(os.path.abspath(args.bin), data, args.rows)
-    for name, (argv, check) in contenders.items():
-        p = subprocess.run(argv, capture_output=True, text=True)
-        if p.returncode != 0 or not check(p.stdout):
-            sys.exit("%s did not report %d rows: %r %r" % (name, args.rows, p.stdout[:200], p.stderr[:200]))
+def run_scenario(title, contenders, runs, size):
     names = list(contenders)
     times = {n: [] for n in names}
-    for r in range(args.runs):
+    for r in range(runs):
         order = names[r % len(names):] + names[:r % len(names)]
         for n in order:
             seconds, rc = once(contenders[n][0])
@@ -115,22 +108,53 @@ def main():
                 sys.exit("%s exited %d" % (n, rc))
             times[n].append(seconds)
     peaks = {n: rss(contenders[n][0]) for n in names}
-    print("file: %s, %.1f MB, %d rows; %s %s; minimum of %d interleaved runs" % (
-        data.name, size / 1e6, args.rows, platform.system(), platform.machine(), args.runs))
-    print("versions: csvtk %s; mlr %s" % (version(["csvtk", "version"]) if "csvtk -j 1" in times else "not installed",
-                                          version(["mlr", "--version"]) if "mlr" in times else "not installed"))
-    print()
+    print(title)
     print("%-16s %9s %9s %10s %12s" % ("tool", "min s", "median s", "MB/s", "peak RSS MB"))
     best = min(min(v) for n, v in times.items() if not n.startswith("wc"))
+    ref = min(times["csvtk -j 1"]) if "csvtk -j 1" in times else None
     for n in names:
         lo = min(times[n])
         peak = peaks[n]
-        print("%-16s %9.3f %9.3f %10.0f %12s   %s" % (
+        note = ""
+        if not n.startswith("wc"):
+            note = "%.2fx the fastest" % (lo / best)
+            if ref and n != "csvtk -j 1":
+                note += ", %.2fx csvtk -j 1" % (lo / ref)
+        print("%-16s %9.4f %9.4f %10.0f %12s   %s" % (
             n, lo, statistics.median(times[n]), size / 1e6 / lo,
-            "%.1f" % (peak / 1024) if peak is not None else "n/a",
-            "" if n.startswith("wc") else "%.2fx the fastest" % (lo / best)))
-    if "mlr" not in times:
-        print("\nmlr is not installed here, so it is not measured.")
+            "%.1f" % (peak / 1024) if peak is not None else "n/a", note))
+    print()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--rows", type=int, default=1_000_000)
+    ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
+    ap.add_argument("--file", default=str(ROOT / "build" / "bench" / "data.csv"))
+    ap.add_argument("--only", default="", help="run only the scenarios whose title starts with this")
+    args = ap.parse_args()
+    data = pathlib.Path(args.file).resolve()
+    if not data.exists() or data.stat().st_size == 0:
+        data.parent.mkdir(parents=True, exist_ok=True)
+        generate(data, args.rows)
+    size = data.stat().st_size
+    plan = scenarios(os.path.abspath(args.bin), data, args.rows)
+    for title, contenders in plan.items():
+        for name, (argv, check) in contenders.items():
+            p = subprocess.run(argv, capture_output=True, text=True)
+            if p.returncode != 0 or not check(p.stdout):
+                sys.exit("%s did not give the answer (%s): %r %r" % (name, title, p.stdout[:200], p.stderr[:200]))
+    print("file: %s, %d bytes, %d rows; %s %s; minimum of %d interleaved runs, output to /dev/null" % (
+        data.name, size, args.rows, platform.system(), platform.machine(), args.runs))
+    print("versions: csvtk %s; mlr %s" % (version(["csvtk", "version"]) if shutil.which("csvtk") else "not installed",
+                                          version(["mlr", "--version"]) if shutil.which("mlr") else "not installed"))
+    print()
+    for title, contenders in plan.items():
+        if title.startswith(args.only):
+            run_scenario(title, contenders, args.runs, size)
+    if not shutil.which("mlr"):
+        print("mlr is not installed here, so it is not measured.")
 
 
 if __name__ == "__main__":
