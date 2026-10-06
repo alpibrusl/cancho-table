@@ -428,10 +428,9 @@ pub fn fast_ok[&q](tree: &q query.Query) -> [] bool {
 // that one. `max_rows` and `max_state` are the bounds. Sets `abort` for a bound passed (20 rows, 21 bytes) or a key that is
 // not an integer (as `--where` does, with `err_fn` -2); once `2 * cap + 1` rows are held they are cut back to `cap`.
 fn order_row[&h, &q, &c, &d, &e, &a](heap: &!h Heap, held: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_rows: int, max_state: int, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
-    let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
-    if verdict != 1 {
-        return (held, e2, k2);
-    }
+    // (`--where` was asked of the row by `group_fast` before the rows came here.)
+    let e2 = escr;
+    let k2 = kept;
     var rejected = 0;
     borrow held as &hr in {
         rejected = sorter.reject(hr, record, cells);

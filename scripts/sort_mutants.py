@@ -51,7 +51,7 @@ MUTANTS = [
     ("the cut back keeps the offsets of the old buffer", "sorter.ls", "                    fresh_rows = vec.push(heap, fresh_rows, at + a - old_off);", "                    fresh_rows = vec.push(heap, fresh_rows, a);"),
     ("the cut back loses an unquoted key", "sorter.ls", "                    fresh_side = buffer.append(heap, fresh_side, key_bytes(or, x, j));", "                    fresh_side = buffer.append(heap, fresh_side, \"\");"),
     # engine.order_row
-    ("a row that fails --where is held", "engine.ls", "    let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);\n    if verdict != 1 {\n        return (held, e2, k2);", "    let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);\n    if verdict < 0 {\n        return (held, e2, k2);"),
+    ("a row that fails --where is held", "engine.ls", "    if verdict != 1 {\n        return (0, e2, k2);\n    }\n    if query.count_of(tree, 4) > 0 {", "    if verdict < 0 {\n        return (0, e2, k2);\n    }\n    if query.count_of(tree, 4) > 0 {"),
     ("the held rows are never cut back", "engine.ls", "            full = contents(or.memo)[0] > 0 && sorter.held(or) >= 2 * contents(or.memo)[0] + 1;", "            full = false;"),
     ("a refusal of a key is numbered one high", "engine.ls", "    a[k_abort()] = 8 + status;", "    a[k_abort()] = 9 + status;"),
     ("a key that is not an integer is said to be in the condition", "engine.ls", "    a[k_err_fn()] = -2;", "    a[k_err_fn()] = -1;"),
