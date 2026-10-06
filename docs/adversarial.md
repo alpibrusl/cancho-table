@@ -169,3 +169,75 @@ experiment or inference, and said so.)
 Wide files (C1: 2.3x csvtk on the Mac, 3.2x on Linux, 13.8x Miller), all-quoted (D: 1.7 to 4.3x csvtk at one
 thread), the 90 percent filter (H1: 3.3x csvtk), the 1 GB filter (6x csvtk on the Mac and 10x on Linux at one thread;
 1.7x faster than DuckDB's default on the Mac at 8 threads), with memory of one or two megabytes for a scan.
+
+## After the cell-cost round (branch `cell-cost`, `docs/history.md` "Cell cost")
+
+The same cells, run again with the binary of `main` (`base`) and the binary of this branch in one run (the
+contenders of a round are run one after another, `scripts/adversarial.py --base`), the incumbents re-measured at
+the same time. Minimum of 5 (3 for 1 GB), seconds. Mac: a quiet machine this time (no other work, the Linux box doing
+the benchmarking elsewhere); Linux: cores 0 to 5, niced, the soak still running, `--threads 8` (not the registered 6,
+as before). The outputs were checked first, as before.
+
+### Mac: `table` before and after, and against the incumbents
+
+| cell | base t1 | new t1 | change | new t8 | against DuckDB t1 / default | against csvtk |
+|---|---:|---:|---:|---:|---|---|
+| B1 count, 100k keys | 0.177 | 0.124 | -30% | 0.087 | **win 1.37x** at t1; t8 1.09x **loss** to default (was 1.16x) | 2.4x faster |
+| B2 sum, 100k keys | 0.180 | 0.127 | -29% | 0.087 | **win 1.39x**; t8 1.11x **loss** (was 1.17x) | 36x faster, 16 GB less |
+| I1 `distinct:id` | 0.265 | 0.287 | +8% (see below) | 0.208 | **loss 1.40x** (was 1.54x); t8 2.5x loss (was 2.3x) | 2.0x faster |
+| C1 select 3 of 200 | 0.352 | 0.184 | -48% | 0.040 | win 7.2x; t8 20x vs default | 4.3x faster |
+| D1 cut, all quoted | 0.090 | 0.065 | -27% | 0.025 | win 4.3x; t8 3.3x | 4.2x faster |
+| D2 filter, all quoted | 0.084 | 0.067 | -21% | 0.026 | win 3.7x; t8 3.1x | 5.5x faster |
+| D3 group, all quoted | 0.145 | 0.076 | -48% | 0.025 | win 2.2x; t8 2.7x | 3.1x faster |
+| E1 select, long fields | 0.210 | 0.184 | -12% | 0.182 | win 2.2x | **tie** (1.01x faster; was a 1.11x loss) |
+| E2 group, long fields | 0.215 | 0.192 | -11% | 0.190 | win 2.1x | **tie** (1.02x faster; was a 1.09x loss) |
+| H1 filter keeping 90% | 0.101 | 0.087 | -13% | 0.027 | win 3.3x; t8 4.1x | 3.7x faster |
+| G1 1 GB filter | 1.682 | 1.460 | -13% | 0.264 | t8 1.8x faster than default | 6.8x faster at t1 |
+| G2 1 GB group-count | 3.706 | 1.746 | -53% | 0.282 | t8 **win 1.23x** (was a 1.59x loss); t4 0.473 against 0.348 is a 1.36x loss | 3.5x faster at t1, 22x at t8 |
+| B3 count, 1M keys | 0.725 | 0.792 | within noise (a repeated interleaved run: 0.95x to 1.02x) | 0.790 | **loss 3.4x**, t8 9.4x | 1.08x faster |
+| B4 sum, 1M keys | 0.781 | 0.840 | within noise | 0.814 | **loss 3.1x**, t8 9.2x | 49x faster |
+| A1 sort proxy | 0.722 | 0.763 | within noise | | **loss 1.59x** | 1.04x faster |
+
+I1 is the one slowdown that was real in the adversarial run (+6 to +8 percent on the Mac, +7 percent on Linux in
+interleaved runs): a `distinct` aggregate is not added in place, and the way that decides so was costing a call and
+two loops on every row. Round 15 of `docs/history.md` decides it once, before the loop: interleaved, 15 runs, I1 is
+0.293 s on `main` and 0.268 s now on the Mac (-9%), and 0.587 and 0.596 s on Linux (even). The tables here were
+measured before that round.
+
+### Linux: `table` before and after, and against the incumbents
+
+| cell | base t1 | new t1 | change | new t8 | against csvtk / Miller / the shell pipeline |
+|---|---:|---:|---:|---:|---|
+| B1 count, 100k keys | 0.494 | 0.378 | -23% | 0.368 | csvtk 2.3x, Miller 2.7x faster; `cut\|sort\|uniq -c` 0.319: **loss 1.19x** (was 1.62x) |
+| B2 sum, 100k keys | 0.504 | 0.261 | -48% | 0.335 | csvtk 43x, Miller 7.9x faster |
+| I1 `distinct:id` | 0.635 | 0.648 | no change (before round 15) | 0.710 | csvtk 2.5x, Miller 5.9x faster; shell 0.360: **loss 1.8x** |
+| C1 select 3 of 200 | 0.453 | 0.298 | -34% | 0.140 | csvtk 4.5x, Miller 18.6x faster |
+| D1 cut, all quoted | 0.154 | 0.130 | -16% | 0.069 | csvtk 4.5x, Miller 5.8x faster |
+| D2 filter, all quoted | 0.142 | 0.131 | -8% | 0.056 | csvtk 7.3x, Miller 3.6x faster |
+| D3 group, all quoted | 0.243 | 0.130 | -46% | 0.059 | csvtk 4.0x, Miller 3.5x faster |
+| E1 select, long fields | 0.264 | 0.239 | -10% | 0.244 | csvtk 1.24x, Miller 1.15x faster (was a tie with Miller) |
+| E2 group, long fields | 0.267 | 0.250 | -6% | 0.272 | csvtk 1.18x, Miller 1.11x faster |
+| H1 filter keeping 90% | 0.180 | 0.172 | -4% | 0.109 | csvtk 5.0x, Miller 3.2x faster |
+| G1 1 GB filter | 3.662 | 2.677 | -27% | 2.181 (t4 1.972) | csvtk 29.8: 11x faster at t1 |
+| G2 1 GB group-count | 5.420 | 3.481 | -36% | 2.167 (t4 2.167) | csvtk 16.2: 4.6x at t1, 7.5x at t4 |
+| B3 count, 1M keys | 1.764 | 1.792 | no change | 1.818 | csvtk 1.16x, Miller 1.6x faster; shell 0.324: **loss 5.5x** |
+| B4 sum, 1M keys | 1.892 | 1.725 | -9% | 2.013 | Miller 2.6x faster; csvtk killed at 14 GB |
+| A1 sort proxy | 1.820 | 1.866 | no change | | `sort` 1.027: **loss 1.8x**; csvtk 1.24x, Miller 2.9x faster |
+
+The Linux box is not what it was in the first round (its load changes by the hour, and these runs were faster than
+the earlier ones for every contender), so the Linux base column is the thing to compare with, not the first round's
+column. On Linux `table` now beats Miller and csvtk on every cell, including the two (E1, E2) where the first round
+had it at a tie or behind; what is left against the shell's `sort|uniq` is the high-cardinality shapes (B3, I1, A1).
+
+### What the round did not change
+
+* **B3, B4, I1, A1 (a million keys, or `distinct` over a unique column): the same 3x to 3.4x loss to DuckDB at one
+  thread and 9x at its default.** These rows each create a group; nothing in this round touches the cost of that
+  (the groups are still moved by value to be added, the map still hashes the key twice).
+* **`--threads` does not help them** (B3 t8 0.790 against t1 0.792): the serial merge, unchanged.
+* **E1, E2 do not scale with threads** (t8 equals t1). Checked this time: the same file with *no* newline inside the
+  quoted fields (`build/adv/longq.csv`, 20,000 rows, 1-10 KB) is 0.017 s at one thread and 0.0086 s at eight, and with
+  newlines every 17 bytes (`longq_nl.csv`) 0.172 s and 0.170 s. So the cause is the one named in the first round (the
+  speculation that a range starts outside quotes is wrong most of the time when quoted fields hold newlines), and the
+  cost of the lines themselves: that file is six million short lines in 114 MB.
+* **Memory** is the same, a few MB for a scan and 135 to 180 MB for a million groups; the cache of hot groups is 8 KB.

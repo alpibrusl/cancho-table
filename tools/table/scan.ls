@@ -127,6 +127,40 @@ pub fn fill_at[&f](r: lines.Lines, file: &!f File, base: int) -> [file_read] lin
     return lines.Lines { chunk: c, pos: 0, held: held, cap: cap, seen: seen, begin: begin, count: count, over: over, ended: e, newline: newline, ready: ready, read: read + got, nul: nul, failed: bad, viewing: false, view_from: 0, view_to: 0 };
 }
 
+// `lines.next` for the common case, through a unique reference, so that the reader (seventeen fields) is not
+// moved in and out of a call for each line: a whole line in the chunk, none held over from the one before,
+// not longer than the cap. Answers `lines.line()` with the reader as `lines.next` leaves it, or 9, having
+// changed nothing `lines.next` does not change at its start, when the line is anything else (the chunk is
+// used up, the line goes on in the next one, it is too long, the input has ended): then the caller asks
+// `lines.next`.
+pub fn next_fast[&r](r: &!r lines.Lines) -> [] int {
+    if r.ready {
+        buffer.clear(r.held);
+        r.over = 0;
+        r.begin = r.seen;
+        r.ready = false;
+    }
+    if r.over > 0 || buffer.size(r.held) > 0 {
+        return 9;
+    }
+    let data = buffer.bytes(r.chunk);
+    let at = r.pos;
+    let found = index_of_byte(data[at..len(data)], byte_of(10));
+    if found < 0 || found > r.cap {
+        return 9;
+    }
+    let k = at + found;
+    r.viewing = true;
+    r.view_from = at;
+    r.view_to = k;
+    r.seen = r.seen + (k + 1 - at);
+    r.pos = k + 1;
+    r.newline = true;
+    r.count = r.count + 1;
+    r.ready = true;
+    return lines.line();
+}
+
 // Scan the data records that start in `[start, until)`. `par` carries the parameters
 // (`p_*`), `a` the tally (it continues from what it holds), the buffers and the groups
 // are the read's. Answers where the next record starts (the offset of the first record
@@ -151,6 +185,7 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
     let yield_at = par[p_yield()];
     let track = par[p_track()] == 1;
     let filtering = query.count_of(tree, 1) > 0;
+    let fast_ok = engine.fast_ok(tree);
     var rows2 = rows;
     var scratch2 = scratch;
     var escr2 = escr;
@@ -166,8 +201,15 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
     var consumed = 0;
     var status = 0;
     while going {
-        let (stepped, state) = lines.next(heap, r);
-        r = stepped;
+        var state = 9;
+        borrow mut r as &!rw in {
+            state = next_fast(rw);
+        }
+        if state == 9 {
+            let (stepped, answer) = lines.next(heap, r);
+            r = stepped;
+            state = answer;
+        }
         if state == lines.need() {
             r = fill_at(r, file, start);
         } else if state == lines.done() {
@@ -239,10 +281,34 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
                             escr2 = e3;
                             kept2 = k3;
                         } else {
-                            let (g3, e3, k3) = engine.process_groups(heap, groups2, escr2, kept2, tree, cols, line, cells, base_line + number, max_groups, max_distinct, max_state, track, a);
-                            groups2 = g3;
-                            escr2 = e3;
-                            kept2 = k3;
+                            var hot = 1;
+                            if !fast_ok {
+                                // a distinct count is not added in place: `process_groups`
+                            } else if !filtering {
+                                var got = 1;
+                                borrow mut groups2 as &!gw in {
+                                    got = engine.group_plain(gw, tree, cols, line, cells, track);
+                                }
+                                if got >= 16 {
+                                    kept2 = engine.group_refused(heap, kept2, tree, cols, line, cells, base_line + number, got, a);
+                                    hot = 0;
+                                } else {
+                                    hot = got;
+                                }
+                            } else {
+                                borrow mut groups2 as &!gw in {
+                                    let (f2, e2, k2) = engine.group_fast(heap, gw, escr2, kept2, tree, cols, line, cells, base_line + number, track, a);
+                                    hot = f2;
+                                    escr2 = e2;
+                                    kept2 = k2;
+                                }
+                            }
+                            if hot == 1 || hot == 3 {
+                                let (g3, e3, k3) = engine.process_groups(heap, groups2, escr2, kept2, tree, cols, line, cells, base_line + number, max_groups, max_distinct, max_state, track, hot == 3, a);
+                                groups2 = g3;
+                                escr2 = e3;
+                                kept2 = k3;
+                            }
                         }
                     }
                 } else {
@@ -295,10 +361,34 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
                                     escr2 = e3;
                                     kept2 = k3;
                                 } else {
-                                    let (g3, e3, k3) = engine.process_groups(heap, groups2, escr2, kept2, tree, cols, record, cells, base_line + opened, max_groups, max_distinct, max_state, track, a);
-                                    groups2 = g3;
-                                    escr2 = e3;
-                                    kept2 = k3;
+                                    var hot = 1;
+                                    if !fast_ok {
+                                        // a distinct count is not added in place: `process_groups`
+                                    } else if !filtering {
+                                        var got = 1;
+                                        borrow mut groups2 as &!gw in {
+                                            got = engine.group_plain(gw, tree, cols, record, cells, track);
+                                        }
+                                        if got >= 16 {
+                                            kept2 = engine.group_refused(heap, kept2, tree, cols, record, cells, base_line + opened, got, a);
+                                            hot = 0;
+                                        } else {
+                                            hot = got;
+                                        }
+                                    } else {
+                                        borrow mut groups2 as &!gw in {
+                                            let (f2, e2, k2) = engine.group_fast(heap, gw, escr2, kept2, tree, cols, record, cells, base_line + opened, track, a);
+                                            hot = f2;
+                                            escr2 = e2;
+                                            kept2 = k2;
+                                        }
+                                    }
+                                    if hot == 1 || hot == 3 {
+                                        let (g3, e3, k3) = engine.process_groups(heap, groups2, escr2, kept2, tree, cols, record, cells, base_line + opened, max_groups, max_distinct, max_state, track, hot == 3, a);
+                                        groups2 = g3;
+                                        escr2 = e3;
+                                        kept2 = k3;
+                                    }
                                 }
                             }
                         }

@@ -42,19 +42,27 @@ pub res struct Groups {
     held: int,
     pairs: int,
     stride: int,
+    // A small cache from a cheap look at the key's cells to a group's entry number plus one (0: none):
+    // a row whose group is the one the cache names is added without hashing the key (`add_fast`).
+    memo: Box[[int]],
+}
+
+pub fn memo_size() -> [] int {
+    return 1024;
 }
 
 pub fn start[&h](heap: &!h Heap, aggregates: int) -> [heap] Groups {
-    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: 1 + 2 * aggregates };
+    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: 1 + 2 * aggregates, memo: box_slice(heap, memo_size() + 4, 0) };
 }
 
 pub fn drop[&h](heap: &!h Heap, g: Groups) -> [heap] int {
-    let Groups { index, acc, seen, keyb, dkey, held, pairs, stride } = g;
+    let Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
     map.drop(heap, index);
     vec.drop(heap, acc);
     map.drop(heap, seen);
     buffer.drop(heap, keyb);
     buffer.drop(heap, dkey);
+    unbox_slice(heap, memo);
     return 0;
 }
 
@@ -141,8 +149,8 @@ fn set_at(acc: vec.Vec[int], at: int, value: int) -> [] vec.Vec[int] {
 // which aggregate it is about: 0 added; 1 more than `max_groups`; 2 more than
 // `max_distinct` pairs; 3 more than `max_state` bytes of keys; 4 a cell that is
 // not an integer; 5 an integer of more than 64 bits; 6 a sum past 64 bits.
-pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer, max_groups: int, max_distinct: int, max_state: int, track: bool) -> [heap] (Groups, buffer.Buffer, int, int) {
-    let Groups { index, acc, seen, keyb, dkey, held, pairs, stride } = g;
+pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer, max_groups: int, max_distinct: int, max_state: int, track: bool, keyed: bool) -> [heap] (Groups, buffer.Buffer, int, int) {
+    let Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
     var key = keyb;
     var scr = scratch;
     var m = index;
@@ -151,18 +159,21 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
     var dk = dkey;
     var bytes_held = held;
     var distinct_pairs = pairs;
-    borrow mut key as &!kw in {
-        buffer.clear(kw);
-    }
-    let ng = query.count_of(tree, 2);
-    let base = query.count_of(tree, 0) + query.count_of(tree, 1);
-    var j = 0;
-    while j < ng {
-        let column = cols[base + j];
-        let (k2, s2) = put_cell(heap, key, scr, record, cells[3 * column], cells[3 * column + 1], cells[3 * column + 2]);
-        key = k2;
-        scr = s2;
-        j = j + 1;
+    // `keyed`: the key is already in the key buffer (`add_fast` built it and did not find it).
+    if !keyed {
+        borrow mut key as &!kw in {
+            buffer.clear(kw);
+        }
+        let ng = query.count_of(tree, 2);
+        let base = query.count_of(tree, 0) + query.count_of(tree, 1);
+        var j = 0;
+        while j < ng {
+            let column = cols[base + j];
+            let (k2, s2) = put_cell(heap, key, scr, record, cells[3 * column], cells[3 * column + 1], cells[3 * column + 2]);
+            key = k2;
+            scr = s2;
+            j = j + 1;
+        }
     }
     var status = 0;
     var which = 0;
@@ -170,7 +181,9 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
     var size = 0;
     borrow key as &kr in {
         borrow m as &mr in {
-            entry = map.find(mr, buffer.bytes(kr));
+            if !keyed {
+                entry = map.find(mr, buffer.bytes(kr));
+            }
             size = map.size(mr);
         }
         if entry < 0 {
@@ -281,7 +294,186 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
             k = k + 1;
         }
     }
-    return (Groups { index: m, acc: a, seen: s, keyb: key, dkey: dk, held: bytes_held, pairs: distinct_pairs, stride: stride }, scr, status, which);
+    return (Groups { index: m, acc: a, seen: s, keyb: key, dkey: dk, held: bytes_held, pairs: distinct_pairs, stride: stride, memo: memo }, scr, status, which);
+}
+
+// The same as `add` for the row that needs nothing `add` has to move: a group that exists, keys and
+// aggregates that are plain bytes and integers, the key fitting the room the key buffer has. Works through
+// a unique reference to the groups, so the state is not moved in and out of a call for each row (a `Groups`
+// is some forty words). Answers (status, which) as `add` does, or (-1, 0) when the row has to take `add`'s
+// way; in that case nothing was changed but the key buffer, which `add` clears anyway.
+pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], track: bool) -> [] (int, int) {
+    // A run of rows that are each a new group (a key that is nearly unique) gets nothing from this way, which
+    // builds the key and looks for it before `add` puts it: after 32 in a row the next 2048 rows take `add`'s
+    // way at once. `memo[size + 2]` is how many are left, `memo[size + 3]` the run so far.
+    let rest_at = memo_size() + 2;
+    let waiting = contents(g.memo)[rest_at];
+    if waiting > 0 {
+        contents(g.memo)[rest_at] = waiting - 1;
+        return (0 - 1, 0);
+    }
+    let ng = query.count_of(tree, 2);
+    let base = query.count_of(tree, 0) + query.count_of(tree, 1);
+    let na = query.agg_count(tree);
+    var need = 0;
+    var j = 0;
+    while j < ng {
+        let column = cols[base + j];
+        let first = cells[3 * column];
+        let last = cells[3 * column + 1];
+        if cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {
+            return (0 - 1, 0);
+        }
+        need = need + 4 + last - first;
+        j = j + 1;
+    }
+    var k = 0;
+    while k < na {
+        let function = query.agg_at(tree, k, 0);
+        if function == 4 {
+            return (0 - 1, 0);
+        }
+        if function != 0 {
+            let column = cols[query.agg_at(tree, k, 1)];
+            if cells[3 * column + 2] == 1 && index_of_byte(record[cells[3 * column]..cells[3 * column + 1]], byte_of(34)) >= 0 {
+                return (0 - 1, 0);
+            }
+        }
+        k = k + 1;
+    }
+    // The cache: a cheap look at each cell (its length, first and last byte) picks a place; what is there
+    // is a group's entry number, and is believed only when its key is these cells. It is a cache for
+    // groups that come back, so it gives itself up for a while when it keeps missing (a key that is
+    // nearly always new, or one of very many): `memo[size]` is the score, `memo[size + 1]` the rows
+    // still to be done without it.
+    let size = memo_size();
+    var entry = 0 - 1;
+    var place = 0;
+    var resting = contents(g.memo)[size + 1];
+    if resting > 0 {
+        contents(g.memo)[size + 1] = resting - 1;
+    } else {
+        var look = 0;
+        j = 0;
+        while j < ng {
+            let column = cols[base + j];
+            let first = cells[3 * column];
+            let n = cells[3 * column + 1] - first;
+            look = look * 31 + n;
+            if n > 0 {
+                look = (look * 31 + int_of(record[first])) * 31 + int_of(record[first + n - 1]);
+            }
+            j = j + 1;
+        }
+        place = (look ^ look >> 11) & size - 1;
+        entry = contents(g.memo)[place] - 1;
+        if entry >= 0 {
+            let key = map.key_at(g.index, entry);
+            var p = 0;
+            j = 0;
+            while j < ng && entry >= 0 {
+                let column = cols[base + j];
+                let first = cells[3 * column];
+                let n = cells[3 * column + 1] - first;
+                if length_at(key, p) != n || !bytes.equal(key[p + 4..p + 4 + n], record[first..first + n]) {
+                    entry = 0 - 1;
+                }
+                p = p + 4 + n;
+                j = j + 1;
+            }
+        }
+        var score = contents(g.memo)[size];
+        if entry >= 0 {
+            if score < 32 {
+                contents(g.memo)[size] = score + 1;
+            }
+        } else if score < 0 - 16 {
+            contents(g.memo)[size] = 0;
+            contents(g.memo)[size + 1] = 4096;
+        } else {
+            contents(g.memo)[size] = score - 1;
+        }
+    }
+    if entry < 0 {
+        buffer.clear(g.keyb);
+        if len(buffer.room(g.keyb)) < need {
+            return (0 - 1, 0);
+        }
+        let room = buffer.room(g.keyb);
+        var at = 0;
+        j = 0;
+        while j < ng {
+            let column = cols[base + j];
+            let first = cells[3 * column];
+            let n = cells[3 * column + 1] - first;
+            room[at] = byte_of(n & 255);
+            room[at + 1] = byte_of(n >> 8 & 255);
+            room[at + 2] = byte_of(n >> 16 & 255);
+            room[at + 3] = byte_of(n >> 24 & 255);
+            copy_into(room[at + 4..at + 4 + n], record[first..first + n]);
+            at = at + 4 + n;
+            j = j + 1;
+        }
+        buffer.filled(g.keyb, need);
+        entry = map.find(g.index, buffer.bytes(g.keyb));
+        if entry < 0 {
+            let run = contents(g.memo)[rest_at + 1] + 1;
+            if run >= 32 {
+                contents(g.memo)[rest_at] = 2048;
+                contents(g.memo)[rest_at + 1] = 0;
+            } else {
+                contents(g.memo)[rest_at + 1] = run;
+            }
+            return (0 - 2, 0);
+        }
+        if contents(g.memo)[rest_at + 1] > 0 {
+            contents(g.memo)[rest_at + 1] = 0;
+        }
+        if resting <= 0 {
+            contents(g.memo)[place] = entry + 1;
+        }
+    }
+    let stride = g.stride;
+    let slot = entry * stride;
+    let before = vec.get(g.acc, slot);
+    vec.set(g.acc, slot, before + 1);
+    k = 0;
+    while k < na {
+        let function = query.agg_at(tree, k, 0);
+        if function != 0 {
+            let column = cols[query.agg_at(tree, k, 1)];
+            let now = vec.get(g.acc, slot + 1 + k);
+            let (v, bad) = query.parse_int(record[cells[3 * column]..cells[3 * column + 1]]);
+            if bad == 1 {
+                return (4, k);
+            }
+            if bad == 2 {
+                return (5, k);
+            }
+            if function == 1 {
+                let (sum, fits) = query.add_checked(now, v);
+                if !fits {
+                    return (6, k);
+                }
+                vec.set(g.acc, slot + 1 + k, sum);
+                if track {
+                    let magnitude = int_max_of(sum);
+                    let peak_at = slot + 1 + (stride - 1) / 2 + k;
+                    if magnitude > vec.get(g.acc, peak_at) {
+                        vec.set(g.acc, peak_at, magnitude);
+                    }
+                }
+            } else if before == 0 {
+                vec.set(g.acc, slot + 1 + k, v);
+            } else if function == 2 && v < now {
+                vec.set(g.acc, slot + 1 + k, v);
+            } else if function == 3 && v > now {
+                vec.set(g.acc, slot + 1 + k, v);
+            }
+        }
+        k = k + 1;
+    }
+    return (0, 0);
 }
 
 // -1, 0 or 1: the keys of two groups, field by field, bytewise.
@@ -659,7 +851,7 @@ pub fn serialize[&g, &o](g: &g Groups, out: &!o [byte]) -> [] int {
 // Answers the groups and 0, or the groups untouched and 1 when the answer of the
 // sequential read could differ (see above).
 pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q query.Query, max_groups: int, max_distinct: int, max_state: int) -> [heap] (Groups, int) {
-    let Groups { index, acc, seen, keyb, dkey, held, pairs, stride } = g;
+    let Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
     let na = query.agg_count(tree);
     let ngroups = get_i64(blob, 0);
     let npairs = get_i64(blob, 8);
@@ -827,7 +1019,7 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
     unbox_slice(heap, mapping);
     unbox_slice(heap, fresh);
     if !applied {
-        return (Groups { index: m, acc: a, seen: s, keyb: keyb, dkey: scratch, held: held, pairs: pairs, stride: stride }, 1);
+        return (Groups { index: m, acc: a, seen: s, keyb: keyb, dkey: scratch, held: held, pairs: pairs, stride: stride, memo: memo }, 1);
     }
-    return (Groups { index: m, acc: a, seen: s, keyb: keyb, dkey: scratch, held: held + new_bytes, pairs: pairs + new_pairs, stride: stride }, 0);
+    return (Groups { index: m, acc: a, seen: s, keyb: keyb, dkey: scratch, held: held + new_bytes, pairs: pairs + new_pairs, stride: stride, memo: memo }, 0);
 }

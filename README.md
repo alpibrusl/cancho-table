@@ -194,28 +194,32 @@ csvtk 0.38.0, Miller 6.22.0). Seconds, peak RSS:
 
 | question | `table` | `csvtk -j 1` | `mlr` | reference floor |
 |---|---:|---:|---:|---:|
-| shape | 0.055 s, 1.9 MB | 0.395 s, 21.7 MB | 0.237 s, 122 MB | `wc -l` 0.006 s |
-| cut two columns, csv | 0.112 s, 2.0 MB | 0.489 s, 21.3 MB | 0.716 s, 342 MB | |
-| first 1000 rows | 0.0015 s | 0.0088 s | 0.0229 s | |
-| **filter** `status=404 and bytes>50000`, csv | **0.100 s, 2.2 MB** | 0.797 s (`filter` then `grep`, two processes) / 7.99 s (`filter2`, one) | 0.397 s, 127 MB | `awk -F,` 0.611 s |
-| **group-count** by status | **0.177 s, 1.9 MB** | 0.397 s (`freq`) | 0.371 s (`count-distinct`), 140 MB | `cut\|sort\|uniq -c` 0.176 s |
-| **group sum** of bytes by status | **0.220 s, 1.9 MB** | 1.103 s (`summary`), 118 MB | 0.549 s (`stats1`), 301 MB | |
+| shape | 0.054 s, 2.0 MB | 0.560 s, 20.7 MB | 0.347 s, 110 MB | `wc -l` 0.0075 s |
+| cut two columns, csv | 0.115 s, 2.2 MB | 0.507 s, 20.1 MB | 0.764 s, 337 MB | |
+| first 1000 rows | 0.0018 s | 0.0085 s | 0.0240 s | |
+| **filter** `status=404 and bytes>50000`, csv | **0.074 s, 2.2 MB** | 0.818 s (`filter` then `grep`, two processes) / 7.16 s (`filter2`, one) | 0.300 s, 120 MB | `awk -F,` 0.494 s |
+| **group-count** by status | **0.128 s, 2.0 MB** | 0.566 s (`freq`) | 0.438 s (`count-distinct`), 134 MB | `cut\|sort\|uniq -c` 0.211 s |
+| **group sum** of bytes by status | **0.140 s, 2.0 MB** | 1.278 s (`summary`), 115 MB | 0.649 s (`stats1`), 310 MB | |
 
-**Apple silicon Mac** (16 cores, load 4 to 5 from other work; csvtk 0.38.0; no `mlr`
+**Apple silicon Mac** (16 cores; csvtk 0.38.0; no `mlr`
 there; `table` built by the compiler at `db7d5bc`, the pinned one's fix):
 
 | question | `table` | `csvtk -j 1` | reference floor |
 |---|---:|---:|---:|
-| shape | 0.029 s | 0.172 s | `wc -l` 0.025 s |
-| cut two columns, csv | 0.054 s | 0.174 s | |
-| first 1000 rows | 0.0019 s | 0.0059 s | |
-| **filter** | **0.047 s** | 0.288 s (`filter`\|`grep`) / 2.63 s (`filter2`) | `awk -F,` 0.577 s |
-| **group-count** | **0.104 s** | 0.179 s | `cut\|sort\|uniq -c` 0.293 s |
-| **group sum** | **0.113 s** | 0.398 s (`summary`) | |
+| shape | 0.029 s | 0.184 s | `wc -l` 0.030 s |
+| cut two columns, csv | 0.049 s | 0.188 s | |
+| first 1000 rows | 0.0031 s | 0.0084 s | |
+| **filter** | **0.045 s** | 0.293 s (`filter`\|`grep`) / 2.71 s (`filter2`) | `awk -F,` 0.575 s |
+| **group-count** | **0.051 s** | 0.181 s | `cut\|sort\|uniq -c` 0.295 s |
+| **group sum** | **0.060 s** | 0.395 s (`summary`) | |
 
-Ratios against the best `csvtk -j 1` invocation: filter 6.1x (Mac) and 8.0x (Linux)
-faster, group-count 1.7x and 2.2x, group sum 3.5x and 5.0x. Against Miller on Linux:
-filter 4.0x, group-count 2.1x, group sum 2.5x, at a hundredth of the memory. `table`
+(Both tables were measured again after the cell-cost round, `docs/history.md`: group-count and group sum
+are about twice as fast as before, the others a few percent to a fifth. The Linux box's load differs from run to
+run, which is why its absolute times differ from the earlier tables more than the ratios do.)
+
+Ratios against the best `csvtk -j 1` invocation: filter 6.6x (Mac) and 11.0x (Linux)
+faster, group-count 3.5x and 4.4x, group sum 6.5x and 9.2x. Against Miller on Linux:
+filter 4.0x, group-count 3.4x, group sum 4.7x, at a hundredth of the memory. `table`
 was not worse than `csvtk -j 1` anywhere, so no tuning round was needed for the new
 operations; one round was needed for a regression it introduced in the old ones, and is
 in [`docs/history.md`](docs/history.md).

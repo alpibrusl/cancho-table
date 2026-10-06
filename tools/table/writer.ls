@@ -19,6 +19,31 @@ fn has[&d](data: &d [byte], b: int) -> [] bool {
     return index_of_byte(data, byte_of(b)) >= 0;
 }
 
+// Whether `data` has to be quoted to be one CSV field: it holds a quote or a CR, and, when `all` is 1, the
+// delimiter or an LF. A short value is walked (one pass for all the bytes asked about); a long one is
+// searched with `memchr`, a byte at a time of the set.
+fn must_quote[&d](data: &d [byte], delim: int, all: int) -> [] bool {
+    let n = len(data);
+    if n <= 32 {
+        var i = 0;
+        while i < n {
+            let c = int_of(data[i]);
+            if c == 34 || c == 13 {
+                return true;
+            }
+            if all == 1 && (c == delim || c == 10) {
+                return true;
+            }
+            i = i + 1;
+        }
+        return false;
+    }
+    if has(data, 34) || has(data, 13) {
+        return true;
+    }
+    return all == 1 && (has(data, delim) || has(data, 10));
+}
+
 // `data` with every quote doubled, appended.
 fn doubled[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte]) -> [heap] buffer.Buffer {
     var o = out;
@@ -40,7 +65,7 @@ fn doubled[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte]) -> [heap
 // Plain bytes as one CSV field: quoted when they hold the delimiter, a quote,
 // a CR or an LF.
 pub fn csv_value[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte], delim: int) -> [heap] buffer.Buffer {
-    if !(has(data, delim) || has(data, 34) || has(data, 13) || has(data, 10)) {
+    if !must_quote(data, delim, 1) {
         return buffer.append(heap, out, data);
     }
     var o = buffer.push(heap, out, byte_of(34));
@@ -55,14 +80,14 @@ pub fn csv_value[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte], de
 pub fn csv_cell[&h, &d](heap: &!h Heap, out: buffer.Buffer, record: &d [byte], first: int, last: int, quoted: int, delim: int) -> [heap] buffer.Buffer {
     let data = record[first..last];
     if quoted == 0 {
-        if !(has(data, 34) || has(data, 13)) {
+        if !must_quote(data, delim, 0) {
             return buffer.append(heap, out, data);
         }
         var o = buffer.push(heap, out, byte_of(34));
         o = doubled(heap, o, data);
         return buffer.push(heap, o, byte_of(34));
     }
-    if !(has(data, delim) || has(data, 34) || has(data, 13) || has(data, 10)) {
+    if !must_quote(data, delim, 1) {
         return buffer.append(heap, out, data);
     }
     var o = buffer.push(heap, out, byte_of(34));

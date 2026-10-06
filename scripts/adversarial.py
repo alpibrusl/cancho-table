@@ -362,6 +362,7 @@ def main():
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
+    ap.add_argument("--base", default="", help="another table binary (the one before a change): every table contender is run with it too, as `base ...`")
     ap.add_argument("--gen-only", action="store_true")
     args = ap.parse_args()
     generate()
@@ -370,6 +371,12 @@ def main():
     table = os.path.abspath(args.bin)
     chosen = [c for c in args.cells.split(",") if c]
     plan = cells(table, args.threads)
+    if args.base:
+        base = os.path.abspath(args.base)
+        for _, (_, _, _, contenders, _) in plan.items():
+            for name, (argv, chk) in list(contenders.items()):
+                if argv and argv[0] == table:
+                    contenders["base" + name[5:]] = ([base] + argv[1:], chk)
     print("%s %s, %s cores; table %s; csvtk %s; mlr %s; duckdb %s" % (
         platform.system(), platform.machine(), os.cpu_count(), table, bench.version(["csvtk", "version"]) if shutil.which("csvtk") else "-",
         bench.version(["mlr", "--version"]) if shutil.which("mlr") else "not installed", bench.version(["duckdb", "--version"]) if shutil.which("duckdb") else "not installed"))
