@@ -762,7 +762,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             }
                                         }
                                         borrow okeys as &okr in {
-                                            groups = sorter.configure(groups, nk, wanted, contents(okr));
+                                            groups = sorter.configure(groups, nk, wanted, max_sort_rows, max_state, contents(okr));
                                         }
                                         unbox_slice(heap, okeys);
                                     }

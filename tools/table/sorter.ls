@@ -10,7 +10,8 @@ module sorter;
 // compiler give up specialising the loop for the first two, and `--select` and `--where` were 15 percent slower (a branch that
 // is never taken, at that place, did the same: docs/sort.md). So `keyb` is the data, `dkey` the side buffer, `acc` the
 // index, `stride` the number of keys, `pairs` the number of rows held, and `memo` (a box of integers) the plan: `memo[0]`
-// the rows wanted (0 for all), `memo[1]` 1 once the last of them is known, and from `memo[4]` three integers for each key.
+// the rows wanted (0 for all), `memo[1]` 1 once the last of them is known, `memo[2]` and `memo[3]` the bounds on the rows and on the bytes,
+// and from `memo[4]` three integers for each key.
 //
 // A row is kept as the record was read, in `data`; the index `rows` has `stride` integers a row: where the
 // record begins in `data`, its length, its number in the file, then for each key two integers: for an
@@ -35,12 +36,14 @@ import agg;
 import query;
 
 // Make the groups into a sorter of `nk` keys for `cap` wanted rows (0: all), the keys' columns and flags in `keys`.
-pub fn configure[&k](g: agg.Groups, nk: int, cap: int, keys: &k [int]) -> [] agg.Groups {
+pub fn configure[&k](g: agg.Groups, nk: int, cap: int, max_rows: int, max_state: int, keys: &k [int]) -> [] agg.Groups {
     let agg.Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
     borrow mut memo as &!mw in {
         let m = contents(mw);
         m[0] = cap;
         m[1] = 0;
+        m[2] = max_rows;
+        m[3] = max_state;
         var j = 0;
         while j < 3 * nk {
             m[4 + j] = keys[j];
@@ -444,4 +447,61 @@ pub fn cut_back[&h](heap: &!h Heap, old: agg.Groups) -> [heap] agg.Groups {
         contents(mw)[1] = 1;
     }
     return agg.Groups { index: index, acc: fresh_rows, seen: seen, keyb: fresh_data, dkey: fresh_side, held: held, pairs: kept_count, stride: stride, memo: memo };
+}
+
+// A row, in place: dropped when only the first rows are wanted and it is not before the last of them, else held, in
+// the room that the buffers have. Answers 0 when that is done, 1 when the row has to take the way that can grow the
+// buffers, cut them back, unquote a key or refuse (`engine.order_row`), in which case nothing was changed.
+pub fn hook[&g, &d, &c](g: &!g agg.Groups, record: &d [byte], cells: &c [int]) -> [] int {
+    var rejected = 0;
+    rejected = reject(g, record, cells);
+    if rejected == 1 {
+        return 0;
+    }
+    let nk = g.stride;
+    let width = stride_of(nk);
+    let count = g.pairs;
+    let cap = contents(g.memo)[0];
+    if count >= contents(g.memo)[2] || cap > 0 && count + 1 >= 2 * cap + 1 {
+        return 1;
+    }
+    let used = g.acc.used;
+    let table = contents(g.acc.held);
+    if len(table) - used < width || len(buffer.room(g.keyb)) < len(record) {
+        return 1;
+    }
+    if buffer.size(g.keyb) + buffer.size(g.dkey) + len(record) + 8 * width * (count + 1) > contents(g.memo)[3] {
+        return 1;
+    }
+    // The keys: an integer is read, a text is where it lies; a cell that needs unquoting, or is not an integer, is for `add`.
+    var j = 0;
+    let at = buffer.size(g.keyb);
+    while j < nk {
+        let column = contents(g.memo)[4 + 3 * j];
+        let first = cells[3 * column];
+        let end = cells[3 * column + 1];
+        if cells[3 * column + 2] == 1 && index_of_byte(record[first..end], byte_of(34)) >= 0 {
+            return 1;
+        }
+        if contents(g.memo)[6 + 3 * j] == 1 {
+            let (v, bad) = query.parse_int(record[first..end]);
+            if bad != 0 {
+                return 1;
+            }
+            table[used + 2 + 2 * j] = v;
+            table[used + 3 + 2 * j] = 0;
+        } else {
+            table[used + 2 + 2 * j] = at + first;
+            table[used + 3 + 2 * j] = end - first;
+        }
+        j = j + 1;
+    }
+    table[used] = at;
+    table[used + 1] = len(record);
+    let room = buffer.room(g.keyb);
+    copy_into(room[0..len(record)], record);
+    buffer.filled(g.keyb, len(record));
+    g.acc.used = used + width;
+    g.pairs = count + 1;
+    return 0;
 }

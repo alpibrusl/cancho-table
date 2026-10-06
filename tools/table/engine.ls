@@ -358,6 +358,9 @@ pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Gr
     if verdict != 1 {
         return (0, e2, k2);
     }
+    if query.count_of(tree, 4) > 0 {
+        return (sorter.hook(groups, record, cells), e2, k2);
+    }
     let (status, k) = agg.add_fast(groups, tree, cols, record, cells, track);
     if status == 0 {
         return (0, e2, k2);
@@ -380,6 +383,9 @@ pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Gr
 // when the row is added, 1 when `process_groups` has to deal with it (3 when the key is built: a new group), and 16 + 8 * k + status when aggregate
 // `k` refused the row with `status` (4 to 6), for `group_refused` to record.
 pub fn group_plain[&g, &q, &c, &d, &e](groups: &!g agg.Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], track: bool) -> [] int {
+    if query.count_of(tree, 4) > 0 {
+        return sorter.hook(groups, record, cells);
+    }
     let (status, k) = agg.add_fast(groups, tree, cols, record, cells, track);
     if status == 0 {
         return 0;
@@ -407,9 +413,6 @@ pub fn group_refused[&h, &q, &c, &d, &e, &a](heap: &!h Heap, kept: buffer.Buffer
 // Whether `add_fast` can ever take a row of this plan: not when an aggregate is `distinct`, which keeps a set of
 // pairs and is added the old way (so the rows of such a plan do not go through the fast call at all).
 pub fn fast_ok[&q](tree: &q query.Query) -> [] bool {
-    if query.count_of(tree, 4) > 0 {
-        return false;
-    }
     var k = 0;
     while k < query.agg_count(tree) {
         if query.agg_at(tree, k, 0) == 4 {
