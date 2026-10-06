@@ -7,20 +7,13 @@ every mutant, whatever happens.
 
     python3 scripts/parallel_mutants.py [name-substring ...]
 
-Run where a compiler is (`lex-sys` on PATH, or LEX_SYS; LEX_SYS_ARGS="--ignore-compiler-rev"
-for a compiler of another revision). Exit status 1 if one survives. Do not edit
-tools/table while it runs.
+`--check` only verifies that every site still matches (no build; CI runs it). See mutlib.py.
 """
-import os
-import pathlib
-import signal
-import subprocess
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-SRC = ROOT / "tools" / "table"
-COMPILER = os.environ.get("LEX_SYS", "lex-sys")
-EXTRA = os.environ.get("LEX_SYS_ARGS", "").split()
+sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
+import mutlib  # noqa: E402
+
 TESTS = ["test_parallel"]
 
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file.
@@ -72,50 +65,6 @@ MUTANTS = [
 #  - a re-read does not write a full block of csv: it keeps the block until the next range is taken
 #    instead of writing it, which changes the memory the parent holds and not one byte written.
 
-FILES = {n: (SRC / n).read_text() for n in {m[1] for m in MUTANTS}}
-
-
-def restore(*_):
-    for n, text in FILES.items():
-        (SRC / n).write_text(text)
-
-
-def build_and_test():
-    b = subprocess.run([COMPILER, "build", "--bin", "table", *EXTRA], cwd=ROOT, capture_output=True, text=True)
-    if b.returncode:
-        return "does not build", b.stderr.strip()[-140:]
-    p = subprocess.run([sys.executable, "-W", "ignore", "-m", "unittest", *TESTS], cwd=ROOT / "tests" / "conformance",
-                       capture_output=True, text=True, timeout=1800)
-    failed = sorted({l.split(" ")[1] for l in (p.stdout + p.stderr).splitlines() if l.startswith(("FAIL:", "ERROR:"))})
-    return ("killed" if p.returncode else "SURVIVED"), ", ".join(failed[:3])
-
-
-def main():
-    signal.signal(signal.SIGTERM, lambda *a: (restore(), sys.exit(143)))
-    wanted = sys.argv[1:]
-    chosen = [m for m in MUTANTS if not wanted or any(w in m[0] for w in wanted)]
-    verdict, _ = build_and_test()
-    print("unmutated:", "pass" if verdict == "SURVIVED" else verdict, flush=True)
-    if verdict != "SURVIVED":
-        return 1
-    survivors = []
-    for name, file, old, new in chosen:
-        if FILES[file].count(old) != 1:
-            print("!! %s: the site occurs %d times in %s" % (name, FILES[file].count(old), file))
-            return 1
-        try:
-            (SRC / file).write_text(FILES[file].replace(old, new, 1))
-            verdict, why = build_and_test()
-        finally:
-            restore()
-        print("%-14s %s  [%s]" % (verdict, name, why), flush=True)
-        if verdict == "SURVIVED":
-            survivors.append(name)
-    for n, text in FILES.items():
-        assert (SRC / n).read_text() == text
-    print("%d of %d killed" % (len(chosen) - len(survivors), len(chosen)))
-    return 1 if survivors else 0
-
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(mutlib.main(MUTANTS, TESTS))
