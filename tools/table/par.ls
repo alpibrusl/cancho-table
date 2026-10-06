@@ -302,10 +302,6 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
         u[scan.p_from()] = 0;
         u[scan.p_base_line()] = 0;
         u[scan.p_yield()] = payload_cap;
-        u[scan.p_track()] = 0;
-        if mode == 2 {
-            u[scan.p_track()] = 1;
-        }
         u[j_columns()] = a[engine.k_columns()];
     }
     var slots = box_slice(heap, threads * slot_bytes + 1, byte_of(0));

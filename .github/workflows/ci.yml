@@ -82,7 +82,7 @@ jobs:
       - name: The mutants still apply
         working-directory: table
         run: |
-          for m in select filter parallel cellcost sort; do python3 scripts/${m}_mutants.py --check; done
+          for m in select filter parallel cellcost sort numbers; do python3 scripts/${m}_mutants.py --check; done
 
       - name: Conformance gates (differential against Python's csv, rules, limits, memory, authority)
         working-directory: table

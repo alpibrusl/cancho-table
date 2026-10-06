@@ -8,7 +8,7 @@ module expr;
 //     COND  := COLUMN OP VALUE | COLUMN "contains" VALUE
 //            | COLUMN "in" "(" VALUE { "," VALUE } ")"
 //     OP    := "=" | "!=" | "<" | "<=" | ">" | ">="
-//     COLUMN:= WORD [":int"]          a name, or #N the Nth column
+//     COLUMN:= WORD [":int" | ":dec(" N ")"]     a name, or #N the Nth column; N is a scale, 0 to 18
 //     VALUE := WORD
 //     WORD  := bare | 'quoted'
 //
@@ -21,7 +21,9 @@ module expr;
 // grouping, no expressions, no functions.
 //
 // A condition compares text, bytewise, unless the column is written `:int`, in
-// which case the cell is an exact integer and the literals are too. Evaluation
+// which case the cell is an exact integer and the literals are too, or `:dec(S)`, in
+// which case the cell is an exact decimal of at most S fractional digits (docs/numbers.md:
+// never rounded, `1.5` and `1.50` are one value) and so are the literals. Evaluation
 // is left to right and stops at the first condition that is false, so a
 // condition that would refuse a cell (an empty one is not an integer) is only
 // reached by rows that passed those before it.
@@ -113,7 +115,7 @@ pub fn expected(what: int) -> [] &static [byte] {
         return "an integer, because the column is :int";
     }
     if what == 6 {
-        return "= != < <= > >= or in: contains compares text, and this column is :int";
+        return "= != < <= > >= or in: contains compares text, and this column is :int or :dec";
     }
     if what == 7 {
         return "( after in";
@@ -133,58 +135,115 @@ pub fn expected(what: int) -> [] &static [byte] {
     if what == 12 {
         return "an integer that fits 64 bits, because the column is :int";
     }
+    if what == 13 {
+        return "a decimal number: digits and at most one point, no exponent, no spaces, because the column is :dec";
+    }
+    if what == 14 {
+        return "a decimal with no more fractional digits than the column's scale (write :dec(N) with a larger N to compare finer values)";
+    }
+    if what == 15 {
+        return "a decimal below 10^18 once scaled to the column's scale (a smaller scale, or fewer digits)";
+    }
+    if what == 16 {
+        return "a scale in parentheses after :dec, as :dec(2)";
+    }
+    if what == 17 {
+        return "a scale from 0 to 18";
+    }
     return "a complete expression";
 }
 
-// A column at `from`: added to the plan as a name or a position. Answers the
-// plan, where it ends, the name's index, whether it is :int, and what / where
-// when it is not a column.
+// The scale of a `:dec(N)` suffix: `p` is where the `(` must be. Answers the type (2 + N), where the suffix ends, and what / where
+// when it is not whole (16 a scale in parentheses was expected, 17 the scale is not 0 to 18).
+fn dec_suffix[&s](src: &s [byte], p: int) -> [] (int, int, int, int) {
+    if p >= len(src) || int_of(src[p]) != '(' {
+        return (0, p, 16, p);
+    }
+    var i = p + 1;
+    var value = 0;
+    var digits = 0;
+    while i < len(src) && int_of(src[i]) >= '0' && int_of(src[i]) <= '9' && digits < 3 {
+        value = value * 10 + int_of(src[i]) - '0';
+        digits = digits + 1;
+        i = i + 1;
+    }
+    if digits == 0 {
+        return (0, p, 16, p + 1);
+    }
+    if digits > 2 || value > 18 {
+        return (0, p, 17, p + 1);
+    }
+    if i >= len(src) || int_of(src[i]) != ')' {
+        return (0, p, 16, i);
+    }
+    return (2 + value, i + 1, 0, 0);
+}
+
+// A column at `from`: added to the plan as a name or a position. Answers the plan, where it ends, the name's index, its type (0 text,
+// 1 :int, 2 + S for :dec(S)), and what / where when it is not a column.
 fn parse_column[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int) -> [heap] (query.Query, int, int, int, int, int) {
     var plan = q;
     let (word, after, quoted, status, escaped_first, escaped_last) = read_word(heap, buffer.empty(heap, 16), src, from);
     var next = after;
-    var as_int = 0;
+    var typed = 0;
     var index = 0;
     var what = 0;
+    var at = from;
     if status == 1 && quoted == 0 {
         what = 1;
     } else if status != 0 {
         what = status;
     } else {
         var length = 0;
+        var is_dec = false;
         borrow word as &wr in {
             length = buffer.size(wr);
         }
         if quoted == 1 {
             if after + 4 <= len(src) && bytes.equal(src[after..after + 4], ":int") && (after + 4 == len(src) || is_delimiter(int_of(src[after + 4]))) {
-                as_int = 1;
+                typed = 1;
+                next = after + 4;
+            } else if after + 4 <= len(src) && bytes.equal(src[after..after + 4], ":dec") {
+                is_dec = true;
                 next = after + 4;
             }
         } else if length >= 4 && escaped_last <= length - 4 {
             borrow word as &wr in {
                 if bytes.equal(buffer.bytes(wr)[length - 4..length], ":int") {
-                    as_int = 1;
+                    typed = 1;
+                    length = length - 4;
+                } else if bytes.equal(buffer.bytes(wr)[length - 4..length], ":dec") {
+                    is_dec = true;
                     length = length - 4;
                 }
             }
         }
-        borrow word as &wr in {
-            var position = -1;
-            if quoted == 0 && escaped_first == 0 {
-                position = query.position_of(buffer.bytes(wr)[0..length]);
+        if is_dec {
+            let (t, nx, w, a) = dec_suffix(src, next);
+            typed = t;
+            next = nx;
+            what = w;
+            at = a;
+        }
+        if what == 0 {
+            borrow word as &wr in {
+                var position = -1;
+                if quoted == 0 && escaped_first == 0 {
+                    position = query.position_of(buffer.bytes(wr)[0..length]);
+                }
+                let (p2, ix) = query.add_name(heap, plan, buffer.bytes(wr)[0..length], position);
+                plan = p2;
+                index = ix;
             }
-            let (p2, at) = query.add_name(heap, plan, buffer.bytes(wr)[0..length], position);
-            plan = p2;
-            index = at;
         }
     }
     buffer.drop(heap, word);
-    return (plan, next, index, as_int, what, from);
+    return (plan, next, index, typed, what, at);
 }
 
 // The operator at `from`: answers its kind (0 compare, 1 contains, 2 in), its
 // code, where it ends, and what / where on an error.
-fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, as_int: int) -> [heap] (int, int, int, int, int) {
+fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, typed: int) -> [heap] (int, int, int, int, int) {
     if from >= len(src) {
         return (0, 0, from, 2, from);
     }
@@ -216,7 +275,7 @@ fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, as_int: int
         is_in = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "in");
     }
     buffer.drop(heap, word);
-    if is_contains && as_int == 1 {
+    if is_contains && typed != 0 {
         return (0, 0, from, 6, from);
     }
     if is_contains {
@@ -230,7 +289,7 @@ fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, as_int: int
 
 // One literal at `from`, added to the plan. Answers the plan, where it ends,
 // and what / where on an error.
-fn parse_value[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int, as_int: int) -> [heap] (query.Query, int, int, int) {
+fn parse_value[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int, typed: int) -> [heap] (query.Query, int, int, int) {
     var plan = q;
     let (word, after, quoted, status, e1, e2) = read_word(heap, buffer.empty(heap, 16), src, from);
     var what = 0;
@@ -240,7 +299,7 @@ fn parse_value[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int
         what = status;
     } else {
         var value = 0;
-        if as_int == 1 {
+        if typed == 1 {
             borrow word as &wr in {
                 let (v, bad) = query.parse_int(buffer.bytes(wr));
                 value = v;
@@ -248,6 +307,18 @@ fn parse_value[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int
                     what = 5;
                 } else if bad == 2 {
                     what = 12;
+                }
+            }
+        } else if typed >= 2 {
+            borrow word as &wr in {
+                let (v, bad) = query.parse_dec(buffer.bytes(wr), typed - 2);
+                value = v;
+                if bad == 1 {
+                    what = 13;
+                } else if bad == 3 {
+                    what = 14;
+                } else if bad == 2 {
+                    what = 15;
                 }
             }
         }
@@ -277,13 +348,13 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
             what = 11;
             at = i;
         } else {
-            let (p1, after_column, index, as_int, w1, a1) = parse_column(heap, plan, src, i);
+            let (p1, after_column, index, typed, w1, a1) = parse_column(heap, plan, src, i);
             plan = p1;
             what = w1;
             at = a1;
             if what == 0 {
                 i = skip_space(src, after_column);
-                let (kind, op, after_op, w2, a2) = parse_operator(heap, src, i, as_int);
+                let (kind, op, after_op, w2, a2) = parse_operator(heap, src, i, typed);
                 what = w2;
                 at = a2;
                 i = after_op;
@@ -299,7 +370,7 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
                         var listing = true;
                         while listing && what == 0 {
                             i = skip_space(src, i);
-                            let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, as_int);
+                            let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, typed);
                             plan = p3;
                             what = w3;
                             at = a3;
@@ -327,7 +398,7 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
                     }
                 } else if what == 0 {
                     i = skip_space(src, i);
-                    let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, as_int);
+                    let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, typed);
                     plan = p3;
                     what = w3;
                     at = a3;
@@ -335,7 +406,7 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
                     i = after_value;
                 }
                 if what == 0 {
-                    plan = query.add_cond(heap, plan, kind, as_int, op, index, first, values, begins);
+                    plan = query.add_cond(heap, plan, kind, typed, op, index, first, values, begins);
                     many = many + 1;
                     i = skip_space(src, i);
                     if i >= len(src) {
@@ -362,14 +433,58 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
     return (plan, what, at);
 }
 
+// The same for a :dec(scale) column: the cell is read as the exact scaled integer, and compared with the literals' (read at the
+// same scale when the expression was parsed).
+fn holds_dec[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many: int, scale: int, cell: &c [byte]) -> [] int {
+    let (v, bad) = query.parse_dec(cell, scale);
+    if bad == 1 {
+        return 4;
+    }
+    if bad == 3 {
+        return 5;
+    }
+    if bad == 2 {
+        return 6;
+    }
+    var l = 0;
+    while l < many {
+        let w = query.lit_at(plan, first + l, 2);
+        var yes = false;
+        if kind == 2 || op == 0 {
+            yes = v == w;
+        } else if op == 1 {
+            yes = v != w;
+        } else if op == 2 {
+            yes = v < w;
+        } else if op == 3 {
+            yes = v <= w;
+        } else if op == 4 {
+            yes = v > w;
+        } else {
+            yes = v >= w;
+        }
+        if yes {
+            return 1;
+        }
+        l = l + 1;
+    }
+    return 0;
+}
+
 // Whether `cell` satisfies condition `k`: 1 yes, 0 no, 2 the column is :int
-// and the cell is not an integer, 3 it is one that does not fit 64 bits.
+// and the cell is not an integer, 3 it is one that does not fit 64 bits; for a
+// :dec column 4 the cell is not a decimal, 5 it has more fractional digits than
+// the scale, 6 it is too wide (`query.parse_dec`).
 fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
     let kind = query.cond_at(plan, k, 0);
     let op = query.cond_at(plan, k, 2);
     let first = query.cond_at(plan, k, 4);
     let many = query.cond_at(plan, k, 5);
-    if query.cond_at(plan, k, 1) == 1 {
+    let typed = query.cond_at(plan, k, 1);
+    if typed >= 2 {
+        return holds_dec(plan, kind, op, first, many, typed - 2, cell);
+    }
+    if typed == 1 {
         let (v, bad) = query.parse_int(cell);
         if bad == 1 {
             return 2;

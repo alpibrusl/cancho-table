@@ -52,7 +52,6 @@ MUTANTS = [
     ("a group that is not there is counted anyway", "agg.ls", "        entry = map.find(g.index, buffer.bytes(g.keyb));\n        if entry < 0 {", "        entry = map.find(g.index, buffer.bytes(g.keyb));\n        if false && entry < 0 {"),
     ("the key is written one byte short", "agg.ls", "            copy_into(room[at + 4..at + 4 + n], record[first..first + n]);", "            copy_into(room[at + 4..at + 3 + n], record[first..first + n - 1]);"),
     ("a row counts twice in place", "agg.ls", "    vec.set(g.acc, slot, before + 1);", "    vec.set(g.acc, slot, before + 2);"),
-    ("an in-place sum that overflows is not noticed", "agg.ls", "                if !fits {\n                    return (6, k);", "                if false && !fits {\n                    return (6, k);"),
     ("an in-place integer past 64 bits is a text", "agg.ls", "            if bad == 2 {\n                return (5, k);", "            if bad == 2 {\n                return (4, k);"),
     ("an in-place text is a number", "agg.ls", "            if bad == 1 {\n                return (4, k);", "            if false && bad == 1 {\n                return (4, k);"),
     ("an in-place minimum is a maximum", "agg.ls", "            } else if function == 2 && v < now {\n                vec.set(g.acc, slot + 1 + k, v);", "            } else if function == 2 && v > now {\n                vec.set(g.acc, slot + 1 + k, v);"),

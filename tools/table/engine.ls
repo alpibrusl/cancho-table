@@ -112,6 +112,17 @@ pub fn k_sort_desc() -> [] int {
     return 22;
 }
 
+// The condition of `--where` that refused a cell (for a :dec column, whose refusal names its scale and, for the repair, the text of
+// the condition).
+pub fn k_err_cond() -> [] int {
+    return 23;
+}
+
+// For a :dec cell with more fractional digits than its scale: how many it has.
+pub fn k_err_digits() -> [] int {
+    return 26;
+}
+
 pub fn k_size() -> [] int {
     return 32;
 }
@@ -273,7 +284,22 @@ pub fn screen[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, cols
     }
     // A condition met a cell it cannot compare.
     let column = cols[query.cond_at(tree, which, 3)];
-    a[k_abort()] = 9 + verdict;
+    var code = 9 + verdict;
+    if verdict >= 4 {
+        // 4, 5, 6: a :dec cell that is not a decimal, too fine for the scale, too wide: 22, 23, 24
+        code = 18 + verdict;
+    }
+    a[k_abort()] = code;
+    a[k_err_cond()] = which;
+    if verdict == 5 {
+        var at = cells[3 * column + 1];
+        var n = 0;
+        while at > cells[3 * column] && int_of(record[at - 1]) != '.' {
+            at = at - 1;
+            n = n + 1;
+        }
+        a[k_err_digits()] = n;
+    }
     a[k_err_col()] = column;
     a[k_err_fn()] = -1;
     a[k_err_row()] = a[k_records()];
@@ -322,7 +348,7 @@ pub fn process_rows[&h, &i, &q, &c, &d, &e, &s, &a](heap: &!h Heap, io: &!i Io, 
 }
 
 // The same for a grouping (mode 2): tested, then added to its group.
-pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_groups: int, max_distinct: int, max_state: int, track: bool, keyed: bool, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
+pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_groups: int, max_distinct: int, max_state: int, keyed: bool, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
     if query.count_of(tree, 4) > 0 {
         // `--order-by`: the rows are held, not grouped; the bounds are the sort's (see sorter.ls)
         return order_row(heap, groups, escr, kept, tree, cols, record, cells, opened, max_groups, max_state, a);
@@ -331,7 +357,7 @@ pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups
     if verdict != 1 {
         return (groups, e2, k2);
     }
-    let (g3, e3, status, k) = agg.add(heap, groups, tree, cols, record, cells, e2, max_groups, max_distinct, max_state, track, keyed);
+    let (g3, e3, status, k) = agg.add(heap, groups, tree, cols, record, cells, e2, max_groups, max_distinct, max_state, keyed);
     if status == 0 {
         return (g3, e3, k2);
     }
@@ -353,7 +379,7 @@ pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups
 // 0 when the row is dealt with (not wanted, added, or refused with `a` set), 1 when `process_groups` has to
 // deal with it, 3 when it has to and the key is built in the groups' key buffer (a new group: `keyed`), and
 // the buffers.
-pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, track: bool, a: &!a [int]) -> [heap] (int, buffer.Buffer, buffer.Buffer) {
+pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, a: &!a [int]) -> [heap] (int, buffer.Buffer, buffer.Buffer) {
     let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
     if verdict != 1 {
         return (0, e2, k2);
@@ -361,7 +387,7 @@ pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Gr
     if query.count_of(tree, 4) > 0 {
         return (sorter.hook(groups, record, cells), e2, k2);
     }
-    let (status, k) = agg.add_fast(groups, tree, cols, record, cells, track);
+    let (status, k) = agg.add_fast(groups, tree, cols, record, cells);
     if status == 0 {
         return (0, e2, k2);
     }
@@ -382,11 +408,11 @@ pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Gr
 // `group_fast` for a grouping with no `--where`: nothing to screen, so no buffers go in or out. Answers 0
 // when the row is added, 1 when `process_groups` has to deal with it (3 when the key is built: a new group), and 16 + 8 * k + status when aggregate
 // `k` refused the row with `status` (4 to 6), for `group_refused` to record.
-pub fn group_plain[&g, &q, &c, &d, &e](groups: &!g agg.Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], track: bool) -> [] int {
+pub fn group_plain[&g, &q, &c, &d, &e](groups: &!g agg.Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int]) -> [] int {
     if query.count_of(tree, 4) > 0 {
         return sorter.hook(groups, record, cells);
     }
-    let (status, k) = agg.add_fast(groups, tree, cols, record, cells, track);
+    let (status, k) = agg.add_fast(groups, tree, cols, record, cells);
     if status == 0 {
         return 0;
     }

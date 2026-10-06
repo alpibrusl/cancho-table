@@ -1,6 +1,6 @@
 # `table` and numbers: exact decimals and floats (design)
 
-**Status: design. Nothing in `tools/table` changes with this document.** It decides what `:dec(S)` and `:float` mean
+**Status: design, accepted by the maintainer (the six open questions are answered, section 11); built stage by stage.** It decides what `:dec(S)` and `:float` mean
 in `--where`, `--group`, `--agg`, the row sort and a type report; what they refuse and how; how they stay
 byte-identical for every `--threads`; and which gates are fixed before any code is written. The spikes behind it are in
 `scripts/spikes/` (throwaway; `README.md` there). Every number in this document that is called *measured* was measured
@@ -32,7 +32,7 @@ not one is refused, naming the row, the line and the column.**
 | C1 | suffix per column reference: `x:int`, `x:float`, `x:dec(2)`; one numeric type per column in one plan; no global `--types` | consistent with `--where` and `--select`; an unmarked name stays text |
 | C2 | `--report types FILE`: per column counts of what each cell would be and a suggested declaration; never changes an answer | inference as a report |
 | D | each new refusal is a rule with a tag, exit code 8 (data) or 2 (usage), a position, and a repair | section 6 |
-| E | exact accumulators merge in any order: no `peak` for dec or float; `:int` keeps its rule | section 7 |
+| E | exact accumulators merge in any order: no `peak` for dec or float, and (decided, stage N0p) none for `:int`, whose sum becomes the pair sum too; `agg.sum-overflow` is removed | section 7 |
 
 ## 1. What exists today
 
@@ -426,7 +426,7 @@ new sum is exact, so its merge is a plain add and needs no `peak`**:
 
 | aggregate | partial | merge | order-dependent? |
 |---|---|---|---|
-| `:int` sum | one `int` + `peak` | unchanged: merged only if `\|S\| + peak` fits | yes, as today |
+| `:int` sum | `(hi, lo)` (stage N0p; before it, one `int` and a `peak`) | add the pairs | no |
 | `:dec` sum, `mean` | `(hi, lo)` | add the pairs, carry | no |
 | `:float` sum, `mean` | 72 limbs + counter | carry both, add limbwise, carry | no: the merged state is **the same integer** |
 | `min`/`max` (typed) | the 8-byte key as an `int` | smaller / larger | no |
@@ -434,8 +434,10 @@ new sum is exact, so its merge is a plain add and needs no `peak`**:
 | `count` | `int` | add | no |
 
 The `peak` rule existed because a sequential running sum can **refuse at a row**, which a range's own sum from zero cannot tell. The new sums have no row at which they refuse (`:dec` cannot; `:float` refuses
-only on the exact total, which is not a function of the order), so nothing has to be re-read in order, and a range is **always** merged. (`:int` could use the pair sum too and lose the `peak`, `agg.sum-overflow` and a re-read;
-the pair add measured **faster** than the checked one. It would change a documented refusal into a wide number, so it is a decision for the maintainer, section 11, not part of this design.)
+only on the exact total, which is not a function of the order), so nothing has to be re-read in order, and a range is **always** merged. **Decided (stage N0p): `:int` takes the pair sum too**, and loses the `peak`,
+`agg.sum-overflow` and the re-read of a range whose sum came near the edge. The pair add measured faster than the checked add it replaces; a sum past 64 bits is now printed in full (up to 28 digits) instead of refused.
+The cell is split rather than carried (`lo += v & 0xffffffff; hi += v >> 32`, no branch), so any `int` cell, not only 18 digits, can be added: with at most 10^9 rows (`--max-rows`' ceiling) `lo` stays below 2^62 and `hi` below
+2^61, and `hi * 2^32 + lo` is exact to 2^93.
 
 **Byte-identical for every thread count**: the answer to every plan with a typed column (rows, groups, aggregates, sort, top, pages, csv and json), including each refusal's row, line, column and detail. **Not promised and not
 needed**: the in-memory state between merges (limbs before a carry differ with the partition; after the carry they are the canonical form, and the final text depends only on the exact value).
@@ -488,6 +490,7 @@ Each stage has a pass line and ends with every earlier gate still green (G6 abov
 | stage | scope | pass line |
 |---|---|---|
 | **N0** (before code) | this document accepted; the gates committed as failing tests (the reference, the SPEC, the parallel file, the mutant list) | the tests exist and fail for the right reason |
+| **N0p** (decided after the design) | `:int`'s sum becomes the pair sum; `agg.sum-overflow` and the `peak` rule are removed; docs and generated pages corrected in place | `scripts/corpus.py` md5 identical for every existing plan except those that used to refuse for a sum; G6 (no int path slower than +2%); the sum tests rewritten from refusal to the exact wide number, against Python's `int` |
 | **N1** | `:dec(S)` parse, compare, `in`, literals, in `--where`; the rules `value.not-decimal`, `value.decimal-scale`, `value.decimal-too-wide`, `column.type-conflict`; `where.syntax` additions | G1 (dec), G2 (where plans), G3, G4 (filters), G6, G7 (filter), G11, G5 for those sites |
 | **N2** | `sum`, `min`, `max`, `mean[@N]`, `distinct`, count of `:dec(S)`; the pair sum and its printer; group by a `:dec` key (text-equal and numeric) | G2 (groups), G4 (sums at the carry), G7, G5, 3,000-case `dec_mean` against `Decimal`; `agg.bad-spec` for `mean` without `@N` |
 | **N3a** | `:float` parse (scanner, Clinger, exact slow path through `std.json`), compare, `in`, literals, `min`, `max`, count; refusals `value.not-float`, `value.not-finite`, `value.float-range`, `limit.number-too-long`; the printer | G1 (float), G2, G3, G8 (filter; sum waits for N4); G9 reported; 10,000,000 cells bit-exact against Python's `float()` |
@@ -497,16 +500,87 @@ Each stage has a pass line and ends with every earlier gate still green (G6 abov
 | **N6** | `--report types` | the report against a Python classifier over the generated tables; parallel: the same bytes for every N; the first-offender row as in G1 |
 | **out** | locale formats (`1.234,56`), thousands separators, trimming, hex floats, `f32`, a typed `--select`, dates, a global `--types`, arithmetic in expressions, an `or`, per-type NULLs, rounding on input (`:dec(2,round)`) |  not designed; each would be a decision of its own |
 
+### What was built: N0, N0p and N1 (measured)
+
+Built in this order, one commit each: the decisions recorded; **N0p**; **N0** (the gates of N1 as tests, failing); **N1**. Mac numbers are Apple silicon, the
+Mac compiler (`db7d5bc`), minimum of 7 to 21 interleaved runs; Linux numbers are x86-64 with the pinned compiler (`f8ebe98`), cores 0 to 5 niced, a soak running,
+so absolute times there are noisier than the ratios.
+
+**N0p, the pair sum for `:int`.** `agg.sum-overflow` and the `peak` rule are gone; `track` is removed from the engine, the scan and the merge. A sum is the low 32
+bits of every cell in the aggregate's value slot and `v >> 32` in the slot the `peak` used (so the state did not grow); `agg.settle` carries once before the sort and
+the write; `agg.put_sum` prints up to 28 digits. Pass lines: **the md5 of all 134 plans of `scripts/corpus.py` (sequential and with threads and tiny ranges) is identical
+before and after** (no existing plan overflowed); the sum tests were rewritten from refusal to the exact wide number against Python's `int` (15 edge lists, 2 to 1,000
+cells, `-2^63` times 999, 5*10^18 times 200 for the zeros of the nine-digit groups); G6 on the Mac, 14 cells at 1 and 4 threads: worst ratio 1.017, the sums themselves
+0.98 to 0.99 (the pair add is not slower than the checked add: the spike measured 0.44 against 0.82 ns). 12 new mutants (a bit lost in either half, a missing carry, the
+merge dropping the high half, the sort looking at the low half only, a negative magnitude one too large, a missing zero padding, the narrow path taken too long), all killed;
+the nine-digit padding survived the first test and got the 5*10^18 lists.
+
+**N0, the gates.** `tests/conformance/numbers_ref.py` (the decimal semantics in Python's exact `int` arithmetic, and the 44 edge cells of `SPEC`), `test_numbers.py`
+(19 tests, 14 s), `refimpl.py` and `test_rules.py` extended, `test_memory.py` extended. Run before the code, they failed for the right reason (no `:dec`).
+
+**N1, `:dec(S)` in `--where`.** `query.parse_dec` (the reader, the order of the checks), `expr` (the suffix, the literals, `holds_dec`: the decimal verdicts are a callee of the
+condition test, not a case in the read loop, after `docs/sort.md`'s lesson), `engine.screen`, `frame` (the type conflict, found before a row is read), `table` (the four rules,
+the repair). Pass lines:
+
+| gate | what ran | result |
+|---|---|---|
+| G1 | the 44 edge cells at scales 0, 2 and 18, one process each: the value, or the rule with row 1, line 2, column, context, the cell, `scale`, and for `value.decimal-scale` the exact `digits` | 0 differences |
+| G1 | every operator against every literal over 16 cells, `in` lists, equality by value (`1.5`, `1.50`, `1.500`, `01.5`), the literal grammar and its 18 syntax errors with their byte offsets, names quoted, escaped and positional | pass |
+| G2 | 1,500 generated tables and plans (up to three conditions of the three kinds, `in`, select, groups, aggregates, sort, json and csv) through `refimpl`, which reads `:dec` through `numbers_ref` | 0 differences, and at least 100 of them refusals |
+| G3 | 400 fuzzed files (grammar-fuzzed cells, decimals around 10^18, scales 0 to 18) and the non-UTF-8 cells | no trap; the reference's verdict, row and rule on each |
+| G4 | decimal filters, refusals in two ranges (the first in file order), ragged rows and quoted newlines, N in {2, 3, 4, 8, 16, 64} x chunks {1, 7, 64, 1000} | the sequential bytes in every one |
+| G5 | `scripts/numbers_mutants.py`: 31 mutants (the cell reader, the suffix, the literals, the verdicts, the conflict, what a refusal says) | all killed; one more (`if kind == 2 \|\| op == 0` as `if op == 0`) was **equivalent** (an `in` has op 0) and was replaced by a real one; `--check` passes and is in `test_mutants_apply` |
+| G6 | `scripts/gate_regress.py`, 7 cells x {1, 4} threads, outputs byte-identical first | Mac: worst 1.018 (a first pass said 1.027 on a 17 ms cell, then 0.97: the script now measures a cell over the limit again, three times as long, and believes the lower ratio); Linux: worst 1.011 |
+| G7 | `scripts/bench_numbers.py`: the same question on `bytes:int` and on `price:dec(2)`, count and rows | Mac dec/int: count 1.008 (1 thread), 1.055 (16); rows 1.097, 1.047. Linux: count 0.998, 1.025 (6); rows 1.078, 1.059. Limit 1.15: **pass**; the spike predicted 1.02 to 1.06 |
+| G10 | the same on DuckDB DECIMAL(18,2) and DOUBLE, csvtk, Miller (below) | answers checked against Python's first |
+| G11 | the four rules in `test_rules.py` with a fixture, exit code, repairability and summary | pass |
+| G12 | `test_memory.py`: decimal filters at 2 MB and 37 MB of file | flat |
+
+The whole suite is 155 tests, 100 s. **Against the others** (G10; seconds; 1,000,000 rows, 56 MB; `price` two decimals; the filter is `status=404 and price >= 500.00`):
+
+| | `table` int | `table` dec | DuckDB DECIMAL(18,2) | DuckDB DOUBLE | csvtk `-j 1` | Miller |
+|---|---:|---:|---:|---:|---:|---:|
+| Mac, count, 1 thread | 0.0697 | 0.0703 | 0.186 (2.65x) | 0.189 (2.70x) | 3.00 (43x) | not installed |
+| Mac, count, 16 threads | 0.0113 | 0.0120 | 0.077 (6.4x) | 0.077 (6.4x) | | |
+| Mac, rows as `id,price` csv, 1 thread | 0.0581 | 0.0637 | 0.206 (3.23x) | 0.213 (3.35x) | 2.96 (46x) | not installed |
+| Mac, rows, 16 threads | 0.0123 | 0.0129 | 0.082 (6.4x) | 0.083 (6.4x) | | |
+| Linux, count, 1 thread | 0.1529 | 0.1526 | not installed | not installed | 8.20 (54x) | not measured |
+| Linux, count, 6 threads | 0.0633 | 0.0649 | | | | |
+| Linux, rows, 1 thread | 0.1130 | 0.1218 | | | 8.31 (68x) | 0.469 (3.85x) |
+| Linux, rows, 6 threads | 0.0680 | 0.0720 | | | | |
+
+(The factor is the contender's time over `table`'s decimal time at the same thread count; csvtk's `filter2` has an expression engine and is slow here, and has no thread
+scaling; DuckDB reads a decimal as fast as an integer, as `docs/numbers.md` section 2 found.) DuckDB's `DOUBLE` and `DECIMAL` answers were both compared with Python's exact one
+as `Decimal`: the two print `500.5` and `500.50` for the same cell, which is why the check is numeric.
+
+**Deviations from the stage table.** (1) N0p was added by the maintainer's decision; the doc's stage list now has it. (2) N1 as written in the table (decimal parse, compare,
+`in`, literals in `--where`; the four rules; the `where.syntax` additions) is what was built, and **nothing else**: there is no decimal output yet (`mean`, typed `sum`, `min`,
+`max`, group keys and `distinct` by value are N2 and N5, and `--order-by x:dec(2)` is not a key yet, so it says `column.unknown` for the name `x:dec(2)`; N5 gives it meaning).
+(3) Two additions the stage did not list: `column.type-conflict` counts `--order-by`'s `:int` keys too, and `value.decimal-scale` carries `digits` and a `choose` repair that is the whole invocation
+with the offending condition's scale rewritten. (4) The `value.not-decimal` repair is none: it says an exponent is a float, which is stage N3. (5) `scripts/gate_regress.py`
+re-measures a cell before failing it (above). (6) DuckDB is not installed on the Linux box, Miller not on the Mac: those cells are blank, not estimated. (7) The mutation script is in `scripts/` and
+uses `mutlib`, as asked; it was run in a second worktree so that the Mac stayed free for the timings.
+
+**What the README and the page should now say** (they are not edited here): `:dec(S)` in `--where` (what it is, never rounded, equal as numbers, the three rules and the conflict), the sum
+is exact at any width and no longer refused past 64 bits (README line "Sums are exact whole numbers; one that would not fit in 64 bits is refused" and the same sentence in the page, and the
+`agg.sum-overflow` row of the page's rule table, which is generated: `scripts/site.py` regenerates it, and `docs/refusals.md` was regenerated in this branch), the
+decimal filter numbers above.
+
+**Next: N2** (`sum`, `min`, `max`, `mean[@N]`, `distinct`, count of `:dec(S)`; the printer of a scaled value and of a wide sum at the column's scale; the second consumer of
+`agg.put_sum`), then N3a (`:float` parse), N3b, N4, N5, N6, as the table says.
+
 ## 11. Open questions, assumptions, what the language lacks
 
-**Questions for the maintainer.**
+**Decided by the maintainer** (the six questions of the first version of this document, answered as recommended):
 
-1. Suffix per reference (chosen) or also a global `--types`? (5.1)
-2. Should `:int`'s `sum` move to the pair sum, deleting `agg.sum-overflow` and the `peak` rule (sums print as wide numbers)? It is faster (measured) and simpler, and a contract change. (7)
-3. `.5` and `5.` accepted (chosen, for consistency with every engine measured) or refused (consistency with `:int`'s strictness)? (3.2)
-4. `-0` reads as `0` (chosen). Is losing the sign of zero acceptable for the one reader who wants it? (4.1)
-5. NaN and `inf` refused (chosen) with the filter idiom as the repair. A flag to skip them silently was rejected as csvtk's `-i`; is that right? (4.1)
-6. Is the 584-byte float group state acceptable (it halves the default group bound for a float `sum`) until a two-tier accumulator exists? (4.4)
+1. Suffix per reference only; **no global `--types`** (5.1).
+2. **`:int`'s `sum` moves to the pair sum**, deleting `agg.sum-overflow` and the `peak` rule (sums print as wide numbers); a stage of its own, **N0p**, before N1 (7, 10).
+3. **`.5` and `5.` are accepted** (3.2).
+4. **`-0` reads as `0`**; losing the sign of zero is acceptable and documented (4.1).
+5. **NaN and `inf` are refused**, the filter idiom is the repair (4.1).
+6. **The 584-byte float group state is accepted** for now, bounded by `--max-state-bytes` (4.4).
+
+Nothing is left open in the design itself; what remains unknown is under "Not known" below.
 
 **Assumptions** (each checked by a gate, none by a measurement yet).
 

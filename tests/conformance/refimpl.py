@@ -17,6 +17,8 @@ rows) or ("groups", labels, rows) with ragged: a count, or an error
 
 import re
 
+import numbers_ref
+
 INT_MIN = -(1 << 63)
 INT_MAX = (1 << 63) - 1
 INTEGER = re.compile(r"^[+-]?[0-9]+$")
@@ -39,6 +41,16 @@ def compare(op, a, b):
 def holds(cond, cell):
     """True or False, or an error rule for an :int condition."""
     kind = cond["kind"]
+    if cond.get("dec") is not None:
+        # `:dec(S)` (docs/numbers.md): the cell is the exact scaled integer or a refusal; the literals are read at the same scale
+        scale = cond["dec"]
+        got = numbers_ref.dec(cell, scale)
+        if got[0] == "refuse":
+            return got[1]
+        lits = cond["lits"] if kind == "in" else [cond["lit"]]
+        if kind == "in":
+            return any(got[1] == numbers_ref.dec(l, scale)[1] for l in lits)
+        return compare(cond["op"], got[1], numbers_ref.dec(cond["lit"], scale)[1])
     if cond.get("int"):
         v, bad = to_int(cell)
         if bad:
@@ -102,10 +114,7 @@ def run(table, plan):
                 return None, ragged, (bad, {"row": n, "column": column, "context": function})
             cur = entry["values"][k]
             if function == "sum":
-                total = (cur or 0) + v
-                if total < INT_MIN or total > INT_MAX:
-                    return None, ragged, ("agg.sum-overflow", {"row": n, "column": column, "context": "sum"})
-                entry["values"][k] = total
+                entry["values"][k] = (cur or 0) + v      # exact, whatever the width: a sum is a pair of integers (docs/numbers.md N0p)
             elif cur is None:
                 entry["values"][k] = v
             elif function == "min":

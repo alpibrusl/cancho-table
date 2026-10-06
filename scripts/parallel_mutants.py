@@ -28,6 +28,8 @@ MUTANTS = [
     ("the rows a range read are not counted", "par.ls", "a[engine.k_records()] = before + r;", "a[engine.k_records()] = before;"),
     ("a range that passes --max-rows is taken", "par.ls", "var fits = before < most && before + r <= most;", "var fits = true;"),
     ("a range that would fill the page is taken", "par.ls", "if a[engine.k_emitted()] + e > limit {", "if false {"),
+    ("the merge of a sum drops the high half of the range", "agg.ls", "a = set_at(a, entry * stride + 1 + na + k, mine_high + get_i64(blob, acc_at + 8 * (1 + na + k)));", "a = set_at(a, entry * stride + 1 + na + k, mine_high);"),
+    ("the merge of a sum replaces the total with the range's", "agg.ls", "a = set_at(a, entry * stride + 1 + k, mine + theirs);", "a = set_at(a, entry * stride + 1 + k, theirs);"),
     ("a range that reaches the limit is taken, and the ragged rows after its last row with it", "par.ls", "if !filtering && a[engine.k_emitted()] + e >= limit && r > 0 {", "if false {"),
     ("a range that passes the byte budget is taken", "par.ls", "if have + payload_len + 2 > budget {", "if have + payload_len + 2 > budget + 100000 {"),
     ("json rows of two ranges are not separated", "par.ls", "if !as_csv && a[engine.k_emitted()] > 0 {", "if false {"),
@@ -39,8 +41,6 @@ MUTANTS = [
     ("a range forgets its lines when it stops", "scan.ls", "                    consumed = number - 1;\n                    next_at = at;", "                    consumed = number;\n                    next_at = at;"),
     ("a range of a quoted record is one field short", "scan.ls", "                            let (m, open, bad_quote) = reader.fields(record, delim, cells, a[engine.k_columns()]);\n                            found = m;", "                            let (m, open, bad_quote) = reader.fields(record, delim, cells, a[engine.k_columns()]);\n                            found = m - 1;"),
     # groups across ranges
-    ("a sum that can overflow in order is merged", "agg.ls", "if get_i64(blob, acc_at + 8 * (1 + na + k)) > query.int_max() - int_max_of(total) {", "if get_i64(blob, acc_at + 8 * (1 + na + k)) > query.int_max() {"),
-    ("the largest running sum is not kept", "agg.ls", "                                if magnitude > seen_peak {", "                                if magnitude < seen_peak {"),
     ("a bound that would be passed is not noticed", "agg.ls", "if size + new_groups > max_groups || pairs + new_pairs > max_distinct || held + new_bytes > max_state {", "if false {"),
     ("distinct values of a range are not added", "agg.ls", "a = set_at(a, entry * stride + 1 + k, mine + fr[i * na + k]);", "a = set_at(a, entry * stride + 1 + k, mine);"),
     ("a minimum is merged as a maximum", "agg.ls", "} else if function == 2 && theirs < mine {", "} else if function == 2 && theirs > mine {"),

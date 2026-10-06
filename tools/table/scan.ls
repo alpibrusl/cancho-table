@@ -85,10 +85,6 @@ pub fn p_yield() -> [] int {
     return 13;
 }
 
-pub fn p_track() -> [] int {
-    return 14;
-}
-
 pub fn p_size() -> [] int {
     return 15;
 }
@@ -183,7 +179,6 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
     let cap = par[p_cap()];
     let base_line = par[p_base_line()];
     let yield_at = par[p_yield()];
-    let track = par[p_track()] == 1;
     let filtering = query.count_of(tree, 1) > 0;
     let fast_ok = engine.fast_ok(tree);
     var rows2 = rows;
@@ -287,7 +282,7 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
                             } else if !filtering {
                                 var got = 1;
                                 borrow mut groups2 as &!gw in {
-                                    got = engine.group_plain(gw, tree, cols, line, cells, track);
+                                    got = engine.group_plain(gw, tree, cols, line, cells);
                                 }
                                 if got >= 16 {
                                     kept2 = engine.group_refused(heap, kept2, tree, cols, line, cells, base_line + number, got, a);
@@ -297,14 +292,14 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
                                 }
                             } else {
                                 borrow mut groups2 as &!gw in {
-                                    let (f2, e2, k2) = engine.group_fast(heap, gw, escr2, kept2, tree, cols, line, cells, base_line + number, track, a);
+                                    let (f2, e2, k2) = engine.group_fast(heap, gw, escr2, kept2, tree, cols, line, cells, base_line + number, a);
                                     hot = f2;
                                     escr2 = e2;
                                     kept2 = k2;
                                 }
                             }
                             if hot == 1 || hot == 3 {
-                                let (g3, e3, k3) = engine.process_groups(heap, groups2, escr2, kept2, tree, cols, line, cells, base_line + number, max_groups, max_distinct, max_state, track, hot == 3, a);
+                                let (g3, e3, k3) = engine.process_groups(heap, groups2, escr2, kept2, tree, cols, line, cells, base_line + number, max_groups, max_distinct, max_state, hot == 3, a);
                                 groups2 = g3;
                                 escr2 = e3;
                                 kept2 = k3;
@@ -367,7 +362,7 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
                                     } else if !filtering {
                                         var got = 1;
                                         borrow mut groups2 as &!gw in {
-                                            got = engine.group_plain(gw, tree, cols, record, cells, track);
+                                            got = engine.group_plain(gw, tree, cols, record, cells);
                                         }
                                         if got >= 16 {
                                             kept2 = engine.group_refused(heap, kept2, tree, cols, record, cells, base_line + opened, got, a);
@@ -377,14 +372,14 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
                                         }
                                     } else {
                                         borrow mut groups2 as &!gw in {
-                                            let (f2, e2, k2) = engine.group_fast(heap, gw, escr2, kept2, tree, cols, record, cells, base_line + opened, track, a);
+                                            let (f2, e2, k2) = engine.group_fast(heap, gw, escr2, kept2, tree, cols, record, cells, base_line + opened, a);
                                             hot = f2;
                                             escr2 = e2;
                                             kept2 = k2;
                                         }
                                     }
                                     if hot == 1 || hot == 3 {
-                                        let (g3, e3, k3) = engine.process_groups(heap, groups2, escr2, kept2, tree, cols, record, cells, base_line + opened, max_groups, max_distinct, max_state, track, hot == 3, a);
+                                        let (g3, e3, k3) = engine.process_groups(heap, groups2, escr2, kept2, tree, cols, record, cells, base_line + opened, max_groups, max_distinct, max_state, hot == 3, a);
                                         groups2 = g3;
                                         escr2 = e3;
                                         kept2 = k3;

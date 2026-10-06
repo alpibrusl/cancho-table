@@ -363,3 +363,11 @@ grouping's call, and select and filter are at 0.97x to 1.02x of `main`. Details 
 were reverted. The benchmark, the losses (3.4x to 3.9x behind DuckDB's default, 1.13x behind it at one thread with ties, 1.45x
 behind the shell's `sort -s -n` on Linux with ties) and what is left are in `docs/sort.md`.
 Tests: 1,600 random plans against Python's stable sort, 500 damaged inputs, bounded memory, pages, bounds; 44 mutants.
+
+## The sum becomes a pair (docs/numbers.md, stage N0p)
+
+`agg.sum-overflow` and the `peak` rule are gone: a sum is `hi * 2^32 + lo`, the low 32 bits of each cell added in one integer
+and the rest (`v >> 32`, signed) in the other, so no `int` cell and no number of rows up to `--max-rows`' ceiling (10^9) can
+leave 64 bits in either half; it is printed in full (28 digits at most) and sorts by `(hi, lo)` after one carry pass
+(`agg.settle`). The merge of threads is a plain add, so a range is never re-read for a sum. Outputs of every plan in
+`scripts/corpus.py` were byte-identical before and after (md5), except those that used to refuse for a sum.

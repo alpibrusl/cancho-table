@@ -18,12 +18,21 @@ TESTS = ["test_plan", "test_filter", "test_select", "test_rules", "test_cellcost
 
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file.
 MUTANTS = [
+    # the sum is a pair (docs/numbers.md N0p): the low 32 bits of a cell in one integer, the rest in the second
+    ("the low half of a sum loses its top bit", "agg.ls", "a = set_at(a, at + 1 + k, now + (v & 0xffffffff));", "a = set_at(a, at + 1 + k, now + (v & 0x7fffffff));"),
+    ("the high half of a sum is shifted by 31", "agg.ls", "a = set_at(a, at + 1 + (stride - 1) / 2 + k, high + (v >> 32));", "a = set_at(a, at + 1 + (stride - 1) / 2 + k, high + (v >> 31));"),
+    ("the high half of an in-place sum is not added", "agg.ls", "vec.set(g.acc, high_at, vec.get(g.acc, high_at) + (v >> 32));", "vec.set(g.acc, high_at, vec.get(g.acc, high_at));"),
+    ("the low half of an in-place sum is not masked", "agg.ls", "vec.set(g.acc, slot + 1 + k, now + (v & 0xffffffff));", "vec.set(g.acc, slot + 1 + k, now + v);"),
+    ("settling a sum forgets the carry", "agg.ls", "vec.set(g.acc, high_at, vec.get(g.acc, high_at) + (low >> 32));", "vec.set(g.acc, high_at, vec.get(g.acc, high_at));"),
+    ("settling a sum leaves the low half whole", "agg.ls", "vec.set(g.acc, low_at, low & 0xffffffff);", "vec.set(g.acc, low_at, low);"),
+    ("sorting by a sum looks at the low half only", "agg.ls", "        if hx != hy {\n            if descending {", "        if false && hx != hy {\n            if descending {"),
+    ("the magnitude of a negative wide sum is one too large", "agg.ls", "            h = 0 - high - 1;\n            l = 4294967296 - low;", "            h = 0 - high;\n            l = 4294967296 - low;"),
+    ("a group of nine digits is not padded with zeros", "agg.ls", "while pad > v && pad > 1 {", "while pad > v && pad > 100000000 {"),
+    ("a sum of 2^63 and more takes the narrow way", "agg.ls", "if high >= 0 - 2147483648 && high < 2147483648 {", "if high >= 0 - 2147483648 && high < 4294967296 {"),
     # exact integers
     ("2^63 is accepted as a positive integer", "query.ls", "    if acc == int_min() {\n        return (0, 2);", "    if false && acc == int_min() {\n        return (0, 2);"),
-    ("a minus sign is a plus", "query.ls", "negative = int_of(data[0]) == '-';", "negative = int_of(data[0]) == '+';"),
+    ("a minus sign is a plus", "query.ls", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '-';", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '+';"),
     ("a sign alone is zero", "query.ls", "    if at >= len(data) {\n        return (0, 1);\n    }", "    if false && at >= len(data) {\n        return (0, 1);\n    }"),
-    ("a sum that reaches the maximum is refused", "query.ls", "if b > 0 && a > int_max() - b {", "if b > 0 && a >= int_max() - b {"),
-    ("a sum that reaches the minimum is refused", "query.ls", "if b < 0 && a < int_min() - b {", "if b < 0 && a <= int_min() - b {"),
     ("an integer past 64 bits wraps", "query.ls", "        if acc < (int_min() + digit) / 10 {\n            over = true;", "        if acc < (int_min() + digit) / 10 && false {\n            over = true;"),
     # the grammar
     ("an escaped :int is still a suffix", "expr.ls", "} else if length >= 4 && escaped_last <= length - 4 {", "} else if length >= 4 && escaped_last <= length {"),
@@ -48,7 +57,6 @@ MUTANTS = [
     # (Not here: making the merge unstable. The order is total -- ties are broken by the keys, which are
     # all different -- so stability cannot be seen; the mutant is equivalent.)
     ("zero is written -0", "agg.ls", "    if v >= 0 {\n        return buffer.push_nat(heap, out, v);", "    if v > 0 {\n        return buffer.push_nat(heap, out, v);"),
-    ("a sum that overflows is not noticed", "agg.ls", "                        if fits {\n                            a = set_at(a, at + 1 + k, sum);", "                        if true {\n                            a = set_at(a, at + 1 + k, sum);"),
     # --sort
     ("- does not mean descending", "frame.ls", "if int_of(sort[0]) == '-' {", "if int_of(sort[0]) == '+' {"),
     ("count is sorted by the wrong slot", "frame.ls", "            } else if query.agg_at(tree, found - ng, 0) == 0 {\n                sort_slot = 0;", "            } else if query.agg_at(tree, found - ng, 0) == 0 {\n                sort_slot = 1;"),

@@ -177,13 +177,15 @@ class CellCost(unittest.TestCase):
         back = list(csv.reader(io.StringIO(got.stdout.decode()), strict=True))[1:]
         self.assertEqual({r[0]: (int(r[1]), int(r[2])) for r in back}, want)
 
-    def test_a_sum_that_overflows_is_refused_on_the_way_that_is_not_in_place(self):
+    def test_a_sum_past_64_bits_is_exact_on_every_way_of_adding(self):
+        # in place, by value (a quoted key, a distinct beside it), and by threads
         big = "9223372036854775807"
         for key, aggs in (('"a""b"', "sum:n"), ("a", "sum:n,distinct:n")):
             data = ("g,n\n%s,%s\n%s,1\n" % (key, big, key)).encode()
             for v in ((), ("--threads", "4", "--chunk-bytes", "10", "--parallel-min-bytes", "0")):
-                doc = self.s.table("t.csv", data, "--group", "g", "--agg", aggs, *v).error()
-                self.assertEqual((doc["rule"], doc["detail"]["row"]), ("agg.sum-overflow", 2), (key, aggs, v))
+                got = self.s.table("t.csv", data, "--group", "g", "--agg", aggs, "--format", "csv", *v)
+                self.assertEqual(got.status, 0, (key, aggs, v, got))
+                self.assertEqual(list(csv.reader(io.StringIO(got.stdout.decode())))[1][1], "9223372036854775808", (key, aggs, v))
 
     def test_the_byte_budget_ends_a_page_of_groups(self):
         rows = [["k", "n"]] + [["key%05d" % i, str(i)] for i in range(300)]
@@ -255,10 +257,7 @@ class CellCost(unittest.TestCase):
                 if -(1 << 63) <= v < (1 << 63):
                     f = {"sum": sum, "min": min, "max": max}[function]
                     total = f([v, 1])
-                    if function == "sum" and not -(1 << 63) <= total < (1 << 63):
-                        self.assertEqual(got.status, 8, (cell, function))
-                    else:
-                        self.assertEqual(got.stdout, encode([["g", "%s:n" % function], ["a", str(total)]]), (cell, function))
+                    self.assertEqual(got.stdout, encode([["g", "%s:n" % function], ["a", str(total)]]), (cell, function))   # a sum past 64 bits is printed in full
                 else:
                     self.assertEqual(got.status, 8, (cell, function, got.stdout))
                     rule = self.s.table("t.csv", data, "--group", "g", "--agg", "%s:n" % function).first_rule()
@@ -275,7 +274,8 @@ class CellCost(unittest.TestCase):
         self.assertEqual(got.status, 8)
         rows[177] = ["a", "9223372036854775807"]
         got = self.every_way(encode(rows), ["--group", "g", "--agg", "sum:n"])
-        self.assertEqual(got.status, 8)
+        self.assertEqual(got.status, 0)
+        self.assertEqual(got.stdout, encode([["g", "sum:n"], ["a", str(sum(int(r[1]) for r in rows[1:]))]]))
 
     def test_lines_at_the_cap_and_at_the_end_of_a_chunk(self):
         # a line that is exactly the end of a 64 KiB chunk, one byte short of it, one past it

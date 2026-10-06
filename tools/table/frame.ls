@@ -106,8 +106,23 @@ pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n b
     var sort_field = -1;
     var sort_slot = -1;
     var desc = 0;
+    // A column the plan reads as two numeric types (`column.type-conflict`, abort 25): `bad` is column * 1024 + type * 32 + the other type.
+    var conflict = -1;
+    var type_a = 0;
+    var type_b = 0;
+    if status == 0 {
+        borrow cols as &cr in {
+            let (c1, a1, b1) = query.type_conflict(tree, contents(cr));
+            conflict = c1;
+            type_a = a1;
+            type_b = b1;
+        }
+    }
     if status != 0 {
         abort = 4 + status;
+    } else if conflict >= 0 {
+        abort = 25;
+        bad = conflict * 1024 + type_a * 32 + type_b;
     } else if mode == 1 {
         let ns = query.count_of(tree, 0);
         picked = ns;

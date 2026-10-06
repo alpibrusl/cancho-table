@@ -35,7 +35,10 @@ LOCAL = {
     "sort.unknown-key": (2, "never", "no output column"),
     "value.not-integer": (8, "never", "exact integer"),
     "value.integer-overflow": (8, "never", "64 bits"),
-    "agg.sum-overflow": (8, "never", "64 bits"),
+    "value.not-decimal": (8, "never", "decimal"),
+    "value.decimal-scale": (8, "sometimes", "fractional digits"),
+    "value.decimal-too-wide": (8, "never", "18"),
+    "column.type-conflict": (2, "never", "numeric type"),
 }
 LINUX_ONLY = {"io.read-failed"}
 
@@ -54,7 +57,8 @@ class Rules(unittest.TestCase):
         s.write("many.csv", "a\n1\n2\n3\n")
         s.write("text.csv", "a,b\n1,x\n")
         s.write("big.csv", "a\n99999999999999999999\n")
-        s.write("sum.csv", "a\n9223372036854775807\n1\n")
+        s.write("scale.csv", "a\n1.25\n")
+        s.write("wide18.csv", "a\n99999999999999999.99\n")
         s.write("dup.csv", "a,a\n1,2\n")
         s.write("ragged.csv", "a,b\n1,2\n3\n")
         s.write("quote.csv", 'a,b\n"x"y,1\n')
@@ -104,7 +108,10 @@ class Rules(unittest.TestCase):
             ("sort.unknown-key", root + ["--group", "a", "--sort", "zz", "ok.csv"], None),
             ("value.not-integer", root + ["--where", "b:int > 0", "text.csv"], None),
             ("value.integer-overflow", root + ["--where", "a:int > 0", "big.csv"], None),
-            ("agg.sum-overflow", root + ["--agg", "sum:a", "sum.csv"], None),
+            ("value.not-decimal", root + ["--where", "b:dec(2) > 0", "text.csv"], None),
+            ("value.decimal-scale", root + ["--where", "a:dec(1) > 0", "scale.csv"], None),
+            ("value.decimal-too-wide", root + ["--where", "a:dec(2) > 0", "wide18.csv"], None),
+            ("column.type-conflict", root + ["--where", "a:dec(2) > 0 and a:int > 0", "ok.csv"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")

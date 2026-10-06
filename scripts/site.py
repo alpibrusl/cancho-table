@@ -60,6 +60,14 @@ FIXTURE = """id,customer,status,bytes
 5,Zed,200,64
 """
 
+# A second small file, for the decimal examples
+PRICES = """item,price
+pen,1.50
+book,12.50
+lamp,12.5
+cup,3.2
+"""
+
 # What is shown is what is typed; the argv run is shlex.split of it.
 DEMOS = {
     "shape": "table orders.csv",
@@ -69,6 +77,8 @@ DEMOS = {
     "page1": "table --select id,customer --limit 2 orders.csv",
     "page2": "table --select id,customer --limit 2 --from 2 orders.csv",
     "csv": """table --where "status = 200" --format csv orders.csv""",
+    "dec": """table --where "price:dec(2) >= 12.50" --format csv prices.csv""",
+    "dec_bad": """table --where "price:dec(1) >= 12.5" prices.csv""",
     "sort": """table --where "bytes != ''" --order-by -bytes:int,status --limit 3 --select id,customer,bytes --format csv orders.csv""",
     "cores": "table --threads 4 --group status --agg count --format csv orders.csv",
     "notint": """table --where "bytes:int > 100" --select id orders.csv""",
@@ -76,10 +86,10 @@ DEMOS = {
     "retry_bad": "table --max-line-bytes 10 orders.csv",
 }
 # demos shown as the members of the JSON line that matter, since the line is long
-SUMMARY = {"flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"]}
+SUMMARY = {"dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"]}
 # task name -> the demos shown for it
 TASKS = {
-    "select": ["select"], "filter": ["where"], "sort": ["sort"], "group": ["group"], "page": ["page1", "page2"],
+    "select": ["select"], "filter": ["where"], "decimal": ["dec", "dec_bad"], "sort": ["sort"], "group": ["group"], "page": ["page1", "page2"],
     "csv": ["csv"], "cores": ["cores"], "refuse": ["notint"],
 }
 QS = ["shape", "select", "group"]
@@ -318,6 +328,7 @@ def main():
     bad = 0
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "orders.csv").write_text(FIXTURE)
+        (Path(tmp) / "prices.csv").write_text(PRICES)
         ctx = {"run": lambda words: run_words(words, binary, tmp), "introspect": introspect(binary, tmp)}
         for rel, regions in REGIONS.items():
             path = ROOT / rel
