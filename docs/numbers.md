@@ -1,6 +1,6 @@
 # `table` and numbers: exact decimals and floats (design)
 
-**Status: design. Nothing in `tools/table` changes with this document.** It decides what `:dec(S)` and `:float` mean
+**Status: design, accepted by the maintainer (the six open questions are answered, section 11); built stage by stage.** It decides what `:dec(S)` and `:float` mean
 in `--where`, `--group`, `--agg`, the row sort and a type report; what they refuse and how; how they stay
 byte-identical for every `--threads`; and which gates are fixed before any code is written. The spikes behind it are in
 `scripts/spikes/` (throwaway; `README.md` there). Every number in this document that is called *measured* was measured
@@ -32,7 +32,7 @@ not one is refused, naming the row, the line and the column.**
 | C1 | suffix per column reference: `x:int`, `x:float`, `x:dec(2)`; one numeric type per column in one plan; no global `--types` | consistent with `--where` and `--select`; an unmarked name stays text |
 | C2 | `--report types FILE`: per column counts of what each cell would be and a suggested declaration; never changes an answer | inference as a report |
 | D | each new refusal is a rule with a tag, exit code 8 (data) or 2 (usage), a position, and a repair | section 6 |
-| E | exact accumulators merge in any order: no `peak` for dec or float; `:int` keeps its rule | section 7 |
+| E | exact accumulators merge in any order: no `peak` for dec or float, and (decided, stage N0p) none for `:int`, whose sum becomes the pair sum too; `agg.sum-overflow` is removed | section 7 |
 
 ## 1. What exists today
 
@@ -426,7 +426,7 @@ new sum is exact, so its merge is a plain add and needs no `peak`**:
 
 | aggregate | partial | merge | order-dependent? |
 |---|---|---|---|
-| `:int` sum | one `int` + `peak` | unchanged: merged only if `\|S\| + peak` fits | yes, as today |
+| `:int` sum | `(hi, lo)` (stage N0p; before it, one `int` and a `peak`) | add the pairs | no |
 | `:dec` sum, `mean` | `(hi, lo)` | add the pairs, carry | no |
 | `:float` sum, `mean` | 72 limbs + counter | carry both, add limbwise, carry | no: the merged state is **the same integer** |
 | `min`/`max` (typed) | the 8-byte key as an `int` | smaller / larger | no |
@@ -434,8 +434,10 @@ new sum is exact, so its merge is a plain add and needs no `peak`**:
 | `count` | `int` | add | no |
 
 The `peak` rule existed because a sequential running sum can **refuse at a row**, which a range's own sum from zero cannot tell. The new sums have no row at which they refuse (`:dec` cannot; `:float` refuses
-only on the exact total, which is not a function of the order), so nothing has to be re-read in order, and a range is **always** merged. (`:int` could use the pair sum too and lose the `peak`, `agg.sum-overflow` and a re-read;
-the pair add measured **faster** than the checked one. It would change a documented refusal into a wide number, so it is a decision for the maintainer, section 11, not part of this design.)
+only on the exact total, which is not a function of the order), so nothing has to be re-read in order, and a range is **always** merged. **Decided (stage N0p): `:int` takes the pair sum too**, and loses the `peak`,
+`agg.sum-overflow` and the re-read of a range whose sum came near the edge. The pair add measured faster than the checked add it replaces; a sum past 64 bits is now printed in full (up to 28 digits) instead of refused.
+The cell is split rather than carried (`lo += v & 0xffffffff; hi += v >> 32`, no branch), so any `int` cell, not only 18 digits, can be added: with at most 10^9 rows (`--max-rows`' ceiling) `lo` stays below 2^62 and `hi` below
+2^61, and `hi * 2^32 + lo` is exact to 2^93.
 
 **Byte-identical for every thread count**: the answer to every plan with a typed column (rows, groups, aggregates, sort, top, pages, csv and json), including each refusal's row, line, column and detail. **Not promised and not
 needed**: the in-memory state between merges (limbs before a carry differ with the partition; after the carry they are the canonical form, and the final text depends only on the exact value).
@@ -488,6 +490,7 @@ Each stage has a pass line and ends with every earlier gate still green (G6 abov
 | stage | scope | pass line |
 |---|---|---|
 | **N0** (before code) | this document accepted; the gates committed as failing tests (the reference, the SPEC, the parallel file, the mutant list) | the tests exist and fail for the right reason |
+| **N0p** (decided after the design) | `:int`'s sum becomes the pair sum; `agg.sum-overflow` and the `peak` rule are removed; docs and generated pages corrected in place | `scripts/corpus.py` md5 identical for every existing plan except those that used to refuse for a sum; G6 (no int path slower than +2%); the sum tests rewritten from refusal to the exact wide number, against Python's `int` |
 | **N1** | `:dec(S)` parse, compare, `in`, literals, in `--where`; the rules `value.not-decimal`, `value.decimal-scale`, `value.decimal-too-wide`, `column.type-conflict`; `where.syntax` additions | G1 (dec), G2 (where plans), G3, G4 (filters), G6, G7 (filter), G11, G5 for those sites |
 | **N2** | `sum`, `min`, `max`, `mean[@N]`, `distinct`, count of `:dec(S)`; the pair sum and its printer; group by a `:dec` key (text-equal and numeric) | G2 (groups), G4 (sums at the carry), G7, G5, 3,000-case `dec_mean` against `Decimal`; `agg.bad-spec` for `mean` without `@N` |
 | **N3a** | `:float` parse (scanner, Clinger, exact slow path through `std.json`), compare, `in`, literals, `min`, `max`, count; refusals `value.not-float`, `value.not-finite`, `value.float-range`, `limit.number-too-long`; the printer | G1 (float), G2, G3, G8 (filter; sum waits for N4); G9 reported; 10,000,000 cells bit-exact against Python's `float()` |
@@ -499,14 +502,16 @@ Each stage has a pass line and ends with every earlier gate still green (G6 abov
 
 ## 11. Open questions, assumptions, what the language lacks
 
-**Questions for the maintainer.**
+**Decided by the maintainer** (the six questions of the first version of this document, answered as recommended):
 
-1. Suffix per reference (chosen) or also a global `--types`? (5.1)
-2. Should `:int`'s `sum` move to the pair sum, deleting `agg.sum-overflow` and the `peak` rule (sums print as wide numbers)? It is faster (measured) and simpler, and a contract change. (7)
-3. `.5` and `5.` accepted (chosen, for consistency with every engine measured) or refused (consistency with `:int`'s strictness)? (3.2)
-4. `-0` reads as `0` (chosen). Is losing the sign of zero acceptable for the one reader who wants it? (4.1)
-5. NaN and `inf` refused (chosen) with the filter idiom as the repair. A flag to skip them silently was rejected as csvtk's `-i`; is that right? (4.1)
-6. Is the 584-byte float group state acceptable (it halves the default group bound for a float `sum`) until a two-tier accumulator exists? (4.4)
+1. Suffix per reference only; **no global `--types`** (5.1).
+2. **`:int`'s `sum` moves to the pair sum**, deleting `agg.sum-overflow` and the `peak` rule (sums print as wide numbers); a stage of its own, **N0p**, before N1 (7, 10).
+3. **`.5` and `5.` are accepted** (3.2).
+4. **`-0` reads as `0`**; losing the sign of zero is acceptable and documented (4.1).
+5. **NaN and `inf` are refused**, the filter idiom is the repair (4.1).
+6. **The 584-byte float group state is accepted** for now, bounded by `--max-state-bytes` (4.4).
+
+Nothing is left open in the design itself; what remains unknown is under "Not known" below.
 
 **Assumptions** (each checked by a gate, none by a measurement yet).
 
