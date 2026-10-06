@@ -177,6 +177,34 @@ class CellCost(unittest.TestCase):
         back = list(csv.reader(io.StringIO(got.stdout.decode()), strict=True))[1:]
         self.assertEqual({r[0]: (int(r[1]), int(r[2])) for r in back}, want)
 
+    def test_a_sum_that_overflows_is_refused_on_the_way_that_is_not_in_place(self):
+        big = "9223372036854775807"
+        for key, aggs in (('"a""b"', "sum:n"), ("a", "sum:n,distinct:n")):
+            data = ("g,n\n%s,%s\n%s,1\n" % (key, big, key)).encode()
+            for v in ((), ("--threads", "4", "--chunk-bytes", "10", "--parallel-min-bytes", "0")):
+                doc = self.s.table("t.csv", data, "--group", "g", "--agg", aggs, *v).error()
+                self.assertEqual((doc["rule"], doc["detail"]["row"]), ("agg.sum-overflow", 2), (key, aggs, v))
+
+    def test_the_byte_budget_ends_a_page_of_groups(self):
+        rows = [["k", "n"]] + [["key%05d" % i, str(i)] for i in range(300)]
+        data = encode(rows)
+        got = self.s.table("t.csv", data, "--group", "k", "--max-bytes", "400")
+        d = got.data()
+        self.assertTrue(d["truncated"])
+        self.assertLess(d["row_count"], 300)
+        self.assertEqual(d["next"], {"from": d["row_count"]})
+        self.assertLessEqual(len(__import__("json").dumps(d["rows"], separators=(",", ":"))), 400)
+        seen, at = [], 0
+        while True:
+            got = self.s.table("t.csv", data, "--group", "k", "--max-bytes", "400", "--from", at)
+            seen += got.data()["rows"]
+            if got.data()["next"] is None:
+                break
+            at = got.data()["next"]["from"]
+        self.assertEqual(seen, [["key%05d" % i, "1"] for i in range(300)])
+        got = self.s.table("t.csv", data, "--group", "k", "--max-bytes", "5")
+        self.assertEqual((got.status, got.first_rule()), (8, "limit.output-too-large"))
+
     def test_a_quoted_key_with_a_quote_is_not_the_text_it_is_written_as(self):
         # `a""b` unquoted is the text a""b; `"a""b"` is the text a"b: two groups, whatever the cache holds
         lines = ["k,n"]

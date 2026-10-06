@@ -104,10 +104,8 @@ otherwise said to be inferred.
   Real files with 1-10 KB fields and few newlines already scale. The single-thread time ties csvtk and Miller.
 * **100k-key grouping is 1.09-1.11x DuckDB's default at 8 threads (B1/B2), and wins at one thread (1.37-1.39x faster)**
   after the in-place add and the cache of hot groups (it was 1.07-1.17x slower).
-* **`select_mutants.py` and `filter_mutants.py` are stale**: 21 of their sites moved to `engine.ls` and `scan.ls` when
-  the parallel read was written (and two sites now occur twice, in `add` and `add_fast`), so they stop at their first
-  check. They have not run since. `parallel_mutants.py` and `cellcost_mutants.py` are current. To do: re-point the 21
-  and re-run both, on Linux (the Mac takes about an hour for the pair).
+* ~~**`select_mutants.py` and `filter_mutants.py` are stale**~~ (done, `docs/history.md` "The mutation scripts"): 24 sites
+  re-pointed, a mutant that cannot apply now fails the script, and CI checks that every mutant still applies.
 * **Peak memory of grouping is N threads x groups.** Bounded by `--max-state-bytes` per state, so the true bound is
   N times it; the documentation says the per-state bound, and should say this.
 
