@@ -79,9 +79,23 @@ A sort has state; every bound is a rule with a repair that suggests the way out.
   comparison looks at two 7-byte words of the first text key (or the integer itself, for a first `:int` key) before the
   full keys. This is the group sort's merge sort (`agg.sort_into`) adapted to the row index; the contract's
   `toolbox.sort` has no comparison that can see two keys of one record, so it is not used (its limits do not allow it).
-* A new module, `sorter.ls`, holds the state and the sort; `engine.order_row` is what the read does with a row, in
-  place of `process_rows`; the sorted answer is written with `engine.emit_buf`, the same writer as `--select`, so
-  the cells, the quoting and the page budget are the ones that are already tested.
+* A new module, `sorter.ls`, holds the sort. **Its state is an `agg.Groups`**, the value the grouping holds, used for another
+  purpose (`keyb` the records, `dkey` the unquoted keys, `acc` the index, `stride` the number of keys, `pairs` the rows
+  held, `memo` the plan), and the read hands the rows to the grouping's call (`engine.group_plain`, `group_fast`, and
+  `process_groups` for the cases that need the heap): a row is dropped or appended in place when the buffers have room
+  (`sorter.hook`), and by value, with a cut back, a refusal or an unquoted key, when they do not (`engine.order_row`). The
+  sorted answer is written with `engine.emit_row`, the same writer as `--select`, so the cells, the quoting and the page budget
+  are the ones that are already tested.
+
+  *Why not a state of its own.* The first version had one (a `Sorter`, and a branch in the read loop beside "write the row"
+  and "group the row"). It sorted correctly, and it made `--select` and `--where` **15 percent slower**: 0.0485 to 0.0556 s
+  for the select, 0.0464 to 0.0538 s for the filter, on the 1M-row file. Bisecting: the same slowdown came from a branch
+  that is never taken (`if mode == 3 { a[k_stop()] = 1; }`), put in the same place of the code of `main`, and none from the
+  same branch put after the loop; a branch that the compiler can see is dead (`false &&`) costs nothing. The compiler, it
+  seems, specialises the loop for the two cases it knows (write, or group), and a third reachable case stops it. So
+  **a third thing to do with a row does not go in the loop's body**: it goes in a callee, behind a case the loop already has.
+  Sorting rides the grouping's, and `select`, `filter`, the groupings and the 100k-key cells all measure 0.97x to 1.02x of
+  `main` (noise) with it.
 
 ## Threads
 

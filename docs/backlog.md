@@ -72,6 +72,13 @@ otherwise said to be inferred.
 * ~~**A row sort (text and integer).**~~ (done: `--order-by`, `docs/sort.md`. 1M rows by a text key 0.47 s on the Mac against csvtk's
   0.81, DuckDB's 0.48 at one thread and 0.13 at its default; by an integer 0.44 against 1.8, 0.41 and 0.12; the first 1000
   in 0.064 s and 2 MB.)
+* **A third case in the read's loop costs the other two 15 percent** (found while building the row sort; `docs/sort.md`): a
+  branch that is never taken, at the place where a counted row is written or grouped, made `--select` and `--where` that much
+  slower, and the same branch elsewhere did nothing. Until it is understood (a look at the code the compiler writes for the
+  loop would settle whether it is the specialisation of the loop on the mode), a new thing to do with a row goes in a
+  callee behind a case the loop already has, as the sort does. The cost of the by-value call for the groups is the other
+  half of the same fact: the in-place paths (`group_plain`, `group_fast`) exist because moving the 40-word `Groups` per row
+  cost a quarter of a group-count.
 * **The row sort is sequential.** `--threads` with `--order-by` runs the sequential read and gives the same bytes. DuckDB's
   default is 3.5x to 4.3x ahead of it on 1M rows (the shell's `sort` on Linux uses its cores too). The design that fits:
   each range keeps its rows sorted (the bounded top-N already does that for a page), the parent merges the runs in file
