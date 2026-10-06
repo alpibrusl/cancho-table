@@ -37,7 +37,8 @@ MUTANTS = [
     ("contains is allowed on a :dec column", "expr.ls", "    if is_contains && typed != 0 {", "    if is_contains && typed == 1 {"),
     # the comparison and the verdicts
     ("<= is < on decimals", "expr.ls", "\n            yes = v <= w;", "\n            yes = v < w;"),
-    ("= on a :dec column is not equality for in", "expr.ls", "\n        if kind == 2 || op == 0 {\n            yes = v == w;", "\n        if op == 0 {\n            yes = v == w;"),
+    # (Not here: `if kind == 2 || op == 0` written `if op == 0`. An `in` is parsed with op 0, so the two are the same: equivalent.)
+    ("an in-list of decimals is not an equality test", "expr.ls", "\n        if kind == 2 || op == 0 {\n            yes = v == w;", "\n        if op == 0 && kind != 2 {\n            yes = v == w;"),
     ("a decimal is compared as text", "expr.ls", "    if typed >= 2 {\n        return holds_dec(", "    if typed >= 3 {\n        return holds_dec("),
     ("a cell too fine for the scale is said not to be a decimal", "expr.ls", "    if bad == 3 {\n        return 5;", "    if bad == 3 {\n        return 4;"),
     ("a cell too wide is said to be too fine", "expr.ls", "    if bad == 2 {\n        return 6;", "    if bad == 2 {\n        return 5;"),

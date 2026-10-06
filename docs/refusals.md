@@ -61,7 +61,7 @@ $ table --where "status = 200" --select Customer,bytes orders.csv          # exi
 
 ```console
 $ table --where "bytes:int > 100" --select id orders.csv          # exit status 8
-{"code": "PRECONDITION_FAILED", "rule": "value.not-integer", "message": "a cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)", "hint": "keep out the rows with such a cell with --where, or do not ask for an integer of this column", "repair": {"kind": "none", "reason": "what the cell was meant to be is not known"}, "detail": {"path": "orders.csv", "context": "where", "column": "bytes", "row": 2, "line": 3, "value": "", "value_truncated": false}}
+{"code": "PRECONDITION_FAILED", "rule": "value.not-integer", "message": "a cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)", "hint": "keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N))", "repair": {"kind": "none", "reason": "what the cell was meant to be is not known"}, "detail": {"path": "orders.csv", "context": "where", "column": "bytes", "row": 2, "line": 3, "value": "", "value_truncated": false}}
 ```
 <!-- /gen:examples -->
 
@@ -99,12 +99,13 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `io.read-failed` | 1 | never | the operating system failed a read |
 | `limit.line-too-long` | 8 | sometimes | a line longer than --max-line-bytes |
 | `limit.header-too-large` | 8 | never | the header record holds more than --max-line-bytes bytes |
-| `limit.record-too-large` | 8 | never | a record read for --select, --where or --group holds more than --max-line-bytes bytes |
+| `limit.record-too-large` | 8 | never | a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes |
 | `limit.output-too-large` | 8 | never | the first row of a page is longer than --max-bytes |
 | `limit.too-many-rows` | 8 | never | --format csv reached --max-rows with rows left unread |
+| `limit.too-many-sort-rows` | 8 | never | --order-by would hold more than --max-sort-rows rows to sort |
 | `limit.too-many-groups` | 8 | never | more groups than --max-groups |
 | `limit.too-many-distinct` | 8 | never | more distinct values than --max-distinct |
-| `limit.state-too-large` | 8 | never | the keys and values kept for groups hold more than --max-state-bytes bytes |
+| `limit.state-too-large` | 8 | never | the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes |
 | `parse.csv-ragged-row` | 8 | never | a row has a different number of fields than the header |
 | `parse.csv-bad-quote` | 8 | never | a closing quote is followed by something other than the delimiter or the end of the record |
 | `parse.csv-unterminated-quote` | 8 | never | a quoted field is still open at the end of the input |
@@ -117,7 +118,10 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `sort.unknown-key` | 2 | never | --sort names no output column of the grouping |
 | `value.not-integer` | 8 | never | a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not) |
 | `value.integer-overflow` | 8 | never | a cell of an :int column or of sum, min or max does not fit 64 bits |
-| `agg.sum-overflow` | 8 | never | a sum that would not fit 64 bits |
+| `value.not-decimal` | 8 | never | a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone |
+| `value.decimal-scale` | 8 | sometimes | a cell of a :dec(S) column has more fractional digits than S (it is never rounded) |
+| `value.decimal-too-wide` | 8 | never | a cell of a :dec(S) column has 18 or more significant digits once scaled to S |
+| `column.type-conflict` | 2 | never | the plan reads one column as two numeric types: :int, or :dec with two scales |
 <!-- /gen:rules -->
 
 The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other lexsys-tools; the rest are `table`'s own.

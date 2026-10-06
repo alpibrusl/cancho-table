@@ -104,7 +104,7 @@ def main():
         for threads in (1, a.threads):
             cells.append((f"table int   {q} t={threads}", (q, threads, "int"), table("status = 404 and bytes:int >= 500", "id,bytes", threads, count), chk(want_i)))
             cells.append((f"table dec   {q} t={threads}", (q, threads, "dec"), table("status = 404 and price:dec(2) >= 500.00", "id,price", threads, count), chk(want_d)))
-        for threads in (1, a.threads):
+        for threads in (1, a.threads) if shutil.which("duckdb") else ():
             cells.append((f"duckdb DECIMAL {q} t={threads}", (q, threads, "duck-dec"), duck("price", "decimal(18,2)", count, threads), chk(want_d)))
             cells.append((f"duckdb DOUBLE  {q} t={threads}", (q, threads, "duck-dbl"), duck("price", "double", count, threads), chk(want_d)))
         if shutil.which("csvtk") and not count:
