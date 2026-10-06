@@ -160,7 +160,7 @@ words and take the full comparison. Both are in the backlog.
 
 ### Tests and mutants
 
-`tests/conformance/test_sort.py` (17 tests): a differential test against Python's stable sort over **1,600 random plans**
+`tests/conformance/test_sort.py` (18 tests): a differential test against Python's stable sort over **1,600 random plans**
 (tables with ties, empties, quoted fields with commas, quotes and newlines, the edges of 64-bit integers; one to three keys,
 descending or not, `:int` or text, `#N` positions, `--where`, `--select` that leaves the keys out, `--top`, `--limit`,
 `--from`, csv and json, and `--threads` on one in ten, which must give the same bytes; about one plan in twenty is a

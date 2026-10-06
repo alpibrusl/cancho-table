@@ -201,6 +201,20 @@ class Sort(unittest.TestCase):
             got = self.s.table("t.csv", data, "--order-by", "k", "--limit", limit)
             self.assertEqual(got.data()["rows"], sorted(big, key=lambda r: r[0])[:limit], limit)
 
+    def test_keys_that_share_their_first_bytes(self):
+        # the sort compares two words of seven bytes before the whole key: pairs that agree on the first word, on both, and on neither
+        rng = random.Random(14)
+        stems = ["", "a", "common", "commonp", "commonpr", "commonprefix", "commonprefixxxxx", "commonprefixxxxxx"]
+        keys = [stem + suffix for stem in stems for suffix in ("", "0", "1", "10", "9", "a", "Z", "\xe9")]
+        rows = [[rng.choice(keys), str(i)] for i in range(300)]
+        data = table_data(rows, ["k", "v"])
+        for desc in (False, True):
+            want = sorted(rows, key=lambda r: r[0], reverse=desc)
+            got = self.csv_run(data, "--order-by", ("-" if desc else "") + "k")
+            self.assertEqual(self.parse_csv(got)[1:], want, desc)
+            got = self.s.table("t.csv", data, "--order-by", ("-" if desc else "") + "k", "--limit", 25)
+            self.assertEqual(got.data()["rows"], [[json_cell(c) for c in r] for r in want[:25]], desc)
+
     def test_the_rows_are_all_there_when_the_keys_are_not_selected(self):
         data = b"a,b,c\n3,x,1\n1,y,2\n2,z,3\n"
         got = self.csv_run(data, "--order-by", "-a", "--select", "c")

@@ -36,7 +36,7 @@ MUTANTS = [
     ("the merge takes the later of two equal runs first", "sorter.ls", "(q >= hi || !before(s, keys, pre, pre2, order[q], order[p]))", "(q >= hi || before(s, keys, pre, pre2, order[q], order[p]))"),
     ("the second key of two is not looked at", "sorter.ls", "    var j = 0;\n    while j < s.nk {\n        var c = 0;\n        if keys[3 * j + 2] == 1 {\n            let vx", "    var j = 0;\n    while j < 1 {\n        var c = 0;\n        if keys[3 * j + 2] == 1 {\n            let vx"),
     ("the second prefix word is compared ascending for a descending key", "sorter.ls", "    if pre2[x] != pre2[y] {\n        if keys[1] == 1 {\n            return pre2[x] > pre2[y];\n        }", "    if pre2[x] != pre2[y] {\n        if false {\n            return pre2[x] > pre2[y];\n        }"),
-    ("the second prefix word starts at the first byte", "sorter.ls", "                pre2[i] = prefix_of(kb, 7);", "                pre2[i] = prefix_of(kb, 6);"),
+    ("the second prefix word is in the wrong order", "sorter.ls", "                pre2[i] = prefix_of(kb, 7);", "                pre2[i] = 0 - prefix_of(kb, 7);"),
     # the cut back
     ("the cut back keeps one row too few", "sorter.ls", "        while i < cap && i < count {", "        while i < cap - 1 && i < count {"),
     ("the cut back keeps the offsets of the old buffer", "sorter.ls", "                    fresh_rows = vec.push(heap, fresh_rows, at + a - old_off);", "                    fresh_rows = vec.push(heap, fresh_rows, a);"),
@@ -75,7 +75,8 @@ MUTANTS = [
 #  - the first rows are not told apart from the sort of everything (`--top` not a cut of what is held, in `wanted`): the
 #    rows past `top` are held and never written;
 #  - the rows that were rejected are kept (`reject` always answering 0): the cut back drops them;
-#  - a prefix of 6 bytes for 7: the full keys settle what the prefix does not;
+#  - a prefix of 6 bytes for 7, a second word that starts at byte 6 or 8: a prefix that is equal falls to the full keys, and
+#    one that starts early only repeats a byte; the answer is the same and only the time is not;
 #  - a bound too small for the page does not fall back to a full sort (`wanted` kept): both ways refuse at the same row,
 #    the one past `--max-sort-rows` (a page of `2 * wanted + 1` rows that does not fit is never reached before it).
 
