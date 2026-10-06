@@ -52,7 +52,9 @@ status,count,sum:bytes
 * **filter rows**: `--where EXPR`, conditions joined by `and`: `= != < <= > >=`,
   `contains`, `in (...)`. Text compares bytewise; **`COLUMN:int` compares as an exact
   64-bit integer** (a cell that is not one, an empty cell included, is a refusal naming
-  its row and column, never a coercion or a float); conditions stop at the first false,
+  its row and column, never a coercion or a float); **`COLUMN:dec(S)` compares as an exact
+  decimal of at most `S` fractional digits** (never rounded: more digits is a refusal, as is
+  a cell that is not a decimal; `1.5` and `1.50` are one value, `docs/numbers.md`); conditions stop at the first false,
   so `x != '' and x:int > 5` guards an empty cell. A malformed expression is
   `where.syntax` with the byte offset of the error. It composes with `--select` and
   paging, and is applied before grouping;

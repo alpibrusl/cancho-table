@@ -112,6 +112,17 @@ pub fn k_sort_desc() -> [] int {
     return 22;
 }
 
+// The condition of `--where` that refused a cell (for a :dec column, whose refusal names its scale and, for the repair, the text of
+// the condition).
+pub fn k_err_cond() -> [] int {
+    return 23;
+}
+
+// For a :dec cell with more fractional digits than its scale: how many it has.
+pub fn k_err_digits() -> [] int {
+    return 26;
+}
+
 pub fn k_size() -> [] int {
     return 32;
 }
@@ -273,7 +284,22 @@ pub fn screen[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, cols
     }
     // A condition met a cell it cannot compare.
     let column = cols[query.cond_at(tree, which, 3)];
-    a[k_abort()] = 9 + verdict;
+    var code = 9 + verdict;
+    if verdict >= 4 {
+        // 4, 5, 6: a :dec cell that is not a decimal, too fine for the scale, too wide: 22, 23, 24
+        code = 18 + verdict;
+    }
+    a[k_abort()] = code;
+    a[k_err_cond()] = which;
+    if verdict == 5 {
+        var at = cells[3 * column + 1];
+        var n = 0;
+        while at > cells[3 * column] && int_of(record[at - 1]) != '.' {
+            at = at - 1;
+            n = n + 1;
+        }
+        a[k_err_digits()] = n;
+    }
     a[k_err_col()] = column;
     a[k_err_fn()] = -1;
     a[k_err_row()] = a[k_records()];

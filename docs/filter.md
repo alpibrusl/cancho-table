@@ -29,7 +29,7 @@ rows (a `--where` alone returns every column). `--group` and/or `--agg`: groups
 EXPR   := COND { "and" COND }
 COND   := COLUMN OP VALUE | COLUMN "contains" VALUE | COLUMN "in" "(" VALUE { "," VALUE } ")"
 OP     := "=" | "!=" | "<" | "<=" | ">" | ">="
-COLUMN := WORD [":int"]        a header name, or #N the Nth column (1-based)
+COLUMN := WORD [":int" | ":dec(" N ")"]     a header name, or #N the Nth column; N is a scale, 0 to 18 (1-based)
 VALUE  := WORD
 WORD   := bare | 'quoted'
 ```
@@ -65,8 +65,26 @@ that does not fit, is **never coerced and never a float**: the whole query is re
 with `value.not-integer` or `value.integer-overflow`, naming the **row** (1-based among
 data records), the **line**, the **column** and the cell (its first 64 bytes). A
 deviation from section 5: it says "a column of decimals is read as an exact scaled
-integer or as a string" and leaves open how decimals are declared; they are not, here,
-and a decimal is a refusal.
+integer or as a string" and leaves open how decimals are declared; **they are declared
+`:dec(S)`**, below, and an `:int` column that meets `1.5` is still a refusal (its hint says to
+declare the column `:dec(1)`).
+
+**Exact decimals are opt-in per column too**: `price:dec(2) >= 12.50` (docs/numbers.md, stage N1).
+`S`, 0 to 18, is the number of fractional digits the column may hold, and is written, never inferred.
+The cell is `[+-]? digits? [. digits?]` with at least one digit, ASCII, nothing else (no exponent, no
+space, no thousands separator; `.5` and `5.` are fine), as an exact integer of 10^-S: `3` is 300 and `1.5`
+is 150 at scale 2. **It is never rounded**: a cell with more than `S` fractional digits is refused
+(`value.decimal-scale`, with the repair that declares the larger scale), one that is 18 or more
+significant digits once scaled is `value.decimal-too-wide`, anything else `value.not-decimal` (an empty
+cell is not one); each names the row, the line, the column and the cell, as `:int` does, and the checks run
+in that order (the whole cell against the grammar, then the scale, then the width). The literals of the
+condition are read the same way at the same scale, so `12.505` against `:dec(2)` is an error of the
+expression at the literal, not of a row. **Equal as numbers**: `1.5` and `1.50` are one value
+(`price:dec(2) = 1.5` matches both), while the same column without a suffix is text and they differ.
+`contains` on a typed column is a syntax error. **One numeric type per column in one plan**:
+`x:dec(2)` beside `x:int` or `x:dec(3)`, or beside `sum:x`, is `column.type-conflict` (exit 2) before a
+row is read; an unmarked mention is text and mixes freely. Not built yet (the stages after N1): typed
+aggregates, group keys and sort keys of a decimal, `:float`, the type report.
 
 **Empty cells.** In a text comparison an empty cell is the empty string (`name = ''`
 works). In an `:int` condition an empty cell **is not an integer: it is refused**, not

@@ -67,14 +67,15 @@ class Numbers(unittest.TestCase):
                         self.assertEqual((d["value"], d["value_truncated"]), (cell, False), got)
 
     def test_the_repair_of_a_scale_refusal_is_the_whole_invocation_with_a_larger_scale(self):
-        got = self.s.table("t.csv", "id,x\n1,3.999\n", "--where", "x:dec(2) >= 1 and id = 1", "--select", "id")
+        got = self.s.table("t.csv", "id,x,y\n1,3.999,2\n", "--where", "y:dec(1) >= 1 and x:dec(2) >= 1 and id = 1", "--select", "id")
         self.assertEqual(got.first_rule(), "value.decimal-scale")
         repair = got.error()["repair"]
         self.assertEqual(repair["kind"], "choose", got)
-        argv = repair["options"][0]["invocation"] if "invocation" in repair["options"][0] else repair["options"][0]["argv"]
-        self.assertIn("x:dec(3) >= 1 and id = 1", argv, got)
+        argv = repair["options"][0]["argv"]
+        self.assertIn("y:dec(1) >= 1 and x:dec(3) >= 1 and id = 1", argv, got)       # the second condition, not the first, and the tail kept
+        self.assertEqual(got.error()["detail"]["scale"], 2)
         # and that invocation works
-        again = self.s.table("t.csv", "id,x\n1,3.999\n", "--where", "x:dec(3) >= 1 and id = 1", "--select", "id")
+        again = self.s.table("t.csv", "id,x,y\n1,3.999,2\n", "--where", "y:dec(1) >= 1 and x:dec(3) >= 1 and id = 1", "--select", "id")
         self.assertEqual(again.data()["rows"], [["1"]])
 
     # ---- the operators, the values, equality by value ----------------------------------------------------------
@@ -117,7 +118,7 @@ class Numbers(unittest.TestCase):
 
     def test_a_typed_condition_after_a_false_one_is_not_reached(self):
         data = "id,x\n1,\n2,3\n3,abc\n"
-        got = self.s.table("t.csv", data, "--where", "x != '' and x:dec(2) > 1 and id != 3", "--select", "id")
+        got = self.s.table("t.csv", data, "--where", "id != 3 and x != '' and x:dec(2) > 1", "--select", "id")
         self.assertEqual(got.data()["rows"], [["2"]])
         got = self.s.table("t.csv", data, "--where", "x:dec(2) > 1", "--select", "id")      # an empty cell is not a decimal
         self.assertEqual((got.status, got.first_rule(), got.error()["detail"]["row"]), (8, "value.not-decimal", 1))
@@ -125,10 +126,9 @@ class Numbers(unittest.TestCase):
         self.assertEqual((got.status, got.error()["detail"]["row"]), (8, 1))
 
     def test_a_quoted_cell_is_read_without_its_quotes(self):
-        data = 'id,x\n1,"1.50"\n2,"2,5"\n'
-        got = self.s.table("t.csv", data, "--where", "x:dec(2) = 1.5", "--select", "id")
+        got = self.s.table("t.csv", 'id,x\n1,"1.50"\n2,"-0.5"\n', "--where", "x:dec(2) = 1.5", "--select", "id")
         self.assertEqual(got.data()["rows"], [["1"]])
-        got = self.s.table("t.csv", data, "--where", "x:dec(2) >= 0", "--select", "id")
+        got = self.s.table("t.csv", 'id,x\n1,"1.50"\n2,"2,5"\n', "--where", "x:dec(2) >= 0", "--select", "id")
         self.assertEqual((got.status, got.first_rule(), got.error()["detail"]["row"], got.error()["detail"]["value"]), (8, "value.not-decimal", 2, "2,5"))
 
     def test_the_digits_and_the_width_are_the_declared_ones(self):
@@ -136,7 +136,7 @@ class Numbers(unittest.TestCase):
         for scale, cell, ok in ((2, mx, True), (2, "10000000000000000.00", False), (0, "999999999999999999", True), (0, "1000000000000000000", False),
                                 (18, "0.999999999999999999", True), (18, "1.000000000000000000", False), (18, "0.000000000000000001", True), (1, "0.01", False),
                                 (3, "-999999999999999.999", True), (3, "-1000000000000000.000", False), (0, "5.", True), (0, "5.0", False)):
-            got = self.s.table("t.csv", enc([["x"], [cell]]), "--where", "x:dec(%d) != 7" % scale)
+            got = self.s.table("t.csv", enc([["x"], [cell]]), "--where", "x:dec(%d) != 0" % scale)
             self.assertEqual(got.status == 0, ok, (scale, cell, got))
 
     # ---- the grammar of the suffix and of the literals --------------------------------------------------------
@@ -217,8 +217,8 @@ class Numbers(unittest.TestCase):
                 else:
                     cells.append(rng.choice(["1.5", "1.50", "-0", ".5", "5.", "", " 1", "1e2", "0.0", "00.10", "9" * rng.randint(1, 22)]))
             lit = rng.choice(["0", "1.5", "-2", "0.1", "5", ".5", "12.25", "-0.5"])
-            if len(lit.split(".")[1] if "." in lit else "") > scale:
-                lit = "1"
+            if ref.dec(lit, scale)[0] != "ok":
+                lit = "0"
             op = rng.choice(list(OPS))
             data = enc([["id", "x"]] + [[str(n), c] for n, c in enumerate(cells, 1)])
             got = self.s.table("t.csv", data, "--where", "x:dec(%d) %s %s" % (scale, op, lit), "--select", "id")
@@ -262,8 +262,8 @@ def dec_cell(rng, scale):
 
 
 def dec_literal(rng, scale):
-    cands = ["0", "1", "-1.5", "12.25", "+3", ".5", "5.", "007.1", "-0", "999", "0.1", "0.05", "-0.001", "1.000", "123456.789"]
-    return rng.choice([c for c in cands if "." in c and len(c.split(".")[1]) <= scale] + [c for c in cands if "." not in c])
+    cands = ["0", "1", "-1.5", "12.25", "+3", ".5", "5.", "007.1", "-0", "999", "0.1", "0.05", "-0.001", "1.000", "123456.789", "0.000000000000000001"]
+    return rng.choice([c for c in cands if ref.dec(c, scale)[0] == "ok"])
 
 
 def make_dec_table(rng):

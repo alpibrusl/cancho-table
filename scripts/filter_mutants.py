@@ -31,7 +31,7 @@ MUTANTS = [
     ("a sum of 2^63 and more takes the narrow way", "agg.ls", "if high >= 0 - 2147483648 && high < 2147483648 {", "if high >= 0 - 2147483648 && high < 4294967296 {"),
     # exact integers
     ("2^63 is accepted as a positive integer", "query.ls", "    if acc == int_min() {\n        return (0, 2);", "    if false && acc == int_min() {\n        return (0, 2);"),
-    ("a minus sign is a plus", "query.ls", "negative = int_of(data[0]) == '-';", "negative = int_of(data[0]) == '+';"),
+    ("a minus sign is a plus", "query.ls", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '-';", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '+';"),
     ("a sign alone is zero", "query.ls", "    if at >= len(data) {\n        return (0, 1);\n    }", "    if false && at >= len(data) {\n        return (0, 1);\n    }"),
     ("an integer past 64 bits wraps", "query.ls", "        if acc < (int_min() + digit) / 10 {\n            over = true;", "        if acc < (int_min() + digit) / 10 && false {\n            over = true;"),
     # the grammar

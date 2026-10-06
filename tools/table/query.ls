@@ -15,11 +15,11 @@ module query;
 // refers to a name by its index in that list.
 //
 // `conds` has 7 integers per condition:
-//     kind (0 compare, 1 contains, 2 in), int (the column is :int),
+//     kind (0 compare, 1 contains, 2 in), type (0 text, 1 :int, 2 + S for :dec(S): docs/numbers.md),
 //     op (0 =, 1 !=, 2 <, 3 <=, 4 >, 5 >=), name (index into names),
 //     first literal and how many (into `lits`), offset (in the expression).
 // `lits` has 4 per literal: where its bytes begin and end in `ltext`, its
-// integer value when the condition is :int, 0.
+// integer value when the condition is :int, or its scaled value when it is :dec(S), 0.
 // `aggs` has 2 per aggregate: function (0 count, 1 sum, 2 min, 3 max,
 // 4 distinct) and name (or -1 for count).
 // `meta` is: names for select, conditions, names for group, aggregates, order keys; then, for each order key,
@@ -196,6 +196,143 @@ pub fn parse_int[&d](data: &d [byte]) -> [] (int, int) {
         return (0, 2);
     }
     return (0 - acc, 0);
+}
+
+// 10^k for 0 <= k <= 18.
+pub fn pow10(k: int) -> [] int {
+    var x = 1;
+    var n = 0;
+    while n < k {
+        x = x * 10;
+        n = n + 1;
+    }
+    return x;
+}
+
+// `data` as an exact decimal at scale `scale` (docs/numbers.md, section 3): `[+-]? digits? [. digits?]`, at least one digit,
+// ASCII, nothing else (no exponent, no space, no separator); at most `scale` fractional digits (fewer are padded with zeros:
+// `1.5` at scale 2 is 150); and below 10^18 once scaled, so it is an `int`. Never rounded, never a float. Answers (value,
+// status): 0 it is, 1 it is not a decimal (empty, a sign or a point alone, an exponent, a space, a second point, a letter),
+// 2 it is one that is too wide, 3 it has more fractional digits than `scale`. **The order of the checks is the design's**:
+// the whole cell against the grammar first (a bad byte after a width problem is still a grammar error), then the scale,
+// then the width. Leading zeros do not count towards the width.
+pub fn parse_dec[&d](data: &d [byte], scale: int) -> [] (int, int) {
+    var at = 0;
+    var negative = false;
+    let n = len(data);
+    if n > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {
+        negative = int_of(data[0]) == '-';
+        at = 1;
+    }
+    var v = 0;
+    var digits = 0;
+    var frac = 0;
+    var seen_point = false;
+    var wide = false;
+    while at < n {
+        let c = int_of(data[at]);
+        if c >= '0' && c <= '9' {
+            if v >= 100000000000000000 {
+                wide = true;
+            } else {
+                v = v * 10 + c - '0';
+            }
+            digits = digits + 1;
+            if seen_point {
+                frac = frac + 1;
+            }
+        } else if c == '.' && !seen_point {
+            seen_point = true;
+        } else {
+            return (0, 1);
+        }
+        at = at + 1;
+    }
+    if digits == 0 {
+        return (0, 1);
+    }
+    if frac > scale {
+        return (0, 3);
+    }
+    if wide {
+        return (0, 2);
+    }
+    if frac < scale {
+        let pad = scale - frac;
+        if v > 999999999999999999 / pow10(pad) {
+            return (0, 2);
+        }
+        v = v * pow10(pad);
+    }
+    if negative {
+        return (0 - v, 0);
+    }
+    return (v, 0);
+}
+
+// The numeric type a name is read as in the plan, or 0 when it is only ever text: the `:int` or `:dec(S)` of a condition on it (1,
+// or 2 + S), `:int` for the sum, min or max of it, `:int` for an `--order-by` key flagged integer. Answers the type of the first
+// mention that has one, after `from`; and the index of that mention's name in `names`, or -1 when there is none.
+pub fn typed_mention[&q, &c](q: &q Query, cols: &c [int], column: int, from: int) -> [] (int, int) {
+    var k = 0;
+    var seen = 0;
+    while k < count_of(q, 1) {
+        let t = cond_at(q, k, 1);
+        if t != 0 && cols[cond_at(q, k, 3)] == column {
+            if seen >= from {
+                return (t, cond_at(q, k, 3));
+            }
+            seen = seen + 1;
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < agg_count(q) {
+        let f = agg_at(q, k, 0);
+        if (f == 1 || f == 2 || f == 3) && cols[agg_at(q, k, 1)] == column {
+            if seen >= from {
+                return (1, agg_at(q, k, 1));
+            }
+            seen = seen + 1;
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < order_count(q) {
+        if order_flags(q, k) / 2 % 2 == 1 && cols[order_name(q, k)] == column {
+            if seen >= from {
+                return (1, order_name(q, k));
+            }
+            seen = seen + 1;
+        }
+        k = k + 1;
+    }
+    return (0, -1);
+}
+
+// A column that the plan reads as two different numeric types (a `:dec(2)` and an `:int`, or `:dec(2)` and `:dec(3)`): answers the
+// column and the two types, else (-1, 0, 0). Text mentions are not counted: an unmarked name is text and may be mixed freely.
+pub fn type_conflict[&q, &c](q: &q Query, cols: &c [int]) -> [] (int, int, int) {
+    var n = 0;
+    while n < name_count(q) {
+        let column = cols[n];
+        let (first, i1) = typed_mention(q, cols, column, 0);
+        if first != 0 {
+            var j = 1;
+            var more = true;
+            while more {
+                let (other, i2) = typed_mention(q, cols, column, j);
+                if other == 0 {
+                    more = false;
+                } else if other != first {
+                    return (column, first, other);
+                }
+                j = j + 1;
+            }
+        }
+        n = n + 1;
+    }
+    return (0 - 1, 0, 0);
 }
 
 // One more literal: its bytes (kept in `ltext`) and its integer value.
