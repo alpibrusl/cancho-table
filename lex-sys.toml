@@ -1,0 +1,58 @@
+[package]
+name = "table"
+lex-sys = "f8ebe98e6867e1b7af3a5636b180b56eb3dd3cc1"   # the compiler these sources were written for
+
+# `contract` is not a directory here: it is lexsys-tools' package, one store per
+# module, pinned to a commit. `toolbox.built` is not in the package; it is this
+# tool's own generated module (generated/table, written by scripts/manifest.py).
+
+[dependencies.cli]
+git = "https://github.com/alpibrusl/lexsys-tools"
+rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+path = ".lex-sys-vcs/toolbox.cli"
+
+[dependencies.describe]
+git = "https://github.com/alpibrusl/lexsys-tools"
+rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+path = ".lex-sys-vcs/toolbox.describe"
+
+[dependencies.fail]
+git = "https://github.com/alpibrusl/lexsys-tools"
+rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+path = ".lex-sys-vcs/toolbox.fail"
+
+[dependencies.limit]
+git = "https://github.com/alpibrusl/lexsys-tools"
+rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+path = ".lex-sys-vcs/toolbox.limit"
+
+[dependencies.lines]
+git = "https://github.com/alpibrusl/lexsys-tools"
+rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+path = ".lex-sys-vcs/toolbox.lines"
+
+[dependencies.out]
+git = "https://github.com/alpibrusl/lexsys-tools"
+rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+path = ".lex-sys-vcs/toolbox.out"
+
+[dependencies.path]
+git = "https://github.com/alpibrusl/lexsys-tools"
+rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+path = ".lex-sys-vcs/toolbox.path"
+
+[dependencies.place]
+git = "https://github.com/alpibrusl/lexsys-tools"
+rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+path = ".lex-sys-vcs/toolbox.place"
+
+[dependencies.text]
+git = "https://github.com/alpibrusl/lexsys-tools"
+rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+path = ".lex-sys-vcs/toolbox.text"
+
+[[bin]]
+name = "table"
+sources = ["tools/table", "generated/table"]
+std = true
+out = "build/table"

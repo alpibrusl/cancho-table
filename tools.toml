@@ -1,0 +1,16 @@
+# The authority ceiling of each tool (lex-sys docs/agent-toolbox.md D12), as in
+# lexsys-tools: a person writes and reviews this file; the authority is whatever
+# `lex-sys authority` derives from the source (manifests/<tool>.authority.json,
+# embedded in the binary and printed by `table introspect`), and
+# scripts/manifest.py --check fails when a derived label is not allowed here.
+# Rows are exact in both directions in the sense that matters: the derived set
+# may be smaller than the ceiling, never larger. No tool may hold ffi, net_out,
+# net_in or clock; `bounded` must be true.
+#
+# `table` reads one file and writes one document: no standard input (no
+# io_read), nothing written to disk (no file_write, no dir_write).
+
+max_tools = 10
+
+[table]
+allow = ["args", "dir_read", "err_write", "file_read", "fs_read(\"\")", "heap", "io_write"]
