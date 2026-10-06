@@ -182,6 +182,25 @@ class Sort(unittest.TestCase):
             # as text the same column is fine
             self.assertEqual(self.csv_run(data, "--order-by", "n").status, 0)
 
+    def test_a_quoted_key_with_doubled_quotes_sorts_as_the_text_it_says(self):
+        # `a"c` is written "a""c": raw, it would sort as a""c, which is before a"b
+        rows = [['a"c', "1"], ['a"b', "2"], ["a", "3"], ['a"', "4"], ['a"c', "5"], ['"', "6"], ["", "7"], ['a""', "8"]]
+        data = table_data(rows, ["k", "v"])
+        want = sorted(rows, key=lambda r: r[0])
+        self.assertEqual(self.parse_csv(self.csv_run(data, "--order-by", "k"))[1:], want)
+        self.assertEqual(self.parse_csv(self.csv_run(data, "--order-by", "-k"))[1:], sorted(rows, key=lambda r: r[0], reverse=True))
+        # a quoted key against an unquoted one that holds a quote (text, in the middle of a field): x"y is after x"#
+        data = b'k,v\n"x""y",1\nx"#,2\n"x""y",3\nx"#,4\n'
+        self.assertEqual([r[1] for r in self.parse_csv(self.csv_run(data, "--order-by", "k"))[1:]], ["2", "4", "1", "3"])
+        self.assertEqual([r[1] for r in self.parse_csv(self.csv_run(data, "--order-by", "-k"))[1:]], ["1", "3", "2", "4"])
+        self.assertEqual([r[1] for r in self.s.table("t.csv", data, "--order-by", "k", "--limit", 1).data()["rows"]], ["2"])
+        # and through the bounded top-N, which keeps such a key in a side buffer and moves it when it cuts back
+        big = [[rows[i % len(rows)][0], str(i)] for i in range(200)]
+        data = table_data(big, ["k", "v"])
+        for limit in (1, 3, 20):
+            got = self.s.table("t.csv", data, "--order-by", "k", "--limit", limit)
+            self.assertEqual(got.data()["rows"], sorted(big, key=lambda r: r[0])[:limit], limit)
+
     def test_the_rows_are_all_there_when_the_keys_are_not_selected(self):
         data = b"a,b,c\n3,x,1\n1,y,2\n2,z,3\n"
         got = self.csv_run(data, "--order-by", "-a", "--select", "c")

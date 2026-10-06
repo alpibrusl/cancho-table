@@ -30,15 +30,13 @@ MUTANTS = [
     ("the doubled quotes of a key are kept", "sorter.ls", "            s2 = query.unquote(heap, s2, record[first..end]);", "            s2 = buffer.append(heap, s2, record[first..end]);"),
     ("an unquoted key is compared where it was quoted", "sorter.ls", "        let unquote = cells[3 * column + 2] == 1 && index_of_byte(record[first..end], byte_of(34)) >= 0;", "        let unquote = false;"),
     # the order
-    ("rows with equal keys come out in reverse order", "sorter.ls", "    return vec.get(s.rows, x * stride + 2) < vec.get(s.rows, y * stride + 2);", "    return vec.get(s.rows, x * stride + 2) > vec.get(s.rows, y * stride + 2);"),
     ("a descending key is compared ascending", "sorter.ls", "            if keys[3 * j + 1] == 1 {\n                return c > 0;\n            }", "            if keys[3 * j + 1] == 1 {\n                return c < 0;\n            }"),
     ("a descending first key is ascending by its prefix", "sorter.ls", "        if keys[1] == 1 {\n            return pre[x] > pre[y];\n        }", "        if false {\n            return pre[x] > pre[y];\n        }"),
-    ("the prefix of an integer first key is its text", "sorter.ls", "            if keys[2] == 1 {\n                pre[i] = vec.get(s.rows, i * stride + 3);", "            if false {\n                pre[i] = vec.get(s.rows, i * stride + 3);"),
+    ("the prefix of an integer first key is its text", "sorter.ls", "            if keys[2] == 1 {\n                pre[i] = vec.get(s.rows, i * stride + 2);", "            if false {\n                pre[i] = vec.get(s.rows, i * stride + 2);"),
     ("the merge takes the later of two equal runs first", "sorter.ls", "(q >= hi || !before(s, keys, pre, order[q], order[p]))", "(q >= hi || before(s, keys, pre, order[q], order[p]))"),
     ("the second key of two is not looked at", "sorter.ls", "    var j = 0;\n    while j < s.nk {\n        var c = 0;\n        if keys[3 * j + 2] == 1 {\n            let vx", "    var j = 0;\n    while j < 1 {\n        var c = 0;\n        if keys[3 * j + 2] == 1 {\n            let vx"),
     # the cut back
     ("the cut back keeps one row too few", "sorter.ls", "        while i < cap && i < count {", "        while i < cap - 1 && i < count {"),
-    ("the cut back forgets the rows' numbers", "sorter.ls", "            fresh_rows = vec.push(heap, fresh_rows, vec.get(or.rows, x * stride + 2));", "            fresh_rows = vec.push(heap, fresh_rows, 0);"),
     ("the cut back keeps the offsets of the old buffer", "sorter.ls", "                    fresh_rows = vec.push(heap, fresh_rows, at + a - old_off);", "                    fresh_rows = vec.push(heap, fresh_rows, a);"),
     ("the cut back loses an unquoted key", "sorter.ls", "                    fresh_side = buffer.append(heap, fresh_side, key_bytes(or, x, j));", "                    fresh_side = buffer.append(heap, fresh_side, \"\");"),
     # engine.order_row
@@ -49,7 +47,6 @@ MUTANTS = [
     ("a bound on the rows is a bound on the bytes", "engine.ls", "    if status == 1 {\n        a[k_abort()] = 20;", "    if status == 1 {\n        a[k_abort()] = 21;"),
     # table.ls: the wanted rows, the plan, the writing
     ("a page does not keep the row that says there is more", "table.ls", "            wanted = from + limit + 1;", "            wanted = from + limit;"),
-    ("a bound too small for the page does not fall back to a full sort", "table.ls", "        if wanted > 0 && 2 * wanted + 1 > max_sort_rows {\n            wanted = 0;", "        if false && wanted > 0 && 2 * wanted + 1 > max_sort_rows {\n            wanted = 0;"),
     ("--top is not a cut of the sorted rows", "table.ls", "    var end = n;\n    if top > 0 && top < n {\n        end = top;\n    }\n    var pending = rows;", "    var end = n;\n    if false {\n        end = top;\n    }\n    var pending = rows;"),
     ("a page starts one row late", "table.ls", "    let ord = sorter.order(heap, held, keys);\n    var pos = from;", "    let ord = sorter.order(heap, held, keys);\n    var pos = from + 1;"),
     ("the next of a full page is one past", "table.ls", "            a[engine.k_more()] = 1;\n            a[engine.k_next()] = pos;\n            going = false;\n        } else {\n            borrow ord", "            a[engine.k_more()] = 1;\n            a[engine.k_next()] = pos + 1;\n            going = false;\n        } else {\n            borrow ord"),
@@ -76,7 +73,9 @@ MUTANTS = [
 #  - the first rows are not told apart from the sort of everything (`--top` not a cut of what is held, in `wanted`): the
 #    rows past `top` are held and never written;
 #  - the rows that were rejected are kept (`reject` always answering 0): the cut back drops them;
-#  - a prefix of 6 bytes for 7: the full keys settle what the prefix does not.
+#  - a prefix of 6 bytes for 7: the full keys settle what the prefix does not;
+#  - a bound too small for the page does not fall back to a full sort (`wanted` kept): both ways refuse at the same row,
+#    the one past `--max-sort-rows` (a page of `2 * wanted + 1` rows that does not fit is never reached before it).
 
 
 if __name__ == "__main__":
