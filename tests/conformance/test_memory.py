@@ -77,6 +77,8 @@ class Memory(unittest.TestCase):
         make(self.s.dir / "large.csv", 960_000)
         for flags in (["--where", "status=200 and bytes:int>50", "--select", "id", "--format", "csv"],
                       ["--where", "bytes:int>50", "--limit", "1000"],
+                      ["--where", "status=200 and bytes:dec(2)>50.5", "--select", "id", "--format", "csv"],   # docs/numbers.md N1
+                      ["--where", "bytes:dec(0) in (7, 8, 99999)", "--limit", "1000"],
                       ["--group", "status", "--agg", "count,sum:bytes,min:bytes,max:bytes"],
                       ["--group", "status", "--agg", "count,distinct:status", "--sort", "-count"]):
             rc1, small = peak_rss("--root", self.s.dir, *flags, "small.csv")

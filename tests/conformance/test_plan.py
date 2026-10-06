@@ -43,7 +43,7 @@ def render_word(word, rng):
 
 
 def render_cond(cond, rng):
-    col = render_word(cond["column"], rng) + (":int" if cond.get("int") else "")
+    col = render_word(cond["column"], rng) + (":int" if cond.get("int") else "") + (":dec(%d)" % cond["dec"] if cond.get("dec") is not None else "")
     if cond["kind"] == "contains":
         return "%s contains %s" % (col, render_word(cond["lit"], rng))
     if cond["kind"] == "in":
