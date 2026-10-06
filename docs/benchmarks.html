@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<!-- Hand-written. Every number is copied from README or docs/*.md with its conditions; none is computed here. -->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>table benchmarks: time to answer against csvtk, Miller and DuckDB</title>
+<meta name="description" content="How long table, csvtk, Miller and DuckDB take to answer the same questions on a 1,000,000-row CSV, on a Mac and a Linux machine, with the harder cases and how to rerun them.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b7a75'/%3E%3Cpath d='M7 11h18M7 17h18M7 23h18M13 8v18' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #fbfcfc; --fg: #14181a; --muted: #55606a; --line: #dfe5e7; --surface: #ffffff; --soft: #eff4f4;
+  --accent: #0b7a75; --accent-fg: #ffffff; --good: #0f7b5f; --warn: #92400e; --warn-bg: #fdf6e7; --warn-line: #e0b765; --bad: #b42d27;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0c1011; --fg: #e7ebec; --muted: #9aa8ae; --line: #212a2d; --surface: #131a1c; --soft: #172022;
+    --accent: #4fd1c5; --accent-fg: #06201e; --good: #4fd1a5; --warn: #f3c77a; --warn-bg: #1d1a12; --warn-line: #8a6a2a; --bad: #ff7b73; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; scroll-padding-top: 4rem; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--font); }
+a { color: var(--accent); text-underline-offset: .15em; }
+.wrap { width: 100%; max-width: 68rem; margin: 0 auto; padding: 0 16px; }
+.skip { position: absolute; left: 16px; top: -4rem; background: var(--accent); color: var(--accent-fg); padding: .5rem .8rem; border-radius: 6px; z-index: 9; }
+.skip:focus { top: 8px; }
+a:focus-visible, .btn:focus-visible, pre:focus-visible, summary:focus-visible, .fitwrap:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; gap: 1.5rem; height: 3.4rem; }
+.brand { font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; letter-spacing: -.01em; white-space: nowrap; }
+nav { display: flex; gap: 1.2rem; margin-left: auto; }
+nav a { color: var(--muted); text-decoration: none; font-size: .93rem; white-space: nowrap; }
+nav a:hover { color: var(--fg); }
+@media (max-width: 40rem) { nav a.opt { display: none; } nav { gap: .9rem; } }
+
+h1 { font-size: clamp(2.1rem, 6vw, 3.8rem); line-height: 1.06; letter-spacing: -.035em; margin: 0 0 1rem; font-weight: 750; overflow-wrap: break-word; }
+h2 { font-size: clamp(1.5rem, 3.4vw, 2.1rem); line-height: 1.15; letter-spacing: -.025em; margin: 0 0 .5rem; font-weight: 700; }
+h3 { font-size: 1.05rem; margin: 0 0 .25rem; }
+p { margin: 0 0 1rem; }
+section { padding: 4.5rem 0 0; }
+.lead { font-size: 1.2rem; color: var(--muted); max-width: 34rem; }
+.sub { color: var(--muted); max-width: 40rem; }
+code { font-family: var(--mono); font-size: .9em; background: var(--soft); padding: .1em .35em; border-radius: 5px; overflow-wrap: anywhere; }
+
+.hero { padding: 3.5rem 0 0; display: grid; gap: 2.2rem; align-items: center; }
+.hero > *, .two > *, .cols > * { min-width: 0; }
+@media (min-width: 58rem) { .hero { grid-template-columns: 1fr 1.1fr; } }
+.badge { display: inline-flex; gap: .5rem; align-items: center; font-size: .82rem; color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-line); padding: .22rem .7rem; border-radius: 999px; margin-bottom: 1.2rem; text-decoration: none; }
+.badge i { width: .5rem; height: .5rem; border-radius: 50%; background: var(--warn-line); display: inline-block; flex: none; }
+.cta { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 1.6rem; }
+.btn { display: inline-block; padding: .65rem 1.15rem; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); }
+.btn.ghost { color: var(--accent); }
+.btn.ghost:hover { background: var(--soft); }
+
+.term { background: #0d1117; color: #d6dde8; border: 1px solid #262c36; border-radius: 12px; font: .82rem/1.6 var(--mono); padding: 1rem 1.1rem 1.1rem; box-shadow: 0 18px 50px -24px rgba(10, 40, 40, .55); overflow-x: auto; }
+.term .bar { display: flex; gap: .35rem; margin-bottom: .8rem; }
+.term .bar i { width: .65rem; height: .65rem; border-radius: 50%; background: #2d3440; display: block; }
+.term .c { color: #8b95a5; } .term .r { color: #ff9a92; }
+.term pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.three { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); margin-top: 3rem; }
+.three div { border-top: 3px solid var(--accent); padding-top: .8rem; }
+.three p { color: var(--muted); margin: 0; font-size: .96rem; }
+
+.figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.2rem; min-width: 0; }
+.figure.wide { margin-top: 2rem; }
+.figure svg { display: block; width: 100%; height: auto; }
+.figure h3 { margin-bottom: .6rem; }
+.figure figcaption { color: var(--muted); font-size: .88rem; margin-top: .8rem; }
+.two { display: grid; gap: 1rem; grid-template-columns: 1fr; margin-top: 2rem; }
+@media (min-width: 52rem) { .two { grid-template-columns: 1fr 1fr; } }
+svg .t { fill: var(--fg); font: 600 13px var(--font); } svg .s { fill: var(--muted); font: 12px var(--font); }
+svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.4; } svg .hot { fill: var(--soft); stroke: var(--accent); stroke-width: 2; }
+svg .ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+
+.grid { display: grid; gap: 1px; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: 2rem; }
+.grid div { background: var(--surface); padding: 1.1rem 1.2rem; }
+.grid p { color: var(--muted); font-size: .93rem; margin: 0; }
+
+.stats { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); margin: 2rem 0 0; }
+.stats div { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; }
+.stats b { display: block; font: 700 1.9rem/1.1 var(--font); letter-spacing: -.03em; }
+.stats span { color: var(--muted); font-size: .88rem; }
+.note { color: var(--muted); font-size: .88rem; margin-top: .9rem; }
+
+pre.code { background: var(--soft); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; font: .84rem/1.6 var(--mono); overflow-x: auto; margin: 1.4rem 0 0; }
+.figure pre.code { margin-top: .4rem; }
+pre.code .c { color: var(--muted); } pre.code .r { color: var(--bad); }
+.status { margin-top: 4.5rem; background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 14px; padding: 1.3rem 1.5rem; }
+.status h2 { font-size: 1.2rem; letter-spacing: -.01em; }
+.status ul { margin: .4rem 0 0; padding-left: 1.2rem; color: var(--muted); }
+footer { margin-top: 4rem; border-top: 1px solid var(--line); padding: 1.6rem 0 2.6rem; color: var(--muted); font-size: .9rem; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: .5rem 1.6rem; }
+.fitwrap { overflow-x: auto; margin-top: 1.4rem; }
+table.fit { width: 100%; border-collapse: collapse; font-size: .93rem; }
+table.fit th, table.fit td { text-align: left; padding: .7rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.fit thead th { color: var(--muted); font-weight: 600; font-size: .85rem; }
+table.fit tbody th { font-weight: 650; }
+table.fit td { color: var(--muted); }
+table.fit.auth tbody th { white-space: nowrap; }
+table.fit .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.fit.wide { min-width: 38rem; } table.fit.bench { min-width: 44rem; }
+table.fit tr.us { background: var(--soft); } table.fit tr.us td, table.fit tr.us th { color: var(--fg); }
+table.fit td.lose { color: var(--bad); font-weight: 600; } table.fit td.win { color: var(--good); font-weight: 600; }
+.cols { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); margin-top: 1.4rem; }
+.cols > div { border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.3rem; background: var(--surface); }
+.cols ul { margin: .4rem 0 0; padding-left: 1.1rem; color: var(--muted); } .cols li { margin: .25rem 0; }
+.cols .no h3 { color: var(--muted); }
+details.rules { margin-top: 1.4rem; } details.rules summary { cursor: pointer; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+h3.task { margin: 0 0 .15rem; font-size: 1.1rem; }
+.task + p { color: var(--muted); margin: 0 0 .2rem; max-width: 42rem; }
+.tasks { display: grid; gap: 1.6rem; margin-top: 2rem; grid-template-columns: minmax(0, 1fr); }
+.tasks > * { min-width: 0; }
+.tasks pre.code { margin-top: .6rem; }
+ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .35rem 0; }
+.fn { color: var(--muted); font-size: .85rem; margin-top: .8rem; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top"><div class="wrap">
+  <a class="brand" href="index.html">table</a>
+  <nav aria-label="Sections">
+    <a href="#mac" class="opt">Mac</a><a href="#linux" class="opt">Linux</a><a href="#harder" class="opt">Harder cases</a><a href="#reproduce">Rerun them</a>
+    <a href="index.html">Overview</a>
+  </nav>
+</div></header>
+<main id="main" class="wrap">
+<div style="padding-top:3rem">
+  <h1 style="font-size:clamp(1.8rem,5vw,2.8rem)">Benchmarks</h1>
+  <p class="lead">How long <code>table</code>, csvtk, Miller and DuckDB take to answer the same questions, on two machines. Lower is better. All times are seconds unless a unit is given.</p>
+</div>
+
+<section id="how" style="padding-top:2.5rem">
+  <h2>How these were measured</h2>
+  <ul class="plain">
+    <li><strong>The file.</strong> 1,000,000 rows of <code>id,status,bytes,path,note</code> (the last field quoted), 31,667,311 bytes. <code>status</code> has a few distinct values; <code>bytes</code> is a whole number.</li>
+    <li><strong>The timing.</strong> The best of five runs, taken one tool after another so a busy machine affects all of them. Output goes to /dev/null. Memory is the peak, from <code>/usr/bin/time</code>.</li>
+    <li><strong>Answers first.</strong> Each tool&rsquo;s answer is compared with one computed in Python before it is timed. A tool that disagrees is reported, not timed.</li>
+    <li><strong>The tools.</strong> csvtk 0.38.0 on one core. Miller 6.22.0 (Linux only). DuckDB 1.5.6 (Mac only), reading with <code>read_csv</code> and type detection, writing to /dev/null. <code>awk</code> and <code>cut | sort | uniq -c</code> are shown where they apply as a floor: they do not understand CSV quoting.</li>
+    <li><strong>Cores.</strong> A core is one independent worker in a processor. <code>table --threads N</code> uses N; the default is 1. DuckDB uses all by default.</li>
+    <li><strong>Machines.</strong> Mac: Apple silicon, 16 cores. Linux: x86-64, 6 cores (three physical, each running two) of a shared box, with other work running.</li>
+  </ul>
+</section>
+
+<section id="mac">
+  <h2>Mac: the four everyday questions</h2>
+  <p class="sub">Time to answer, in seconds. <code>table</code> and csvtk after the latest speed-ups. DuckDB&rsquo;s 4- and 16-core times are from an earlier run on the same machine (DuckDB did not change); its 1-core times are from the same run as <code>table</code>&rsquo;s.</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Mac, the four everyday questions"><table class="fit bench"><thead><tr><th>question</th><th class="num">table, 1 core</th><th class="num">table, 4</th><th class="num">table, 16</th><th class="num">csvtk, 1 core</th><th class="num">DuckDB, 1 core</th><th class="num">DuckDB, 4</th><th class="num">DuckDB, 16</th></tr></thead><tbody><tr><th>filter rows</th><td class="num">0.046</td><td class="num">0.017</td><td class="num"><b>0.0087</b></td><td class="num">0.293</td><td class="num">0.170</td><td class="num">0.074</td><td class="num">0.075</td></tr><tr><th>count by a key</th><td class="num">0.057</td><td class="num">0.019</td><td class="num"><b>0.0099</b></td><td class="num">0.181</td><td class="num">0.132</td><td class="num">0.062</td><td class="num">0.065</td></tr><tr><th>sum by a key</th><td class="num">0.062</td><td class="num">0.021</td><td class="num"><b>0.011</b></td><td class="num">0.395</td><td class="num">0.141</td><td class="num">0.064</td><td class="num">0.067</td></tr><tr><th>pick 2 columns</th><td class="num">0.050</td><td class="num">0.020</td><td class="num"><b>0.011</b></td><td class="num">0.188</td><td class="num">0.190</td><td class="num">0.079</td><td class="num">0.078</td></tr></tbody></table></div>
+  <p class="note">csvtk&rsquo;s filter is <code>filter</code> piped to <code>grep</code>. <code>table</code> on 16 cores finishes in 0.009 to 0.011 s, below DuckDB&rsquo;s best here (0.062 to 0.078 s), which stops getting faster at 4 cores on a file this small. DuckDB also does type detection and planning, and <code>table</code> does neither: the table compares the same four questions answered with the same bytes, not the two tools. Other times on the Mac, one core: row and column count 0.029 s (csvtk 0.184 s), first 1000 rows 0.0031 s (csvtk 0.0084 s).</p>
+</section>
+
+<section id="linux">
+  <h2>Linux: with Miller</h2>
+  <p class="sub">Time to answer, with peak memory. One core for every tool. Six cores shared with other running work, so the absolute times move from run to run more than the ratios do. DuckDB is not installed on this machine.</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Linux, with Miller"><table class="fit bench"><thead><tr><th>question</th><th>table</th><th>csvtk</th><th>Miller</th><th>a plain shell floor</th></tr></thead><tbody><tr><th>shape (row and column count)</th><td><b>0.054 s, 2.0 MB</b></td><td>0.560 s, 20.7 MB</td><td>0.347 s, 110 MB</td><td><code>wc -l</code> 0.0075 s</td></tr><tr><th>pick 2 columns, as CSV</th><td><b>0.115 s, 2.2 MB</b></td><td>0.507 s, 20.1 MB</td><td>0.764 s, 337 MB</td><td></td></tr><tr><th>first 1000 rows</th><td><b>0.0018 s</b></td><td>0.0085 s</td><td>0.0240 s</td><td></td></tr><tr><th>filter rows</th><td><b>0.074 s, 2.2 MB</b></td><td>0.818 s (<code>filter</code> piped to <code>grep</code>, two processes) / 7.16 s (<code>filter2</code>, one)</td><td>0.300 s, 120 MB</td><td><code>awk -F,</code> 0.494 s</td></tr><tr><th>count by a key</th><td><b>0.128 s, 2.0 MB</b></td><td>0.566 s (<code>freq</code>)</td><td>0.438 s (<code>count-distinct</code>), 134 MB</td><td><code>cut | sort | uniq -c</code> 0.211 s</td></tr><tr><th>sum by a key</th><td><b>0.140 s, 2.0 MB</b></td><td>1.278 s (<code>summary</code>), 115 MB</td><td>0.649 s (<code>stats1</code>), 310 MB</td><td></td></tr></tbody></table></div>
+  <p class="note"><code>table</code> against the best csvtk run: filter 11.0x faster, count 4.4x, sum 9.2x. Against Miller: filter 4.0x, count 3.4x, sum 4.7x, at about a hundredth of the memory. The <code>cut | sort | uniq -c</code> floor runs three processes in parallel on the box&rsquo;s other cores, which is why it matches <code>table</code> there.</p>
+  <h3 style="margin-top:2rem">More cores on Linux (seconds)</h3>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="More cores on Linux"><table class="fit wide"><thead><tr><th>question</th><th class="num">1 core</th><th class="num">2</th><th class="num">4</th><th class="num">6</th></tr></thead><tbody><tr><th>filter</th><td class="num">0.124</td><td class="num">0.081</td><td class="num">0.071</td><td class="num">0.064</td></tr><tr><th>pick 2 columns</th><td class="num">0.112</td><td class="num">0.082</td><td class="num">0.070</td><td class="num">0.067</td></tr><tr><th>count by a key</th><td class="num">0.210</td><td class="num">0.107</td><td class="num">0.095</td><td class="num">0.087</td></tr><tr><th>sum by a key</th><td class="num">0.236</td><td class="num">0.121</td><td class="num">0.115</td><td class="num">0.098</td></tr></tbody></table></div>
+  <p class="note">Measured on an earlier build of <code>table</code>, so the one-core times are higher than in the table above. The six cores are three physical ones, which limits the gain: six separate one-core runs side by side each took 3.8 times as long as one alone.</p>
+</section>
+
+<section id="harder">
+  <h2>Harder cases</h2>
+  <p class="sub">Files and questions chosen to be unkind to <code>table</code>: many distinct keys, wide files, long fields, every field quoted, a 1 GB file. The second file has 1,000,000 rows with keys of 100,000 and 1,000,000 distinct values. Sixteen cases, with the losses left in.</p>
+  <h3 style="margin-top:1.6rem">Mac</h3>
+  <p class="note" style="margin-top:0">Seconds. &ldquo;8 cores&rdquo; is <code>table --threads 8</code>. The comparisons are against DuckDB on one core, then on all 16, and against csvtk on one core. 1 GB case: 33.8 million rows, best of three.</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Harder cases, Mac"><table class="fit bench"><thead><tr><th>case</th><th class="num">table, 1 core</th><th class="num">table, 8 cores</th><th>against DuckDB</th><th>against csvtk</th></tr></thead><tbody><tr><th>count by a key, 100,000 distinct keys (<code>B1</code>)</th><td class="num">0.124</td><td class="num">0.087</td><td>1.37x faster; with 16 cores of DuckDB, 1.09x slower</td><td>2.4x faster</td></tr><tr><th>sum by a key, 100,000 keys (<code>B2</code>)</th><td class="num">0.127</td><td class="num">0.087</td><td>1.39x faster; with 16 cores of DuckDB, 1.11x slower</td><td>36x faster, and 16 GB less memory</td></tr><tr><th>count by a key, <b>1,000,000 distinct keys</b> (<code>B3</code>)</th><td class="num">0.792</td><td class="num">0.790</td><td><b>3.4x slower</b>; 9.4x slower than DuckDB on 16 cores</td><td>1.08x faster</td></tr><tr><th>sum by a key, <b>1,000,000 keys</b> (<code>B4</code>)</th><td class="num">0.840</td><td class="num">0.814</td><td><b>3.1x slower</b>; 9.2x slower on 16 cores</td><td>49x faster</td></tr><tr><th><code>distinct</code> over a column of unique values (<code>I1</code>)</th><td class="num">0.287</td><td class="num">0.208</td><td><b>1.40x slower</b>; 2.5x slower on 8 cores</td><td>2.0x faster</td></tr><tr><th>sort rows by a column (<code>A1</code>, <code>A2</code>)</th><td class="num">none</td><td class="num"></td><td><b>no row sort yet.</b> Grouping by the column, as a stand-in for a text sort, is 1.59x slower</td><td>1.04x faster (stand-in)</td></tr><tr><th>pick 3 of 200 columns (<code>C1</code>)</th><td class="num">0.184</td><td class="num">0.040</td><td>7.2x faster</td><td>4.3x faster</td></tr><tr><th>pick 2 columns, every field quoted (<code>D1</code>)</th><td class="num">0.065</td><td class="num">0.025</td><td>4.3x faster</td><td>4.2x faster</td></tr><tr><th>filter, every field quoted (<code>D2</code>)</th><td class="num">0.067</td><td class="num">0.026</td><td>3.7x faster</td><td>5.5x faster</td></tr><tr><th>count by a key, every field quoted (<code>D3</code>)</th><td class="num">0.076</td><td class="num">0.025</td><td>2.2x faster</td><td>3.1x faster</td></tr><tr><th>pick 2 columns, fields of 1 to 10 KB (<code>E1</code>)</th><td class="num">0.184</td><td class="num">0.182</td><td>2.2x faster</td><td>a tie (1.01x faster); more cores do not help</td></tr><tr><th>count by a key, fields of 1 to 10 KB (<code>E2</code>)</th><td class="num">0.192</td><td class="num">0.190</td><td>2.1x faster</td><td>a tie (1.02x faster); more cores do not help</td></tr><tr><th>filter keeping 90% of the rows (<code>H1</code>)</th><td class="num">0.087</td><td class="num">0.027</td><td>3.3x faster</td><td>3.7x faster</td></tr><tr><th>filter a 1 GB file (<code>G1</code>)</th><td class="num">1.460</td><td class="num">0.264</td><td>with 8 cores, 1.8x faster than DuckDB on 16</td><td>6.8x faster on one core</td></tr><tr><th>count by a key, 1 GB file (<code>G2</code>)</th><td class="num">1.746</td><td class="num">0.282</td><td>with 8 cores, 1.23x faster than DuckDB on 16; with 4 cores, 1.36x slower</td><td>3.5x faster on one core, 22x on 8</td></tr></tbody></table></div>
+  <h3 style="margin-top:2rem">Linux</h3>
+  <p class="note" style="margin-top:0">Seconds, six shared cores, <code>--threads 8</code> (a little more than the cores there are). &ldquo;Faster&rdquo; and &ldquo;slower&rdquo; refer to <code>table</code>.</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Harder cases, Linux"><table class="fit bench"><thead><tr><th>case</th><th class="num">table, 1 core</th><th class="num">table, 8 cores</th><th>against the others</th></tr></thead><tbody><tr><th>count by a key, 100,000 keys (<code>B1</code>)</th><td class="num">0.378</td><td class="num">0.368</td><td>csvtk 2.3x, Miller 2.7x faster; <code>cut | sort | uniq -c</code> (0.319): <b>1.19x slower</b></td></tr><tr><th>sum by a key, 100,000 keys (<code>B2</code>)</th><td class="num">0.261</td><td class="num">0.335</td><td>csvtk 43x, Miller 7.9x faster</td></tr><tr><th>count by a key, 1,000,000 keys (<code>B3</code>)</th><td class="num">1.792</td><td class="num">1.818</td><td>csvtk 1.16x, Miller 1.6x faster; <code>cut | sort | uniq -c</code> (0.324): <b>5.5x slower</b></td></tr><tr><th>sum by a key, 1,000,000 keys (<code>B4</code>)</th><td class="num">1.725</td><td class="num">2.013</td><td>Miller 2.6x faster; csvtk was killed at 14 GB</td></tr><tr><th><code>distinct</code> over unique values (<code>I1</code>)</th><td class="num">0.648</td><td class="num">0.710</td><td>csvtk 2.5x, Miller 5.9x faster; shell pipeline (0.360): <b>1.8x slower</b></td></tr><tr><th>sort rows (<code>A1</code>, stand-in: group by the column)</th><td class="num">1.866</td><td class="num"></td><td>GNU <code>sort</code> (1.027): <b>1.8x slower</b>; csvtk 1.24x, Miller 2.9x faster. No row sort yet</td></tr><tr><th>pick 3 of 200 columns (<code>C1</code>)</th><td class="num">0.298</td><td class="num">0.140</td><td>csvtk 4.5x, Miller 18.6x faster</td></tr><tr><th>pick 2 columns, every field quoted (<code>D1</code>)</th><td class="num">0.130</td><td class="num">0.069</td><td>csvtk 4.5x, Miller 5.8x faster</td></tr><tr><th>filter, every field quoted (<code>D2</code>)</th><td class="num">0.131</td><td class="num">0.056</td><td>csvtk 7.3x, Miller 3.6x faster</td></tr><tr><th>count by a key, every field quoted (<code>D3</code>)</th><td class="num">0.130</td><td class="num">0.059</td><td>csvtk 4.0x, Miller 3.5x faster</td></tr><tr><th>pick 2 columns, fields of 1 to 10 KB (<code>E1</code>)</th><td class="num">0.239</td><td class="num">0.244</td><td>csvtk 1.24x, Miller 1.15x faster</td></tr><tr><th>count by a key, fields of 1 to 10 KB (<code>E2</code>)</th><td class="num">0.250</td><td class="num">0.272</td><td>csvtk 1.18x, Miller 1.11x faster</td></tr><tr><th>filter keeping 90% (<code>H1</code>)</th><td class="num">0.172</td><td class="num">0.109</td><td>csvtk 5.0x, Miller 3.2x faster</td></tr><tr><th>filter a 1 GB file (<code>G1</code>)</th><td class="num">2.677</td><td class="num">2.181</td><td>csvtk (29.8 s): 11x faster on one core</td></tr><tr><th>count by a key, 1 GB file (<code>G2</code>)</th><td class="num">3.481</td><td class="num">2.167</td><td>csvtk (16.2 s): 4.6x faster on one core</td></tr></tbody></table></div>
+  <h3 style="margin-top:2rem">Good to know</h3>
+  <ul class="plain">
+    <li><strong>Many distinct keys are the weak spot.</strong> Each new key is a new group, and the groups are sorted at the end. More cores do not help, and use more memory (a million groups took 135 to 183 MB, with the group limit raised to 1 GiB). Do not use <code>--threads</code> for a group-by like that.</li>
+    <li><strong>Long fields with newlines inside do not speed up with more cores.</strong> The same file without newlines in the fields goes from 0.017 s to 0.0086 s on eight cores; with a newline every 17 bytes it stays at 0.17 s.</li>
+    <li><strong>Memory.</strong> A few MB for a scan. csvtk&rsquo;s <code>summary</code> used 11.8 to 14.8 GB on the 100,000- and 1,000,000-key sums, and Miller 0.5 to 3.9 GB.</li>
+  </ul>
+</section>
+
+<section id="reproduce">
+  <h2>Rerun them</h2>
+  <p class="sub">Build <code>build/table</code> as the <a href="index.html#start">overview</a> shows, then, from the repository root:</p>
+  <pre class="code" tabindex="0"><code>python3 scripts/bench.py                 # the 1,000,000-row file; every answer checked, then timed
+python3 scripts/bench_parallel.py        # the same questions on 1, 2, 4, 8, 16 cores
+python3 scripts/adversarial.py           # the harder cases; --cells B1,B3 --runs 5 --threads 8</code></pre>
+  <p class="note">Files are generated under <code>build/</code> and are never committed. csvtk, Miller and DuckDB are used where they are installed. The numbers come from the documents in the repository: <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/adversarial.md">harder cases</a>, <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">cores</a>, <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">DuckDB comparison</a>.</p>
+</section>
+</main>
+<footer><div class="wrap">
+  <a href="https://github.com/alpibrusl/lexsys-table">Repository</a><a href="index.html">Overview</a>
+  <span>Built on <a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> · EUPL-1.2</span>
+</div></footer>
+</body>
+</html>
