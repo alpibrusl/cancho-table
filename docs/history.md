@@ -115,3 +115,72 @@ A filter that keeps most of the file (output-bound), a grouping with high cardin
 (the 100,000-group case is only bounded, 17 MB, not timed), `distinct` on a large column,
 an `:int` condition on a column with quoted cells, wider files. `csvtk filter2` at 8 s
 is an expression interpreter, not the comparison that matters; `filter | grep` is.
+
+
+# Threads (docs/parallel.md)
+
+`--threads N`, the answer the sequential read gives, from N threads. Measured with
+`scripts/bench_parallel.py`, minimum of 5 interleaved runs; the sequential read is the first column
+and the oracle.
+
+## Round 0: the first parallel read
+
+Speculate that every range begins a record, read ranges in waves, take the ranges in file order,
+read again whatever cannot be trusted. Mac, group count, seconds: 1 thread 0.124, 2 0.068, 4 0.036,
+8 0.020, 16 0.020; filter 0.052, 0.035, 0.020, 0.011, 0.011. Already 4 to 6x at 8 threads, and the
+answers were the sequential ones on every test. Two things in these numbers were wrong:
+
+* **16 threads were no faster than 8** (0.020 and 0.020): a range was 4 MiB, a 31 MB file has 8 of
+  them, and 8 of 16 threads were idle.
+* The scan of a *paged* answer (`--limit 1000`, JSON's default) started a full wave: when the page
+  ended in the first range, the other N-1 had read for nothing.
+
+## Round 1: the size of a range follows the number of threads, and a page starts small
+
+A range is now the smaller of `--chunk-bytes` and a thread's share of what is left, so 16 threads
+get 16 ranges (group count at 16 threads 0.020 -> 0.015 s; the filter, whose time is the rows the parent copies and
+writes, stays at 0.011 to 0.012); and a paged answer's waves
+start with one range and double. Not a speed-up but a bound: what a page reads beyond what it needed
+is at most what it needed.
+
+## Round 2: where it stops paying
+
+The size below which several threads are not worth starting was measured, not guessed
+(`--threshold`): break-even at 0.25 MiB of data after the header, a clear win from 1 MiB; the default
+`--parallel-min-bytes` is 1 MiB.
+
+## Round 3: the Linux curve flattens; is it the code?
+
+Cores 0 to 5 of the Linux box: group-count 1.95x at 2 threads, 2.2x at 4, 2.4x at 6; filter 1.5x, 1.8x,
+1.9x. Below the Mac's. Checked, in this order:
+
+1. *Is it the memory?* One thread reads the file at 150 to 270 MB/s, so it is not bandwidth.
+2. *Is it the cores?* `lscpu -e`: 0 to 5 are three physical cores. On cores 0, 2 and 4 (one thread to
+   a core) 3 threads give 2.28x (group count), 2.32x (sum) and 1.92x (filter).
+3. *Is it the machine, independent of the program?* Six concurrent *sequential* processes, sharing
+   nothing, each took 3.8x as long as one alone: 1.56x aggregate on six logical cores. Six threads of
+   one process get 2.4x.
+4. *Is it the program's own serial part?* The one serial cost that is the design's is the copy of a
+   thread's rows into the parent's array and out (the filter and the cut, 1.5 to 1.9x; the
+   groupings, which send a few bytes, 2.0 to 2.4x). `perf` is not permitted on the box, so there is no
+   profile; that part is a measured difference between questions, not a measured profile.
+
+No change was made for this round: the flattening is not the program's, as far as the checks reach, and
+the program is within 25 percent of what three cores give.
+
+## A bug the tests found, and what the mutants found
+
+* A page that fills at the last good row of a range was taken whole, with the ragged rows that follow it
+  counted: the sequential read stops at the *next record*, ragged or not, and never reads them. Found by
+  a mutant that removed the test, which led to a test of ragged rows after a full page, which failed; fixed
+  in `par.run` (a range that reaches the limit without a condition is read in order).
+* The mutant that moved a range's end one byte early did not change an answer: it hung (a wave that makes
+  no progress). The proof that a wave always reads the record at its start is in `docs/parallel.md`; a loop
+  that is only shown to end by a proof now also has a guard that reads the rest sequentially if it ever
+  does not.
+
+## Not measured
+
+More than six cores of x86; a file whose boundaries are all inside quoted fields (correct, and about
+sequential speed); wider files; a file that does not fit the page cache (the reads are `pread`s of 64 KiB, the
+same as the sequential read's, but the threads' disk pattern was not looked at).

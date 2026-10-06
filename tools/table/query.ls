@@ -265,3 +265,23 @@ pub fn position_of[&w](word: &w [byte]) -> [] int {
     }
     return n;
 }
+
+fn copy_vec[&h, &v](heap: &!h Heap, from: &v vec.Vec[int]) -> [heap] vec.Vec[int] {
+    var out = vec.empty(heap, vec.size(from) + 1, 0);
+    var i = 0;
+    while i < vec.size(from) {
+        out = vec.push(heap, out, vec.get(from, i));
+        i = i + 1;
+    }
+    return out;
+}
+
+fn copy_buffer[&h, &b](heap: &!h Heap, from: &b buffer.Buffer) -> [heap] buffer.Buffer {
+    return buffer.append(heap, buffer.empty(heap, buffer.size(from) + 1), buffer.bytes(from));
+}
+
+// The plan again, in memory of its own: a worker thread gets one, because the plan is
+// read by all of them and owned by none.
+pub fn duplicate[&h, &q](heap: &!h Heap, plan: &q Query) -> [heap] Query {
+    return Query { names: copy_buffer(heap, plan.names), nends: copy_vec(heap, plan.nends), nkinds: copy_vec(heap, plan.nkinds), conds: copy_vec(heap, plan.conds), lits: copy_vec(heap, plan.lits), ltext: copy_buffer(heap, plan.ltext), aggs: copy_vec(heap, plan.aggs), meta: copy_vec(heap, plan.meta) };
+}

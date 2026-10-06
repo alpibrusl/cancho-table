@@ -17,7 +17,7 @@ from harness import ROOT, binary, introspect
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 # What a tool that reads one file and writes one document may hold; a label
 # beyond these has to be argued for in tools.toml, and not by this test.
-NEEDS = {"args", "dir_read", "err_write", "file_read", "fs_read", "heap", "io_write"}
+NEEDS = {"args", "conc", "dir_read", "err_write", "file_read", "fs_read", "heap", "io_write"}
 
 
 def label_text(label):

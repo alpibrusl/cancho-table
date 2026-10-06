@@ -240,6 +240,14 @@ class Grammar(unittest.TestCase):
         got = self.s.table("c.csv", 'k,v\n"a,b",1\n"l1\nl2",2\n,3\n"a,b",4\n"q""q",5\n', "--group", "k", "--agg", "sum:v", "--format", "csv")
         self.assertEqual(got.stdout, b'k,sum:v\n,3\n"a,b",5\n"l1\nl2",2\n"q""q",5\n')
 
+    def test_from_pages_the_groups_and_skips_no_row(self):
+        # (a bug of the first grouping: --from also skipped that many rows before counting)
+        data = "k,v\nb,1\nb,1\na,1\na,1\na,1\n"
+        got = self.s.table("fr.csv", data, "--group", "k", "--agg", "count,sum:v", "--from", 1)
+        self.assertEqual((got.data()["rows"], got.data()["group_count"]), ([["b", "2", "2"]], 2))
+        got = self.s.table("fr.csv", data, "--group", "k", "--agg", "count", "--from", 1, "--format", "csv")
+        self.assertEqual(got.stdout, b"k,count\nb,2\n")
+
     def test_ragged_rows_are_not_filtered_or_grouped(self):
         got = self.s.table("r.csv", "a,b\n1,x\n2\n3,y,z\n4,x\n", "--group", "b", "--agg", "count,sum:a")
         self.assertEqual(got.first_rule(), "parse.csv-ragged-row")

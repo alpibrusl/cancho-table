@@ -45,7 +45,7 @@ pub res struct Groups {
 }
 
 pub fn start[&h](heap: &!h Heap, aggregates: int) -> [heap] Groups {
-    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: 1 + aggregates };
+    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: 1 + 2 * aggregates };
 }
 
 pub fn drop[&h](heap: &!h Heap, g: Groups) -> [heap] int {
@@ -71,6 +71,17 @@ fn put_length[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.B
 
 fn length_at[&k](key: &k [byte], at: int) -> [] int {
     return int_of(key[at]) | int_of(key[at + 1]) << 8 | int_of(key[at + 2]) << 16 | int_of(key[at + 3]) << 24;
+}
+
+// |v|, with the one value that has none (the minimum) answered as the maximum.
+fn int_max_of(v: int) -> [] int {
+    if v >= 0 {
+        return v;
+    }
+    if v == query.int_min() {
+        return query.int_max();
+    }
+    return 0 - v;
 }
 
 // A field of a record, as the bytes it holds, appended after its length.
@@ -130,7 +141,7 @@ fn set_at(acc: vec.Vec[int], at: int, value: int) -> [] vec.Vec[int] {
 // which aggregate it is about: 0 added; 1 more than `max_groups`; 2 more than
 // `max_distinct` pairs; 3 more than `max_state` bytes of keys; 4 a cell that is
 // not an integer; 5 an integer of more than 64 bits; 6 a sum past 64 bits.
-pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer, max_groups: int, max_distinct: int, max_state: int) -> [heap] (Groups, buffer.Buffer, int, int) {
+pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer, max_groups: int, max_distinct: int, max_state: int, track: bool) -> [heap] (Groups, buffer.Buffer, int, int) {
     let Groups { index, acc, seen, keyb, dkey, held, pairs, stride } = g;
     var key = keyb;
     var scr = scratch;
@@ -240,6 +251,18 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
                         let (sum, fits) = query.add_checked(now, v);
                         if fits {
                             a = set_at(a, at + 1 + k, sum);
+                            if track {
+                                // The largest the running sum has been in size: what lets the sum of
+                                // several ranges be checked without reading them in order (par.ls).
+                                var magnitude = int_max_of(sum);
+                                var seen_peak = 0;
+                                borrow a as &ar in {
+                                    seen_peak = vec.get(ar, at + 1 + (stride - 1) / 2 + k);
+                                }
+                                if magnitude > seen_peak {
+                                    a = set_at(a, at + 1 + (stride - 1) / 2 + k, magnitude);
+                                }
+                            }
                         } else {
                             status = 6;
                         }
@@ -496,4 +519,286 @@ pub fn parse_aggs[&h, &s](heap: &!h Heap, tree: query.Query, given: &s [byte]) -
     vec.drop(heap, ends);
     vec.drop(heap, kinds);
     return (q, bad);
+}
+
+// ---------------------------------------------------------------------------------
+// Groups across ranges (par.ls). A worker counts its range into groups of its own and
+// writes them out as bytes; the parent reads those bytes into its own groups, range by
+// range, in file order. The bytes are, little-endian:
+//
+//     groups: i64, pairs: i64,
+//     then each group: key length u32, the key, `stride` i64 (the group's integers),
+//     then each distinct pair: key length u32, the key (group number u32, the aggregate's
+//     number u8, the value's length and bytes).
+//
+// What a merge may and may not do is what keeps the answer the sequential one:
+// the groups are a set, so their order does not matter, and counts, minima, maxima and
+// distinct values combine in any order; a sum does not, because the sequential read
+// refuses at the first row where a *running* sum leaves 64 bits, and a range's sum
+// starting from zero says nothing of that. So a worker also keeps, per group and sum,
+// the largest absolute value its running sum took (`peak`), and the merge of a range
+// into a group that already has a total `S` is allowed only when `|S| + peak` fits: then
+// no running sum of the sequential read, which is `S` plus one of the range's, can have
+// left 64 bits. Otherwise the merge refuses and the parent reads the range again itself.
+// So does it for a bound that would be passed (groups, distinct values, key bytes): the
+// sequential read says which refusal comes first only by reading in order.
+// ---------------------------------------------------------------------------------
+
+fn put_u8[&o](out: &!o [byte], at: int, v: int) -> [] int {
+    out[at] = byte_of(v & 255);
+    return at + 1;
+}
+
+fn put_u32[&o](out: &!o [byte], at: int, v: int) -> [] int {
+    out[at] = byte_of(v & 255);
+    out[at + 1] = byte_of(v >> 8 & 255);
+    out[at + 2] = byte_of(v >> 16 & 255);
+    out[at + 3] = byte_of(v >> 24 & 255);
+    return at + 4;
+}
+
+pub fn put_i64[&o](out: &!o [byte], at: int, v: int) -> [] int {
+    var i = 0;
+    while i < 8 {
+        out[at + i] = byte_of(v >> 8 * i & 255);
+        i = i + 1;
+    }
+    return at + 8;
+}
+
+// The i64 at `at`, and nothing wraps: the high half is signed, and half times 2^32 plus
+// the low half fits whatever the half was.
+pub fn get_i64[&b](blob: &b [byte], at: int) -> [] int {
+    let low = int_of(blob[at]) | int_of(blob[at + 1]) << 8 | int_of(blob[at + 2]) << 16 | int_of(blob[at + 3]) << 24;
+    var top = int_of(blob[at + 7]);
+    if top >= 128 {
+        top = top - 256;
+    }
+    let high = int_of(blob[at + 4]) | int_of(blob[at + 5]) << 8 | int_of(blob[at + 6]) << 16;
+    return (high + top * 16777216) * 4294967296 + low;
+}
+
+fn put_bytes[&o, &d](out: &!o [byte], at: int, data: &d [byte]) -> [] int {
+    var i = 0;
+    while i < len(data) {
+        out[at + i] = data[i];
+        i = i + 1;
+    }
+    return at + len(data);
+}
+
+// Write the groups into `out` (which has `len(out)` bytes). Answers the bytes used, or
+// -1 when they do not fit.
+pub fn serialize[&g, &o](g: &g Groups, out: &!o [byte]) -> [] int {
+    let ngroups = map.size(g.index);
+    let npairs = map.size(g.seen);
+    var at = 16;
+    if at > len(out) {
+        return 0 - 1;
+    }
+    put_i64(out, 0, ngroups);
+    put_i64(out, 8, npairs);
+    var e = 0;
+    while e < ngroups {
+        let key = map.key_at(g.index, e);
+        if at + 4 + len(key) + 8 * g.stride > len(out) {
+            return 0 - 1;
+        }
+        at = put_u32(out, at, len(key));
+        at = put_bytes(out, at, key);
+        var i = 0;
+        while i < g.stride {
+            at = put_i64(out, at, vec.get(g.acc, e * g.stride + i));
+            i = i + 1;
+        }
+        e = e + 1;
+    }
+    var p = 0;
+    while p < npairs {
+        let key = map.key_at(g.seen, p);
+        if at + 4 + len(key) > len(out) {
+            return 0 - 1;
+        }
+        at = put_u32(out, at, len(key));
+        at = put_bytes(out, at, key);
+        p = p + 1;
+    }
+    return at;
+}
+
+// Read the groups in `blob` (written by `serialize`, for a plan of `tree`) into `g`.
+// Answers the groups and 0, or the groups untouched and 1 when the answer of the
+// sequential read could differ (see above).
+pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q query.Query, max_groups: int, max_distinct: int, max_state: int) -> [heap] (Groups, int) {
+    let Groups { index, acc, seen, keyb, dkey, held, pairs, stride } = g;
+    let na = query.agg_count(tree);
+    let ngroups = get_i64(blob, 0);
+    let npairs = get_i64(blob, 8);
+    let mapping = box_slice(heap, ngroups + 1, 0 - 1);
+    let fresh = box_slice(heap, ngroups * na + 1, 0);
+    var m = index;
+    var a = acc;
+    var s = seen;
+    var scratch = dkey;
+    var refuse = false;
+    var new_groups = 0;
+    var new_pairs = 0;
+    var new_bytes = 0;
+    var applied = false;
+    borrow mut mapping as &!mw in {
+        borrow mut fresh as &!fw in {
+            let mp = contents(mw);
+            let fr = contents(fw);
+            // First: what would it add, and is it safe to add it?
+            var at = 16;
+            var i = 0;
+            while i < ngroups && !refuse {
+                let klen = length_at(blob, at);
+                let key = blob[at + 4..at + 4 + klen];
+                let acc_at = at + 4 + klen;
+                var found = -1;
+                borrow m as &mr in {
+                    found = map.find(mr, key);
+                }
+                mp[i] = found;
+                if found < 0 {
+                    new_groups = new_groups + 1;
+                    new_bytes = new_bytes + klen;
+                } else {
+                    var k = 0;
+                    while k < na {
+                        if query.agg_at(tree, k, 0) == 1 {
+                            var total = 0;
+                            borrow a as &ar in {
+                                total = vec.get(ar, found * stride + 1 + k);
+                            }
+                            if get_i64(blob, acc_at + 8 * (1 + na + k)) > query.int_max() - int_max_of(total) {
+                                refuse = true;
+                            }
+                        }
+                        k = k + 1;
+                    }
+                }
+                at = acc_at + 8 * stride;
+                i = i + 1;
+            }
+            var pair_at = at;
+            var p = 0;
+            while p < npairs && !refuse {
+                let klen = length_at(blob, pair_at);
+                let key = blob[pair_at + 4..pair_at + 4 + klen];
+                let gid = length_at(key, 0);
+                let function_k = int_of(key[4]);
+                let target = mp[gid];
+                var known = false;
+                if target >= 0 {
+                    borrow mut scratch as &!sw in {
+                        buffer.clear(sw);
+                    }
+                    scratch = put_length(heap, scratch, target);
+                    scratch = buffer.append(heap, scratch, key[4..len(key)]);
+                    borrow scratch as &sr in {
+                        borrow s as &seen_r in {
+                            known = map.find(seen_r, buffer.bytes(sr)) >= 0;
+                        }
+                    }
+                }
+                if !known {
+                    new_pairs = new_pairs + 1;
+                    new_bytes = new_bytes + klen;
+                    fr[gid * na + function_k] = fr[gid * na + function_k] + 1;
+                }
+                pair_at = pair_at + 4 + klen;
+                p = p + 1;
+            }
+            var size = 0;
+            borrow m as &mr in {
+                size = map.size(mr);
+            }
+            if size + new_groups > max_groups || pairs + new_pairs > max_distinct || held + new_bytes > max_state {
+                refuse = true;
+            }
+            if !refuse {
+                // Then: add it.
+                at = 16;
+                i = 0;
+                while i < ngroups {
+                    let klen = length_at(blob, at);
+                    let key = blob[at + 4..at + 4 + klen];
+                    let acc_at = at + 4 + klen;
+                    var entry = mp[i];
+                    if entry < 0 {
+                        borrow m as &mr in {
+                            entry = map.size(mr);
+                        }
+                        m = map.put(heap, m, key, 0);
+                        mp[i] = entry;
+                        var z = 0;
+                        while z < stride {
+                            a = vec.push(heap, a, get_i64(blob, acc_at + 8 * z));
+                            z = z + 1;
+                        }
+                    } else {
+                        var before = 0;
+                        borrow a as &ar in {
+                            before = vec.get(ar, entry * stride);
+                        }
+                        a = set_at(a, entry * stride, before + get_i64(blob, acc_at));
+                        var k = 0;
+                        while k < na {
+                            let function = query.agg_at(tree, k, 0);
+                            var mine = 0;
+                            borrow a as &ar in {
+                                mine = vec.get(ar, entry * stride + 1 + k);
+                            }
+                            let theirs = get_i64(blob, acc_at + 8 * (1 + k));
+                            if function == 1 {
+                                let (sum, fits) = query.add_checked(mine, theirs);
+                                a = set_at(a, entry * stride + 1 + k, sum);
+                            } else if function == 2 && theirs < mine {
+                                a = set_at(a, entry * stride + 1 + k, theirs);
+                            } else if function == 3 && theirs > mine {
+                                a = set_at(a, entry * stride + 1 + k, theirs);
+                            } else if function == 4 {
+                                a = set_at(a, entry * stride + 1 + k, mine + fr[i * na + k]);
+                            }
+                            k = k + 1;
+                        }
+                    }
+                    at = acc_at + 8 * stride;
+                    i = i + 1;
+                }
+                pair_at = at;
+                p = 0;
+                while p < npairs {
+                    let klen = length_at(blob, pair_at);
+                    let key = blob[pair_at + 4..pair_at + 4 + klen];
+                    let gid = length_at(key, 0);
+                    borrow mut scratch as &!sw in {
+                        buffer.clear(sw);
+                    }
+                    scratch = put_length(heap, scratch, mp[gid]);
+                    scratch = buffer.append(heap, scratch, key[4..len(key)]);
+                    borrow scratch as &sr in {
+                        var known = false;
+                        borrow s as &seen_r in {
+                            known = map.find(seen_r, buffer.bytes(sr)) >= 0;
+                        }
+                        if !known {
+                            s = map.put(heap, s, buffer.bytes(sr), 0);
+                        }
+                    }
+                    pair_at = pair_at + 4 + klen;
+                    p = p + 1;
+                }
+                applied = true;
+            }
+        }
+    }
+    unbox_slice(heap, mapping);
+    unbox_slice(heap, fresh);
+    if !applied {
+        return (Groups { index: m, acc: a, seen: s, keyb: keyb, dkey: scratch, held: held, pairs: pairs, stride: stride }, 1);
+    }
+    return (Groups { index: m, acc: a, seen: s, keyb: keyb, dkey: scratch, held: held + new_bytes, pairs: pairs + new_pairs, stride: stride }, 0);
 }

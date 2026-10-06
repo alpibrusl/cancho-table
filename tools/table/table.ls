@@ -50,11 +50,14 @@ import std.bytes;
 import std.json;
 import std.vec;
 import agg;
+import engine;
 import expr;
 import frame;
+import par;
 import plan;
 import query;
 import reader;
+import scan;
 import toolbox.built;
 import toolbox.cli;
 import toolbox.describe;
@@ -68,11 +71,11 @@ import toolbox.text;
 import writer;
 
 fn flag_table() -> [] &static [byte] {
-    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, named by their header separated by commas (a comma or backslash in a name is written with a backslash before it), or by position as #3, and in the order given;where||text|none||only the rows that satisfy this: conditions joined by and, each COLUMN OP VALUE with OP one of = != < <= > >= contains in (a, b), COLUMN:int for an exact integer comparison, 'quoted' words and backslashes as docs/filter.md says;group||text|none||count the rows by these columns, named as for select, instead of returning them;agg||text|none||with --group (or alone), what to compute per group: count, sum:COL, min:COL, max:COL, distinct:COL separated by commas (default count);sort||text|none||with --group, order the groups by this output column (count, sum:bytes, a group column), - before it for descending, ties by group;top||nat|none||with --group, keep only the first N groups after sorting;limit||nat|none||the most rows returned (default 1000 as json, no limit as csv, ceiling 1000000);from||nat|none||the 0-based row to start at, as the next of a truncated answer says;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-groups||nat|none|100000|the most groups kept, one more is limit.too-many-groups (ceiling 1000000);max-distinct||nat|none|100000|the most distinct values kept over all groups for distinct, one more is limit.too-many-distinct (ceiling 10000000);max-state-bytes||nat|none|67108864|the most bytes of group keys and distinct values kept (ceiling 1073741824);max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, text for a person (the shape only), csv for rows or groups as csv";
+    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, named by their header separated by commas (a comma or backslash in a name is written with a backslash before it), or by position as #3, and in the order given;where||text|none||only the rows that satisfy this: conditions joined by and, each COLUMN OP VALUE with OP one of = != < <= > >= contains in (a, b), COLUMN:int for an exact integer comparison, 'quoted' words and backslashes as docs/filter.md says;group||text|none||count the rows by these columns, named as for select, instead of returning them;agg||text|none||with --group (or alone), what to compute per group: count, sum:COL, min:COL, max:COL, distinct:COL separated by commas (default count);sort||text|none||with --group, order the groups by this output column (count, sum:bytes, a group column), - before it for descending, ties by group;top||nat|none||with --group, keep only the first N groups after sorting;limit||nat|none||the most rows returned (default 1000 as json, no limit as csv, ceiling 1000000);from||nat|none||the 0-based row to start at, as the next of a truncated answer says;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-groups||nat|none|100000|the most groups kept, one more is limit.too-many-groups (ceiling 1000000);max-distinct||nat|none|100000|the most distinct values kept over all groups for distinct, one more is limit.too-many-distinct (ceiling 10000000);max-state-bytes||nat|none|67108864|the most bytes of group keys and distinct values kept (ceiling 1073741824);threads||nat|none|1|how many threads read the file (1 to 64), for rows and groups only, on a file of at least --parallel-min-bytes of data: 1 is the sequential read and the answer of every other count is the same bytes;chunk-bytes||nat|none|4194304|the size of the range one thread reads at a time (with --threads), at least 1;parallel-min-bytes||nat|none|1048576|the smallest data (after the header) read by several threads, below it the read is sequential;max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, text for a person (the shape only), csv for rows or groups as csv";
 }
 
 fn tool() -> [] describe.Tool {
-    return describe.Tool { name: "table", version: "0.3.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some columns (--select), the rows that satisfy a condition (--where, bytewise or exact integers), or counts, sums, minima, maxima and distinct counts of groups (--group, --agg, --sort, --top), as json pages or csv. Every refusal is a rule: a ragged row, an unterminated quote, an unknown column, a cell that is not an integer, a line past the limit.", usage: "table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE | table [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N] [--format json|csv] FILE | table --group NAMES [--agg LIST] [--where EXPR] [--sort KEY] [--top N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--format json|csv] FILE", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|1|1|the CSV file to read", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;limit.too-many-groups;limit.too-many-distinct;limit.state-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column;column.unknown;column.ambiguous;where.syntax;agg.bad-spec;sort.unknown-key;value.not-integer;value.integer-overflow;agg.sum-overflow", extra_rules: extra(), limits: "limit|1000|1000000;max-bytes|1048576|67108864;max-groups|100000|1000000;max-distinct|100000|10000000;max-state-bytes|67108864|1073741824;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
+    return describe.Tool { name: "table", version: "0.3.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some columns (--select), the rows that satisfy a condition (--where, bytewise or exact integers), or counts, sums, minima, maxima and distinct counts of groups (--group, --agg, --sort, --top), as json pages or csv. Every refusal is a rule: a ragged row, an unterminated quote, an unknown column, a cell that is not an integer, a line past the limit.", usage: "table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE | table [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N] [--format json|csv] FILE | table --group NAMES [--agg LIST] [--where EXPR] [--sort KEY] [--top N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--format json|csv] FILE", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|1|1|the CSV file to read", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;limit.too-many-groups;limit.too-many-distinct;limit.state-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column;column.unknown;column.ambiguous;where.syntax;agg.bad-spec;sort.unknown-key;value.not-integer;value.integer-overflow;agg.sum-overflow", extra_rules: extra(), limits: "threads|1|64;chunk-bytes|4194304|1073741824;parallel-min-bytes|1048576|1073741824;limit|1000|1000000;max-bytes|1048576|67108864;max-groups|100000|1000000;max-distinct|100000|10000000;max-state-bytes|67108864|1073741824;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
 }
 
 // The tool's own rules, beside the contract's catalogue: tag, exit code,
@@ -147,301 +150,11 @@ struct Counts {
     groups: int,
 }
 
-fn k_records() -> [] int {
-    return 0;
-}
-
-fn k_ragged() -> [] int {
-    return 1;
-}
-
-fn k_first_row() -> [] int {
-    return 2;
-}
-
-fn k_first_line() -> [] int {
-    return 3;
-}
-
-fn k_first_found() -> [] int {
-    return 4;
-}
-
-fn k_capped() -> [] int {
-    return 5;
-}
-
-fn k_abort() -> [] int {
-    return 6;
-}
-
-fn k_abort_line() -> [] int {
-    return 7;
-}
-
-fn k_long() -> [] int {
-    return 8;
-}
-
-fn k_emitted() -> [] int {
-    return 9;
-}
-
-fn k_more() -> [] int {
-    return 10;
-}
-
-fn k_next() -> [] int {
-    return 11;
-}
-
-fn k_columns() -> [] int {
-    return 12;
-}
-
-fn k_bad_name() -> [] int {
-    return 13;
-}
-
-fn k_stop() -> [] int {
-    return 14;
-}
-
-fn k_err_col() -> [] int {
-    return 15;
-}
-
-fn k_err_fn() -> [] int {
-    return 16;
-}
-
-fn k_err_row() -> [] int {
-    return 17;
-}
-
-fn k_err_line() -> [] int {
-    return 18;
-}
-
-fn k_groups() -> [] int {
-    return 19;
-}
-
-fn k_sort_field() -> [] int {
-    return 20;
-}
-
-fn k_sort_slot() -> [] int {
-    return 21;
-}
-
-fn k_sort_desc() -> [] int {
-    return 22;
-}
-
-fn k_size() -> [] int {
-    return 32;
-}
-
-// One more data record, number `opened`'s line it began on, of `found` fields:
-// counted, and answers whether it is a row to hand on (not ragged, and not
-// before `from`).
-fn count_row[&a](a: &!a [int], found: int, opened: int, from: int) -> [] bool {
-    let index = a[k_records()];
-    a[k_records()] = index + 1;
-    if found != a[k_columns()] {
-        if a[k_ragged()] == 0 {
-            a[k_first_row()] = index + 1;
-            a[k_first_line()] = opened;
-            a[k_first_found()] = found;
-        }
-        a[k_ragged()] = a[k_ragged()] + 1;
-        return false;
-    }
-    return index >= from;
-}
-
-// Write what is pending, and keep the buffer; false when standard output took
-// less.
-fn flush[&i](io: &!i Io, pending: buffer.Buffer) -> [io_write] (buffer.Buffer, bool) {
-    var ok = true;
-    var held = pending;
-    borrow held as &r in {
-        ok = out.emit(io, buffer.bytes(r));
-    }
-    borrow mut held as &!w in {
-        buffer.clear(w);
-    }
-    return (held, ok);
-}
-
-// One row of the selection, from the record `record` whose fields are in
-// `cells`, as csv into `rows` (written out once a block of it is pending) or as
-// json into `rows`, through `scratch` so that a row that does not fit the
-// budget is not half in. Updates the tally: `emitted`, and `stop` with
-// `more` and `next` when the page ends here or `abort` when it cannot.
-fn emit_row[&h, &i, &d, &c, &s, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, record: &d [byte], cells: &c [int], sel: &s [int], picked: int, delim: int, as_csv: bool, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer) {
-    var pending = rows;
-    var row = scratch;
-    if as_csv {
-        var begun = 0;
-        borrow pending as &br in {
-            begun = buffer.size(br);
-        }
-        var j = 0;
-        while j < picked {
-            let at = 3 * sel[j];
-            if j > 0 {
-                pending = buffer.push(heap, pending, byte_of(delim));
-            }
-            pending = writer.csv_cell(heap, pending, record, cells[at], cells[at + 1], cells[at + 2], delim);
-            j = j + 1;
-        }
-        var held = 0;
-        borrow pending as &r in {
-            held = buffer.size(r);
-        }
-        if picked == 1 && held == begun {
-            // A row of one empty field is `""`: a blank line is no record.
-            pending = buffer.append(heap, pending, "\"\"");
-            held = held + 2;
-        }
-        pending = buffer.push(heap, pending, byte_of(10));
-        a[k_emitted()] = a[k_emitted()] + 1;
-        if held >= 65536 {
-            let (after, ok) = flush(io, pending);
-            pending = after;
-            if !ok {
-                a[k_abort()] = 9;
-                a[k_stop()] = 1;
-            }
-        }
-        return (pending, row);
-    }
-    borrow mut row as &!w in {
-        buffer.clear(w);
-    }
-    row = buffer.push(heap, row, byte_of('['));
-    var j = 0;
-    while j < picked {
-        let at = 3 * sel[j];
-        if j > 0 {
-            row = buffer.push(heap, row, byte_of(','));
-        }
-        row = writer.json_cell(heap, row, record, cells[at], cells[at + 1], cells[at + 2]);
-        j = j + 1;
-    }
-    row = buffer.push(heap, row, byte_of(']'));
-    var have = 0;
-    var need = 0;
-    borrow pending as &pr in {
-        have = buffer.size(pr);
-    }
-    borrow row as &rr in {
-        need = buffer.size(rr);
-    }
-    if have + need + 1 > budget {
-        a[k_stop()] = 1;
-        if a[k_emitted()] == 0 {
-            a[k_abort()] = 8;
-        } else {
-            a[k_more()] = 1;
-            a[k_next()] = a[k_records()] - 1;
-        }
-        return (pending, row);
-    }
-    if a[k_emitted()] > 0 {
-        pending = buffer.push(heap, pending, byte_of(','));
-    }
-    borrow row as &rr in {
-        pending = buffer.append(heap, pending, buffer.bytes(rr));
-    }
-    a[k_emitted()] = a[k_emitted()] + 1;
-    return (pending, row);
-}
-
-// The first 64 bytes of a cell, kept to say which one was refused.
-fn keep_value[&h, &d](heap: &!h Heap, kept: buffer.Buffer, record: &d [byte], first: int, last: int) -> [heap] buffer.Buffer {
-    var v = kept;
-    borrow mut v as &!w in {
-        buffer.clear(w);
-    }
-    var stop = last;
-    if last - first > 64 {
-        stop = first + 64;
-    }
-    return buffer.append(heap, v, record[first..stop]);
-}
-
-// Whether `--where` wants the record: 1 yes (also when there is no condition),
-// 0 no, -1 a condition met a cell it cannot compare, which is recorded in `a`
-// (the read stops). `escr` is a scratch for a quoted cell, `kept` the first
-// bytes of the cell that was refused.
-fn screen[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], escr: buffer.Buffer, kept: buffer.Buffer, opened: int, a: &!a [int]) -> [heap] (int, buffer.Buffer, buffer.Buffer) {
-    if query.count_of(tree, 1) == 0 {
-        return (1, escr, kept);
-    }
-    let (verdict, which, e2) = expr.eval(heap, tree, cols, record, cells, escr);
-    if verdict < 2 {
-        return (verdict, e2, kept);
-    }
-    // A condition met a cell it cannot compare.
-    let column = cols[query.cond_at(tree, which, 3)];
-    a[k_abort()] = 9 + verdict;
-    a[k_err_col()] = column;
-    a[k_err_fn()] = -1;
-    a[k_err_row()] = a[k_records()];
-    a[k_err_line()] = opened;
-    a[k_stop()] = 1;
-    return (-1, e2, keep_value(heap, kept, record, cells[3 * column], cells[3 * column + 1]));
-}
-
-// A counted row that is not ragged and is at or past `from`, for rows (mode 1):
-// tested by `--where`, then emitted.
-fn process_rows[&h, &i, &q, &c, &d, &e, &s, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], sel: &s [int], picked: int, delim: int, as_csv: bool, budget: int, opened: int, limit: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
-    let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
-    if verdict != 1 {
-        return (rows, scratch, e2, k2);
-    }
-    if a[k_emitted()] >= limit {
-        // The page is full and this row matches: there is more.
-        a[k_more()] = 1;
-        a[k_next()] = a[k_records()] - 1;
-        a[k_stop()] = 1;
-        return (rows, scratch, e2, k2);
-    }
-    let (r3, s3) = emit_row(heap, io, rows, scratch, record, cells, sel, picked, delim, as_csv, budget, a);
-    return (r3, s3, e2, k2);
-}
-
-// The same for a grouping (mode 2): tested, then added to its group.
-fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_groups: int, max_distinct: int, max_state: int, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
-    let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
-    if verdict != 1 {
-        return (groups, e2, k2);
-    }
-    let (g3, e3, status, k) = agg.add(heap, groups, tree, cols, record, cells, e2, max_groups, max_distinct, max_state);
-    if status == 0 {
-        return (g3, e3, k2);
-    }
-    a[k_stop()] = 1;
-    a[k_abort()] = 12 + status;
-    if status < 4 {
-        return (g3, e3, k2);
-    }
-    let column = cols[query.agg_at(tree, k, 1)];
-    a[k_err_col()] = column;
-    a[k_err_fn()] = query.agg_at(tree, k, 0);
-    a[k_err_row()] = a[k_records()];
-    a[k_err_line()] = opened;
-    return (g3, e3, keep_value(heap, k2, record, cells[3 * column], cells[3 * column + 1]));
-}
-
 // The groups, in order, as the answer: the page `--from` and `--limit` ask for
 // of the first `--top` of them, as csv written out or as json rows kept.
 fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, groups: &g agg.Groups, tree: &q query.Query, as_csv: bool, delim: int, from: int, limit: int, top: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer) {
     let n = agg.groups(groups);
-    a[k_groups()] = n;
+    a[engine.k_groups()] = n;
     let ng = query.count_of(tree, 2);
     let order = box_slice(heap, n + 1, 0);
     let spare = box_slice(heap, n + 1, 0);
@@ -449,7 +162,7 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
     var row = scratch;
     borrow mut order as &!ow in {
         borrow mut spare as &!sw in {
-            agg.sort_into(groups, contents(ow), contents(sw), ng, a[k_sort_field()], a[k_sort_slot()], a[k_sort_desc()] == 1);
+            agg.sort_into(groups, contents(ow), contents(sw), ng, a[engine.k_sort_field()], a[engine.k_sort_slot()], a[engine.k_sort_desc()] == 1);
             var end = n;
             if top > 0 && top < n {
                 end = top;
@@ -458,9 +171,9 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
             var going = true;
             while pos < end && going {
                 let x = contents(ow)[pos];
-                if a[k_emitted()] >= limit {
-                    a[k_more()] = 1;
-                    a[k_next()] = pos;
+                if a[engine.k_emitted()] >= limit {
+                    a[engine.k_more()] = 1;
+                    a[engine.k_next()] = pos;
                     going = false;
                 } else if as_csv {
                     var j = 0;
@@ -480,16 +193,16 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
                         k = k + 1;
                     }
                     pending = buffer.push(heap, pending, byte_of(10));
-                    a[k_emitted()] = a[k_emitted()] + 1;
+                    a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
                     var held = 0;
                     borrow pending as &pr in {
                         held = buffer.size(pr);
                     }
                     if held >= 65536 {
-                        let (after, ok) = flush(io, pending);
+                        let (after, ok) = engine.flush(io, pending);
                         pending = after;
                         if !ok {
-                            a[k_abort()] = 9;
+                            a[engine.k_abort()] = 9;
                             going = false;
                         }
                     }
@@ -509,20 +222,20 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
                     }
                     if have + need + 1 > budget {
                         going = false;
-                        if a[k_emitted()] == 0 {
-                            a[k_abort()] = 8;
+                        if a[engine.k_emitted()] == 0 {
+                            a[engine.k_abort()] = 8;
                         } else {
-                            a[k_more()] = 1;
-                            a[k_next()] = pos;
+                            a[engine.k_more()] = 1;
+                            a[engine.k_next()] = pos;
                         }
                     } else {
-                        if a[k_emitted()] > 0 {
+                        if a[engine.k_emitted()] > 0 {
                             pending = buffer.push(heap, pending, byte_of(','));
                         }
                         borrow row as &rr in {
                             pending = buffer.append(heap, pending, buffer.bytes(rr));
                         }
-                        a[k_emitted()] = a[k_emitted()] + 1;
+                        a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
                         pos = pos + 1;
                     }
                 }
@@ -730,18 +443,27 @@ fn start_output[&h](heap: &!h Heap, rows: buffer.Buffer, lead: buffer.Buffer) ->
 // csv straight to standard output, as json into the buffer answered third (the
 // second is the answer's `columns` array text). Answers what was counted, those
 // two buffers, the header's names and where each ends, and the errors.
-fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, shown: &s [byte], io: &!i Io, delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_write] (Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, shown: &s [byte], io: &!i Io, fs: &fs Fs(""), root: &rt [byte], rel: &rl [byte], full: &fu [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_write, conc, fs_read(""), dir_read] (Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
     let table = flag_table();
     let cap = cli.nat(args, parsed, table, "max-line-bytes");
     let most = cli.nat(args, parsed, table, "max-rows");
     let max_groups = cli.nat(args, parsed, table, "max-groups");
     let max_distinct = cli.nat(args, parsed, table, "max-distinct");
     let max_state = cli.nat(args, parsed, table, "max-state-bytes");
+    let threads = cli.nat(args, parsed, table, "threads");
+    let chunk = cli.nat(args, parsed, table, "chunk-bytes");
+    let min_bytes = cli.nat(args, parsed, table, "parallel-min-bytes");
     var sort = "";
     if cli.has(parsed, table, "sort") {
         sort = cli.text(args, parsed, table, "sort");
     }
     let filtering = query.count_of(tree, 1) > 0;
+    // `from` pages the rows of a selection; for a grouping it pages the groups, after all
+    // the rows have been counted, and must not skip any.
+    var row_from = from;
+    if mode == 2 {
+        row_from = 0;
+    }
     var e = errs;
     var names = buffer.empty(heap, 1);
     var hends = vec.empty(heap, 1, 0);
@@ -757,7 +479,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
     var sel = box_slice(heap, 1, 0);
     var labels = buffer.empty(heap, 1);
     var lends = vec.empty(heap, 1, 0);
-    var tally = box_slice(heap, k_size(), 0);
+    var tally = box_slice(heap, engine.k_size(), 0);
     var out_rows = buffer.empty(heap, 1);
     var out_kept = buffer.empty(heap, 1);
     var picked = 0;
@@ -778,10 +500,10 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
             } else if status == lines.done() {
                 going = false;
             } else if status == lines.long() {
-                a[k_abort()] = 4;
+                a[engine.k_abort()] = 4;
                 borrow r as &rr in {
-                    a[k_abort_line()] = lines.number(rr);
-                    a[k_long()] = lines.length(rr);
+                    a[engine.k_abort_line()] = lines.number(rr);
+                    a[engine.k_long()] = lines.length(rr);
                 }
                 going = false;
             } else {
@@ -798,14 +520,14 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                     }
                     if !quoted && len(line) == 0 {
                         // A blank line between records is not a record.
-                    } else if header && !quoted && a[k_records()] >= most {
+                    } else if header && !quoted && a[engine.k_records()] >= most {
                         // A record past the bound: not read, so not judged.
-                        a[k_capped()] = 1;
+                        a[engine.k_capped()] = 1;
                         going = false;
-                    } else if header && !quoted && mode == 1 && !filtering && a[k_records()] >= from && a[k_emitted()] >= limit {
+                    } else if header && !quoted && mode == 1 && !filtering && a[engine.k_records()] >= from && a[engine.k_emitted()] >= limit {
                         // The page is full and there is another record.
-                        a[k_more()] = 1;
-                        a[k_next()] = a[k_records()];
+                        a[engine.k_more()] = 1;
+                        a[engine.k_next()] = a[engine.k_records()];
                         going = false;
                     } else if header && !quoted {
                         // A data record begins; most are whole on this line.
@@ -814,7 +536,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                         var bad = false;
                         if mode != 0 {
                             borrow mut cells as &!cw in {
-                                let (n, open, wrong) = reader.fields(line, delim, contents(cw), a[k_columns()]);
+                                let (n, open, wrong) = reader.fields(line, delim, contents(cw), a[engine.k_columns()]);
                                 found = n;
                                 inside = open;
                                 bad = wrong;
@@ -827,8 +549,8 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                             bad = wrong;
                         }
                         if bad {
-                            a[k_abort()] = 1;
-                            a[k_abort_line()] = number;
+                            a[engine.k_abort()] = 1;
+                            a[engine.k_abort_line()] = number;
                             going = false;
                         } else if inside {
                             quoted = true;
@@ -840,18 +562,18 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                                 rec = buffer.append(heap, rec, whole);
                                 rec = buffer.push(heap, rec, byte_of(10));
                             }
-                        } else if count_row(a, found, number, from) && mode != 0 {
+                        } else if engine.count_row(a, found, number, row_from) && mode != 0 {
                             borrow cells as &cr in {
                                 borrow sel as &sr in {
                                     borrow cols as &kr in {
                                         if mode == 1 {
-                                            let (r2, s2, e2, k2) = process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), line, contents(cr), contents(sr), picked, delim, as_csv, budget, number, limit, a);
+                                            let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), line, contents(cr), contents(sr), picked, delim, as_csv, budget, number, limit, a);
                                             rows = r2;
                                             scratch = s2;
                                             escr = e2;
                                             kept = k2;
                                         } else {
-                                            let (g2, e2, k2) = process_groups(heap, groups, escr, kept, tree, contents(kr), line, contents(cr), number, max_groups, max_distinct, max_state, a);
+                                            let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), line, contents(cr), number, max_groups, max_distinct, max_state, false, a);
                                             groups = g2;
                                             escr = e2;
                                             kept = k2;
@@ -879,8 +601,8 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                             held = buffer.size(rw);
                         }
                         if bad {
-                            a[k_abort()] = 1;
-                            a[k_abort_line()] = number;
+                            a[engine.k_abort()] = 1;
+                            a[engine.k_abort_line()] = number;
                             going = false;
                         } else if inside {
                             quoted = true;
@@ -888,11 +610,11 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                                 rec = buffer.push(heap, rec, byte_of(10));
                             }
                             if held + 1 > cap {
-                                a[k_abort()] = 3;
+                                a[engine.k_abort()] = 3;
                                 if header {
-                                    a[k_abort()] = 7;
+                                    a[engine.k_abort()] = 7;
                                 }
-                                a[k_abort_line()] = opened;
+                                a[engine.k_abort_line()] = opened;
                                 going = false;
                             }
                         } else {
@@ -908,14 +630,14 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                                 }
                                 header = true;
                                 borrow hends as &er in {
-                                    a[k_columns()] = vec.size(er);
+                                    a[engine.k_columns()] = vec.size(er);
                                 }
                                 if mode != 0 {
                                     var made = frame.none(heap);
                                     frame.drop(heap, made);
                                     borrow names as &nr in {
                                         borrow hends as &er in {
-                                            made = frame.prepare(heap, tree, nr, er, a[k_columns()], mode, delim, sort);
+                                            made = frame.prepare(heap, tree, nr, er, a[engine.k_columns()], mode, delim, sort);
                                         }
                                     }
                                     let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
@@ -932,18 +654,75 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                                     labels = flabels;
                                     lends = flends;
                                     picked = fpicked;
-                                    a[k_sort_field()] = fsort_field;
-                                    a[k_sort_slot()] = fsort_slot;
-                                    a[k_sort_desc()] = fdesc;
+                                    a[engine.k_sort_field()] = fsort_field;
+                                    a[engine.k_sort_slot()] = fsort_slot;
+                                    a[engine.k_sort_desc()] = fdesc;
                                     if fabort != 0 {
-                                        a[k_abort()] = fabort;
-                                        a[k_bad_name()] = fbad;
+                                        a[engine.k_abort()] = fabort;
+                                        a[engine.k_bad_name()] = fbad;
                                         going = false;
                                     }
                                     if as_csv && fabort == 0 {
                                         rows = start_output(heap, rows, flead);
                                     } else {
                                         buffer.drop(heap, flead);
+                                    }
+                                }
+                                // The rest of the file, by several threads, when that is asked for and
+                                // worth it (par.ls): it leaves the tally, the output and the groups as
+                                // this loop would have.
+                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (mode == 2 || row_from == 0) {
+                                    var size = 0;
+                                    match file_size(file) {
+                                        Done::Ok(n) => {
+                                            size = n;
+                                        }
+                                        Done::Failed(reason) => {
+                                            size = 0;
+                                        }
+                                    }
+                                    var at = 0;
+                                    var lines_so_far = 0;
+                                    borrow r as &rr in {
+                                        at = lines.consumed(rr);
+                                        lines_so_far = lines.number(rr);
+                                    }
+                                    if size - at >= min_bytes && size - at > 0 {
+                                        var pp = box_slice(heap, scan.p_count(), 0);
+                                        borrow mut pp as &!pw in {
+                                            let u = contents(pw);
+                                            u[scan.p_delim()] = delim;
+                                            u[scan.p_mode()] = mode;
+                                            if as_csv {
+                                                u[scan.p_csv()] = 1;
+                                                u[scan.p_yield()] = 65536;
+                                            }
+                                            u[scan.p_picked()] = picked;
+                                            u[scan.p_budget()] = budget;
+                                            u[scan.p_limit()] = limit;
+                                            u[scan.p_most()] = most;
+                                            u[scan.p_from()] = row_from;
+                                            u[scan.p_max_groups()] = max_groups;
+                                            u[scan.p_max_distinct()] = max_distinct;
+                                            u[scan.p_max_state()] = max_state;
+                                            u[scan.p_cap()] = cap;
+                                            u[scan.p_base_line()] = lines_so_far;
+                                            u[scan.p_size()] = size;
+                                            borrow mut cells as &!cw in {
+                                                borrow cols as &kr in {
+                                                    borrow sel as &sr in {
+                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
+                                                        rows = r2;
+                                                        scratch = s2;
+                                                        escr = e2;
+                                                        kept = k2;
+                                                        groups = g2;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        unbox_slice(heap, pp);
+                                        going = false;
                                     }
                                 }
                             } else {
@@ -959,27 +738,27 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                                     var wrong = false;
                                     if mode != 0 {
                                         borrow mut cells as &!cw in {
-                                            let (n, open, bad_quote) = reader.fields(record, delim, contents(cw), a[k_columns()]);
+                                            let (n, open, bad_quote) = reader.fields(record, delim, contents(cw), a[engine.k_columns()]);
                                             found = n;
                                             wrong = bad_quote || open;
                                         }
                                     }
                                     if wrong {
-                                        a[k_abort()] = 1;
-                                        a[k_abort_line()] = opened;
+                                        a[engine.k_abort()] = 1;
+                                        a[engine.k_abort_line()] = opened;
                                         going = false;
-                                    } else if count_row(a, found, opened, from) && mode != 0 {
+                                    } else if engine.count_row(a, found, opened, row_from) && mode != 0 {
                                         borrow cells as &cr in {
                                             borrow sel as &sr in {
                                                 borrow cols as &kr in {
                                                     if mode == 1 {
-                                                        let (r2, s2, e2, k2) = process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), record, contents(cr), contents(sr), picked, delim, as_csv, budget, opened, limit, a);
+                                                        let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), record, contents(cr), contents(sr), picked, delim, as_csv, budget, opened, limit, a);
                                                         rows = r2;
                                                         scratch = s2;
                                                         escr = e2;
                                                         kept = k2;
                                                     } else {
-                                                        let (g2, e2, k2) = process_groups(heap, groups, escr, kept, tree, contents(kr), record, contents(cr), opened, max_groups, max_distinct, max_state, a);
+                                                        let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), record, contents(cr), opened, max_groups, max_distinct, max_state, false, a);
                                                         groups = g2;
                                                         escr = e2;
                                                         kept = k2;
@@ -993,23 +772,23 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                         }
                     }
                 }
-                if a[k_stop()] == 1 {
+                if a[engine.k_stop()] == 1 {
                     going = false;
                 }
             }
         }
         // No header at all: no column to name.
-        if mode != 0 && !header && a[k_abort()] == 0 {
-            a[k_abort()] = 5;
+        if mode != 0 && !header && a[engine.k_abort()] == 0 {
+            a[engine.k_abort()] = 5;
         }
         // The end of the input with a quote open: not a record.
-        if quoted && a[k_abort()] == 0 {
-            a[k_abort()] = 2;
-            a[k_abort_line()] = opened;
+        if quoted && a[engine.k_abort()] == 0 {
+            a[engine.k_abort()] = 2;
+            a[engine.k_abort_line()] = opened;
         }
         var finished = rows;
         var spare = scratch;
-        if mode == 2 && a[k_abort()] == 0 {
+        if mode == 2 && a[engine.k_abort()] == 0 {
             borrow groups as &gr in {
                 let (r2, s2) = finish_groups(heap, io, finished, spare, gr, tree, as_csv, delim, from, limit, top, budget, a);
                 finished = r2;
@@ -1023,7 +802,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
         buffer.drop(heap, out_kept);
         out_rows = finished;
         out_kept = kept;
-        c = Counts { columns: a[k_columns()], records: a[k_records()], ragged: a[k_ragged()], first_row: a[k_first_row()], first_line: a[k_first_line()], first_found: a[k_first_found()], capped: a[k_capped()] == 1, abort: a[k_abort()], abort_line: a[k_abort_line()], long_length: a[k_long()], emitted: a[k_emitted()], more: a[k_more()] == 1, next: a[k_next()], bad_name: a[k_bad_name()], err_col: a[k_err_col()], err_fn: a[k_err_fn()], err_row: a[k_err_row()], err_line: a[k_err_line()], groups: a[k_groups()] };
+        c = Counts { columns: a[engine.k_columns()], records: a[engine.k_records()], ragged: a[engine.k_ragged()], first_row: a[engine.k_first_row()], first_line: a[engine.k_first_line()], first_found: a[engine.k_first_found()], capped: a[engine.k_capped()] == 1, abort: a[engine.k_abort()], abort_line: a[engine.k_abort_line()], long_length: a[engine.k_long()], emitted: a[engine.k_emitted()], more: a[engine.k_more()] == 1, next: a[engine.k_next()], bad_name: a[engine.k_bad_name()], err_col: a[engine.k_err_col()], err_fn: a[engine.k_err_fn()], err_row: a[engine.k_err_row()], err_line: a[engine.k_err_line()], groups: a[engine.k_groups()] };
     }
     unbox_slice(heap, tally);
     unbox_slice(heap, cells);
@@ -1037,7 +816,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
     lines.drop(heap, r);
     // What csv still had pending, written now unless the stream already failed.
     if as_csv && c.abort != 9 {
-        let (after, ok) = flush(io, out_rows);
+        let (after, ok) = engine.flush(io, out_rows);
         out_rows = after;
         if !ok {
             c = Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, groups: c.groups };
@@ -1164,7 +943,7 @@ fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given
     return (q, e);
 }
 
-fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read, io_write, err_write] int {
+fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read, io_write, err_write, conc] int {
     let table = flag_table();
     var e = errs;
     let form = cli.text(args, parsed, table, "format");
@@ -1202,6 +981,17 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     let state_most = cli.nat(args, parsed, table, "max-state-bytes");
     if state_most < 1 || state_most > 1073741824 {
         e = flag_problem(heap, e, "args.bad-value", "--max-state-bytes is from 1 to 1073741824", "--max-state-bytes 67108864", "--max-state-bytes");
+    }
+    let thread_count = cli.nat(args, parsed, table, "threads");
+    if thread_count < 1 || thread_count > 64 {
+        e = flag_problem(heap, e, "args.bad-value", "--threads is from 1 to 64", "--threads 4", "--threads");
+    }
+    let chunk_size = cli.nat(args, parsed, table, "chunk-bytes");
+    if chunk_size < 1 || chunk_size > 1073741824 {
+        e = flag_problem(heap, e, "args.bad-value", "--chunk-bytes is from 1 to 1073741824", "--chunk-bytes 4194304", "--chunk-bytes");
+    }
+    if cli.nat(args, parsed, table, "parallel-min-bytes") > 1073741824 {
+        e = flag_problem(heap, e, "args.bad-value", "--parallel-min-bytes is at most 1073741824", "--parallel-min-bytes 1048576", "--parallel-min-bytes");
     }
     var budget = cli.nat(args, parsed, table, "max-bytes");
     if budget < 1 || budget > 67108864 {
@@ -1327,7 +1117,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
                             borrow mut file as &!handle in {
                                 var wrote = 0;
                                 borrow tree as &tq in {
-                                    let (c, head, rows, names, hends, after) = read_file(heap, args, parsed, handle, path.shown(tp), io, delim, mode, as_csv, from, limit, budget, top, tq, names_at, e);
+                                    let (c, head, rows, names, hends, after) = read_file(heap, args, parsed, handle, path.shown(tp), io, fs, buffer.bytes(rr), path.shown(tp), path.full(tp), delim, mode, as_csv, from, limit, budget, top, tq, names_at, e);
                                     e = after;
                                     // What was read is the answer unless the read had to
                                     // stop short of the end: a ragged row is an error
@@ -1403,7 +1193,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     return status;
 }
 
-fn run[&h, &g, &f, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, file_read, io_write, err_write] int {
+fn run[&h, &g, &f, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, file_read, io_write, err_write, conc] int {
     let which = cli.subcommand(args);
     if which != 0 {
         return describe.answer(heap, io, which, tool(), built());
@@ -1417,7 +1207,7 @@ fn run[&h, &g, &f, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io)
     return status;
 }
 
-fn main(world: World) -> [] int {
+fn main(world: World) -> [conc] int {
     let Split { io, ffi, fs, heap, args, net, clock } = split(world);
     // No foreign code, no network, no clock.
     release(ffi);
