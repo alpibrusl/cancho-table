@@ -50,6 +50,20 @@ So with threads `table` is ahead of DuckDB's default on all four, **on this file
 planning and everything in the list below, and `table` does none of it. The adversarial round
 (`docs/adversarial.md`) is where this claim is tested against shapes that are not kind to `table`.
 
+**After the cell-cost round** (`docs/history.md`; the same Mac, `scripts/bench_parallel.py`, the same file and questions,
+minimum of 5 interleaved, answers checked first), seconds:
+
+| question | `table` 1 / 4 / 16 threads | `duckdb` 1 / default |
+|---|---|---|
+| filter | 0.046 / 0.017 / **0.0087** | 0.170 / (not taken) |
+| `cut` | 0.050 / 0.020 / **0.011** | 0.190 / (not taken) |
+| group-count | 0.057 / 0.019 / **0.0099** | 0.132 / 0.065 |
+| group sum | 0.062 / 0.021 / **0.011** | 0.141 / 0.067 |
+
+Group-count and group-sum were level with DuckDB per core (0.105 against 0.122, 0.115 against 0.131); they are now
+2.3 times faster at one thread. On the shapes that are not kind to `table` the picture is in `docs/adversarial.md`:
+the groupings with many keys are still 3x behind DuckDB at one thread.
+
 ## From the adversarial round (`docs/adversarial.md`), with the cause of each
 
 Each is a measured loss or a missing thing; the cause is from a profile where one was possible (`sample`, Mac) and
@@ -68,14 +82,32 @@ otherwise said to be inferred.
   builds its own map of up to a million keys and the parent merges them one by one. Options: a hash-partitioned
   merge (threads own key ranges); or a pre-sample that declines threads when the first wave's groups are more than
   a fraction of its rows. Until then `--threads` should not be used for a high-cardinality grouping.
-* **`csv_value` does four `memchr`s per cell** (visible in the `sample` of B3 and in G2: 290 MB/s sequential
-  against DuckDB's 3.2 GB/s default). One fused scan for quote, delimiter and newline per cell would remove three.
-  This is the one change that helps every cell, and also needs the byte-identical gate.
-* **Long fields (1-10 KB) do not scale with threads and tie with csvtk (E1/E2).** Inferred: a record boundary found
-  by speculation "outside quotes" is wrong more often when long text holds newlines and quotes; a wrong guess is a
-  re-read by the parent. The time per MB is not a cliff. To check: count the re-reads in a `--threads 8` run.
-* **100k-key grouping is 1.07-1.17x DuckDB (B1/B2):** a cache-missing probe per row. A smaller key table (store the
-  hash, not only the key) is the guess; not tried.
+* ~~**`csv_value` does four `memchr`s per cell**~~ (done, `docs/history.md` "Cell cost": the per-row and per-cell work
+  was profiled and cut in rounds: group-count 110 to 52 ns a row, select 56 to 46, filter 50 to 43; the 1 GB
+  group-count on the Mac is now 1.23x *faster* than DuckDB's default at 8 threads, where it was 1.59x slower.)
+* **The field search is the largest item left, 40 to 48% of every scan** (`reader.fields`, after the cell-cost round):
+  a byte loop at about 0.5 ns a byte that LLVM does not vectorise, three integers stored per cell. Ideas, none tried:
+  stop at the last column the plan needs and count the delimiters of the rest with `count_byte` when the rest has
+  no quote (one `memchr` for the quote decides); skip storing the cells nobody reads; a SWAR word-at-a-time delimiter
+  test needs a way to load eight bytes as an int, which the language has no way to say yet. Unrolling by hand was
+  tried and was slower (round 11).
+* **A new group costs what it cost**: the groups are moved by value to be added (the map grows by value), and the key is
+  hashed twice (`find`, then `put`). A 1M-key grouping is 3x DuckDB at one thread and the cell-cost round did not touch
+  it (B3 1.0x of `main`). A `std.map` with an `insert` that reports whether the key was new, working through `&!`, would
+  take both; that is lex-sys's, not this tool's.
+* **Long fields (1-10 KB) do not scale with threads, and the cause is now known (E1/E2).** With no newline inside the
+  quoted fields the same file scales 2x at eight threads (0.017 to 0.0086 s); with newlines every 17 bytes it does not
+  (0.172 to 0.170 s), because the speculation "this range starts outside quotes" is wrong about as often as a boundary
+  is inside a quoted field, and a wrong guess is a re-read by the parent; and each embedded newline is a line the
+  reader handles (six million of them in that file). To do: let a worker that finds its guess wrong say where the first
+  record start after an *even* count of quotes is, which needs the range's whole quote parity (a pass of `count_byte`).
+  Real files with 1-10 KB fields and few newlines already scale. The single-thread time ties csvtk and Miller.
+* **100k-key grouping is 1.09-1.11x DuckDB's default at 8 threads (B1/B2), and wins at one thread (1.37-1.39x faster)**
+  after the in-place add and the cache of hot groups (it was 1.07-1.17x slower).
+* **`select_mutants.py` and `filter_mutants.py` are stale**: 21 of their sites moved to `engine.ls` and `scan.ls` when
+  the parallel read was written (and two sites now occur twice, in `add` and `add_fast`), so they stop at their first
+  check. They have not run since. `parallel_mutants.py` and `cellcost_mutants.py` are current. To do: re-point the 21
+  and re-run both, on Linux (the Mac takes about an hour for the pair).
 * **Peak memory of grouping is N threads x groups.** Bounded by `--max-state-bytes` per state, so the true bound is
   N times it; the documentation says the per-state bound, and should say this.
 

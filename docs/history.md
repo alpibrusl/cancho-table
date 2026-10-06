@@ -209,3 +209,98 @@ what a text key of this shape looks like (a prefix then digits), and the loss is
 
 Contract package adopted in the same branch: `fail.choose_*`, `fail.detail_*` (lexsys-tools#29), 48 lines fewer
 (4,844 to 4,796); `toolbox.sort` was not adopted for `agg.ls` (see the backlog's friction list).
+
+# Cell cost (branch `cell-cost`)
+
+The adversarial round (`docs/adversarial.md`) found one lever behind most of its losses: the work done per row and
+per cell, not the memory or the threads. This branch works that lever in measured rounds. The rule for a round: keep
+it only if it is faster beyond noise **and** the output is byte for byte the same; otherwise revert it and write the
+idea down with its number. The gates, every round: `scripts/corpus.py` (the md5 of the output, the status and the
+error of 134 plans over the benchmark and adversarial files, each sequentially and with 3 and 4 threads and tiny
+ranges: the same 134 lines before and after, every round), and from round 2 the whole conformance suite (111 tests
+now; the parallel differential tests run 2, 3, 4, 8, 16 and 64 threads, with ranges down to one byte). The stopwatch
+is `scripts/cellcost.py`: `table` only, one thread, the minimum of 9 to 15 runs, the binaries of two rounds
+interleaved so that the machine's load falls on both. Numbers below are the Mac's unless said (Apple silicon, 16
+cores; the Mac was not quiet during the rounds, which is why a ratio under about 3 percent is called noise).
+
+## Round 0: where the time goes
+
+`sample` on the Mac over the 1 GB file (33.8 million rows of 32 bytes), one thread, 1 ms samples, self time by function.
+Per row, before: select 56 ns, filter 50 ns, group-count 110 ns, group-sum 122 ns (3.7 and 4.1 s for the file).
+
+| cell | where the samples were (before) |
+|---|---|
+| select `status,bytes` | `memchr` 27% (the field search, one call per cell, and the two to four calls that decide whether an output cell needs quotes), `reader.fields` 18%, the read loop itself 14%, `lines.next` 12%, `emit_buf` 10%, `memmove` 8%, `csv_cell` 5% |
+| filter `status=404 and bytes:int>50000` | `reader.fields` 22%, `memchr` 21%, `expr.holds` 15%, the read loop 13%, `lines.next` 10%, `expr.eval` 7% |
+| group-count by status | `engine.process_groups` itself 30% and the read loop 22% (neither does any work: they **move** the `Groups` struct, about forty words, in and out of a call for every row), `agg.add` 14%, `reader.fields` 8%, `memchr` 8%, `lines.next` 5%, `map.find_slot` 5% |
+| group-sum | as group-count, plus `parse_int` |
+
+Two experiments fix the floor. With the group call replaced by nothing, group-count of the standard file takes
+0.035 s (900 MB/s): reading, finding the fields and the screening are a third of what group-count costs. And an empty
+`borrow mut` of the groups costs nothing, so working through a unique reference is free; the moves were the cost.
+The thing the first plan of this round blamed, four `memchr`s per cell in `csv_value`, is the *output* side (the quoting
+decision); the field search has one per cell; both were real, neither was the biggest.
+
+## Rounds, in the order they were run
+
+| # | idea | result (interleaved against the round before) | kept |
+|---|---|---|---|
+| 1 | **Add a row to an existing group in place**: `agg.add_fast` works through a unique reference to the groups, builds the key in the room of the key buffer, finds the entry, updates the integers with `vec.set`; a new group, a key that has to be unquoted, a `distinct` take the old way (`engine.group_fast`, then `process_groups`). No `Groups` moves per row | count 0.113 to 0.082 (-28%), sum 0.126 to 0.089 (-29%), 100k keys 0.196 to 0.146 (-25%) | yes |
+| 2 | **A cache of hot groups** in front of the key hash: a cheap look (length, first and last byte of each key cell) names a group, believed only after comparing its key with the cells (so a wrong cache is a slow row, never a wrong answer); it gives itself up for 4096 rows after 16 net misses | count 0.082 to 0.071 (-14%), sum -13%. The first version, without giving up, made 100k keys 16% *slower*; with it, neutral | yes |
+| 3 | **Walk short fields instead of calling `memchr`** (`reader.seek`): 24 bytes by hand, then `memchr` for what is left. A pure walk first: the 200-column file went 0.338 to 0.152 s (2.2x) and count -15%, but a file of 1 to 10 KB *unquoted* fields went 2.5x slower; the hybrid keeps both | select -2%, filter -8%, count -13%, sum -11%, wide -49%, long unquoted fields 1.00x | yes (the pure walk: no) |
+| 4 | The same `seek` for the closing quote of a quoted field | quoted file -7%, others noise | yes |
+| 5 | **One pass to decide an output cell needs quoting** (`writer.must_quote`) for cells up to 32 bytes, instead of two to four `memchr`s | select -9%, all-quoted -14%, 90%-filter -14% | yes |
+| 6 | A grouping with no `--where` takes no buffers through the hot call (`engine.group_plain`) | count -8%, sum -2% (noise), 100k keys -3% | yes (small) |
+| 7 | **A larger read chunk** (256 KiB, 1 MiB, 4 MiB instead of the contract's 64 KiB; a copy of `fill_file` that grows the chunk) | 32 MB file: select -6%, the rest -2% to -3%; **1 GB file: group-count 1.958 s to 1.950, 1.967, 1.941; filter 1.657 to 1.633, 1.653, 1.667: nothing** | **no, reverted**: the time in `read` is the kernel's copy of the page cache, not the number of calls |
+| 8 | `parse_int` without the overflow check for up to 18 digits (a positive accumulator) | sum -6%, filter and the rest noise | yes |
+| 9 | One loop instead of two in `add_fast` (the quote check, the cache's look and the key length together) | 0% to +3% | **no, reverted** |
+| 10 | **The next line through a unique reference** (`scan.next_fast`: a whole line inside the chunk, nothing held over, not past the cap, is taken without moving the 17-field `Lines` in and out of `lines.next`; anything else asks `lines.next` as before) | select -11%, filter -11%, count -12%, sum -11%, quoted -9%, long -9%, 90% filter -9% | yes |
+| 11 | The field walk unrolled four bytes at a time | 3% to 11% *slower* | **no, reverted** |
+| 12 | `seek` in `reader.scan` (the lines inside a quoted field) | long fields 3% slower, newline-heavy long fields 18% slower | **no, reverted** |
+| 13 | A new group takes the key `add_fast` already built and its failed lookup (`add`'s `keyed`) instead of building and looking again | 100k-key and 1M-key unchanged, 1M keys 1.09x to 1.05x of `main` | yes (it removes duplicate work) |
+| 14 | After 32 rows in a row that each made a group, the next 2048 take the old way at once | 1M keys 1.05x to 1.00x of `main` | yes |
+| 15 | A plan with a `distinct` aggregate does not go through the fast call at all (`engine.fast_ok`, decided once; round 1 had it ask and be refused on every row) | distinct over a unique column: Mac 0.293 s (main) to 0.268 (-9%); Linux 0.587 to 0.596 (+1.5%, even). Before this round it was +7% on Linux | yes |
+
+That is more than the eight rounds the plan allowed; the last ones were each a few lines and each was measured and
+either kept or reverted on its number, which is the reason none was stopped at the 3% line: a round that gained
+under 3% on its own cell (6, 8, 13) is in because it also removed work the profile had shown, and is marked small.
+
+### After (Mac, one thread, the 1 GB file)
+
+| cell | before | after | per row |
+|---|---:|---:|---:|
+| select `status,bytes` | 1.898 s | 1.556 s | 56 to 46 ns |
+| filter | 1.679 s | 1.456 s | 50 to 43 ns |
+| group-count | 3.725 s | 1.772 s | 110 to 52 ns |
+| group-sum | 4.139 s | 1.968 s | 122 to 58 ns |
+
+`sample` after: select: `reader.fields` 42%, the read loop 15%, `emit_buf` 12%, `csv_cell` 12%, `memmove` 6%, `read` 5%,
+`memchr` 5%; filter: `reader.fields` 48%, `expr.holds` 13%, the read loop 13%, `expr.eval` 8%; group-count:
+`reader.fields` 39%, the read loop 30% (with the in-place add partly inlined into it), `add_fast` 23%; group-sum the
+same plus `parse_int` 6%. **The field search is now the largest item in every cell**: 0.5 ns a byte, a byte loop that
+LLVM does not vectorise and a cell-by-cell store of three integers. It is what is left (see `docs/backlog.md`).
+
+On the standard 1M-row file (`scripts/bench.py`, the README's table): group-count 0.104 to 0.051 s on the Mac, group-sum
+0.113 to 0.060 s, filter 0.047 to 0.045, cut 0.054 to 0.049. The adversarial cells before and after, with the new
+ratios against csvtk, Miller and DuckDB, are in `docs/adversarial.md`.
+
+### Tests and mutants
+
+`tests/conformance/test_cellcost.py` (new) aims at each seam: field lengths around the 24-byte walk and the 32-byte
+quoting pass with every kind of special byte at every distance; the cache (keys that collide, runs, many keys, a
+few keys after many; **two keys of different lengths that share a cache place**, which only the length check
+tells apart); a quoted key with a doubled quote against the same text unquoted; keys of more than 255 bytes (the second
+length byte); `distinct` over text; the second aggregate refusing (which one is said, and the rule); integers of 0 to
+30 digits, signs, and the sums at the edge; a line that ends a 64 KiB chunk, one that is a byte on either side, a line
+longer than `--max-line-bytes` that is more than a chunk (and one that ends 100 bytes into the next chunk, the case where
+a line held over looks like a whole one). Each plan runs sequentially and with 3, 4, 16 and 64 threads and ranges of
+7 to 4096 bytes, and the answers must be equal and equal to Python's.
+`scripts/cellcost_mutants.py` (new) has 45 mutants of the new paths, **all killed** (on the Linux box; the Mac run of an earlier
+version of the list too), and three more that are equivalent and are said so in the script: an unquoted field is never able to hold a delimiter or an LF, so testing for them changes nothing; and the
+key `add_fast` builds is only looked for, so a wrong length byte in it makes a miss and the row takes the slow way, with
+the same answer. The first run of the mutants had seven survivors, two of them those equivalent ones and five real (the tests checked a refusal's status and not its
+rule, did not hold a group in the cache before a collision, did not have a quoted key and an unquoted key of the same
+text, and did not have a line over the cap that left less than the cap in the next chunk); the tests were sharpened and
+all seven are killed. The older `select_mutants.py` and `filter_mutants.py` no longer apply to the code (21 of their
+sites moved to `engine.ls` and `scan.ls` when the parallel read was written, and `agg.ls` now has two copies of two
+of them); that was already so on `main`; it is in the backlog.
