@@ -241,3 +241,27 @@ had it at a tie or behind; what is left against the shell's `sort|uniq` is the h
   speculation that a range starts outside quotes is wrong most of the time when quoted fields hold newlines), and the
   cost of the lines themselves: that file is six million short lines in 114 MB.
 * **Memory** is the same, a few MB for a scan and 135 to 180 MB for a million groups; the cache of hot groups is 8 KB.
+
+## After the row sort (branch `row-sort`, `docs/sort.md`)
+
+A1 and A2 were "missing feature": `table` could not sort rows. It can now, and the cells measure it for real (A1 with a
+text key, A2 an integer key, plus A3, the first 1000 by an integer, and A4, an integer key with ties; the whole output of
+every contender is compared with Python's before timing). Seconds, minimum of 7 (Mac) and 5 (Linux, cores 0 to 5, niced,
+the soak running, no DuckDB there):
+
+| cell | `table` | csvtk | Miller | DuckDB 1 thread / default | `sort` |
+|---|---:|---:|---:|---:|---:|
+| A1 text, Mac | 0.465 | 0.806 | | 0.482 / 0.134 | 1.86 |
+| A1 text, Linux | 1.077 | 2.342 | 5.789 | | 1.030 |
+| A2 integer, Mac | 0.435 | 1.830 | | 0.414 / 0.119 | 1.74 |
+| A2 integer, Linux | 0.895 | 4.095 | 4.682 | | 0.892 |
+| A3 top 1000, Mac | 0.064 | 1.919 | | 0.197 / 0.084 | 1.80 |
+| A3 top 1000, Linux | 0.152 | 4.764 | 3.903 | | 0.965 |
+| A4 ties, Mac | 0.563 | 2.164 | | 0.430 / 0.132 | 2.22 |
+| A4 ties, Linux | 1.117 | 4.353 | 2.265 | | 0.658 |
+
+Losses, by the registered definition: against DuckDB's default **3.5x (A1), 3.7x (A2), 4.3x (A4)** (the sort is
+sequential; its default uses 16 cores), **1.05x (A2) and 1.31x (A4) against DuckDB at one thread**, and on Linux **1.7x against
+`sort -s -n` with ties** and 1.05x on a text key (`sort` uses the cores it is given). Wins: 1.7x to 4.6x against csvtk, 2x to
+5.4x against Miller, 3.1x against DuckDB at one thread and 1.3x against its default on the top 1000, which `table` does in
+2 MB. The text cell was 1.7x behind DuckDB at one thread before round S1.

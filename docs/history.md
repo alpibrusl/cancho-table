@@ -304,3 +304,12 @@ text, and did not have a line over the cap that left less than the cap in the ne
 all seven are killed. The older `select_mutants.py` and `filter_mutants.py` no longer apply to the code (21 of their
 sites moved to `engine.ls` and `scan.ls` when the parallel read was written, and `agg.ls` now has two copies of two
 of them); that was already so on `main`; it is in the backlog.
+
+# The row sort (branch `row-sort`, docs/sort.md)
+
+`--order-by KEYS` (`[-]NAME[:int]`, stable, multi-key, `--top`, paging, bounded), with the design written first
+(`docs/sort.md`), and its rounds there: S1, a second prefix word for the first text key, took the text sort of 1M rows from
+0.807 s to 0.455 s (-44%); two more ideas (insertion-sorted runs, the prefix carried through the merge) gained 1% to 4% and
+were reverted. The benchmark, the losses (3.5x to 4.3x behind DuckDB's default, 1.05x to 1.3x behind it at one thread on
+the integer cells, 1.7x behind the shell's `sort -s -n` on Linux with ties) and what is left are in `docs/sort.md`.
+Tests: 1,600 random plans against Python's stable sort, 500 damaged inputs, bounded memory, pages, bounds; 44 mutants.
