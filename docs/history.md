@@ -350,3 +350,16 @@ real test gaps, not equivalents:
 | `filter_mutants.py` | 44 | all killed | all killed |
 | `parallel_mutants.py` | 27 (+ the equivalents its header lists) | all killed | all killed |
 | `cellcost_mutants.py` | 44 (+3 equivalents, explained) | all killed | all killed |
+
+# The row sort (branch `row-sort`, docs/sort.md)
+
+*A finding on the way, for the next change to the read's loop:* the first version of the sort added a case to the loop (write a row,
+group it, **hold it**) and made `--select` 15 percent slower; so did a branch that is never taken, in the same place. The sort now rides the
+grouping's call, and select and filter are at 0.97x to 1.02x of `main`. Details in `docs/sort.md`.
+
+`--order-by KEYS` (`[-]NAME[:int]`, stable, multi-key, `--top`, paging, bounded), with the design written first
+(`docs/sort.md`), and its rounds there: S1, a second prefix word for the first text key, took the text sort of 1M rows from
+0.807 s to 0.455 s (-44%); two more ideas (insertion-sorted runs, the prefix carried through the merge) gained 1% to 4% and
+were reverted. The benchmark, the losses (3.4x to 3.9x behind DuckDB's default, 1.13x behind it at one thread with ties, 1.45x
+behind the shell's `sort -s -n` on Linux with ties) and what is left are in `docs/sort.md`.
+Tests: 1,600 random plans against Python's stable sort, 500 damaged inputs, bounded memory, pages, bounds; 44 mutants.

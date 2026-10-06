@@ -5,7 +5,7 @@ edition 5;
 //
 //     table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N]
 //           [--format json|text] FILE                                the shape
-//     table [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N]
+//     table [--select NAMES] [--where EXPR] [--order-by KEYS] [--top N] [--max-sort-rows N] [--limit N] [--from N] [--max-bytes N]
 //           [--format json|csv] [the same] FILE                      rows
 //     table --group NAMES [--agg LIST] [--where EXPR] [--sort KEY] [--top N]
 //           [--limit N] [--from N] [--max-groups N] [--max-distinct N]
@@ -58,6 +58,7 @@ import plan;
 import query;
 import reader;
 import scan;
+import sorter;
 import toolbox.built;
 import toolbox.cli;
 import toolbox.describe;
@@ -71,17 +72,17 @@ import toolbox.text;
 import writer;
 
 fn flag_table() -> [] &static [byte] {
-    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, named by their header separated by commas (a comma or backslash in a name is written with a backslash before it), or by position as #3, and in the order given;where||text|none||only the rows that satisfy this: conditions joined by and, each COLUMN OP VALUE with OP one of = != < <= > >= contains in (a, b), COLUMN:int for an exact integer comparison, 'quoted' words and backslashes as docs/filter.md says;group||text|none||count the rows by these columns, named as for select, instead of returning them;agg||text|none||with --group (or alone), what to compute per group: count, sum:COL, min:COL, max:COL, distinct:COL separated by commas (default count);sort||text|none||with --group, order the groups by this output column (count, sum:bytes, a group column), - before it for descending, ties by group;top||nat|none||with --group, keep only the first N groups after sorting;limit||nat|none||the most rows returned (default 1000 as json, no limit as csv, ceiling 1000000);from||nat|none||the 0-based row to start at, as the next of a truncated answer says;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-groups||nat|none|100000|the most groups kept, one more is limit.too-many-groups (ceiling 1000000);max-distinct||nat|none|100000|the most distinct values kept over all groups for distinct, one more is limit.too-many-distinct (ceiling 10000000);max-state-bytes||nat|none|67108864|the most bytes of group keys and distinct values kept (ceiling 1073741824);threads||nat|none|1|how many threads read the file (1 to 64), for rows and groups only, on a file of at least --parallel-min-bytes of data: 1 is the sequential read and the answer of every other count is the same bytes;chunk-bytes||nat|none|4194304|the size of the range one thread reads at a time (with --threads), at least 1;parallel-min-bytes||nat|none|1048576|the smallest data (after the header) read by several threads, below it the read is sequential;max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, text for a person (the shape only), csv for rows or groups as csv";
+    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, named by their header separated by commas (a comma or backslash in a name is written with a backslash before it), or by position as #3, and in the order given;where||text|none||only the rows that satisfy this: conditions joined by and, each COLUMN OP VALUE with OP one of = != < <= > >= contains in (a, b), COLUMN:int for an exact integer comparison, 'quoted' words and backslashes as docs/filter.md says;group||text|none||count the rows by these columns, named as for select, instead of returning them;agg||text|none||with --group (or alone), what to compute per group: count, sum:COL, min:COL, max:COL, distinct:COL separated by commas (default count);sort||text|none||with --group, order the groups by this output column (count, sum:bytes, a group column), - before it for descending, ties by group;top||nat|none||with --group or --order-by, keep only the first N groups or rows after sorting;limit||nat|none||the most rows returned (default 1000 as json, no limit as csv, ceiling 1000000);from||nat|none||the 0-based row to start at, as the next of a truncated answer says;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-groups||nat|none|100000|the most groups kept, one more is limit.too-many-groups (ceiling 1000000);max-distinct||nat|none|100000|the most distinct values kept over all groups for distinct, one more is limit.too-many-distinct (ceiling 10000000);max-state-bytes||nat|none|67108864|the most bytes of group keys, distinct values or sorted rows kept (ceiling 1073741824);order-by||text|none||sort the rows by these keys, each NAME, -NAME for descending, NAME:int for exact integers, separated by commas, ties keep the order of the file (docs/sort.md);max-sort-rows||nat|none|1000000|the most rows held to sort, one more is limit.too-many-sort-rows (ceiling 20000000);threads||nat|none|1|how many threads read the file (1 to 64), for rows and groups only, on a file of at least --parallel-min-bytes of data: 1 is the sequential read and the answer of every other count is the same bytes;chunk-bytes||nat|none|4194304|the size of the range one thread reads at a time (with --threads), at least 1;parallel-min-bytes||nat|none|1048576|the smallest data (after the header) read by several threads, below it the read is sequential;max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, text for a person (the shape only), csv for rows or groups as csv";
 }
 
 fn tool() -> [] describe.Tool {
-    return describe.Tool { name: "table", version: "0.3.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some columns (--select), the rows that satisfy a condition (--where, bytewise or exact integers), or counts, sums, minima, maxima and distinct counts of groups (--group, --agg, --sort, --top), as json pages or csv. Every refusal is a rule: a ragged row, an unterminated quote, an unknown column, a cell that is not an integer, a line past the limit.", usage: "table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE | table [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N] [--format json|csv] FILE | table --group NAMES [--agg LIST] [--where EXPR] [--sort KEY] [--top N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--format json|csv] FILE", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|1|1|the CSV file to read", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;limit.too-many-groups;limit.too-many-distinct;limit.state-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column;column.unknown;column.ambiguous;where.syntax;agg.bad-spec;sort.unknown-key;value.not-integer;value.integer-overflow;agg.sum-overflow", extra_rules: extra(), limits: "threads|1|64;chunk-bytes|4194304|1073741824;parallel-min-bytes|1048576|1073741824;limit|1000|1000000;max-bytes|1048576|67108864;max-groups|100000|1000000;max-distinct|100000|10000000;max-state-bytes|67108864|1073741824;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
+    return describe.Tool { name: "table", version: "0.3.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some columns (--select), the rows that satisfy a condition (--where, bytewise or exact integers), or counts, sums, minima, maxima and distinct counts of groups (--group, --agg, --sort, --top), as json pages or csv. Every refusal is a rule: a ragged row, an unterminated quote, an unknown column, a cell that is not an integer, a line past the limit.", usage: "table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE | table [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N] [--format json|csv] FILE | table --group NAMES [--agg LIST] [--where EXPR] [--sort KEY] [--top N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--format json|csv] FILE", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|1|1|the CSV file to read", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;limit.too-many-sort-rows;limit.too-many-groups;limit.too-many-distinct;limit.state-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column;column.unknown;column.ambiguous;where.syntax;agg.bad-spec;sort.unknown-key;value.not-integer;value.integer-overflow;agg.sum-overflow", extra_rules: extra(), limits: "threads|1|64;chunk-bytes|4194304|1073741824;parallel-min-bytes|1048576|1073741824;limit|1000|1000000;max-bytes|1048576|67108864;max-groups|100000|1000000;max-distinct|100000|10000000;max-state-bytes|67108864|1073741824;max-sort-rows|1000000|20000000;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
 }
 
 // The tool's own rules, beside the contract's catalogue: tag, exit code,
 // repairable, summary.
 fn extra() -> [] &static [byte] {
-    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes;limit.record-too-large|8|never|a record read for --select, --where or --group holds more than --max-line-bytes bytes;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread;limit.too-many-groups|8|never|more groups than --max-groups;limit.too-many-distinct|8|never|more distinct values than --max-distinct;limit.state-too-large|8|never|the keys and values kept for groups hold more than --max-state-bytes bytes;parse.csv-ragged-row|8|never|a row has a different number of fields than the header;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header;select.ambiguous-column|8|never|a name in --select that is the name of more than one column;column.unknown|3|never|a name or position in --where, --group or --agg that is not a column of the header;column.ambiguous|8|never|a name in --where, --group or --agg that is the name of more than one column;where.syntax|2|never|--where is not an expression of the grammar, at the offset the detail gives;agg.bad-spec|2|never|an item of --agg that is not count, sum:COL, min:COL, max:COL or distinct:COL;sort.unknown-key|2|never|--sort names no output column of the grouping;value.not-integer|8|never|a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not);value.integer-overflow|8|never|a cell of an :int column or of sum, min or max does not fit 64 bits;agg.sum-overflow|8|never|a sum that would not fit 64 bits";
+    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes;limit.record-too-large|8|never|a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread;limit.too-many-sort-rows|8|never|--order-by would hold more than --max-sort-rows rows to sort;limit.too-many-groups|8|never|more groups than --max-groups;limit.too-many-distinct|8|never|more distinct values than --max-distinct;limit.state-too-large|8|never|the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes;parse.csv-ragged-row|8|never|a row has a different number of fields than the header;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header;select.ambiguous-column|8|never|a name in --select that is the name of more than one column;column.unknown|3|never|a name or position in --where, --group or --agg that is not a column of the header;column.ambiguous|8|never|a name in --where, --group or --agg that is the name of more than one column;where.syntax|2|never|--where is not an expression of the grammar, at the offset the detail gives;agg.bad-spec|2|never|an item of --agg that is not count, sum:COL, min:COL, max:COL or distinct:COL;sort.unknown-key|2|never|--sort names no output column of the grouping;value.not-integer|8|never|a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not);value.integer-overflow|8|never|a cell of an :int column or of sum, min or max does not fit 64 bits;agg.sum-overflow|8|never|a sum that would not fit 64 bits";
 }
 
 fn built() -> [] describe.Built {
@@ -310,7 +311,9 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         var at_arg = names_at;
         if c.bad_name >= ns {
             flag = "--where";
-            if c.bad_name >= ns + nw + ng {
+            if c.bad_name >= query.name_count(tree) - query.count_of(tree, 4) && query.count_of(tree, 4) > 0 {
+                flag = "--order-by";
+            } else if c.bad_name >= ns + nw + ng {
                 flag = "--agg";
             } else if c.bad_name >= ns + nw {
                 flag = "--group";
@@ -331,6 +334,10 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         e = plan.refusal(heap, e, extra(), rule, what, hint, args, at_arg, names, hends, tree.names, tree.nends, tree.nkinds, c.bad_name, upto, flag, shown);
     } else if c.abort == 8 {
         e = over_limit(heap, e, "limit.output-too-large", "the first row of the page is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names, or select fewer columns", shown, budget);
+    } else if c.abort == 20 {
+        e = over_limit(heap, e, "limit.too-many-sort-rows", "--order-by would hold more than --max-sort-rows rows to sort", "ask for the first rows only with --top N or a smaller --limit (they are kept in bounded memory), keep fewer rows with --where, or raise --max-sort-rows, up to the ceiling introspect names", shown, cli.nat(args, parsed, table, "max-sort-rows"));
+    } else if c.abort == 21 {
+        e = over_limit(heap, e, "limit.state-too-large", "the rows kept to sort hold more than --max-state-bytes bytes", "ask for the first rows only with --top N or a smaller --limit, keep fewer or narrower rows with --where, or raise --max-state-bytes, up to the ceiling introspect names", shown, cli.nat(args, parsed, table, "max-state-bytes"));
     } else if c.abort == 13 {
         e = over_limit(heap, e, "limit.too-many-groups", "more groups than --max-groups; counting stopped there", "raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns", shown, cli.nat(args, parsed, table, "max-groups"));
     } else if c.abort == 14 {
@@ -350,7 +357,9 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
             hint = "sum fewer rows, with --where, or group more finely";
         }
         var context = "where";
-        if c.err_fn == 1 {
+        if c.err_fn == -2 {
+            context = "order-by";
+        } else if c.err_fn == 1 {
             context = "sum";
         } else if c.err_fn == 2 {
             context = "min";
@@ -389,7 +398,7 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         }
         w = json.end_array(heap, w);
         e = fail.add(heap, e, w);
-    } else if as_csv && c.capped {
+    } else if (as_csv || query.count_of(tree, 4) > 0) && c.capped {
         e = over_limit(heap, e, "limit.too-many-rows", "--max-rows data rows were read and there are more", "raise --max-rows, up to the ceiling introspect names, or page with --limit and --from", shown, most);
     } else if c.ragged > 0 {
         var w = fail.open_in(heap, extra(), "parse.csv-ragged-row", "a row has a different number of fields than the header", "make every row as wide as the header, quoting fields that hold the delimiter");
@@ -423,6 +432,47 @@ fn start_output[&h](heap: &!h Heap, rows: buffer.Buffer, lead: buffer.Buffer) ->
     return r;
 }
 
+// The sorted rows of `--order-by`, written as `--select` writes them: the rows from `from` on, up to `limit` and `top`, as
+// csv written out or as json kept (a page that stops short because of the byte budget or the limit says where the next one
+// begins: `next` is a place in the sorted answer).
+fn finish_sort[&h, &i, &s, &l, &c, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, held: &s agg.Groups, sel: &l [int], cells: &!c [int], picked: int, as_csv: bool, delim: int, from: int, limit: int, top: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer) {
+    let n = sorter.held(held);
+    var end = n;
+    if top > 0 && top < n {
+        end = top;
+    }
+    var pending = rows;
+    var row = scratch;
+    let ord = sorter.order(heap, held);
+    var pos = from;
+    var going = true;
+    while pos < end && going {
+        if a[engine.k_emitted()] >= limit {
+            a[engine.k_more()] = 1;
+            a[engine.k_next()] = pos;
+            going = false;
+        } else {
+            borrow ord as &or in {
+                let record = sorter.record_of(held, contents(or)[pos]);
+                let (found, open, bad) = reader.fields(record, delim, cells, a[engine.k_columns()]);
+                let (p2, r2) = engine.emit_row(heap, io, pending, row, record, cells, sel, picked, delim, as_csv, budget, a);
+                pending = p2;
+                row = r2;
+            }
+            if a[engine.k_stop()] == 1 {
+                going = false;
+                if a[engine.k_more()] == 1 {
+                    a[engine.k_next()] = pos;
+                }
+            } else {
+                pos = pos + 1;
+            }
+        }
+    }
+    unbox_slice(heap, ord);
+    return (pending, row);
+}
+
 // Read the open file. Mode 0 counts (the shape); mode 1 writes the rows the plan
 // selects and keeps, mode 2 counts them into groups and writes the groups: as
 // csv straight to standard output, as json into the buffer answered third (the
@@ -432,7 +482,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     let table = flag_table();
     let cap = cli.nat(args, parsed, table, "max-line-bytes");
     let most = cli.nat(args, parsed, table, "max-rows");
-    let max_groups = cli.nat(args, parsed, table, "max-groups");
+    var max_groups = cli.nat(args, parsed, table, "max-groups");
     let max_distinct = cli.nat(args, parsed, table, "max-distinct");
     let max_state = cli.nat(args, parsed, table, "max-state-bytes");
     let threads = cli.nat(args, parsed, table, "threads");
@@ -444,10 +494,33 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     }
     let filtering = query.count_of(tree, 1) > 0;
     let fast_ok = engine.fast_ok(tree);
+    let ordering = query.count_of(tree, 4) > 0;
+    let max_sort_rows = cli.nat(args, parsed, table, "max-sort-rows");
+    // `--order-by` goes where the grouping goes: the rows are held in the groups' place (sorter.ls), and the bound on the groups is
+    // the bound on the rows. The loop below is not told: a third thing to do with a row, there, made it 15 percent slower for the other two.
+    var row_mode = mode;
+    if ordering {
+        row_mode = 2;
+        max_groups = max_sort_rows;
+    }
+    // The rows of the answer that are wanted, when they are not all of them: a page (the one past it says there is
+    // more) or `--top`. 0 is all of them, and also when twice that and one is past `--max-sort-rows`.
+    var wanted = 0;
+    if ordering {
+        if limit < 100000000 {
+            wanted = from + limit + 1;
+        }
+        if top > 0 && (wanted == 0 || top < wanted) {
+            wanted = top;
+        }
+        if wanted > 0 && 2 * wanted + 1 > max_sort_rows {
+            wanted = 0;
+        }
+    }
     // `from` pages the rows of a selection; for a grouping it pages the groups, after all
     // the rows have been counted, and must not skip any.
     var row_from = from;
-    if mode == 2 {
+    if mode == 2 || ordering {
         row_from = 0;
     }
     var e = errs;
@@ -559,7 +632,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                             borrow cells as &cr in {
                                 borrow sel as &sr in {
                                     borrow cols as &kr in {
-                                        if mode == 1 {
+                                        if row_mode == 1 {
                                             let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), line, contents(cr), contents(sr), picked, delim, as_csv, budget, number, limit, a);
                                             rows = r2;
                                             scratch = s2;
@@ -674,6 +747,25 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                     a[engine.k_sort_field()] = fsort_field;
                                     a[engine.k_sort_slot()] = fsort_slot;
                                     a[engine.k_sort_desc()] = fdesc;
+                                    if ordering && fabort == 0 {
+                                        let nk = query.order_count(tree);
+                                        var okeys = box_slice(heap, 3 * nk + 1, 0);
+                                        borrow mut okeys as &!ow in {
+                                            borrow cols as &cr in {
+                                                var j = 0;
+                                                while j < nk {
+                                                    contents(ow)[3 * j] = contents(cr)[query.order_name(tree, j)];
+                                                    contents(ow)[3 * j + 1] = query.order_flags(tree, j) % 2;
+                                                    contents(ow)[3 * j + 2] = query.order_flags(tree, j) / 2;
+                                                    j = j + 1;
+                                                }
+                                            }
+                                        }
+                                        borrow okeys as &okr in {
+                                            groups = sorter.configure(groups, nk, wanted, max_sort_rows, max_state, contents(okr));
+                                        }
+                                        unbox_slice(heap, okeys);
+                                    }
                                     if fabort != 0 {
                                         a[engine.k_abort()] = fabort;
                                         a[engine.k_bad_name()] = fbad;
@@ -688,7 +780,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                 // The rest of the file, by several threads, when that is asked for and
                                 // worth it (par.ls): it leaves the tally, the output and the groups as
                                 // this loop would have.
-                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (mode == 2 || row_from == 0) {
+                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && !ordering && (mode == 2 || row_from == 0) {
                                     var size = 0;
                                     match file_size(file) {
                                         Done::Ok(n) => {
@@ -768,7 +860,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                         borrow cells as &cr in {
                                             borrow sel as &sr in {
                                                 borrow cols as &kr in {
-                                                    if mode == 1 {
+                                                    if row_mode == 1 {
                                                         let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), record, contents(cr), contents(sr), picked, delim, as_csv, budget, opened, limit, a);
                                                         rows = r2;
                                                         scratch = s2;
@@ -834,6 +926,17 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                 let (r2, s2) = finish_groups(heap, io, finished, spare, gr, tree, as_csv, delim, from, limit, top, budget, a);
                 finished = r2;
                 spare = s2;
+            }
+        }
+        if ordering && a[engine.k_abort()] == 0 {
+            borrow groups as &hr in {
+                borrow mut cells as &!cw in {
+                    borrow sel as &sr in {
+                        let (r2, s2) = finish_sort(heap, io, finished, spare, hr, contents(sr), contents(cw), picked, as_csv, delim, from, limit, top, budget, a);
+                        finished = r2;
+                        spare = s2;
+                    }
+                }
             }
         }
         agg.drop(heap, groups);
@@ -984,6 +1087,109 @@ fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given
     return (q, e);
 }
 
+// `--order-by KEYS` as names (added to the plan after the aggregates') and flags: each key is `[-]NAME[:int]`. A leading
+// `-` is descending, a trailing `:int` is exact integers; `\-` at the start and `\:` anywhere write a minus and a colon
+// that are part of a name. What is left is a list of names as `--select`'s is, and goes through the same parser.
+fn add_order_keys[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given: &g [byte]) -> [heap] (query.Query, fail.Errors) {
+    var e = errs;
+    var cleaned = buffer.empty(heap, len(given) + 1);
+    var flags = vec.empty(heap, 4, 0);
+    let n = len(given);
+    var i = 0;
+    var at_start = true;
+    var minus_done = false;
+    var flag = 0;
+    while i <= n {
+        var c = -1;
+        if i < n {
+            c = int_of(given[i]);
+        }
+        let was_start = at_start;
+        at_start = false;
+        if c == ',' || c < 0 {
+            flags = vec.push(heap, flags, flag);
+            flag = 0;
+            at_start = true;
+            minus_done = false;
+            if c == ',' {
+                cleaned = buffer.push(heap, cleaned, byte_of(','));
+            }
+            i = i + 1;
+        } else if was_start && c == '-' && !minus_done {
+            flag = 1;
+            minus_done = true;
+            at_start = true;
+            i = i + 1;
+        } else if c == '\\' && i + 1 < n {
+            let d = int_of(given[i + 1]);
+            if d == '-' && was_start || d == ':' {
+                cleaned = buffer.push(heap, cleaned, byte_of(d));
+            } else {
+                cleaned = buffer.push(heap, cleaned, byte_of(c));
+                cleaned = buffer.push(heap, cleaned, byte_of(d));
+            }
+            i = i + 2;
+        } else if c == ':' && i + 3 < n + 0 && int_of(given[i + 1]) == 'i' && int_of(given[i + 2]) == 'n' && int_of(given[i + 3]) == 't' && (i + 4 == n || int_of(given[i + 4]) == ',') {
+            flag = flag + 2;
+            i = i + 4;
+        } else {
+            cleaned = buffer.push(heap, cleaned, byte_of(c));
+            i = i + 1;
+        }
+    }
+    var toks = buffer.empty(heap, 1);
+    var ends = vec.empty(heap, 1, 0);
+    var kinds = vec.empty(heap, 1, 0);
+    var listed = true;
+    buffer.drop(heap, toks);
+    vec.drop(heap, ends);
+    vec.drop(heap, kinds);
+    borrow cleaned as &cr in {
+        let (t2, e2, k2, l2) = plan.parse(heap, buffer.bytes(cr));
+        toks = t2;
+        ends = e2;
+        kinds = k2;
+        listed = l2;
+    }
+    var named = 0;
+    borrow ends as &ter in {
+        named = vec.size(ter);
+    }
+    var q = tree;
+    if !listed {
+        e = flag_problem(heap, e, "args.bad-value", "a list of keys is names separated by commas, each with - before it for descending and :int after it for integers, and a backslash escapes only a comma, a backslash, a #, a leading - or a :", "--order-by '-bytes:int,status'", "--order-by");
+    } else if named > plan.most_names() {
+        e = flag_problem(heap, e, "args.bad-value", "a list names more columns than the ceiling", "4096 is the most one flag names", "--order-by");
+    } else {
+        var first = 0;
+        borrow q as &qr in {
+            first = query.name_count(qr);
+        }
+        borrow toks as &tr in {
+            borrow ends as &er in {
+                borrow kinds as &kr in {
+                    q = plan.fill(heap, q, tr, er, kr);
+                }
+            }
+        }
+        var k = 0;
+        while k < named {
+            var f = 0;
+            borrow flags as &fr in {
+                f = vec.get(fr, k);
+            }
+            q = query.add_order(heap, q, first + k, f);
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, cleaned);
+    buffer.drop(heap, toks);
+    vec.drop(heap, ends);
+    vec.drop(heap, kinds);
+    vec.drop(heap, flags);
+    return (q, e);
+}
+
 fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read, io_write, err_write, conc] int {
     let table = flag_table();
     var e = errs;
@@ -994,11 +1200,12 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     let has_where = cli.has(parsed, table, "where");
     let has_group = cli.has(parsed, table, "group");
     let has_agg = cli.has(parsed, table, "agg");
+    let has_order = cli.has(parsed, table, "order-by");
     let grouped = has_group || has_agg;
     var mode = 0;
     if grouped {
         mode = 2;
-    } else if has_select || has_where {
+    } else if has_select || has_where || has_order {
         mode = 1;
     }
     let delim = delimiter_of(cli.text(args, parsed, table, "delimiter"));
@@ -1022,6 +1229,10 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     let state_most = cli.nat(args, parsed, table, "max-state-bytes");
     if state_most < 1 || state_most > 1073741824 {
         e = flag_problem(heap, e, "args.bad-value", "--max-state-bytes is from 1 to 1073741824", "--max-state-bytes 67108864", "--max-state-bytes");
+    }
+    let sort_rows_most = cli.nat(args, parsed, table, "max-sort-rows");
+    if sort_rows_most < 1 || sort_rows_most > 20000000 {
+        e = flag_problem(heap, e, "args.bad-value", "--max-sort-rows is from 1 to 20000000", "--max-sort-rows 1000000", "--max-sort-rows");
     }
     let thread_count = cli.nat(args, parsed, table, "threads");
     if thread_count < 1 || thread_count > 64 {
@@ -1072,8 +1283,11 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     if grouped && has_select {
         e = flag_problem(heap, e, "args.conflict", "--select picks columns, and with --group or --agg the columns are the groups and the aggregates", "drop --select", "--select --group --agg");
     }
-    if !grouped && (cli.has(parsed, table, "sort") || cli.has(parsed, table, "top")) {
-        e = flag_problem(heap, e, "args.required-flag", "--sort and --top order and cut groups, so they need --group or --agg", "--group NAMES", "--sort --top --group");
+    if grouped && has_order {
+        e = flag_problem(heap, e, "args.conflict", "--order-by sorts rows, and with --group or --agg the rows are counted into groups: order those with --sort and --top", "drop --order-by", "--order-by --group --agg");
+    }
+    if !grouped && (cli.has(parsed, table, "sort") || cli.has(parsed, table, "top") && !has_order) {
+        e = flag_problem(heap, e, "args.required-flag", "--sort orders groups and --top cuts groups or sorted rows, so they need --group, --agg or --order-by", "--group NAMES", "--sort --top --group");
     }
     // The plan.
     var tree = query.empty(heap);
@@ -1119,6 +1333,11 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         } else {
             tree = query.add_agg(heap, tree, 0, -1);
         }
+    }
+    if has_order && !grouped {
+        let (t2, e2) = add_order_keys(heap, tree, e, cli.text(args, parsed, table, "order-by"));
+        tree = t2;
+        e = e2;
     }
     let (root, after_root) = path.root(heap, args, cli.text(args, parsed, table, "root"), cli.value_index(parsed, table, "root"), e);
     e = after_root;

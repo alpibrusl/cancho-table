@@ -16,6 +16,7 @@ import std.vec;
 import agg;
 import expr;
 import query;
+import sorter;
 import toolbox.out;
 import writer;
 
@@ -322,6 +323,10 @@ pub fn process_rows[&h, &i, &q, &c, &d, &e, &s, &a](heap: &!h Heap, io: &!i Io, 
 
 // The same for a grouping (mode 2): tested, then added to its group.
 pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_groups: int, max_distinct: int, max_state: int, track: bool, keyed: bool, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
+    if query.count_of(tree, 4) > 0 {
+        // `--order-by`: the rows are held, not grouped; the bounds are the sort's (see sorter.ls)
+        return order_row(heap, groups, escr, kept, tree, cols, record, cells, opened, max_groups, max_state, a);
+    }
     let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
     if verdict != 1 {
         return (groups, e2, k2);
@@ -353,6 +358,9 @@ pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Gr
     if verdict != 1 {
         return (0, e2, k2);
     }
+    if query.count_of(tree, 4) > 0 {
+        return (sorter.hook(groups, record, cells), e2, k2);
+    }
     let (status, k) = agg.add_fast(groups, tree, cols, record, cells, track);
     if status == 0 {
         return (0, e2, k2);
@@ -375,6 +383,9 @@ pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Gr
 // when the row is added, 1 when `process_groups` has to deal with it (3 when the key is built: a new group), and 16 + 8 * k + status when aggregate
 // `k` refused the row with `status` (4 to 6), for `group_refused` to record.
 pub fn group_plain[&g, &q, &c, &d, &e](groups: &!g agg.Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], track: bool) -> [] int {
+    if query.count_of(tree, 4) > 0 {
+        return sorter.hook(groups, record, cells);
+    }
     let (status, k) = agg.add_fast(groups, tree, cols, record, cells, track);
     if status == 0 {
         return 0;
@@ -410,4 +421,52 @@ pub fn fast_ok[&q](tree: &q query.Query) -> [] bool {
         k = k + 1;
     }
     return true;
+}
+
+// A counted row that is not ragged, for `--order-by`: tested by `--where`, then held by the sorter (the groups, see
+// sorter.ls), or, when only the first rows are wanted and the last of them is known, dropped at once if it is not before
+// that one. `max_rows` and `max_state` are the bounds. Sets `abort` for a bound passed (20 rows, 21 bytes) or a key that is
+// not an integer (as `--where` does, with `err_fn` -2); once `2 * cap + 1` rows are held they are cut back to `cap`.
+fn order_row[&h, &q, &c, &d, &e, &a](heap: &!h Heap, held: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_rows: int, max_state: int, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
+    // (`--where` was asked of the row by `group_fast` before the rows came here.)
+    let e2 = escr;
+    let k2 = kept;
+    var rejected = 0;
+    borrow held as &hr in {
+        rejected = sorter.reject(hr, record, cells);
+    }
+    if rejected == 1 {
+        return (held, e2, k2);
+    }
+    let (s2, e3, status, which) = sorter.add(heap, held, record, cells, e2, max_rows, max_state);
+    if status == 0 {
+        var out = s2;
+        var full = false;
+        borrow out as &or in {
+            full = contents(or.memo)[0] > 0 && sorter.held(or) >= 2 * contents(or.memo)[0] + 1;
+        }
+        if full {
+            out = sorter.cut_back(heap, out);
+        }
+        return (out, e3, k2);
+    }
+    a[k_stop()] = 1;
+    if status == 1 {
+        a[k_abort()] = 20;
+        return (s2, e3, k2);
+    }
+    if status == 2 {
+        a[k_abort()] = 21;
+        return (s2, e3, k2);
+    }
+    a[k_abort()] = 8 + status;
+    var column = 0;
+    borrow s2 as &sr in {
+        column = contents(sr.memo)[4 + 3 * which];
+    }
+    a[k_err_col()] = column;
+    a[k_err_fn()] = -2;
+    a[k_err_row()] = a[k_records()];
+    a[k_err_line()] = opened;
+    return (s2, e3, keep_value(heap, k2, record, cells[3 * column], cells[3 * column + 1]));
 }

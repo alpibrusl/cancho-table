@@ -22,7 +22,8 @@ module query;
 // integer value when the condition is :int, 0.
 // `aggs` has 2 per aggregate: function (0 count, 1 sum, 2 min, 3 max,
 // 4 distinct) and name (or -1 for count).
-// `meta` is: names for select, conditions, names for group, aggregates.
+// `meta` is: names for select, conditions, names for group, aggregates, order keys; then, for each order key,
+// its name (an index into `names`, which come after the aggregates') and its flags (1 descending, 2 integer).
 
 import std.buffer;
 import std.bytes;
@@ -41,6 +42,7 @@ pub res struct Query {
 
 pub fn empty[&h](heap: &!h Heap) -> [heap] Query {
     var meta = vec.empty(heap, 4, 0);
+    meta = vec.push(heap, meta, 0);
     meta = vec.push(heap, meta, 0);
     meta = vec.push(heap, meta, 0);
     meta = vec.push(heap, meta, 0);
@@ -85,6 +87,26 @@ pub fn bump(q: Query, slot: int, by: int) -> [] Query {
         vec.set(w, slot, vec.get(w, slot) + by);
     }
     return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: m };
+}
+
+// One more `--order-by` key: the index of its name, and its flags.
+pub fn add_order[&h](heap: &!h Heap, q: Query, name: int, flags: int) -> [heap] Query {
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta } = q;
+    var m = vec.push(heap, meta, name);
+    m = vec.push(heap, m, flags);
+    return bump(Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: m }, 4, 1);
+}
+
+pub fn order_count[&q](q: &q Query) -> [] int {
+    return vec.get(q.meta, 4);
+}
+
+pub fn order_name[&q](q: &q Query, k: int) -> [] int {
+    return vec.get(q.meta, 5 + 2 * k);
+}
+
+pub fn order_flags[&q](q: &q Query, k: int) -> [] int {
+    return vec.get(q.meta, 6 + 2 * k);
 }
 
 pub fn count_of[&q](q: &q Query, slot: int) -> [] int {

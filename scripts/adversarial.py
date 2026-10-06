@@ -149,13 +149,18 @@ def cells(table, nthreads):
         return c
 
     f2 = d + "/f2.csv"
-    # A1: sort by text. table: the proxy (a group by the unique key, in key order)
-    def a1():
-        header, rows = python_rows(f2)
-        k = header.index("k1m")
-        keys = sorted(r[k] for r in rows)
-        return keys
-    A1 = {"table -t1 (proxy: --group k1m)": (tbl(f2, "--group", "k1m", "--format", "csv", *big), None),
+    # A1, A2, A3: sorting rows (`table --order-by`, docs/sort.md). The keys are unique, so the answer is one answer; the
+    # whole rows are compared with Python's, in order, before anything is timed.
+    sortargs = ["--format", "csv", "--max-state-bytes", "536870912", "--max-sort-rows", "2000000"]
+
+    def rows_by(col, desc=False, as_int=False, first=None):
+        def expected():
+            header, rows = python_rows(f2)
+            i = header.index(col)
+            got = sorted(rows, key=(lambda r: int(r[i])) if as_int else (lambda r: r[i]), reverse=desc)
+            return got[:first] if first else got
+        return expected
+    A1 = {"table -t1": (tbl(f2, "--order-by", "k1m", *sortargs), None),
           "csvtk sort": (["csvtk", "-j", "1", "sort", "-k", "k1m", f2], None),
           "sh sort": (sh("tail -n +2 %s | LC_ALL=C sort -t, -k4,4" % f2), None)}
     if shutil.which("mlr"):
@@ -163,14 +168,41 @@ def cells(table, nthreads):
     if shutil.which("duckdb"):
         A1["duckdb -t1"] = duck(f2, "SELECT * FROM @ ORDER BY k1m", 1)
         A1["duckdb default"] = duck(f2, "SELECT * FROM @ ORDER BY k1m")
-    out["A1"] = ("sort 1M rows by a text column (table: proxy only, see docs)", f2, a1, A1, "keys")
-    A2 = {"csvtk sort": (["csvtk", "-j", "1", "sort", "-k", "u:n", f2], None)}
+    out["A1"] = ("sort 1M rows by a text column", f2, rows_by("k1m"), A1, "rows")
+    A2 = {"table -t1": (tbl(f2, "--order-by", "u:int", *sortargs), None),
+          "csvtk sort": (["csvtk", "-j", "1", "sort", "-k", "u:n", f2], None),
+          "sh sort -n": (sh("tail -n +2 %s | LC_ALL=C sort -t, -k5,5n" % f2), None)}
     if shutil.which("mlr"):
         A2["mlr sort"] = (["mlr", "--icsv", "--ocsv", "sort", "-nf", "u", f2], None)
     if shutil.which("duckdb"):
         A2["duckdb -t1"] = duck(f2, "SELECT * FROM @ ORDER BY u", 1)
         A2["duckdb default"] = duck(f2, "SELECT * FROM @ ORDER BY u")
-    out["A2"] = ("sort 1M rows by an integer column (table has no row sort and no proxy)", f2, None, A2, "sortint")
+    out["A2"] = ("sort 1M rows by an integer column", f2, rows_by("u", as_int=True), A2, "rows")
+    A3 = {"table -t1": (tbl(f2, "--order-by", "-u:int", "--top", "1000", "--format", "csv"), None),
+          "csvtk sort|head": (sh("csvtk -j 1 sort -k u:nr %s | head -n 1001" % f2), None),
+          "sh sort|head": (sh("tail -n +2 %s | LC_ALL=C sort -t, -k5,5nr | head -n 1000" % f2), None)}
+    if shutil.which("mlr"):
+        A3["mlr sort then head"] = (["mlr", "--icsv", "--ocsv", "sort", "-nr", "u", "then", "head", "-n", "1000", f2], None)
+    if shutil.which("duckdb"):
+        A3["duckdb -t1"] = duck(f2, "SELECT * FROM @ ORDER BY u DESC LIMIT 1000", 1)
+        A3["duckdb default"] = duck(f2, "SELECT * FROM @ ORDER BY u DESC LIMIT 1000")
+    out["A3"] = ("the first 1000 of 1M rows by an integer column, descending", f2, rows_by("u", desc=True, as_int=True, first=1000), A3, "rows")
+
+    # A4: many ties (v has about 10 rows per value). The incumbents break ties in their own ways, so the answer is checked as
+    # "ordered by v, and the same rows"; `table`'s stable order is the oracle of the tests and equals `sort -s` byte for byte.
+    A4 = {"table -t1": (tbl(f2, "--order-by", "v:int", *sortargs), None),
+          "csvtk sort": (["csvtk", "-j", "1", "sort", "-k", "v:n", f2], None),
+          "sh sort -s -n": (sh("tail -n +2 %s | LC_ALL=C sort -s -t, -k6,6n" % f2), None)}
+    if shutil.which("mlr"):
+        A4["mlr sort"] = (["mlr", "--icsv", "--ocsv", "sort", "-nf", "v", f2], None)
+    if shutil.which("duckdb"):
+        A4["duckdb -t1"] = duck(f2, "SELECT * FROM @ ORDER BY v", 1)
+        A4["duckdb default"] = duck(f2, "SELECT * FROM @ ORDER BY v")
+
+    def ties():
+        header, rows = python_rows(f2)
+        return sorted(rows, key=lambda r: int(r[5]))
+    out["A4"] = ("sort 1M rows by an integer column with about 10 rows to a value", f2, ties, A4, "rowsties")
 
     def group_cell(cid, title, path, col, agg, valcol=None, kind="count", extra_args=()):
         ex = {}
@@ -349,6 +381,18 @@ def check(kind, expected, text):
         rows = [r for r in csv.reader(io.StringIO(text, newline="")) if r and r[4] != "u"]
         u = [int(r[4]) for r in rows]
         return u == sorted(u) and len(u) == 1_000_000
+    if kind == "rows":      # the whole rows, in order (a header line, if there is one, is not a row)
+        rows = [r for r in csv.reader(io.StringIO(text, newline="")) if r]
+        if rows and rows[0] == ["id", "s", "k100k", "k1m", "u", "v"]:
+            rows = rows[1:]
+        return rows == expected()
+    if kind == "rowsties":  # ordered by column v (index 5), and the same rows
+        rows = [r for r in csv.reader(io.StringIO(text, newline="")) if r]
+        if rows and rows[0] == ["id", "s", "k100k", "k1m", "u", "v"]:
+            rows = rows[1:]
+        want = expected()
+        vs = [int(r[5]) for r in rows]
+        return vs == [int(r[5]) for r in want] and sorted(map(tuple, rows)) == sorted(map(tuple, want))
     if kind == "linecount":
         return len(text.splitlines()) - 1 == expected()
     if kind == "pairs":

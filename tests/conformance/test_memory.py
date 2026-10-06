@@ -104,6 +104,36 @@ class Memory(unittest.TestCase):
                 self.assertLess(large, (8 + threads * 4 * 1) * range_bytes, common)
                 self.assertLess(large - small, (2 + threads * 3) * range_bytes, common)
 
+    def test_the_first_rows_of_a_sort_are_flat_in_the_size_of_the_file(self):
+        # Top-N is bounded memory: 2 * (page + 1) + 1 rows held, whatever the file holds.
+        make(self.s.dir / "small.csv", 60_000)
+        make(self.s.dir / "large.csv", 960_000)
+        for flags in (["--order-by", "-bytes:int,note", "--limit", "1000"], ["--order-by", "note", "--top", "500", "--format", "csv"],
+                      ["--order-by", "-id:int", "--select", "id,path", "--limit", "100", "--from", "1000"]):
+            rc1, small = peak_rss("--root", self.s.dir, *flags, "small.csv")
+            rc2, large = peak_rss("--root", self.s.dir, *flags, "large.csv")
+            self.assertEqual((rc1, rc2), (0, 0), flags)
+            print("\npeak RSS %s: %d KB on 2 MB, %d KB on 37 MB" % (" ".join(flags), small // 1024, large // 1024), file=sys.stderr)
+            self.assertLess(large - small, 1 << 20, flags)
+            self.assertLess(large, 8 << 20, flags)
+
+    def test_a_full_sort_is_within_its_bound_and_refused_at_it(self):
+        make(self.s.dir / "large.csv", 960_000)
+        make(self.s.dir / "small.csv", 60_000)
+        # within the bound the rows are held: about what they weigh, and never more than --max-state-bytes plus the sort's scratch
+        rc, peak = peak_rss("--root", self.s.dir, "--order-by", "-bytes:int", "--format", "csv", "small.csv")
+        self.assertEqual(rc, 0)
+        self.assertLess(peak, 24 << 20)
+        # at the bound: the refusal comes when the bytes held pass it, so the memory is about the bound, not the file
+        bound = 8 << 20
+        rc, peak = peak_rss("--root", self.s.dir, "--order-by", "-bytes:int", "--format", "csv", "--max-state-bytes", bound, "large.csv")
+        self.assertEqual(rc, 8)
+        print("\npeak RSS of a sort refused at 8 MiB of state: %d KB" % (peak // 1024), file=sys.stderr)
+        self.assertLess(peak, bound * 4)   # the buffers double as they grow: old and new are live together, about 3x
+        rc, peak = peak_rss("--root", self.s.dir, "--order-by", "-bytes:int", "--format", "csv", "--max-sort-rows", 100000, "large.csv")
+        self.assertEqual(rc, 8)
+        self.assertLess(peak, 64 << 20)
+
     def test_a_grouping_is_bounded_by_its_limits(self):
         # Every id is a group: the default 100,000 groups stop it, and memory is
         # what 100,000 short keys take, not what a million rows would.

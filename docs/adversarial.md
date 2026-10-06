@@ -241,3 +241,27 @@ had it at a tie or behind; what is left against the shell's `sort|uniq` is the h
   speculation that a range starts outside quotes is wrong most of the time when quoted fields hold newlines), and the
   cost of the lines themselves: that file is six million short lines in 114 MB.
 * **Memory** is the same, a few MB for a scan and 135 to 180 MB for a million groups; the cache of hot groups is 8 KB.
+
+## After the row sort (branch `row-sort`, `docs/sort.md`)
+
+A1 and A2 were "missing feature": `table` could not sort rows. It can now, and the cells measure it for real (A1 with a
+text key, A2 an integer key, plus A3, the first 1000 by an integer, and A4, an integer key with ties; the whole output of
+every contender is compared with Python's before timing). Seconds, minimum of 7 (Mac) and 5 (Linux, cores 0 to 5, niced,
+the soak running, no DuckDB there):
+
+| cell | `table` | csvtk | Miller | DuckDB 1 thread / default | `sort` |
+|---|---:|---:|---:|---:|---:|
+| A1 text, Mac | 0.483 | 0.789 | | 0.522 / 0.143 | 1.56 |
+| A1 text, Linux | 0.912 | 2.014 | 4.936 | | 0.881 |
+| A2 integer, Mac | 0.413 | 1.882 | | 0.429 / 0.123 | 1.87 |
+| A2 integer, Linux | 0.958 | 4.420 | 4.377 | | 0.926 |
+| A3 top 1000, Mac | 0.063 | 1.898 | | 0.196 / 0.082 | 1.60 |
+| A3 top 1000, Linux | 0.115 | 4.324 | 3.958 | | 0.909 |
+| A4 ties, Mac | 0.487 | 2.246 | | 0.432 / 0.125 | 2.00 |
+| A4 ties, Linux | 1.080 | 4.714 | 2.626 | | 0.743 |
+
+Losses, by the registered definition: against DuckDB's default **3.4x (A1, A2), 3.9x (A4)** (the sort is sequential; its
+default uses 16 cores), **1.13x against DuckDB at one thread with ties**, and on Linux **1.45x against `sort -s -n` with ties**
+and 1.04x on a text key (`sort` uses the cores it is given). Wins: 1.6x to 4.6x against csvtk, 2.4x to 5.4x against Miller,
+1.04x to 1.08x against DuckDB at one thread on A1 and A2, and on the top 1000 3.1x against DuckDB at one thread and 1.3x against
+its default, in 2 MB. The text cell was 1.7x behind DuckDB at one thread before round S1 of `docs/sort.md`.

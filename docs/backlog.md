@@ -69,9 +69,31 @@ the groupings with many keys are still 3x behind DuckDB at one thread.
 Each is a measured loss or a missing thing; the cause is from a profile where one was possible (`sample`, Mac) and
 otherwise said to be inferred.
 
-* **A row sort (`--sort-rows COL`, text and integer).** Missing: A1/A2. The group-sort machinery (`agg.sort_into`) is
-  the starting point for text; an integer key needs a numeric compare. The bound is the whole file in memory unless
-  it is an external merge, so the first version would refuse past `--max-state-bytes`.
+* ~~**A row sort (text and integer).**~~ (done: `--order-by`, `docs/sort.md`. 1M rows by a text key 0.47 s on the Mac against csvtk's
+  0.81, DuckDB's 0.48 at one thread and 0.13 at its default; by an integer 0.44 against 1.8, 0.41 and 0.12; the first 1000
+  in 0.064 s and 2 MB.)
+* **A third case in the read's loop costs the other two 15 percent** (found while building the row sort; `docs/sort.md`): a
+  branch that is never taken, at the place where a counted row is written or grouped, made `--select` and `--where` that much
+  slower, and the same branch elsewhere did nothing. Until it is understood (a look at the code the compiler writes for the
+  loop would settle whether it is the specialisation of the loop on the mode), a new thing to do with a row goes in a
+  callee behind a case the loop already has, as the sort does. The cost of the by-value call for the groups is the other
+  half of the same fact: the in-place paths (`group_plain`, `group_fast`) exist because moving the 40-word `Groups` per row
+  cost a quarter of a group-count.
+* **The row sort is sequential.** `--threads` with `--order-by` runs the sequential read and gives the same bytes. DuckDB's
+  default is 3.4x to 3.9x ahead of it on 1M rows (the shell's `sort` on Linux uses its cores too). The design that fits:
+  each range keeps its rows sorted (the bounded top-N already does that for a page), the parent merges the runs in file
+  order (equal keys: the earlier range first, which is the stable order), the way the groups are merged now. It needs a
+  serialised form of a held row, which the groups' blob has the pieces of. Worth it only with the hash-partitioned merge
+  of the groupings, which needs the same plumbing.
+* **A sort by two keys whose first has few values is twice a sort by one** (`--order-by s,v:int`: 0.87 s, against 0.44):
+  most comparisons tie on the first key's prefix words and take the full comparison, through `vec.get` and `key_bytes`.
+  A prefix of the *pair* (the second key's integer, when the first has settled to ties) would make them integer compares.
+* **Writing the rows out in sorted order reads the file's records at random**: the same file already in order sorts in 0.20 s,
+  the random one in 0.44 to 0.50. An external-memory layout (the keys and a pointer, the records read again in order) is
+  no better; storing the records in sorted blocks is what a column store does. Not tried.
+* **No external sort**: past `--max-sort-rows` or `--max-state-bytes` the answer is the refusal (`limit.too-many-sort-rows`,
+  `limit.state-too-large`), by design (`docs/sort.md`). A merge of sorted spill files would lift it; it is not worth
+  building before someone has a file that does not fit.
 * **The end-phase sort of a million groups: `compare_keys` is still two thirds of B3's profile** after the prefix
   sort of round 4, because keys share their first bytes. Next steps in order of cost: an MSD radix or a longer prefix
   (skip the shared leading bytes of the whole key set, which is one pass); store the key hash-map in insertion order
