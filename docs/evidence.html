@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<!--
+  Hand-written, except between the paired "gen:NAME" comment lines (the counts), which
+  scripts/site.py writes from the repository. Every benchmark number is copied from
+  README.md or docs/*.md with its conditions; none is computed here.
+-->
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>table evidence: tests, benchmarks and the cells where it loses</title>
+<meta name="description" content="What has been tested and how, the benchmark tables with their conditions, the adversarial round and every cell where table loses, and how to reproduce all of it.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b7a75'/%3E%3Cpath d='M7 11h18M7 17h18M7 23h18M13 8v18' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #fbfcfc; --fg: #14181a; --muted: #55606a; --line: #dfe5e7; --surface: #ffffff; --soft: #eff4f4;
+  --accent: #0b7a75; --accent-fg: #ffffff; --good: #0f7b5f; --warn: #92400e; --warn-bg: #fdf6e7; --warn-line: #e0b765; --bad: #b42d27;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0c1011; --fg: #e7ebec; --muted: #9aa8ae; --line: #212a2d; --surface: #131a1c; --soft: #172022;
+    --accent: #4fd1c5; --accent-fg: #06201e; --good: #4fd1a5; --warn: #f3c77a; --warn-bg: #1d1a12; --warn-line: #8a6a2a; --bad: #ff7b73; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; scroll-padding-top: 4rem; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 1rem/1.6 var(--font); }
+a { color: var(--accent); text-underline-offset: .15em; }
+.wrap { width: 100%; max-width: 68rem; margin: 0 auto; padding: 0 16px; }
+.skip { position: absolute; left: 16px; top: -4rem; background: var(--accent); color: var(--accent-fg); padding: .5rem .8rem; border-radius: 6px; z-index: 9; }
+.skip:focus { top: 8px; }
+a:focus-visible, .btn:focus-visible, pre:focus-visible, summary:focus-visible, .fitwrap:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; gap: 1.5rem; height: 3.4rem; }
+.brand { font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; letter-spacing: -.01em; white-space: nowrap; }
+nav { display: flex; gap: 1.2rem; margin-left: auto; }
+nav a { color: var(--muted); text-decoration: none; font-size: .93rem; white-space: nowrap; }
+nav a:hover { color: var(--fg); }
+@media (max-width: 40rem) { nav a.opt { display: none; } nav { gap: .9rem; } }
+
+h1 { font-size: clamp(2.1rem, 6vw, 3.8rem); line-height: 1.06; letter-spacing: -.035em; margin: 0 0 1rem; font-weight: 750; overflow-wrap: break-word; }
+h2 { font-size: clamp(1.5rem, 3.4vw, 2.1rem); line-height: 1.15; letter-spacing: -.025em; margin: 0 0 .5rem; font-weight: 700; }
+h3 { font-size: 1.05rem; margin: 0 0 .25rem; }
+p { margin: 0 0 1rem; }
+section { padding: 4.5rem 0 0; }
+.lead { font-size: 1.2rem; color: var(--muted); max-width: 34rem; }
+.sub { color: var(--muted); max-width: 40rem; }
+code { font-family: var(--mono); font-size: .9em; background: var(--soft); padding: .1em .35em; border-radius: 5px; overflow-wrap: anywhere; }
+
+.hero { padding: 3.5rem 0 0; display: grid; gap: 2.2rem; align-items: center; }
+.hero > *, .two > *, .cols > * { min-width: 0; }
+@media (min-width: 58rem) { .hero { grid-template-columns: 1fr 1.1fr; } }
+.badge { display: inline-flex; gap: .5rem; align-items: center; font-size: .82rem; color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-line); padding: .22rem .7rem; border-radius: 999px; margin-bottom: 1.2rem; text-decoration: none; }
+.badge i { width: .5rem; height: .5rem; border-radius: 50%; background: var(--warn-line); display: inline-block; flex: none; }
+.cta { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 1.6rem; }
+.btn { display: inline-block; padding: .65rem 1.15rem; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); }
+.btn.ghost { color: var(--accent); }
+.btn.ghost:hover { background: var(--soft); }
+
+.term { background: #0d1117; color: #d6dde8; border: 1px solid #262c36; border-radius: 12px; font: .82rem/1.6 var(--mono); padding: 1rem 1.1rem 1.1rem; box-shadow: 0 18px 50px -24px rgba(10, 40, 40, .55); overflow-x: auto; }
+.term .bar { display: flex; gap: .35rem; margin-bottom: .8rem; }
+.term .bar i { width: .65rem; height: .65rem; border-radius: 50%; background: #2d3440; display: block; }
+.term .c { color: #8b95a5; } .term .r { color: #ff9a92; }
+.term pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.three { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); margin-top: 3rem; }
+.three div { border-top: 3px solid var(--accent); padding-top: .8rem; }
+.three p { color: var(--muted); margin: 0; font-size: .96rem; }
+
+.figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.2rem; min-width: 0; }
+.figure.wide { margin-top: 2rem; }
+.figure svg { display: block; width: 100%; height: auto; }
+.figure h3 { margin-bottom: .6rem; }
+.figure figcaption { color: var(--muted); font-size: .88rem; margin-top: .8rem; }
+.two { display: grid; gap: 1rem; grid-template-columns: 1fr; margin-top: 2rem; }
+@media (min-width: 52rem) { .two { grid-template-columns: 1fr 1fr; } }
+svg .t { fill: var(--fg); font: 600 13px var(--font); } svg .s { fill: var(--muted); font: 12px var(--font); }
+svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.4; } svg .hot { fill: var(--soft); stroke: var(--accent); stroke-width: 2; }
+svg .ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+
+.grid { display: grid; gap: 1px; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: 2rem; }
+.grid div { background: var(--surface); padding: 1.1rem 1.2rem; }
+.grid p { color: var(--muted); font-size: .93rem; margin: 0; }
+
+.stats { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); margin: 2rem 0 0; }
+.stats div { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; }
+.stats b { display: block; font: 700 1.9rem/1.1 var(--font); letter-spacing: -.03em; }
+.stats span { color: var(--muted); font-size: .88rem; }
+.note { color: var(--muted); font-size: .88rem; margin-top: .9rem; }
+
+pre.code { background: var(--soft); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; font: .84rem/1.6 var(--mono); overflow-x: auto; margin: 1.4rem 0 0; }
+.figure pre.code { margin-top: .4rem; }
+pre.code .c { color: var(--muted); } pre.code .r { color: var(--bad); }
+.status { margin-top: 4.5rem; background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 14px; padding: 1.3rem 1.5rem; }
+.status h2 { font-size: 1.2rem; letter-spacing: -.01em; }
+.status ul { margin: .4rem 0 0; padding-left: 1.2rem; color: var(--muted); }
+footer { margin-top: 4rem; border-top: 1px solid var(--line); padding: 1.6rem 0 2.6rem; color: var(--muted); font-size: .9rem; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: .5rem 1.6rem; }
+.fitwrap { overflow-x: auto; margin-top: 1.4rem; }
+table.fit { width: 100%; border-collapse: collapse; font-size: .93rem; }
+table.fit th, table.fit td { text-align: left; padding: .7rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.fit thead th { color: var(--muted); font-weight: 600; font-size: .85rem; }
+table.fit tbody th { font-weight: 650; }
+table.fit td { color: var(--muted); }
+table.fit .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.fit.wide { min-width: 38rem; } table.fit.bench { min-width: 44rem; }
+table.fit tr.us { background: var(--soft); } table.fit tr.us td, table.fit tr.us th { color: var(--fg); }
+table.fit td.lose { color: var(--bad); font-weight: 600; } table.fit td.win { color: var(--good); font-weight: 600; }
+.cols { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); margin-top: 1.4rem; }
+.cols > div { border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.3rem; background: var(--surface); }
+.cols ul { margin: .4rem 0 0; padding-left: 1.1rem; color: var(--muted); } .cols li { margin: .25rem 0; }
+.cols .no h3 { color: var(--muted); }
+details.rules { margin-top: 1.4rem; } details.rules summary { cursor: pointer; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+details.rules table { margin-top: 0; }
+h2.big { margin-top: 0; }
+section.ev { padding-top: 3.2rem; }
+ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .35rem 0; }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top"><div class="wrap">
+  <a class="brand" href="index.html">table</a>
+  <nav aria-label="Sections">
+    <a href="#tested" class="opt">Tested</a><a href="#bench" class="opt">Benchmarks</a><a href="#adversarial" class="opt">Where it loses</a><a href="#reproduce">Reproduce</a>
+    <a href="index.html">Overview</a>
+  </nav>
+</div></header>
+
+<main id="main" class="wrap">
+<div style="padding-top:3rem">
+  <h1 style="font-size:clamp(1.8rem,5vw,2.8rem)">Evidence</h1>
+  <p class="lead">What has been tested and how, what was measured and on what, and the cells where <code>table</code> loses. Every number is copied from the document it names, with its conditions; the counts below are computed from the repository.</p>
+</div>
+
+<section class="ev" id="tested">
+  <h2>What has been tested, and how</h2>
+  <p class="sub">The conformance tests run against the built binary (<code>tests/conformance</code>). CI builds the pinned compiler and runs the formatting check, the build, the schema and authority checks, these tests, and a smoke run of the benchmark script. The mutant scripts are not run in CI: each is one build and a test run per mutant.</p>
+<!-- gen:counts -->
+<div class="stats"><div><b>111</b><span>conformance tests (<code>tests/conformance</code>, counted by the unittest loader)</span></div><div><b>137</b><span>mutants listed across the four scripts</span></div></div>
+<div class="fitwrap"><table class="fit"><thead><tr><th>mutant list</th><th>mutants</th></tr></thead><tbody><tr><th><code>scripts/select_mutants.py</code></th><td class="num">29</td></tr><tr><th><code>scripts/filter_mutants.py</code></th><td class="num">37</td></tr><tr><th><code>scripts/parallel_mutants.py</code></th><td class="num">27</td></tr><tr><th><code>scripts/cellcost_mutants.py</code></th><td class="num">44</td></tr></tbody></table></div>
+<!-- /gen:counts -->
+  <div class="cols">
+    <div><h3>Differential, against Python</h3><ul>
+      <li>The shape and <code>--select</code> against Python&rsquo;s <code>csv</code> module in strict mode: hand-picked fixtures (quoted LF and CRLF newlines, a BOM, empty fields, doubled quotes, a header only, an empty file, an unterminated quote, ragged rows, text after a closing quote).</li>
+      <li>Thousands of random tables written by <code>csv.writer</code> and then damaged, and fields that straddle the 64 KiB chunk boundary. A selection must equal Python&rsquo;s fields, and its CSV must be the bytes <code>csv.writer</code> writes.</li>
+      <li>Every benchmark answer is checked against one computed in Python before it is timed; a contender that disagrees stops the run.</li>
+    </ul></div>
+    <div><h3>Against itself</h3><ul>
+      <li><code>--threads N</code> must give the sequential bytes: every plan with N in 2, 3, 4, 8, 16 and ranges of 1, 7, 64 and 1000 bytes (a boundary inside almost every record), 350 generated tables, the same run 200 times, 300 fuzz inputs, sums at the edge of 64 bits in every order that matters (<a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">docs/parallel.md</a> section 4).</li>
+      <li><code>scripts/corpus.py</code>: the md5, status and error of 134 plans over the benchmark and adversarial files, sequentially and with threads and tiny ranges, the same 134 lines before and after every cell-cost round.</li>
+    </ul></div>
+    <div><h3>Rules, memory, authority</h3><ul>
+      <li>Every rule the tool declares has a fixture that reaches it, with its exit code and, for a <code>retry</code> repair, a re-run that succeeds.</li>
+      <li>Peak resident set is flat on a 2 MB and a 37 MB file for each way of reading, and on a record of 20 MB over 200,000 lines. No input reaches a trap (fuzz).</li>
+      <li>The binary&rsquo;s authority report is the committed one, within <code>tools.toml</code>; under <code>strace</code> (Linux) there is no socket and no write on disk.</li>
+    </ul></div>
+  </div>
+  <h3 style="margin-top:2.2rem">What the mutants found, and what is stale</h3>
+  <ul class="plain">
+    <li>The cell-cost mutants (<code>cellcost_mutants.py</code>) were all killed on the Linux box, and three equivalent ones are said so in the script. The first run had seven survivors, five of them real: the tests checked a refusal&rsquo;s status and not its rule, did not hold a group in the cache before a collision, and so on. The tests were sharpened and all seven killed (<a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/history.md">docs/history.md</a>, &ldquo;Tests and mutants&rdquo;).</li>
+    <li>A mutant that removed a test found a real bug in <code>--threads</code>: a page that fills at the last good row of a range was taken whole, with the ragged rows that follow it counted. It led to a test that failed, and a fix. A mutant that moved a range&rsquo;s end one byte early did not change an answer: it hung, and a loop that was only shown to end by a proof now also has a guard.</li>
+    <li><strong>Stale:</strong> <code>select_mutants.py</code> and <code>filter_mutants.py</code> point at code that moved to <code>engine.ls</code> and <code>scan.ls</code>; 21 of their sites no longer match, they stop at their first check, and they have not run since. That is in <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">docs/backlog.md</a>. The two other lists are current. The documents quote 33 and 45 mutants for the thread and cell-cost lists where the scripts list the numbers above; the table is the scripts&rsquo; own count.</li>
+  </ul>
+</section>
+
+<section class="ev" id="bench">
+  <h2>Benchmarks: the method, and the standard file</h2>
+  <p class="sub">The file is the design&rsquo;s: 1,000,000 rows of <code>id,status,bytes,path,note</code>, the last quoted, seeded, 31,667,311 bytes (<code>scripts/bench.py</code>). Minimum of 5 interleaved runs, output to /dev/null, peak resident set from <code>/usr/bin/time</code> on one more run. Before any timing every contender&rsquo;s answer is parsed and compared with one computed independently in Python. Contenders: csvtk 0.38.0 (<code>-j 1</code> unless said), Miller 6.22.0 (Linux only), DuckDB 1.5.6 (Mac only; <code>COPY (...) TO '/dev/null'</code> over <code>read_csv</code> with type detection), and <code>awk</code> and <code>cut|sort|uniq -c</code> as floors that are not CSV-aware.</p>
+  <h3 style="margin-top:2rem">Linux x86-64: i7-1260P, six logical cores (three physical) of a shared box, niced, a soak running</h3>
+  <p class="note" style="margin-top:0">Pinned compiler. Seconds, peak memory. From the Benchmark section of <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/reference.md">docs/reference.md</a>, measured again after the cell-cost round.</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Benchmark on Linux"><table class="fit bench"><thead><tr><th>question</th><th>table</th><th>csvtk -j 1</th><th>Miller</th><th>reference floor</th></tr></thead><tbody><tr><th>shape</th><td><b>0.054 s, 2.0 MB</b></td><td>0.560 s, 20.7 MB</td><td>0.347 s, 110 MB</td><td><code>wc -l</code> 0.0075 s</td></tr><tr><th>cut two columns, csv</th><td><b>0.115 s, 2.2 MB</b></td><td>0.507 s, 20.1 MB</td><td>0.764 s, 337 MB</td><td></td></tr><tr><th>first 1000 rows</th><td><b>0.0018 s</b></td><td>0.0085 s</td><td>0.0240 s</td><td></td></tr><tr><th>filter <code>status=404 and bytes&gt;50000</code>, csv</th><td><b>0.074 s, 2.2 MB</b></td><td>0.818 s (<code>filter</code> then <code>grep</code>, two processes) / 7.16 s (<code>filter2</code>, one)</td><td>0.300 s, 120 MB</td><td><code>awk -F,</code> 0.494 s</td></tr><tr><th>group-count by status</th><td><b>0.128 s, 2.0 MB</b></td><td>0.566 s (<code>freq</code>)</td><td>0.438 s (<code>count-distinct</code>), 134 MB</td><td><code>cut|sort|uniq -c</code> 0.211 s</td></tr><tr><th>group sum of bytes by status</th><td><b>0.140 s, 2.0 MB</b></td><td>1.278 s (<code>summary</code>), 115 MB</td><td>0.649 s (<code>stats1</code>), 310 MB</td><td></td></tr></tbody></table></div>
+  <h3 style="margin-top:2rem">Apple-silicon Mac, 16 cores (no Miller there)</h3>
+  <p class="note" style="margin-top:0">Measured again after the cell-cost round; <code>table</code> built by the compiler at <code>db7d5bc</code>, the pinned one&rsquo;s fix. Seconds.</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Benchmark on the Mac"><table class="fit wide"><thead><tr><th>question</th><th>table</th><th>csvtk -j 1</th><th>reference floor</th></tr></thead><tbody><tr><th>shape</th><td>0.029 s</td><td>0.184 s</td><td><code>wc -l</code> 0.030 s</td></tr><tr><th>cut two columns, csv</th><td>0.049 s</td><td>0.188 s</td><td></td></tr><tr><th>first 1000 rows</th><td>0.0031 s</td><td>0.0084 s</td><td></td></tr><tr><th>filter</th><td><b>0.045 s</b></td><td>0.293 s (<code>filter</code>|<code>grep</code>) / 2.71 s (<code>filter2</code>)</td><td><code>awk -F,</code> 0.575 s</td></tr><tr><th>group-count</th><td><b>0.051 s</b></td><td>0.181 s</td><td><code>cut|sort|uniq -c</code> 0.295 s</td></tr><tr><th>group sum</th><td><b>0.060 s</b></td><td>0.395 s (<code>summary</code>)</td><td></td></tr></tbody></table></div>
+  <p class="note"><strong>What these numbers are not:</strong> a claim about every question. Everything here is one file, two integer columns and one low-cardinality group column; <code>table</code> does less than the incumbents (no types, one sort key, integers only: <code>csvtk summary</code> computes floats and Miller is a whole language). The <code>awk</code> and <code>uniq</code> rows are floors where CSV quoting does not matter and are not equivalent on the quoted column; the <code>uniq</code> pipeline is three processes running in parallel on the Linux box&rsquo;s other cores, which is why it matches <code>table</code> there. The Linux box&rsquo;s load differs from run to run, which is why its absolute times differ between rounds more than the ratios do.</p>
+
+  <h3 style="margin-top:2rem">Threads (<code>scripts/bench_parallel.py</code>), Mac, 16 cores, seconds</h3>
+  <p class="note" style="margin-top:0">Same file; measured before the cell-cost round. DuckDB&rsquo;s threads are <code>SET threads=N</code>; csvtk&rsquo;s are <code>-j N</code>. From <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">docs/parallel.md</a> section 5.</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Threads on the Mac"><table class="fit bench"><thead><tr><th>question</th><th class="num">table 1</th><th class="num">2</th><th class="num">4</th><th class="num">8</th><th class="num">16</th><th class="num">DuckDB 1 / 4 / default</th><th class="num">csvtk -j 1</th></tr></thead><tbody><tr><th>filter</th><td class="num">0.0514</td><td class="num">0.0351</td><td class="num">0.0200</td><td class="num">0.0122</td><td class="num">0.0120</td><td class="num">0.176 / 0.074 / 0.075</td><td class="num">0.308</td></tr><tr><th>cut two columns, csv</th><td class="num">0.0577</td><td class="num">0.0374</td><td class="num">0.0210</td><td class="num">0.0129</td><td class="num">0.0108</td><td class="num">0.187 / 0.079 / 0.078</td><td class="num">0.185</td></tr><tr><th>group-count by status</th><td class="num">0.1102</td><td class="num">0.0612</td><td class="num">0.0330</td><td class="num">0.0172</td><td class="num">0.0150</td><td class="num">0.129 / 0.062 / 0.062</td><td class="num">0.186</td></tr><tr><th>group sum of bytes</th><td class="num">0.1214</td><td class="num">0.0689</td><td class="num">0.0366</td><td class="num">0.0194</td><td class="num">0.0177</td><td class="num">0.135 / 0.064 / 0.063</td><td class="num">0.403</td></tr></tbody></table></div>
+  <p class="note">Speed-up at 4 / 8 / 16 threads: filter 2.6x / 4.2x / 4.3x, cut 2.8x / 4.5x / 5.3x, group-count 3.3x / 6.4x / 7.3x, group sum 3.3x / 6.3x / 6.9x. Peak memory: <code>table</code> 1.6 to 2 MB at one thread and 3 to 41 MB at 4 to 16; DuckDB 56 to 80 MB; csvtk 23 to 28 MB (122 MB for the sum). <code>csvtk -j N</code> does not scale on any of these (0.8x to 1.4x at best). After the cell-cost round, one thread / 4 / 16: filter 0.046 / 0.017 / 0.0087, cut 0.050 / 0.020 / 0.011, group-count 0.057 / 0.019 / 0.0099, group sum 0.062 / 0.021 / 0.011, against DuckDB at one thread 0.170, 0.190, 0.132, 0.141 and at its default 0.065 and 0.067 for the two groupings (another run: <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">docs/backlog.md</a>).</p>
+  <h3 style="margin-top:2rem">Threads, Linux, cores 0 to 5, seconds</h3>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Threads on Linux"><table class="fit wide"><thead><tr><th>question</th><th class="num">1</th><th class="num">2</th><th class="num">4</th><th class="num">6</th><th>speed-up at 2 / 4 / 6</th></tr></thead><tbody><tr><th>filter</th><td class="num">0.124</td><td class="num">0.081</td><td class="num">0.071</td><td class="num">0.064</td><td>1.5x / 1.8x / 1.9x</td></tr><tr><th>cut</th><td class="num">0.112</td><td class="num">0.082</td><td class="num">0.070</td><td class="num">0.067</td><td>1.4x / 1.6x / 1.7x</td></tr><tr><th>group-count</th><td class="num">0.210</td><td class="num">0.107</td><td class="num">0.095</td><td class="num">0.087</td><td>2.0x / 2.2x / 2.4x</td></tr><tr><th>group sum</th><td class="num">0.236</td><td class="num">0.121</td><td class="num">0.115</td><td class="num">0.098</td><td>1.9x / 2.1x / 2.4x</td></tr></tbody></table></div>
+  <p class="note">The flattening was checked and is the machine&rsquo;s: the logical cores 0 to 5 are three physical cores; on one thread per physical core three threads give 2.3x on both groupings and 1.9x on the filter; six independent sequential processes took 3.8x as long as one alone, an aggregate 1.56x on six cores. One thread reads the file at 150 to 270 MB/s, far below what the memory can give. <code>perf</code> is not permitted on that machine, so there is no profile: those two experiments are what there is. The default threshold below which <code>--threads</code> is ignored, 1 MiB of data after the header, is measured in <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">docs/parallel.md</a> (break-even near a quarter of a megabyte).</p>
+</section>
+
+<section class="ev" id="adversarial">
+  <h2>The adversarial round: where does <code>table</code> lose?</h2>
+  <p class="sub">Registered before any of it was run: the first commit of <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/adversarial.md">docs/adversarial.md</a> is the registration, with the cells, the incumbents, how each is run and the predictions; the results came in later commits. <strong>A loss</strong> is <code>table</code>&rsquo;s time above an incumbent&rsquo;s at the same thread count, or at the machine&rsquo;s thread count above the incumbent&rsquo;s default; <strong>a material loss</strong> is a ratio above 1.25; <strong>a memory loss</strong> is a peak above 4x the incumbent&rsquo;s and above 64 MB; <strong>a cliff</strong> is time per megabyte rising more than 3x from the benchmark file&rsquo;s. Nothing is tuned to avoid a loss and no cell is dropped because it is bad. Not run: many small files, joins, sorts of non-key columns, Parquet (not features).</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="The cells"><table class="fit wide"><thead><tr><th>cells</th><th>the question</th><th>registered prediction</th></tr></thead><tbody><tr><th>A1, A2</th><td>sort 1M rows by a text, then an integer, column</td><td>no row sort: a missing feature</td></tr><tr><th>B1, B2</th><td>group-count and group-sum, 100,000 distinct keys</td><td>loss likely</td></tr><tr><th>B3, B4</th><td>group-count and group-sum, 1,000,000 distinct keys</td><td>loss likely, large</td></tr><tr><th>C1</th><td>select 3 columns of 200</td><td>loss possible</td></tr><tr><th>D1, D2, D3</th><td>cut, filter, group-count on a file with every field quoted</td><td>loss likely</td></tr><tr><th>E1, E2</th><td>select, group-count with fields of 1 to 10 KB</td><td>loss possible</td></tr><tr><th>G1, G2</th><td>a 1 GB file: filter, group-count</td><td>a win on time at 4+ threads</td></tr><tr><th>H1</th><td>a filter that keeps about 90% of the rows</td><td>loss possible</td></tr><tr><th>I1</th><td>distinct of a unique column, per group</td><td>loss likely, large</td></tr></tbody></table></div>
+  <p class="note">The files are generated and seeded: the 1M-row benchmark file, and a second one of 1,000,000 rows of <code>id,s,k100k,k1m,u,v</code> (<code>s</code> four values, <code>k100k</code> 100,000 distinct keys, <code>k1m</code> a million, <code>u</code> a permutation, <code>v</code> an integer below 100,000), a 200-column file, an all-quoted file, a long-field file and a 1.08 GB file.</p>
+
+  <h3 style="margin-top:2rem">After the cell-cost round: Mac</h3>
+  <p class="note" style="margin-top:0">Apple silicon, 16 cores, a quiet machine; <code>table</code> of <code>main</code> (&ldquo;base&rdquo;) and of the branch in one run, the incumbents measured at the same time; minimum of 5 (3 for 1 GB), seconds; <code>--threads 8</code> (t8). The outputs were checked first. Ratios against DuckDB are at one thread, then at its default, as the document gives them.</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Mac, after the cell-cost round"><table class="fit bench"><thead><tr><th>cell</th><th class="num">base t1</th><th class="num">new t1</th><th>change</th><th class="num">new t8</th><th>against DuckDB</th><th>against csvtk</th></tr></thead><tbody><tr><th>B1 count, 100k keys</th><td class="num">0.177</td><td class="num">0.124</td><td>-30%</td><td class="num">0.087</td><td><b>win 1.37x</b> at t1; t8 1.09x <b>loss</b> to default (was 1.16x)</td><td>2.4x faster</td></tr><tr><th>B2 sum, 100k keys</th><td class="num">0.180</td><td class="num">0.127</td><td>-29%</td><td class="num">0.087</td><td><b>win 1.39x</b>; t8 1.11x <b>loss</b> (was 1.17x)</td><td>36x faster, 16 GB less</td></tr><tr><th>I1 <code>distinct:id</code></th><td class="num">0.265</td><td class="num">0.287</td><td>+8% (see text)</td><td class="num">0.208</td><td><b>loss 1.40x</b> (was 1.54x); t8 2.5x loss (was 2.3x)</td><td>2.0x faster</td></tr><tr><th>C1 select 3 of 200 columns</th><td class="num">0.352</td><td class="num">0.184</td><td>-48%</td><td class="num">0.040</td><td>win 7.2x; t8 20x vs default</td><td>4.3x faster</td></tr><tr><th>D1 cut, all quoted</th><td class="num">0.090</td><td class="num">0.065</td><td>-27%</td><td class="num">0.025</td><td>win 4.3x; t8 3.3x</td><td>4.2x faster</td></tr><tr><th>D2 filter, all quoted</th><td class="num">0.084</td><td class="num">0.067</td><td>-21%</td><td class="num">0.026</td><td>win 3.7x; t8 3.1x</td><td>5.5x faster</td></tr><tr><th>D3 group, all quoted</th><td class="num">0.145</td><td class="num">0.076</td><td>-48%</td><td class="num">0.025</td><td>win 2.2x; t8 2.7x</td><td>3.1x faster</td></tr><tr><th>E1 select, long fields</th><td class="num">0.210</td><td class="num">0.184</td><td>-12%</td><td class="num">0.182</td><td>win 2.2x</td><td><b>tie</b> (1.01x faster; was a 1.11x loss)</td></tr><tr><th>E2 group, long fields</th><td class="num">0.215</td><td class="num">0.192</td><td>-11%</td><td class="num">0.190</td><td>win 2.1x</td><td><b>tie</b> (1.02x faster; was a 1.09x loss)</td></tr><tr><th>H1 filter keeping 90%</th><td class="num">0.101</td><td class="num">0.087</td><td>-13%</td><td class="num">0.027</td><td>win 3.3x; t8 4.1x</td><td>3.7x faster</td></tr><tr><th>G1 1 GB filter</th><td class="num">1.682</td><td class="num">1.460</td><td>-13%</td><td class="num">0.264</td><td>t8 1.8x faster than default</td><td>6.8x faster at t1</td></tr><tr><th>G2 1 GB group-count</th><td class="num">3.706</td><td class="num">1.746</td><td>-53%</td><td class="num">0.282</td><td>t8 <b>win 1.23x</b> (was a 1.59x loss); t4 0.473 against 0.348 is a 1.36x <b>loss</b></td><td>3.5x faster at t1, 22x at t8</td></tr><tr><th>B3 count, 1M keys</th><td class="num">0.725</td><td class="num">0.792</td><td>within noise</td><td class="num">0.790</td><td><b>loss 3.4x</b>, t8 9.4x</td><td>1.08x faster</td></tr><tr><th>B4 sum, 1M keys</th><td class="num">0.781</td><td class="num">0.840</td><td>within noise</td><td class="num">0.814</td><td><b>loss 3.1x</b>, t8 9.2x</td><td>49x faster</td></tr><tr><th>A1 sort proxy (group by the column)</th><td class="num">0.722</td><td class="num">0.763</td><td>within noise</td><td class="num"></td><td><b>loss 1.59x</b></td><td>1.04x faster</td></tr></tbody></table></div>
+  <h3 style="margin-top:2rem">After the cell-cost round: Linux</h3>
+  <p class="note" style="margin-top:0">Cores 0 to 5, niced, the soak still running, <code>--threads 8</code> (not the registered 6, a deviation that oversubscribes the six logical cores a little). DuckDB is not installed there.</p>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Linux, after the cell-cost round"><table class="fit bench"><thead><tr><th>cell</th><th class="num">base t1</th><th class="num">new t1</th><th>change</th><th class="num">new t8</th><th>against csvtk / Miller / the shell pipeline</th></tr></thead><tbody><tr><th>B1 count, 100k keys</th><td class="num">0.494</td><td class="num">0.378</td><td>-23%</td><td class="num">0.368</td><td>csvtk 2.3x, Miller 2.7x faster; <code>cut|sort|uniq -c</code> 0.319: <b>loss 1.19x</b> (was 1.62x)</td></tr><tr><th>B2 sum, 100k keys</th><td class="num">0.504</td><td class="num">0.261</td><td>-48%</td><td class="num">0.335</td><td>csvtk 43x, Miller 7.9x faster</td></tr><tr><th>I1 <code>distinct:id</code></th><td class="num">0.635</td><td class="num">0.648</td><td>no change (before round 15)</td><td class="num">0.710</td><td>csvtk 2.5x, Miller 5.9x faster; shell 0.360: <b>loss 1.8x</b></td></tr><tr><th>C1 select 3 of 200</th><td class="num">0.453</td><td class="num">0.298</td><td>-34%</td><td class="num">0.140</td><td>csvtk 4.5x, Miller 18.6x faster</td></tr><tr><th>D1 cut, all quoted</th><td class="num">0.154</td><td class="num">0.130</td><td>-16%</td><td class="num">0.069</td><td>csvtk 4.5x, Miller 5.8x faster</td></tr><tr><th>D2 filter, all quoted</th><td class="num">0.142</td><td class="num">0.131</td><td>-8%</td><td class="num">0.056</td><td>csvtk 7.3x, Miller 3.6x faster</td></tr><tr><th>D3 group, all quoted</th><td class="num">0.243</td><td class="num">0.130</td><td>-46%</td><td class="num">0.059</td><td>csvtk 4.0x, Miller 3.5x faster</td></tr><tr><th>E1 select, long fields</th><td class="num">0.264</td><td class="num">0.239</td><td>-10%</td><td class="num">0.244</td><td>csvtk 1.24x, Miller 1.15x faster (was a tie with Miller)</td></tr><tr><th>E2 group, long fields</th><td class="num">0.267</td><td class="num">0.250</td><td>-6%</td><td class="num">0.272</td><td>csvtk 1.18x, Miller 1.11x faster</td></tr><tr><th>H1 filter keeping 90%</th><td class="num">0.180</td><td class="num">0.172</td><td>-4%</td><td class="num">0.109</td><td>csvtk 5.0x, Miller 3.2x faster</td></tr><tr><th>G1 1 GB filter</th><td class="num">3.662</td><td class="num">2.677</td><td>-27%</td><td class="num">2.181 (t4 1.972)</td><td>csvtk 29.8 s: 11x faster at t1</td></tr><tr><th>G2 1 GB group-count</th><td class="num">5.420</td><td class="num">3.481</td><td>-36%</td><td class="num">2.167 (t4 2.167)</td><td>csvtk 16.2 s: 4.6x at t1, 7.5x at t4</td></tr><tr><th>B3 count, 1M keys</th><td class="num">1.764</td><td class="num">1.792</td><td>no change</td><td class="num">1.818</td><td>csvtk 1.16x, Miller 1.6x faster; shell 0.324: <b>loss 5.5x</b></td></tr><tr><th>B4 sum, 1M keys</th><td class="num">1.892</td><td class="num">1.725</td><td>-9%</td><td class="num">2.013</td><td>Miller 2.6x faster; csvtk killed at 14 GB</td></tr><tr><th>A1 sort proxy</th><td class="num">1.820</td><td class="num">1.866</td><td>no change</td><td class="num"></td><td><code>sort</code> 1.027: <b>loss 1.8x</b>; csvtk 1.24x, Miller 2.9x faster</td></tr></tbody></table></div>
+  <p class="note">The Linux box&rsquo;s load changes by the hour, so the base column is the thing to compare with, not the first round&rsquo;s numbers. I1 is the one slowdown that was real (+6 to +8 percent on the Mac): the way a <code>distinct</code> aggregate is decided cost a call and two loops per row; round 15 of <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/history.md">docs/history.md</a> decides it once (0.293 s on <code>main</code>, 0.268 s now, Mac), and these tables were measured before it.</p>
+
+  <h3 style="margin-top:2rem">What the round did not change</h3>
+  <ul class="plain">
+    <li><strong>A million keys, or <code>distinct</code> over a unique column: a 3x to 3.4x loss to DuckDB at one thread and 9x at its default.</strong> Each row creates a group and nothing in the round touches that cost (the groups are moved by value, the key is hashed twice). <code>--threads</code> does not help (B3 at t8 0.790 against t1 0.792): the serial merge. The backlog says to not use <code>--threads</code> for a high-cardinality grouping.</li>
+    <li><strong>Long fields do not scale with threads,</strong> and the cause was checked: the same file without newlines inside the quoted fields goes from 0.017 s to 0.0086 s at eight threads; with a newline every 17 bytes, 0.172 s and 0.170 s.</li>
+    <li><strong>The sort.</strong> There is no row sort. The proxy is not the same question.</li>
+    <li><strong>Memory</strong> is the same: a few MB for a scan, 135 to 180 MB for a million groups. Against it, csvtk&rsquo;s <code>summary</code> used 11.8 to 14.8 GB on the 100,000 and 1,000,000-key sums and was killed on Linux; Miller used 0.5 to 3.9 GB. No cliff by the registered definition (the longest, E1, was at 0.93x).</li>
+  </ul>
+  <h3 style="margin-top:2rem">Claims corrected in place</h3>
+  <ul class="plain">
+    <li>The first DuckDB comparison compared only the group-count answers; the later tables check every contender&rsquo;s answer first, and the document says so.</li>
+    <li>The cell-cost plan blamed four <code>memchr</code>s per cell in <code>csv_value</code>; the profile showed that was the output side, and the larger costs were moving the group state in and out of a call for every row (the filter&rsquo;s time per row went from 50 to 43 ns, the group-count&rsquo;s from 110 to 52). The backlog item is struck through, with the reason.</li>
+    <li>The first pass at the grouping regressed the cut from 0.057 s to 0.093 s in code that had not changed. It was found only because the old benchmark was kept in the loop.</li>
+  </ul>
+</section>
+
+<section class="ev" id="reproduce">
+  <h2>Reproduce</h2>
+  <p class="sub">Build <code>build/table</code> as the <a href="index.html#start">overview</a> does, then, from the repository root:</p>
+  <pre class="code" tabindex="0"><code>python3 scripts/bench.py                 # the 1,000,000-row file, every contender's answer checked, then timed
+python3 scripts/bench.py --rows 20000 --runs 1    # the smoke run CI does
+python3 scripts/bench_parallel.py        # the thread curve; --threshold for where threads start to pay
+python3 scripts/adversarial.py           # the 16 cells; --cells B1,B3 --runs 5 --threads 8; --base OLD_BINARY compares two builds
+python3 scripts/corpus.py                # the md5 of 134 plans, to compare before and after a change (needs the files the two scripts above generate)
+python3 -W ignore -m unittest discover -s tests/conformance -v
+python3 scripts/parallel_mutants.py      # also select_, filter_ (stale) and cellcost_mutants.py</code></pre>
+  <p class="note">csvtk, Miller and DuckDB are used where they are installed; a contender that is missing is skipped, and one whose answer disagrees is reported and not timed. Files are generated under <code>build/</code> and never committed.</p>
+</section>
+
+<aside class="status" id="status">
+  <h2>What this evidence does not show</h2>
+  <ul>
+    <li>One file shape for the headline numbers, two machines, and the sixteen adversarial cells; not every file and not every question.</li>
+    <li>The Linux box was loaded (a soak was running) for every Linux number, and DuckDB was never run there.</li>
+    <li>Causes on Linux are by timing experiment or inference, because <code>perf</code> is not permitted there; the Mac causes are from a profile (<code>sample</code>).</li>
+    <li>The tests compare with Python&rsquo;s <code>csv</code>; a file on which Python&rsquo;s reader and this one are meant to differ (a lone CR is a byte of a field here, a record break there) is documented, not hidden.</li>
+  </ul>
+  <p style="margin:.8rem 0 0"><a href="index.html">Overview</a> · <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/adversarial.md">The adversarial document</a> · <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">Backlog</a></p>
+</aside>
+</main>
+
+<footer><div class="wrap">
+  <a href="https://github.com/alpibrusl/lexsys-table">Repository</a><a href="index.html">Overview</a>
+  <span>Built on <a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> · EUPL-1.2</span>
+</div></footer>
+</body>
+</html>
