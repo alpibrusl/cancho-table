@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/alpibrusl/lexsys-table/schemas/table.v1.json",
-  "title": "table.v1",
+  "$id": "https://github.com/alpibrusl/lexsys-table/schemas/table.v2.json",
+  "title": "table.v2",
   "description": "One JSON object on one line. ok is false exactly when errors is present; error is its first element. data is absent when the read stopped before the end of the input.",
   "type": "object",
   "properties": {
@@ -12,7 +12,7 @@
       "const": "table"
     },
     "schema": {
-      "const": "table.v1"
+      "const": "table.v2"
     },
     "data": {
       "$ref": "#/$defs/data"
@@ -223,33 +223,92 @@
       "additionalProperties": false
     },
     "data": {
-      "type": "object",
-      "properties": {
-        "headers": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/text_or_bytes"
-          }
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "headers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/text_or_bytes"
+              }
+            },
+            "column_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "row_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "headers",
+            "column_count",
+            "row_count",
+            "truncated"
+          ],
+          "additionalProperties": false
         },
-        "columns": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "rows": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "truncated": {
-          "type": "boolean"
+        {
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/text_or_bytes"
+              }
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/text_or_bytes"
+                }
+              }
+            },
+            "row_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "next": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "from"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "row_count",
+            "truncated",
+            "next"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "headers",
-        "columns",
-        "rows",
-        "truncated"
-      ],
-      "additionalProperties": false
+      ]
     }
   }
 }

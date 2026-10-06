@@ -85,7 +85,7 @@ class Differential(unittest.TestCase):
         self.assertEqual(got.status, 0, "%s %r -> %r" % (label, data[:200], doc))
         d = doc["data"]
         self.assertEqual([name_text(n) for n in d["headers"]], [h.encode("latin-1") for h in header], label)
-        self.assertEqual((d["columns"], d["rows"], d["truncated"]), (columns, rows, False), label)
+        self.assertEqual((d["column_count"], d["row_count"], d["truncated"]), (columns, rows, False), label)
 
     def test_hand_picked(self):
         cases = {

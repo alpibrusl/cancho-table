@@ -19,6 +19,11 @@ LOCAL = {
     "parse.csv-ragged-row": (8, "never", "different number of fields"),
     "parse.csv-bad-quote": (8, "never", "closing quote"),
     "parse.csv-unterminated-quote": (8, "never", "still open"),
+    "limit.record-too-large": (8, "never", "record"),
+    "limit.output-too-large": (8, "never", "first row"),
+    "limit.too-many-rows": (8, "never", "--max-rows"),
+    "select.unknown-column": (3, "sometimes", "not a column"),
+    "select.ambiguous-column": (8, "never", "more than one column"),
 }
 LINUX_ONLY = {"io.read-failed"}
 
@@ -33,6 +38,8 @@ class Rules(unittest.TestCase):
     def fixtures(self, s):
         """(rule, argv, preexec) for every rule."""
         s.write("ok.csv", "a,b\n1,2\n")
+        s.write("rec.csv", 'a,b\n1,"' + "x\n" * 600 + '"\n')
+        s.write("dup.csv", "a,a\n1,2\n")
         s.write("ragged.csv", "a,b\n1,2\n3\n")
         s.write("quote.csv", 'a,b\n"x"y,1\n')
         s.write("open.csv", 'a,b\n1,"x\n')
@@ -47,6 +54,8 @@ class Rules(unittest.TestCase):
             ("args.missing-value", root + ["ok.csv", "--max-rows"], None),
             ("args.bad-value", root + ["--max-rows", "many", "ok.csv"], None),
             ("args.duplicate-flag", root + ["--max-rows", "1", "--max-rows", "2", "ok.csv"], None),
+            ("args.conflict", root + ["--select", "a", "--format", "text", "ok.csv"], None),
+            ("args.required-flag", root + ["--limit", "3", "ok.csv"], None),
             ("args.missing-operand", root, None),
             ("args.too-many-operands", root + ["ok.csv", "ok.csv"], None),
             ("path.empty", root + [""], None),
@@ -63,6 +72,11 @@ class Rules(unittest.TestCase):
             ("parse.csv-ragged-row", root + ["ragged.csv"], None),
             ("parse.csv-bad-quote", root + ["quote.csv"], None),
             ("parse.csv-unterminated-quote", root + ["open.csv"], None),
+            ("limit.record-too-large", root + ["--select", "a", "--max-line-bytes", "100", "rec.csv"], None),
+            ("limit.output-too-large", root + ["--select", "b", "--max-bytes", "10", "wide.csv"], None),
+            ("limit.too-many-rows", root + ["--select", "a", "--format", "csv", "--max-rows", "1", "ragged.csv"], None),
+            ("select.unknown-column", root + ["--select", "A", "ok.csv"], None),
+            ("select.ambiguous-column", root + ["--select", "a", "dup.csv"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")
@@ -83,17 +97,16 @@ class Rules(unittest.TestCase):
                 p = subprocess.run([binary(), *[str(a) for a in argv]], capture_output=True, preexec_fn=preexec)
                 import json
                 try:
-                    doc = json.loads(p.stdout)
+                    errs = json.loads(p.stdout).get("errors", [])
                 except ValueError:
-                    failures.append("%s: not JSON %r" % (rule, p.stdout[:200]))
-                    continue
-                errs = doc.get("errors", [])
+                    # csv and text answer on standard error: `table: rule: message`.
+                    errs = [{"rule": l.split(": ")[1], "repair": None} for l in p.stderr.decode().splitlines() if l.startswith("table: ")]
                 if not errs or errs[0]["rule"] != rule:
-                    failures.append("%s: first error is %s (status %d) %r" % (rule, errs[0]["rule"] if errs else None, p.returncode, p.stdout[:200]))
+                    failures.append("%s: first error is %s (status %d) %r %r" % (rule, errs[0]["rule"] if errs else None, p.returncode, p.stdout[:200], p.stderr[:200]))
                     continue
                 want = cat[rule][0] if rule in cat else LOCAL[rule][0]
                 if p.returncode != want:
-                    failures.append("%s: exit %d, the package catalogue gives %d" % (rule, p.returncode, want))
+                    failures.append("%s: exit %d, expected %d" % (rule, p.returncode, want))
                 reached.add(rule)
                 repair = errs[0]["repair"]
                 if rule in cat and cat[rule][1] == "never" and repair and repair["kind"] == "retry":
