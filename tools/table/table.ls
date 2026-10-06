@@ -443,6 +443,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
         sort = cli.text(args, parsed, table, "sort");
     }
     let filtering = query.count_of(tree, 1) > 0;
+    let fast_ok = engine.fast_ok(tree);
     // `from` pages the rows of a selection; for a grouping it pages the groups, after all
     // the rows have been counted, and must not skip any.
     var row_from = from;
@@ -478,8 +479,15 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     borrow mut tally as &!tw in {
         let a = contents(tw);
         while going {
-            let (stepped, status) = lines.next(heap, r);
-            r = stepped;
+            var status = 9;
+            borrow mut r as &!rw in {
+                status = scan.next_fast(rw);
+            }
+            if status == 9 {
+                let (stepped, answer) = lines.next(heap, r);
+                r = stepped;
+                status = answer;
+            }
             if status == lines.need() {
                 r = lines.fill_file(r, file);
             } else if status == lines.done() {
@@ -558,10 +566,34 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             escr = e2;
                                             kept = k2;
                                         } else {
-                                            let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), line, contents(cr), number, max_groups, max_distinct, max_state, false, a);
-                                            groups = g2;
-                                            escr = e2;
-                                            kept = k2;
+                                            var hot = 1;
+                                            if !fast_ok {
+                                                // a distinct count is not added in place: `process_groups`
+                                            } else if !filtering {
+                                                var got = 1;
+                                                borrow mut groups as &!gw in {
+                                                    got = engine.group_plain(gw, tree, contents(kr), line, contents(cr), false);
+                                                }
+                                                if got >= 16 {
+                                                    kept = engine.group_refused(heap, kept, tree, contents(kr), line, contents(cr), number, got, a);
+                                                    hot = 0;
+                                                } else {
+                                                    hot = got;
+                                                }
+                                            } else {
+                                                borrow mut groups as &!gw in {
+                                                    let (f2, e2, k2) = engine.group_fast(heap, gw, escr, kept, tree, contents(kr), line, contents(cr), number, false, a);
+                                                    hot = f2;
+                                                    escr = e2;
+                                                    kept = k2;
+                                                }
+                                            }
+                                            if hot == 1 || hot == 3 {
+                                                let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), line, contents(cr), number, max_groups, max_distinct, max_state, false, hot == 3, a);
+                                                groups = g2;
+                                                escr = e2;
+                                                kept = k2;
+                                            }
                                         }
                                     }
                                 }
@@ -743,10 +775,34 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                                         escr = e2;
                                                         kept = k2;
                                                     } else {
-                                                        let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), record, contents(cr), opened, max_groups, max_distinct, max_state, false, a);
-                                                        groups = g2;
-                                                        escr = e2;
-                                                        kept = k2;
+                                                        var hot = 1;
+                                                        if !fast_ok {
+                                                            // a distinct count is not added in place: `process_groups`
+                                                        } else if !filtering {
+                                                            var got = 1;
+                                                            borrow mut groups as &!gw in {
+                                                                got = engine.group_plain(gw, tree, contents(kr), record, contents(cr), false);
+                                                            }
+                                                            if got >= 16 {
+                                                                kept = engine.group_refused(heap, kept, tree, contents(kr), record, contents(cr), opened, got, a);
+                                                                hot = 0;
+                                                            } else {
+                                                                hot = got;
+                                                            }
+                                                        } else {
+                                                            borrow mut groups as &!gw in {
+                                                                let (f2, e2, k2) = engine.group_fast(heap, gw, escr, kept, tree, contents(kr), record, contents(cr), opened, false, a);
+                                                                hot = f2;
+                                                                escr = e2;
+                                                                kept = k2;
+                                                            }
+                                                        }
+                                                        if hot == 1 || hot == 3 {
+                                                            let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), record, contents(cr), opened, max_groups, max_distinct, max_state, false, hot == 3, a);
+                                                            groups = g2;
+                                                            escr = e2;
+                                                            kept = k2;
+                                                        }
                                                     }
                                                 }
                                             }

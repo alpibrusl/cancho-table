@@ -127,6 +127,31 @@ pub fn split_header[&h, &r](heap: &!h Heap, raw: &r [byte], delim: int) -> [heap
     return (names, ends);
 }
 
+// Where the byte `b` first is in `line[from..end]` (an index into `line`), or -1. Short fields, most of
+// them, are walked: a call to `memchr` costs more than the bytes it would skip. One that is still going
+// after 24 bytes is left to `memchr`.
+fn seek[&l](line: &l [byte], from: int, end: int, b: int) -> [] int {
+    var q = from;
+    var stop = end;
+    if end - from > 24 {
+        stop = from + 24;
+    }
+    while q < stop && int_of(line[q]) != b {
+        q = q + 1;
+    }
+    if q < stop {
+        return q;
+    }
+    if q == end {
+        return 0 - 1;
+    }
+    let more = index_of_byte(line[q..end], byte_of(b));
+    if more < 0 {
+        return 0 - 1;
+    }
+    return q + more;
+}
+
 // The fields of the record `line`, found in one pass: for field `n` its
 // `cells[3n]` start, `cells[3n + 1]` end and `cells[3n + 2]` 1 when it was
 // quoted (start and end then exclude the quotes, and a doubled quote is still
@@ -152,33 +177,30 @@ pub fn fields[&l, &c](line: &l [byte], delim: int, cells: &!c [int], room: int) 
             var q = p + 1;
             var closed = false;
             while !closed && !inside {
-                let found = index_of_byte(line[q..end], byte_of(34));
-                if found < 0 {
+                let at = seek(line, q, end, 34);
+                if at < 0 {
                     inside = true;
+                } else if at + 1 < end && int_of(line[at + 1]) == 34 {
+                    q = at + 2;
                 } else {
-                    let at = q + found;
-                    if at + 1 < end && int_of(line[at + 1]) == 34 {
-                        q = at + 2;
+                    closed = true;
+                    first = p + 1;
+                    last = at;
+                    quoted = 1;
+                    if at + 1 == end {
+                        next = end + 1;
+                    } else if int_of(line[at + 1]) == delim {
+                        next = at + 2;
                     } else {
-                        closed = true;
-                        first = p + 1;
-                        last = at;
-                        quoted = 1;
-                        if at + 1 == end {
-                            next = end + 1;
-                        } else if int_of(line[at + 1]) == delim {
-                            next = at + 2;
-                        } else {
-                            bad = true;
-                        }
+                        bad = true;
                     }
                 }
             }
         } else {
-            let found = index_of_byte(line[p..end], byte_of(delim));
-            if found >= 0 {
-                last = p + found;
-                next = last + 1;
+            let q = seek(line, p, end, delim);
+            if q >= 0 {
+                last = q;
+                next = q + 1;
             }
         }
         if inside || bad {

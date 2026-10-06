@@ -111,6 +111,7 @@
     "expected",
     "extra",
     "failed",
+    "fast_ok",
     "field",
     "find",
     "find$int",
@@ -204,9 +205,11 @@
     "long",
     "longest",
     "max_depth",
+    "memo_size",
     "message_of",
     "more",
     "most_names",
+    "must_quote",
     "name_count",
     "name_of",
     "name_of",
@@ -247,6 +250,7 @@
     "scan",
     "schema",
     "second_range",
+    "seek",
     "sentences",
     "set_at",
     "short_of",
@@ -273,7 +277,7 @@
     "value_of",
     "width_of"
   ],
-  "folded_operators": 44,
+  "folded_operators": 55,
   "folded_calls": 0,
-  "functions": 405
+  "functions": 414
 }

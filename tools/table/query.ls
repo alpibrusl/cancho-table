@@ -132,6 +132,22 @@ pub fn parse_int[&d](data: &d [byte]) -> [] (int, int) {
     if at >= len(data) {
         return (0, 1);
     }
+    if len(data) - at <= 18 {
+        // At most 18 digits cannot leave 64 bits: no check on the way, and a positive accumulator.
+        var plain = 0;
+        while at < len(data) {
+            let c = int_of(data[at]);
+            if c < '0' || c > '9' {
+                return (0, 1);
+            }
+            plain = plain * 10 + c - '0';
+            at = at + 1;
+        }
+        if negative {
+            return (0 - plain, 0);
+        }
+        return (plain, 0);
+    }
     // Accumulated as a negative number, which has room for -2^63.
     var acc = 0;
     var over = false;

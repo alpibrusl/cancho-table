@@ -321,12 +321,12 @@ pub fn process_rows[&h, &i, &q, &c, &d, &e, &s, &a](heap: &!h Heap, io: &!i Io, 
 }
 
 // The same for a grouping (mode 2): tested, then added to its group.
-pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_groups: int, max_distinct: int, max_state: int, track: bool, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
+pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_groups: int, max_distinct: int, max_state: int, track: bool, keyed: bool, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
     let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
     if verdict != 1 {
         return (groups, e2, k2);
     }
-    let (g3, e3, status, k) = agg.add(heap, groups, tree, cols, record, cells, e2, max_groups, max_distinct, max_state, track);
+    let (g3, e3, status, k) = agg.add(heap, groups, tree, cols, record, cells, e2, max_groups, max_distinct, max_state, track, keyed);
     if status == 0 {
         return (g3, e3, k2);
     }
@@ -341,4 +341,73 @@ pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups
     a[k_err_row()] = a[k_records()];
     a[k_err_line()] = opened;
     return (g3, e3, keep_value(heap, k2, record, cells[3 * column], cells[3 * column + 1]));
+}
+
+// What `process_groups` does for a row whose group exists and whose cells are plain (see `agg.add_fast`),
+// through a unique reference to the groups, so that they are not moved in and out for each row. Answers
+// 0 when the row is dealt with (not wanted, added, or refused with `a` set), 1 when `process_groups` has to
+// deal with it, 3 when it has to and the key is built in the groups' key buffer (a new group: `keyed`), and
+// the buffers.
+pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, track: bool, a: &!a [int]) -> [heap] (int, buffer.Buffer, buffer.Buffer) {
+    let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
+    if verdict != 1 {
+        return (0, e2, k2);
+    }
+    let (status, k) = agg.add_fast(groups, tree, cols, record, cells, track);
+    if status == 0 {
+        return (0, e2, k2);
+    }
+    if status < 0 {
+        return (1 - 2 * status - 2, e2, k2);
+    }
+    // The same refusal as `process_groups`.
+    a[k_stop()] = 1;
+    a[k_abort()] = 12 + status;
+    let column = cols[query.agg_at(tree, k, 1)];
+    a[k_err_col()] = column;
+    a[k_err_fn()] = query.agg_at(tree, k, 0);
+    a[k_err_row()] = a[k_records()];
+    a[k_err_line()] = opened;
+    return (0, e2, keep_value(heap, k2, record, cells[3 * column], cells[3 * column + 1]));
+}
+
+// `group_fast` for a grouping with no `--where`: nothing to screen, so no buffers go in or out. Answers 0
+// when the row is added, 1 when `process_groups` has to deal with it (3 when the key is built: a new group), and 16 + 8 * k + status when aggregate
+// `k` refused the row with `status` (4 to 6), for `group_refused` to record.
+pub fn group_plain[&g, &q, &c, &d, &e](groups: &!g agg.Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], track: bool) -> [] int {
+    let (status, k) = agg.add_fast(groups, tree, cols, record, cells, track);
+    if status == 0 {
+        return 0;
+    }
+    if status < 0 {
+        return 1 - 2 * status - 2;
+    }
+    return 16 + 8 * k + status;
+}
+
+// The refusal `group_plain` answered, recorded as `process_groups` records it.
+pub fn group_refused[&h, &q, &c, &d, &e, &a](heap: &!h Heap, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, answer: int, a: &!a [int]) -> [heap] buffer.Buffer {
+    let status = (answer - 16) % 8;
+    let k = (answer - 16) / 8;
+    a[k_stop()] = 1;
+    a[k_abort()] = 12 + status;
+    let column = cols[query.agg_at(tree, k, 1)];
+    a[k_err_col()] = column;
+    a[k_err_fn()] = query.agg_at(tree, k, 0);
+    a[k_err_row()] = a[k_records()];
+    a[k_err_line()] = opened;
+    return keep_value(heap, kept, record, cells[3 * column], cells[3 * column + 1]);
+}
+
+// Whether `add_fast` can ever take a row of this plan: not when an aggregate is `distinct`, which keeps a set of
+// pairs and is added the old way (so the rows of such a plan do not go through the fast call at all).
+pub fn fast_ok[&q](tree: &q query.Query) -> [] bool {
+    var k = 0;
+    while k < query.agg_count(tree) {
+        if query.agg_at(tree, k, 0) == 4 {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
 }
