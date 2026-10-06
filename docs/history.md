@@ -184,3 +184,28 @@ the program is within 25 percent of what three cores give.
 More than six cores of x86; a file whose boundaries are all inside quoted fields (correct, and about
 sequential speed); wider files; a file that does not fit the page cache (the reads are `pread`s of 64 KiB, the
 same as the sequential read's, but the threads' disk pattern was not looked at).
+
+# The adversarial round (docs/adversarial.md)
+
+## Round 4: the end-phase sort of a high-cardinality grouping
+
+Cells registered first, then run (results in `docs/adversarial.md`). The worst Mac loss was the grouping of a
+million distinct keys (B3 0.940 s, B4 0.895 s against DuckDB's 0.257 and 0.281 at one thread, and 9 to 10 times its
+default), with the A1 proxy at 0.914 s. `sample` of B3: the end phase, `agg.compare_keys` and `agg.sort_into`
+(the merge sort of the groups by key, field by field), over half of the samples.
+
+*Change:* before the sort, one integer per group holds the first 7 bytes of the first key field (zero padded,
+big-endian, so integer order is byte order); the merge sort compares the integers and calls `compare_keys` only when
+they are equal (`agg.prefix_of`, `agg.before`, `agg.sort_into`, `table.finish_groups`). Output byte-identical:
+md5 of `--group k1m --format csv` equal before and after (`bb5069c5...`), the 100 conformance tests pass (Mac and
+Linux).
+
+*Result (Mac, minimum of 5):* B3 0.940 to 0.790 s, B4 0.895 to 0.811 s, A1 0.914 to 0.778 s (-16, -9, -15
+percent); B1, B2 and I1 did not move outside the noise (0.184, 0.193, 0.308). A smaller win than hoped, and the
+reason is in the data: the keys `key0000001`... share their first 4 to 5 bytes, so the 7-byte prefix settles only
+part of the comparisons; the second `sample` has `compare_keys` still 152 of about 370 samples. The rest is in
+`docs/backlog.md` (a radix pass, a parallel merge, `csv_value`). Not tuned to the benchmark: the generated keys are
+what a text key of this shape looks like (a prefix then digits), and the loss is reported as it stands.
+
+Contract package adopted in the same branch: `fail.choose_*`, `fail.detail_*` (lexsys-tools#29), 48 lines fewer
+(4,844 to 4,796); `toolbox.sort` was not adopted for `agg.ls` (see the backlog's friction list).

@@ -238,6 +238,7 @@
     "parse_int",
     "parse_nat",
     "position_of",
+    "prefix_of",
     "repairable_in",
     "role_of",
     "row_ceiling",
@@ -274,5 +275,5 @@
   ],
   "folded_operators": 44,
   "folded_calls": 0,
-  "functions": 394
+  "functions": 405
 }
