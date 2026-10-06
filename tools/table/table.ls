@@ -742,6 +742,12 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
         sort = cli.text(args, parsed, table, "sort");
     }
     let filtering = query.count_of(tree, 1) > 0;
+    // `from` pages the rows of a selection; for a grouping it pages the groups, after all
+    // the rows have been counted, and must not skip any.
+    var row_from = from;
+    if mode == 2 {
+        row_from = 0;
+    }
     var e = errs;
     var names = buffer.empty(heap, 1);
     var hends = vec.empty(heap, 1, 0);
@@ -840,7 +846,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                                 rec = buffer.append(heap, rec, whole);
                                 rec = buffer.push(heap, rec, byte_of(10));
                             }
-                        } else if count_row(a, found, number, from) && mode != 0 {
+                        } else if count_row(a, found, number, row_from) && mode != 0 {
                             borrow cells as &cr in {
                                 borrow sel as &sr in {
                                     borrow cols as &kr in {
@@ -968,7 +974,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: 
                                         a[k_abort()] = 1;
                                         a[k_abort_line()] = opened;
                                         going = false;
-                                    } else if count_row(a, found, opened, from) && mode != 0 {
+                                    } else if count_row(a, found, opened, row_from) && mode != 0 {
                                         borrow cells as &cr in {
                                             borrow sel as &sr in {
                                                 borrow cols as &kr in {
