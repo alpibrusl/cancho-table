@@ -8,9 +8,12 @@
 # net_in or clock; `bounded` must be true.
 #
 # `table` reads one file and writes one document: no standard input (no
-# io_read), nothing written to disk (no file_write, no dir_write).
+# io_read), nothing written to disk (no file_write, no dir_write). `conc` is the
+# threads of `--threads` (spawn and join, which the language labels so): they hold
+# no capability the process did not already have -- a `File` opened by the same
+# path, a `Heap` forked from the parent's -- and no network, clock or foreign code.
 
 max_tools = 10
 
 [table]
-allow = ["args", "dir_read", "err_write", "file_read", "fs_read(\"\")", "heap", "io_write"]
+allow = ["args", "conc", "dir_read", "err_write", "file_read", "fs_read(\"\")", "heap", "io_write"]

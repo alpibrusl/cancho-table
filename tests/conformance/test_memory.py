@@ -86,6 +86,24 @@ class Memory(unittest.TestCase):
             self.assertLess(large - small, 1 << 20, flags)
             self.assertLess(large, 8 << 20, flags)
 
+    def test_threads_are_bounded_by_the_ranges_not_the_file(self):
+        # O(threads x range): the same ranges on a file 18 times as large use the same memory,
+        # and the memory is a few times (threads x range), never the file.
+        make(self.s.dir / "small.csv", 60_000)
+        make(self.s.dir / "large.csv", 960_000)
+        range_bytes = 1 << 20
+        for threads in (2, 4, 8):
+            for flags in (["--where", "status=200 and bytes:int>50", "--select", "id,path", "--format", "csv"],
+                          ["--group", "status", "--agg", "count,sum:bytes,distinct:status"],
+                          ["--select", "note", "--limit", "1000", "--max-bytes", "4000000"]):
+                common = flags + ["--threads", threads, "--chunk-bytes", range_bytes, "--parallel-min-bytes", 0]
+                rc1, small = peak_rss("--root", self.s.dir, *common, "small.csv")
+                rc2, large = peak_rss("--root", self.s.dir, *common, "large.csv")
+                self.assertEqual((rc1, rc2), (0, 0), common)
+                print("\npeak RSS %s: %d KB on 2 MB, %d KB on 37 MB" % (" ".join(str(c) for c in common), small // 1024, large // 1024), file=sys.stderr)
+                self.assertLess(large, (8 + threads * 4 * 1) * range_bytes, common)
+                self.assertLess(large - small, (2 + threads * 3) * range_bytes, common)
+
     def test_a_grouping_is_bounded_by_its_limits(self):
         # Every id is a group: the default 100,000 groups stop it, and memory is
         # what 100,000 short keys take, not what a million rows would.

@@ -59,6 +59,14 @@ status,count,sum:bytes
   in any order. Bounded by `--max-groups`, `--max-distinct` and `--max-state-bytes`,
   each its own rule. All of it is one plan (`tools/table/query.ls`); design and
   deviations from the design document in [`docs/filter.md`](docs/filter.md);
+* **threads**: `--threads N` (1 to 64, default 1) reads the file with N threads, for rows and
+  groups, and the answer is **the sequential answer byte for byte**: the same output, the same
+  refusal naming the same row, line and column (the first in file order), the same ragged-row
+  report, the same page. A range of the file whose first line is not where the previous record
+  ended (a quoted newline) is read again by the parent, and so is anything that depends on order
+  (a page, a bound, an integer sum that could leave 64 bits). Memory is O(threads x range), not the
+  file. 4 to 7x faster on a 16-core Mac, 2 to 2.4x on three physical cores; the design, what the
+  language did and did not allow, and the measurements are in [`docs/parallel.md`](docs/parallel.md);
 * an RFC 4180 reader of its own ([`tools/table/`](tools/table)): quoted fields,
   doubled quotes, delimiters and newlines (LF or CRLF) inside quotes, a leading
   UTF-8 byte order mark, blank lines between records skipped;
@@ -72,8 +80,8 @@ status,count,sum:bytes
   `limit.record-too-large`, `limit.output-too-large`, `limit.too-many-rows`,
   `select.unknown-column`, `select.ambiguous-column`, and the `args.*`, `path.*` and
   `io.*` rules of the contract. The tool's own rules are in `extra_rules`;
-* an authority of `args, dir_read, err_write, file_read, fs_read(""), heap,
-  io_write`: no network, no foreign code, no clock, nothing written to disk,
+* an authority of `args, conc, dir_read, err_write, file_read, fs_read(""), heap,
+  io_write` (`conc` is `--threads`): no network, no foreign code, no clock, nothing written to disk,
   enforced by the ceiling in [`tools.toml`](tools.toml) and
   `python3 scripts/manifest.py --check`;
 * `table introspect` and `table skill`, generated from the tables the parser
@@ -96,6 +104,8 @@ status,count,sum:bytes
   ends a record there; the two can differ on a file that is already damaged); a
   quote in the middle of an unquoted field is text.
 * not cheap to page through: `--from N` re-reads the file from the start.
+* not threaded for the shape or for a selection that starts late (`--from`); no work stealing
+  (no atomics yet), so a wave waits for its slowest range.
 
 ## Build
 
@@ -140,6 +150,7 @@ python3 scripts/manifest.py --check     # authority = the compiler's, embedded, 
 python3 -W ignore -m unittest discover -s tests/conformance -v   # needs jsonschema, cc; strace on Linux
 python3 scripts/select_mutants.py       # mutation check of --select (slow: one build and a test run each)
 python3 scripts/filter_mutants.py       # the same for --where, --group, --agg
+python3 scripts/parallel_mutants.py     # the same for --threads
 ```
 
 The conformance tests, in [`tests/conformance`](tests/conformance):
@@ -217,20 +228,41 @@ does not matter and are not equivalent on the quoted column; the `uniq` pipeline
 three processes running in parallel on the Linux box's other cores, which is why it
 matches `table` there.
 
+### Threads (`--threads N`, `python3 scripts/bench_parallel.py`)
+
+Seconds, the same file; DuckDB is `COPY (...) TO '/dev/null'` with `SET threads=N`, csvtk is `-j N`.
+Every answer is checked first. Apple silicon Mac, 16 cores:
+
+| question | `table` 1 / 2 / 4 / 8 / 16 threads | DuckDB 1 / 4 / default | csvtk -j 1 |
+|---|---|---|---:|
+| filter | 0.051 / 0.035 / 0.020 / 0.012 / 0.012 | 0.176 / 0.074 / 0.075 | 0.308 |
+| cut two columns | 0.058 / 0.037 / 0.021 / 0.013 / 0.011 | 0.187 / 0.079 / 0.078 | 0.185 |
+| group-count | 0.110 / 0.061 / 0.033 / 0.017 / 0.015 | 0.129 / 0.062 / 0.062 | 0.186 |
+| group sum | 0.121 / 0.069 / 0.037 / 0.019 / 0.018 | 0.135 / 0.064 / 0.063 | 0.403 |
+
+Linux x86-64, cores 0 to 5 (three physical cores) of a shared box, `table` 1 / 2 / 4 / 6 threads:
+filter 0.124 / 0.081 / 0.071 / 0.064, group-count 0.210 / 0.107 / 0.095 / 0.087; `csvtk -j N` does
+not scale (0.9 to 1.2x). The scaling there is limited by the machine, which was checked
+([`docs/parallel.md`](docs/parallel.md) section 5): six independent sequential processes get 1.56x
+the throughput of one. The default threshold below which `--threads` is ignored, 1 MiB of data, is
+measured in the same document.
+
 ## Layout
 
 ```
-tools/table/        the program: table.ls (flags, the read, the answers), reader.ls
+tools/table/        the program: table.ls (flags, the read, the answers), engine.ls (what is done
+                    with a row), scan.ls (a byte range), par.ls (threads), reader.ls
                     (RFC 4180), writer.ls (csv and json fields), plan.ls (name lists),
                     query.ls (the plan), expr.ls (--where), agg.ls (groups), frame.ls
                     (the plan against the header)
-docs/               select.md, filter.md (the designs), history.md (the measurements)
+docs/               select.md, filter.md, parallel.md (the designs), history.md (the measurements)
 generated/table/    the embedded manifest (written by scripts/manifest.py)
 manifests/          the authority, as the compiler reports it
 schemas/            table.v2.json (written by scripts/schemas.py)
 tools.toml          the authority ceiling a person writes and reviews
 tests/conformance/  the gates, run against build/table
-scripts/            manifest.py, schemas.py, bench.py, select_mutants.py, filter_mutants.py
+scripts/            manifest.py, schemas.py, bench.py, bench_parallel.py, select_mutants.py,
+                    filter_mutants.py, parallel_mutants.py
 ```
 
 Licence: EUPL-1.2, as lexsys-tools.
