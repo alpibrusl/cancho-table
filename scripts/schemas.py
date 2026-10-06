@@ -105,15 +105,17 @@ SCHEMAS = {
             "row_count": NAT,
             "truncated": {"type": "boolean"},
         }),
-        # `table --select NAMES FILE`: a page of rows, each the selected fields in
-        # the order named; `next` resumes with `--from`.
+        # `--select`, `--where` or `--group`: a page of rows, each the fields in the order
+        # of `columns`; `next` resumes with `--from`; `group_count` is the number of
+        # groups of a grouping, before `--top` and the page.
         obj({
+            "group_count": NAT,
             "columns": {"type": "array", "items": TB},
             "rows": {"type": "array", "items": {"type": "array", "items": TB}},
             "row_count": NAT,
             "truncated": {"type": "boolean"},
             "next": {"oneOf": [{"type": "null"}, obj({"from": NAT})]},
-        }),
+        }, required=["columns", "rows", "row_count", "truncated", "next"]),
     ]}),
 }
 

@@ -1,15 +1,21 @@
 edition 5;
 
-// `table` -- a CSV or TSV file as a table: its shape, or some of its columns.
+// `table` -- a CSV or TSV file as a table: its shape, some of its columns, the
+// rows that satisfy a condition, or counts and sums of groups of rows.
 //
 //     table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N]
-//           [--format json|text] FILE                         the shape
-//     table --select NAMES [--limit N] [--from N] [--max-bytes N]
-//           [--format json|csv] [the same] FILE               some columns
+//           [--format json|text] FILE                                the shape
+//     table [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N]
+//           [--format json|csv] [the same] FILE                      rows
+//     table --group NAMES [--agg LIST] [--where EXPR] [--sort KEY] [--top N]
+//           [--limit N] [--from N] [--max-groups N] [--max-distinct N]
+//           [--max-state-bytes N] [--format json|csv] [the same] FILE   groups
 //
-// Design and measurements: `docs/select.md`. The reader is `reader.ls` (RFC 4180,
-// one line at a time), what is written for a field `writer.ls`, and the reading
-// of `--select` `plan.ls`; this file drives them and says what went wrong.
+// Design and measurements: `docs/select.md`, `docs/filter.md`. The reader is
+// `reader.ls` (RFC 4180, one line at a time), what is written for a field
+// `writer.ls`, the plan `query.ls` (filled by `plan.ls` for column lists,
+// `expr.ls` for `--where`, `agg.ls` for `--agg`), and what the header lets the
+// plan become `frame.ls`; this file drives them and says what went wrong.
 //
 // * The first record is the header; every later non-blank record is a row.
 // * RFC 4180: a field may be quoted, a quote inside it is doubled, a quoted
@@ -22,25 +28,32 @@ edition 5;
 // * A row with a number of fields other than the header's is
 //   `parse.csv-ragged-row`, one error for the file naming the first such row;
 //   the rest of the file is still read and counted, and a ragged row is never
-//   among the rows a selection returns. A quote left open at the end of the
-//   input is `parse.csv-unterminated-quote`.
+//   among the rows a selection returns or a grouping counts. A quote left open
+//   at the end of the input is `parse.csv-unterminated-quote`.
+// * One plan, one engine: the flags fill a `Query` (query.ls); a row is
+//   counted, then tested by `--where`, then either emitted or added to its
+//   group. `--where` is applied before grouping.
 // * `--max-rows` is a bound on work, not memory: reading stops at it. In JSON
 //   the answer says `truncated: true`; as CSV there is nowhere to say it, so it
 //   is `limit.too-many-rows`. `--max-line-bytes` is a bound on memory: a
-//   physical line longer than it is `limit.line-too-long` (the file cannot be
-//   read past it with any confidence about where its records end), and the
-//   header, and with `--select` every record, which are kept while they are
-//   used, may not hold more than that many bytes in all (`limit.header-too-large`,
-//   `limit.record-too-large`).
+//   physical line longer than it is `limit.line-too-long`, and the header, and
+//   with `--select`, `--where` or `--group` every record, which are kept while
+//   they are used, may not hold more than that many bytes in all
+//   (`limit.header-too-large`, `limit.record-too-large`).
 //
 // Memory is one 64 KiB chunk, the longest record, the header, one row of
-// output and, as JSON, the page asked for (`--limit`, within `--max-bytes`).
+// output and, as JSON, the page asked for (`--limit`, within `--max-bytes`);
+// for a grouping, also its groups, bounded three ways (agg.ls).
 
 import std.buffer;
 import std.bytes;
 import std.json;
 import std.vec;
+import agg;
+import expr;
+import frame;
 import plan;
+import query;
 import reader;
 import toolbox.built;
 import toolbox.cli;
@@ -55,17 +68,17 @@ import toolbox.text;
 import writer;
 
 fn flag_table() -> [] &static [byte] {
-    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, named by their header separated by commas (a comma or backslash in a name is written with a backslash before it), or by position as #3, and in the order given;limit||nat|none||with --select, the most rows returned (default 1000 as json, no limit as csv, ceiling 1000000);from||nat|none||with --select, the 0-based row to start at, as the next of a truncated answer says;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, text for a person (the shape only), csv for the selected columns as csv";
+    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, named by their header separated by commas (a comma or backslash in a name is written with a backslash before it), or by position as #3, and in the order given;where||text|none||only the rows that satisfy this: conditions joined by and, each COLUMN OP VALUE with OP one of = != < <= > >= contains in (a, b), COLUMN:int for an exact integer comparison, 'quoted' words and backslashes as docs/filter.md says;group||text|none||count the rows by these columns, named as for select, instead of returning them;agg||text|none||with --group (or alone), what to compute per group: count, sum:COL, min:COL, max:COL, distinct:COL separated by commas (default count);sort||text|none||with --group, order the groups by this output column (count, sum:bytes, a group column), - before it for descending, ties by group;top||nat|none||with --group, keep only the first N groups after sorting;limit||nat|none||the most rows returned (default 1000 as json, no limit as csv, ceiling 1000000);from||nat|none||the 0-based row to start at, as the next of a truncated answer says;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-groups||nat|none|100000|the most groups kept, one more is limit.too-many-groups (ceiling 1000000);max-distinct||nat|none|100000|the most distinct values kept over all groups for distinct, one more is limit.too-many-distinct (ceiling 10000000);max-state-bytes||nat|none|67108864|the most bytes of group keys and distinct values kept (ceiling 1073741824);max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, text for a person (the shape only), csv for rows or groups as csv";
 }
 
 fn tool() -> [] describe.Tool {
-    return describe.Tool { name: "table", version: "0.2.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape (header names, data rows, columns), or with --select some of its columns as json rows (a page, with a next cursor) or as csv. Every refusal is a rule: a ragged row, an unterminated quote, an unknown column, a line past the limit.", usage: "table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE | table --select NAMES [--limit N] [--from N] [--max-bytes N] [--format json|csv] [--root DIR] [--delimiter ,|tab|;] FILE", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|1|1|the CSV file to read", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column", extra_rules: extra(), limits: "limit|1000|1000000;max-bytes|1048576|67108864;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
+    return describe.Tool { name: "table", version: "0.3.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some columns (--select), the rows that satisfy a condition (--where, bytewise or exact integers), or counts, sums, minima, maxima and distinct counts of groups (--group, --agg, --sort, --top), as json pages or csv. Every refusal is a rule: a ragged row, an unterminated quote, an unknown column, a cell that is not an integer, a line past the limit.", usage: "table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE | table [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N] [--format json|csv] FILE | table --group NAMES [--agg LIST] [--where EXPR] [--sort KEY] [--top N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--format json|csv] FILE", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|1|1|the CSV file to read", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;limit.too-many-groups;limit.too-many-distinct;limit.state-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column;column.unknown;column.ambiguous;where.syntax;agg.bad-spec;sort.unknown-key;value.not-integer;value.integer-overflow;agg.sum-overflow", extra_rules: extra(), limits: "limit|1000|1000000;max-bytes|1048576|67108864;max-groups|100000|1000000;max-distinct|100000|10000000;max-state-bytes|67108864|1073741824;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
 }
 
 // The tool's own rules, beside the contract's catalogue: tag, exit code,
 // repairable, summary.
 fn extra() -> [] &static [byte] {
-    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes;limit.record-too-large|8|never|a record read for --select holds more than --max-line-bytes bytes;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread;parse.csv-ragged-row|8|never|a row has a different number of fields than the header;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header;select.ambiguous-column|8|never|a name in --select that is the name of more than one column";
+    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes;limit.record-too-large|8|never|a record read for --select, --where or --group holds more than --max-line-bytes bytes;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread;limit.too-many-groups|8|never|more groups than --max-groups;limit.too-many-distinct|8|never|more distinct values than --max-distinct;limit.state-too-large|8|never|the keys and values kept for groups hold more than --max-state-bytes bytes;parse.csv-ragged-row|8|never|a row has a different number of fields than the header;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header;select.ambiguous-column|8|never|a name in --select that is the name of more than one column;column.unknown|3|never|a name or position in --where, --group or --agg that is not a column of the header;column.ambiguous|8|never|a name in --where, --group or --agg that is the name of more than one column;where.syntax|2|never|--where is not an expression of the grammar, at the offset the detail gives;agg.bad-spec|2|never|an item of --agg that is not count, sum:COL, min:COL, max:COL or distinct:COL;sort.unknown-key|2|never|--sort names no output column of the grouping;value.not-integer|8|never|a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not);value.integer-overflow|8|never|a cell of an :int column or of sum, min or max does not fit 64 bits;agg.sum-overflow|8|never|a sum that would not fit 64 bits";
 }
 
 fn built() -> [] describe.Built {
@@ -106,8 +119,12 @@ fn delimiter_of[&t](given: &t [byte]) -> [] int {
 // `abort` is why it stopped before the end of the input: 0 it did not, 1 a bad
 // quote, 2 a quote left open, 3 a header past its limit, 4 a line past the
 // limit, 5 a name that is no column, 6 a name that is several, 7 a record past
-// its limit, 8 a first row past the budget, 9 standard output refused a write;
-// `abort_line` is the line it is about.
+// its limit, 8 a first row past the budget, 9 standard output refused a write,
+// 11 and 12 --where met a cell that is not an integer / too large, 13 more
+// groups than allowed, 14 more distinct values, 15 more key bytes, 16 and 17 an
+// aggregate met a cell that is not an integer / too large, 18 a sum past 64
+// bits, 19 a --sort key that is no output column; `abort_line` is the line it is
+// about.
 struct Counts {
     columns: int,
     records: int,
@@ -123,6 +140,11 @@ struct Counts {
     more: bool,
     next: int,
     bad_name: int,
+    err_col: int,
+    err_fn: int,
+    err_row: int,
+    err_line: int,
+    groups: int,
 }
 
 fn k_records() -> [] int {
@@ -185,8 +207,40 @@ fn k_stop() -> [] int {
     return 14;
 }
 
-fn k_size() -> [] int {
+fn k_err_col() -> [] int {
+    return 15;
+}
+
+fn k_err_fn() -> [] int {
     return 16;
+}
+
+fn k_err_row() -> [] int {
+    return 17;
+}
+
+fn k_err_line() -> [] int {
+    return 18;
+}
+
+fn k_groups() -> [] int {
+    return 19;
+}
+
+fn k_sort_field() -> [] int {
+    return 20;
+}
+
+fn k_sort_slot() -> [] int {
+    return 21;
+}
+
+fn k_sort_desc() -> [] int {
+    return 22;
+}
+
+fn k_size() -> [] int {
+    return 32;
 }
 
 // One more data record, number `opened`'s line it began on, of `found` fields:
@@ -306,25 +360,406 @@ fn emit_row[&h, &i, &d, &c, &s, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buf
     return (pending, row);
 }
 
-// Read the open file. With `want` the rows selected by `toks` (NAMES, parsed by
-// `plan.parse`) are written: as csv straight to standard output, as json into
-// the buffer answered third (the first is the header's `columns` array text).
-// Answers what was counted, those two buffers, the header's names and where
-// each ends, and the errors.
-fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, shown: &s [byte], io: &!i Io, delim: int, want: bool, as_csv: bool, from: int, limit: int, budget: int, toks: &t buffer.Buffer, tends: &k vec.Vec[int], tkinds: &j vec.Vec[int], names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_write] (Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+// The first 64 bytes of a cell, kept to say which one was refused.
+fn keep_value[&h, &d](heap: &!h Heap, kept: buffer.Buffer, record: &d [byte], first: int, last: int) -> [heap] buffer.Buffer {
+    var v = kept;
+    borrow mut v as &!w in {
+        buffer.clear(w);
+    }
+    var stop = last;
+    if last - first > 64 {
+        stop = first + 64;
+    }
+    return buffer.append(heap, v, record[first..stop]);
+}
+
+// Whether `--where` wants the record: 1 yes (also when there is no condition),
+// 0 no, -1 a condition met a cell it cannot compare, which is recorded in `a`
+// (the read stops). `escr` is a scratch for a quoted cell, `kept` the first
+// bytes of the cell that was refused.
+fn screen[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], escr: buffer.Buffer, kept: buffer.Buffer, opened: int, a: &!a [int]) -> [heap] (int, buffer.Buffer, buffer.Buffer) {
+    if query.count_of(tree, 1) == 0 {
+        return (1, escr, kept);
+    }
+    let (verdict, which, e2) = expr.eval(heap, tree, cols, record, cells, escr);
+    if verdict < 2 {
+        return (verdict, e2, kept);
+    }
+    // A condition met a cell it cannot compare.
+    let column = cols[query.cond_at(tree, which, 3)];
+    a[k_abort()] = 9 + verdict;
+    a[k_err_col()] = column;
+    a[k_err_fn()] = -1;
+    a[k_err_row()] = a[k_records()];
+    a[k_err_line()] = opened;
+    a[k_stop()] = 1;
+    return (-1, e2, keep_value(heap, kept, record, cells[3 * column], cells[3 * column + 1]));
+}
+
+// A counted row that is not ragged and is at or past `from`, for rows (mode 1):
+// tested by `--where`, then emitted.
+fn process_rows[&h, &i, &q, &c, &d, &e, &s, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], sel: &s [int], picked: int, delim: int, as_csv: bool, budget: int, opened: int, limit: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
+    if verdict != 1 {
+        return (rows, scratch, e2, k2);
+    }
+    if a[k_emitted()] >= limit {
+        // The page is full and this row matches: there is more.
+        a[k_more()] = 1;
+        a[k_next()] = a[k_records()] - 1;
+        a[k_stop()] = 1;
+        return (rows, scratch, e2, k2);
+    }
+    let (r3, s3) = emit_row(heap, io, rows, scratch, record, cells, sel, picked, delim, as_csv, budget, a);
+    return (r3, s3, e2, k2);
+}
+
+// The same for a grouping (mode 2): tested, then added to its group.
+fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_groups: int, max_distinct: int, max_state: int, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
+    let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
+    if verdict != 1 {
+        return (groups, e2, k2);
+    }
+    let (g3, e3, status, k) = agg.add(heap, groups, tree, cols, record, cells, e2, max_groups, max_distinct, max_state);
+    if status == 0 {
+        return (g3, e3, k2);
+    }
+    a[k_stop()] = 1;
+    a[k_abort()] = 12 + status;
+    if status < 4 {
+        return (g3, e3, k2);
+    }
+    let column = cols[query.agg_at(tree, k, 1)];
+    a[k_err_col()] = column;
+    a[k_err_fn()] = query.agg_at(tree, k, 0);
+    a[k_err_row()] = a[k_records()];
+    a[k_err_line()] = opened;
+    return (g3, e3, keep_value(heap, k2, record, cells[3 * column], cells[3 * column + 1]));
+}
+
+// The groups, in order, as the answer: the page `--from` and `--limit` ask for
+// of the first `--top` of them, as csv written out or as json rows kept.
+fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, groups: &g agg.Groups, tree: &q query.Query, as_csv: bool, delim: int, from: int, limit: int, top: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer) {
+    let n = agg.groups(groups);
+    a[k_groups()] = n;
+    let ng = query.count_of(tree, 2);
+    let order = box_slice(heap, n + 1, 0);
+    let spare = box_slice(heap, n + 1, 0);
+    var pending = rows;
+    var row = scratch;
+    borrow mut order as &!ow in {
+        borrow mut spare as &!sw in {
+            agg.sort_into(groups, contents(ow), contents(sw), ng, a[k_sort_field()], a[k_sort_slot()], a[k_sort_desc()] == 1);
+            var end = n;
+            if top > 0 && top < n {
+                end = top;
+            }
+            var pos = from;
+            var going = true;
+            while pos < end && going {
+                let x = contents(ow)[pos];
+                if a[k_emitted()] >= limit {
+                    a[k_more()] = 1;
+                    a[k_next()] = pos;
+                    going = false;
+                } else if as_csv {
+                    var j = 0;
+                    while j < ng {
+                        if j > 0 {
+                            pending = buffer.push(heap, pending, byte_of(delim));
+                        }
+                        pending = writer.csv_value(heap, pending, agg.key_field(groups, x, j), delim);
+                        j = j + 1;
+                    }
+                    var k = 0;
+                    while k < query.agg_count(tree) {
+                        if ng + k > 0 {
+                            pending = buffer.push(heap, pending, byte_of(delim));
+                        }
+                        pending = agg.put_int(heap, pending, agg.value_of(groups, x, k, query.agg_at(tree, k, 0)));
+                        k = k + 1;
+                    }
+                    pending = buffer.push(heap, pending, byte_of(10));
+                    a[k_emitted()] = a[k_emitted()] + 1;
+                    var held = 0;
+                    borrow pending as &pr in {
+                        held = buffer.size(pr);
+                    }
+                    if held >= 65536 {
+                        let (after, ok) = flush(io, pending);
+                        pending = after;
+                        if !ok {
+                            a[k_abort()] = 9;
+                            going = false;
+                        }
+                    }
+                    pos = pos + 1;
+                } else {
+                    borrow mut row as &!rw in {
+                        buffer.clear(rw);
+                    }
+                    row = agg.row_json(heap, row, groups, tree, x);
+                    var have = 0;
+                    var need = 0;
+                    borrow pending as &pr in {
+                        have = buffer.size(pr);
+                    }
+                    borrow row as &rr in {
+                        need = buffer.size(rr);
+                    }
+                    if have + need + 1 > budget {
+                        going = false;
+                        if a[k_emitted()] == 0 {
+                            a[k_abort()] = 8;
+                        } else {
+                            a[k_more()] = 1;
+                            a[k_next()] = pos;
+                        }
+                    } else {
+                        if a[k_emitted()] > 0 {
+                            pending = buffer.push(heap, pending, byte_of(','));
+                        }
+                        borrow row as &rr in {
+                            pending = buffer.append(heap, pending, buffer.bytes(rr));
+                        }
+                        a[k_emitted()] = a[k_emitted()] + 1;
+                        pos = pos + 1;
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, order);
+    unbox_slice(heap, spare);
+    return (pending, row);
+}
+
+// The header's own spelling of column `col`.
+fn name_of[&n, &e](names: &n buffer.Buffer, ends: &e vec.Vec[int], col: int) -> [] &n [byte] {
+    var begin = 0;
+    if col > 0 {
+        begin = vec.get(ends, col - 1);
+    }
+    return buffer.bytes(names)[begin..vec.get(ends, col)];
+}
+
+// A refusal at one line of the file: the rule's detail is the path and the line.
+fn at_line[&h, &s](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message: &static [byte], hint: &static [byte], reason: &static [byte], shown: &s [byte], line: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, extra(), rule, message, hint);
+    w = fail.repair_none(heap, w, reason);
+    w = fail.detail_open(heap, w);
+    w = json.put_key(heap, w, "path");
+    w = text.put(heap, w, shown);
+    w = json.put_key(heap, w, "line");
+    w = json.put_int(heap, w, line);
+    return fail.add(heap, e, w);
+}
+
+// A refusal of a limit: the rule's detail is the path and the limit.
+fn over_limit[&h, &s](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message: &static [byte], hint: &static [byte], shown: &s [byte], bound: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, extra(), rule, message, hint);
+    w = fail.repair_none(heap, w, "how large the whole is was not measured past the limit");
+    w = fail.detail_open(heap, w);
+    w = json.put_key(heap, w, "path");
+    w = text.put(heap, w, shown);
+    w = json.put_key(heap, w, "limit");
+    w = json.put_int(heap, w, bound);
+    return fail.add(heap, e, w);
+}
+
+// What went wrong in a read, as an error with a rule, or nothing.
+fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, names: &n buffer.Buffer, hends: &d vec.Vec[int], labels: &l buffer.Buffer, lends: &m vec.Vec[int], kept: &k buffer.Buffer, c: Counts, shown: &s [byte], names_at: int, errno: int, as_csv: bool, budget: int, errs: fail.Errors) -> [heap, args] fail.Errors {
     let table = flag_table();
     let cap = cli.nat(args, parsed, table, "max-line-bytes");
     let most = cli.nat(args, parsed, table, "max-rows");
+    var e = errs;
+    if errno != 0 {
+        e = fail.io_error(heap, e, errno, false, shown);
+    } else if c.abort == 4 {
+        let over = limit.more(limit.none(), c.abort_line, c.long_length);
+        e = limit.too_long(heap, e, args, parsed, table, shown, over, cap, line_ceiling(), "a line is longer than --max-line-bytes; the file was not read past it");
+    } else if c.abort == 3 {
+        e = at_line(heap, e, "limit.header-too-large", "the header record holds more than --max-line-bytes bytes", "raise --max-line-bytes, up to the ceiling introspect names", "how large the record is was not read to the end", shown, c.abort_line);
+    } else if c.abort == 7 {
+        e = at_line(heap, e, "limit.record-too-large", "a record holds more than --max-line-bytes bytes", "raise --max-line-bytes, up to the ceiling introspect names", "how large the record is was not read to the end", shown, c.abort_line);
+    } else if c.abort == 2 {
+        e = at_line(heap, e, "parse.csv-unterminated-quote", "a quoted field is open at the end of the input", "close the quote, or double the quotes that are text", "which quote was meant to close is not known", shown, c.abort_line);
+    } else if c.abort == 1 {
+        e = at_line(heap, e, "parse.csv-bad-quote", "a closing quote is followed by something other than the delimiter or the end of the record", "double a quote that is text, or put the delimiter after the closing quote", "what the field was meant to hold is not known", shown, c.abort_line);
+    } else if c.abort == 5 || c.abort == 6 {
+        let ns = query.count_of(tree, 0);
+        let nw = query.count_of(tree, 1);
+        let ng = query.count_of(tree, 2);
+        var flag = "--select";
+        var rule = "select.unknown-column";
+        var what = "--select names a column the header does not have";
+        var hint = "pick from detail.available";
+        var upto = ns;
+        var at_arg = names_at;
+        if c.bad_name >= ns {
+            flag = "--where";
+            if c.bad_name >= ns + nw + ng {
+                flag = "--agg";
+            } else if c.bad_name >= ns + nw {
+                flag = "--group";
+            }
+            rule = "column.unknown";
+            what = "the plan names a column the header does not have";
+            at_arg = -1;
+        }
+        if c.abort == 6 {
+            rule = "select.ambiguous-column";
+            what = "--select names a column that the header has more than once";
+            if c.bad_name >= ns {
+                rule = "column.ambiguous";
+                what = "the plan names a column that the header has more than once";
+            }
+            hint = "name it by position, as #3 for the third column";
+        }
+        e = plan.refusal(heap, e, extra(), rule, what, hint, args, at_arg, names, hends, tree.names, tree.nends, tree.nkinds, c.bad_name, upto, flag, shown);
+    } else if c.abort == 8 {
+        e = over_limit(heap, e, "limit.output-too-large", "the first row of the page is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names, or select fewer columns", shown, budget);
+    } else if c.abort == 13 {
+        e = over_limit(heap, e, "limit.too-many-groups", "more groups than --max-groups; counting stopped there", "raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns", shown, cli.nat(args, parsed, table, "max-groups"));
+    } else if c.abort == 14 {
+        e = over_limit(heap, e, "limit.too-many-distinct", "more distinct values than --max-distinct; counting stopped there", "raise --max-distinct, up to the ceiling introspect names", shown, cli.nat(args, parsed, table, "max-distinct"));
+    } else if c.abort == 15 {
+        e = over_limit(heap, e, "limit.state-too-large", "the group keys and distinct values kept hold more than --max-state-bytes bytes", "raise --max-state-bytes, up to the ceiling introspect names, or group by shorter values", shown, cli.nat(args, parsed, table, "max-state-bytes"));
+    } else if c.abort == 11 || c.abort == 12 || c.abort == 16 || c.abort == 17 || c.abort == 18 {
+        var rule = "value.not-integer";
+        var what = "a cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)";
+        var hint = "keep out the rows with such a cell with --where, or do not ask for an integer of this column";
+        if c.abort == 12 || c.abort == 17 {
+            rule = "value.integer-overflow";
+            what = "a cell is an integer that does not fit 64 bits";
+        } else if c.abort == 18 {
+            rule = "agg.sum-overflow";
+            what = "a sum would not fit 64 bits";
+            hint = "sum fewer rows, with --where, or group more finely";
+        }
+        var context = "where";
+        if c.err_fn == 1 {
+            context = "sum";
+        } else if c.err_fn == 2 {
+            context = "min";
+        } else if c.err_fn == 3 {
+            context = "max";
+        } else if c.err_fn == 4 {
+            context = "distinct";
+        }
+        var w = fail.open_in(heap, extra(), rule, what, hint);
+        w = fail.repair_none(heap, w, "what the cell was meant to be is not known");
+        w = fail.detail_open(heap, w);
+        w = json.put_key(heap, w, "path");
+        w = text.put(heap, w, shown);
+        w = json.put_key(heap, w, "context");
+        w = json.put_string(heap, w, context);
+        w = json.put_key(heap, w, "column");
+        w = text.put(heap, w, name_of(names, hends, c.err_col));
+        w = json.put_key(heap, w, "row");
+        w = json.put_int(heap, w, c.err_row);
+        w = json.put_key(heap, w, "line");
+        w = json.put_int(heap, w, c.err_line);
+        if c.abort != 18 {
+            w = json.put_key(heap, w, "value");
+            w = text.put(heap, w, buffer.bytes(kept));
+            w = json.put_key(heap, w, "value_truncated");
+            w = json.put_bool(heap, w, buffer.size(kept) >= 64);
+        }
+        e = fail.add(heap, e, w);
+    } else if c.abort == 19 {
+        var w = fail.open_in(heap, extra(), "sort.unknown-key", "--sort names no output column of the grouping", "pick from detail.available, with a - before it to sort descending");
+        w = fail.repair_none(heap, w, "which column was meant is not known");
+        w = fail.detail_open(heap, w);
+        w = json.put_key(heap, w, "sort");
+        w = json.put_string(heap, w, cli.text(args, parsed, table, "sort"));
+        w = json.put_key(heap, w, "available");
+        w = json.begin_array(heap, w);
+        var i = 0;
+        var begin = 0;
+        while i < vec.size(lends) {
+            let to = vec.get(lends, i);
+            w = text.put(heap, w, buffer.bytes(labels)[begin..to]);
+            begin = to;
+            i = i + 1;
+        }
+        w = json.end_array(heap, w);
+        e = fail.add(heap, e, w);
+    } else if as_csv && c.capped {
+        e = over_limit(heap, e, "limit.too-many-rows", "--max-rows data rows were read and there are more", "raise --max-rows, up to the ceiling introspect names, or page with --limit and --from", shown, most);
+    } else if c.ragged > 0 {
+        var w = fail.open_in(heap, extra(), "parse.csv-ragged-row", "a row has a different number of fields than the header", "make every row as wide as the header, quoting fields that hold the delimiter");
+        w = fail.repair_none(heap, w, "which fields a short or long row is missing or has too many of is not known");
+        w = fail.detail_open(heap, w);
+        w = json.put_key(heap, w, "path");
+        w = text.put(heap, w, shown);
+        w = json.put_key(heap, w, "ragged_rows");
+        w = json.put_int(heap, w, c.ragged);
+        w = json.put_key(heap, w, "first_row");
+        w = json.put_int(heap, w, c.first_row);
+        w = json.put_key(heap, w, "first_line");
+        w = json.put_int(heap, w, c.first_line);
+        w = json.put_key(heap, w, "expected");
+        w = json.put_int(heap, w, c.columns);
+        w = json.put_key(heap, w, "found");
+        w = json.put_int(heap, w, c.first_found);
+        e = fail.add(heap, e, w);
+    }
+    return e;
+}
+
+// The output of a csv answer starts with its header line.
+fn start_output[&h](heap: &!h Heap, rows: buffer.Buffer, lead: buffer.Buffer) -> [heap] buffer.Buffer {
+    var r = rows;
+    var empty = true;
+    borrow lead as &lr in {
+        empty = buffer.size(lr) == 0;
+        r = buffer.append(heap, r, buffer.bytes(lr));
+    }
+    if empty {
+        // One empty name is `""`: a blank line is no record.
+        r = buffer.append(heap, r, "\"\"");
+    }
+    r = buffer.push(heap, r, byte_of(10));
+    buffer.drop(heap, lead);
+    return r;
+}
+
+// Read the open file. Mode 0 counts (the shape); mode 1 writes the rows the plan
+// selects and keeps, mode 2 counts them into groups and writes the groups: as
+// csv straight to standard output, as json into the buffer answered third (the
+// second is the answer's `columns` array text). Answers what was counted, those
+// two buffers, the header's names and where each ends, and the errors.
+fn read_file[&h, &g, &p, &f, &s, &i, &q](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, shown: &s [byte], io: &!i Io, delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_write] (Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+    let table = flag_table();
+    let cap = cli.nat(args, parsed, table, "max-line-bytes");
+    let most = cli.nat(args, parsed, table, "max-rows");
+    let max_groups = cli.nat(args, parsed, table, "max-groups");
+    let max_distinct = cli.nat(args, parsed, table, "max-distinct");
+    let max_state = cli.nat(args, parsed, table, "max-state-bytes");
+    var sort = "";
+    if cli.has(parsed, table, "sort") {
+        sort = cli.text(args, parsed, table, "sort");
+    }
+    let filtering = query.count_of(tree, 1) > 0;
     var e = errs;
     var names = buffer.empty(heap, 1);
     var hends = vec.empty(heap, 1, 0);
     var head = buffer.empty(heap, 1);
     var rows = buffer.empty(heap, 1);
     var scratch = buffer.empty(heap, 1);
+    var escr = buffer.empty(heap, 16);
+    var kept = buffer.empty(heap, 64);
+    var groups = agg.start(heap, query.agg_count(tree));
     var rec = buffer.empty(heap, 256);
+    var cols = box_slice(heap, 1, 0);
     var cells = box_slice(heap, 3, 0);
     var sel = box_slice(heap, 1, 0);
+    var labels = buffer.empty(heap, 1);
+    var lends = vec.empty(heap, 1, 0);
     var tally = box_slice(heap, k_size(), 0);
+    var out_rows = buffer.empty(heap, 1);
+    var out_kept = buffer.empty(heap, 1);
     var picked = 0;
     var header = false;
     var quoted = false;
@@ -332,7 +767,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
     var opened = 0;
     var r = lines.start(heap, cap);
     var going = true;
-    var c = Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0 };
+    var c = Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, groups: 0 };
     borrow mut tally as &!tw in {
         let a = contents(tw);
         while going {
@@ -367,7 +802,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
                         // A record past the bound: not read, so not judged.
                         a[k_capped()] = 1;
                         going = false;
-                    } else if header && !quoted && a[k_records()] >= from && a[k_emitted()] >= limit {
+                    } else if header && !quoted && mode == 1 && !filtering && a[k_records()] >= from && a[k_emitted()] >= limit {
                         // The page is full and there is another record.
                         a[k_more()] = 1;
                         a[k_next()] = a[k_records()];
@@ -377,7 +812,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
                         var inside = false;
                         var found = 0;
                         var bad = false;
-                        if want {
+                        if mode != 0 {
                             borrow mut cells as &!cw in {
                                 let (n, open, wrong) = reader.fields(line, delim, contents(cw), a[k_columns()]);
                                 found = n;
@@ -401,16 +836,27 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
                             borrow mut rec as &!rw in {
                                 buffer.clear(rw);
                             }
-                            if want {
+                            if mode != 0 {
                                 rec = buffer.append(heap, rec, whole);
                                 rec = buffer.push(heap, rec, byte_of(10));
                             }
-                        } else if count_row(a, found, number, from) && want {
+                        } else if count_row(a, found, number, from) && mode != 0 {
                             borrow cells as &cr in {
                                 borrow sel as &sr in {
-                                    let (more_rows, more_scratch) = emit_row(heap, io, rows, scratch, line, contents(cr), contents(sr), picked, delim, as_csv, budget, a);
-                                    rows = more_rows;
-                                    scratch = more_scratch;
+                                    borrow cols as &kr in {
+                                        if mode == 1 {
+                                            let (r2, s2, e2, k2) = process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), line, contents(cr), contents(sr), picked, delim, as_csv, budget, number, limit, a);
+                                            rows = r2;
+                                            scratch = s2;
+                                            escr = e2;
+                                            kept = k2;
+                                        } else {
+                                            let (g2, e2, k2) = process_groups(heap, groups, escr, kept, tree, contents(kr), line, contents(cr), number, max_groups, max_distinct, max_state, a);
+                                            groups = g2;
+                                            escr = e2;
+                                            kept = k2;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -425,7 +871,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
                         }
                         let (inside, n, bad) = reader.scan(line, delim, quoted, seps);
                         seps = n;
-                        if !header || want {
+                        if !header || mode != 0 {
                             rec = buffer.append(heap, rec, whole);
                         }
                         var held = 0;
@@ -438,7 +884,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
                             going = false;
                         } else if inside {
                             quoted = true;
-                            if !header || want {
+                            if !header || mode != 0 {
                                 rec = buffer.push(heap, rec, byte_of(10));
                             }
                             if held + 1 > cap {
@@ -464,68 +910,40 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
                                 borrow hends as &er in {
                                     a[k_columns()] = vec.size(er);
                                 }
-                                if want {
-                                    picked = vec.size(tends);
-                                    unbox_slice(heap, sel);
-                                    sel = box_slice(heap, picked + 1, 0);
-                                    unbox_slice(heap, cells);
-                                    cells = box_slice(heap, 3 * (a[k_columns()] + 1), 0);
-                                    var status = 0;
+                                if mode != 0 {
+                                    var made = frame.none(heap);
+                                    frame.drop(heap, made);
                                     borrow names as &nr in {
                                         borrow hends as &er in {
-                                            borrow mut sel as &!sw in {
-                                                let found = plan.resolve(heap, nr, er, toks, tends, tkinds, contents(sw));
-                                                status = found.status;
-                                                a[k_bad_name()] = found.at;
-                                            }
+                                            made = frame.prepare(heap, tree, nr, er, a[k_columns()], mode, delim, sort);
                                         }
                                     }
-                                    if status != 0 {
-                                        a[k_abort()] = 4 + status;
+                                    let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
+                                    unbox_slice(heap, cols);
+                                    unbox_slice(heap, sel);
+                                    unbox_slice(heap, cells);
+                                    buffer.drop(heap, head);
+                                    buffer.drop(heap, labels);
+                                    vec.drop(heap, lends);
+                                    cols = fcols;
+                                    sel = fsel;
+                                    cells = fcells;
+                                    head = fhead;
+                                    labels = flabels;
+                                    lends = flends;
+                                    picked = fpicked;
+                                    a[k_sort_field()] = fsort_field;
+                                    a[k_sort_slot()] = fsort_slot;
+                                    a[k_sort_desc()] = fdesc;
+                                    if fabort != 0 {
+                                        a[k_abort()] = fabort;
+                                        a[k_bad_name()] = fbad;
                                         going = false;
+                                    }
+                                    if as_csv && fabort == 0 {
+                                        rows = start_output(heap, rows, flead);
                                     } else {
-                                        // The header of the answer.
-                                        borrow names as &nr in {
-                                            borrow hends as &er in {
-                                                borrow sel as &sr in {
-                                                    var column = 0;
-                                                    var m = 0;
-                                                    var line_out = buffer.empty(heap, 64);
-                                                    head = buffer.push(heap, head, byte_of('['));
-                                                    while m < picked {
-                                                        column = contents(sr)[m];
-                                                        var begin = 0;
-                                                        if column > 0 {
-                                                            begin = vec.get(er, column - 1);
-                                                        }
-                                                        let name = buffer.bytes(nr)[begin..vec.get(er, column)];
-                                                        if m > 0 {
-                                                            head = buffer.push(heap, head, byte_of(','));
-                                                            line_out = buffer.push(heap, line_out, byte_of(delim));
-                                                        }
-                                                        head = text.append_json(heap, head, name);
-                                                        line_out = writer.csv_value(heap, line_out, name, delim);
-                                                        m = m + 1;
-                                                    }
-                                                    head = buffer.push(heap, head, byte_of(']'));
-                                                    if as_csv {
-                                                        var empty_name = false;
-                                                        borrow line_out as &lo in {
-                                                            empty_name = picked == 1 && buffer.size(lo) == 0;
-                                                        }
-                                                        if empty_name {
-                                                            // One empty name is `""`: a blank line is no record.
-                                                            line_out = buffer.append(heap, line_out, "\"\"");
-                                                        }
-                                                        line_out = buffer.push(heap, line_out, byte_of(10));
-                                                        borrow line_out as &lr in {
-                                                            rows = buffer.append(heap, rows, buffer.bytes(lr));
-                                                        }
-                                                    }
-                                                    buffer.drop(heap, line_out);
-                                                }
-                                            }
-                                        }
+                                        buffer.drop(heap, flead);
                                     }
                                 }
                             } else {
@@ -539,7 +957,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
                                     }
                                     var found = n + 1;
                                     var wrong = false;
-                                    if want {
+                                    if mode != 0 {
                                         borrow mut cells as &!cw in {
                                             let (n, open, bad_quote) = reader.fields(record, delim, contents(cw), a[k_columns()]);
                                             found = n;
@@ -550,12 +968,23 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
                                         a[k_abort()] = 1;
                                         a[k_abort_line()] = opened;
                                         going = false;
-                                    } else if count_row(a, found, opened, from) && want {
+                                    } else if count_row(a, found, opened, from) && mode != 0 {
                                         borrow cells as &cr in {
                                             borrow sel as &sr in {
-                                                let (more_rows, more_scratch) = emit_row(heap, io, rows, scratch, record, contents(cr), contents(sr), picked, delim, as_csv, budget, a);
-                                                rows = more_rows;
-                                                scratch = more_scratch;
+                                                borrow cols as &kr in {
+                                                    if mode == 1 {
+                                                        let (r2, s2, e2, k2) = process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), record, contents(cr), contents(sr), picked, delim, as_csv, budget, opened, limit, a);
+                                                        rows = r2;
+                                                        scratch = s2;
+                                                        escr = e2;
+                                                        kept = k2;
+                                                    } else {
+                                                        let (g2, e2, k2) = process_groups(heap, groups, escr, kept, tree, contents(kr), record, contents(cr), opened, max_groups, max_distinct, max_state, a);
+                                                        groups = g2;
+                                                        escr = e2;
+                                                        kept = k2;
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -570,7 +999,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
             }
         }
         // No header at all: no column to name.
-        if want && !header && a[k_abort()] == 0 {
+        if mode != 0 && !header && a[k_abort()] == 0 {
             a[k_abort()] = 5;
         }
         // The end of the input with a quote open: not a record.
@@ -578,13 +1007,29 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
             a[k_abort()] = 2;
             a[k_abort_line()] = opened;
         }
-        c = Counts { columns: a[k_columns()], records: a[k_records()], ragged: a[k_ragged()], first_row: a[k_first_row()], first_line: a[k_first_line()], first_found: a[k_first_found()], capped: a[k_capped()] == 1, abort: a[k_abort()], abort_line: a[k_abort_line()], long_length: a[k_long()], emitted: a[k_emitted()], more: a[k_more()] == 1, next: a[k_next()], bad_name: a[k_bad_name()] };
+        var finished = rows;
+        var spare = scratch;
+        if mode == 2 && a[k_abort()] == 0 {
+            borrow groups as &gr in {
+                let (r2, s2) = finish_groups(heap, io, finished, spare, gr, tree, as_csv, delim, from, limit, top, budget, a);
+                finished = r2;
+                spare = s2;
+            }
+        }
+        agg.drop(heap, groups);
+        buffer.drop(heap, escr);
+        buffer.drop(heap, spare);
+        buffer.drop(heap, out_rows);
+        buffer.drop(heap, out_kept);
+        out_rows = finished;
+        out_kept = kept;
+        c = Counts { columns: a[k_columns()], records: a[k_records()], ragged: a[k_ragged()], first_row: a[k_first_row()], first_line: a[k_first_line()], first_found: a[k_first_found()], capped: a[k_capped()] == 1, abort: a[k_abort()], abort_line: a[k_abort_line()], long_length: a[k_long()], emitted: a[k_emitted()], more: a[k_more()] == 1, next: a[k_next()], bad_name: a[k_bad_name()], err_col: a[k_err_col()], err_fn: a[k_err_fn()], err_row: a[k_err_row()], err_line: a[k_err_line()], groups: a[k_groups()] };
     }
     unbox_slice(heap, tally);
     unbox_slice(heap, cells);
     unbox_slice(heap, sel);
+    unbox_slice(heap, cols);
     buffer.drop(heap, rec);
-    buffer.drop(heap, scratch);
     var errno = 0;
     borrow r as &rr in {
         errno = lines.failed(rr);
@@ -592,103 +1037,27 @@ fn read_file[&h, &g, &p, &f, &s, &i, &t, &k, &j](heap: &!h Heap, args: &g Args, 
     lines.drop(heap, r);
     // What csv still had pending, written now unless the stream already failed.
     if as_csv && c.abort != 9 {
-        let (after, ok) = flush(io, rows);
-        rows = after;
+        let (after, ok) = flush(io, out_rows);
+        out_rows = after;
         if !ok {
-            c = Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name };
+            c = Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, groups: c.groups };
         }
     }
-    if errno != 0 {
-        e = fail.io_error(heap, e, errno, false, shown);
-    } else if c.abort == 4 {
-        let over = limit.more(limit.none(), c.abort_line, c.long_length);
-        e = limit.too_long(heap, e, args, parsed, table, shown, over, cap, line_ceiling(), "a line is longer than --max-line-bytes; the file was not read past it");
-    } else if c.abort == 3 || c.abort == 7 {
-        var rule = "limit.header-too-large";
-        var what = "the header record holds more than --max-line-bytes bytes";
-        if c.abort == 7 {
-            rule = "limit.record-too-large";
-            what = "a record holds more than --max-line-bytes bytes";
-        }
-        var w = fail.open_in(heap, extra(), rule, what, "raise --max-line-bytes, up to the ceiling introspect names");
-        w = fail.repair_none(heap, w, "how large the record is was not read to the end");
-        w = fail.detail_open(heap, w);
-        w = json.put_key(heap, w, "path");
-        w = text.put(heap, w, shown);
-        w = json.put_key(heap, w, "line");
-        w = json.put_int(heap, w, c.abort_line);
-        w = json.put_key(heap, w, "limit");
-        w = json.put_int(heap, w, cap);
-        e = fail.add(heap, e, w);
-    } else if c.abort == 2 {
-        var w = fail.open_in(heap, extra(), "parse.csv-unterminated-quote", "a quoted field is open at the end of the input", "close the quote, or double the quotes that are text");
-        w = fail.repair_none(heap, w, "which quote was meant to close is not known");
-        w = fail.detail_open(heap, w);
-        w = json.put_key(heap, w, "path");
-        w = text.put(heap, w, shown);
-        w = json.put_key(heap, w, "line");
-        w = json.put_int(heap, w, c.abort_line);
-        e = fail.add(heap, e, w);
-    } else if c.abort == 1 {
-        var w = fail.open_in(heap, extra(), "parse.csv-bad-quote", "a closing quote is followed by something other than the delimiter or the end of the record", "double a quote that is text, or put the delimiter after the closing quote");
-        w = fail.repair_none(heap, w, "what the field was meant to hold is not known");
-        w = fail.detail_open(heap, w);
-        w = json.put_key(heap, w, "path");
-        w = text.put(heap, w, shown);
-        w = json.put_key(heap, w, "line");
-        w = json.put_int(heap, w, c.abort_line);
-        e = fail.add(heap, e, w);
-    } else if c.abort == 5 || c.abort == 6 {
-        var rule = "select.unknown-column";
-        var what = "--select names a column the header does not have";
-        var hint = "pick from detail.available";
-        if c.abort == 6 {
-            rule = "select.ambiguous-column";
-            what = "--select names a column that the header has more than once";
-            hint = "name it by position, as #3 for the third column";
-        }
-        borrow names as &nr in {
-            borrow hends as &er3 in {
-                e = plan.refusal(heap, e, extra(), rule, what, hint, args, names_at, nr, er3, toks, tends, tkinds, c.bad_name, shown);
+    borrow names as &nr in {
+        borrow hends as &er3 in {
+            borrow labels as &lr in {
+                borrow lends as &le in {
+                    borrow out_kept as &kr in {
+                        e = explain(heap, args, parsed, tree, nr, er3, lr, le, kr, c, shown, names_at, errno, as_csv, budget, e);
+                    }
+                }
             }
         }
-    } else if c.abort == 8 {
-        var w = fail.open_in(heap, extra(), "limit.output-too-large", "the first row of the page is longer than --max-bytes", "raise --max-bytes, up to the ceiling introspect names, or select fewer columns");
-        w = fail.repair_none(heap, w, "how long the row is was not measured past the budget");
-        w = fail.detail_open(heap, w);
-        w = json.put_key(heap, w, "path");
-        w = text.put(heap, w, shown);
-        w = json.put_key(heap, w, "limit");
-        w = json.put_int(heap, w, budget);
-        e = fail.add(heap, e, w);
-    } else if as_csv && c.capped {
-        var w = fail.open_in(heap, extra(), "limit.too-many-rows", "--max-rows data rows were written and there are more", "raise --max-rows, up to the ceiling introspect names, or page with --limit and --from");
-        w = fail.repair_none(heap, w, "how many rows the file has is not known until it is read");
-        w = fail.detail_open(heap, w);
-        w = json.put_key(heap, w, "path");
-        w = text.put(heap, w, shown);
-        w = json.put_key(heap, w, "limit");
-        w = json.put_int(heap, w, most);
-        e = fail.add(heap, e, w);
-    } else if c.ragged > 0 {
-        var w = fail.open_in(heap, extra(), "parse.csv-ragged-row", "a row has a different number of fields than the header", "make every row as wide as the header, quoting fields that hold the delimiter");
-        w = fail.repair_none(heap, w, "which fields a short or long row is missing or has too many of is not known");
-        w = fail.detail_open(heap, w);
-        w = json.put_key(heap, w, "path");
-        w = text.put(heap, w, shown);
-        w = json.put_key(heap, w, "ragged_rows");
-        w = json.put_int(heap, w, c.ragged);
-        w = json.put_key(heap, w, "first_row");
-        w = json.put_int(heap, w, c.first_row);
-        w = json.put_key(heap, w, "first_line");
-        w = json.put_int(heap, w, c.first_line);
-        w = json.put_key(heap, w, "expected");
-        w = json.put_int(heap, w, c.columns);
-        w = json.put_key(heap, w, "found");
-        w = json.put_int(heap, w, c.first_found);
-        e = fail.add(heap, e, w);
     }
-    return (c, head, rows, names, hends, e);
+    buffer.drop(heap, labels);
+    vec.drop(heap, lends);
+    buffer.drop(heap, out_kept);
+    return (c, head, out_rows, names, hends, e);
 }
 
 // The answer for the shape: `{"headers", "column_count", "row_count",
@@ -735,9 +1104,9 @@ fn report_shape[&h, &n, &d](heap: &!h Heap, c: Counts, names: &n buffer.Buffer, 
     return (o, plain);
 }
 
-// The answer for a selection as json: `{"columns", "rows", "row_count",
-// "truncated", "next"}`.
-fn report_select[&h, &a, &b](heap: &!h Heap, c: Counts, head: &a buffer.Buffer, rows: &b buffer.Buffer) -> [heap] buffer.Buffer {
+// The answer for rows or groups as json: `{"columns", "rows", "row_count",
+// "truncated", "next"}`, and for groups also `"group_count"`.
+fn report_select[&h, &a, &b](heap: &!h Heap, c: Counts, head: &a buffer.Buffer, rows: &b buffer.Buffer, grouped: bool) -> [heap] buffer.Buffer {
     var o = buffer.empty(heap, 128 + buffer.size(head) + buffer.size(rows));
     o = buffer.append(heap, o, "{\"columns\":");
     o = buffer.append(heap, o, buffer.bytes(head));
@@ -753,11 +1122,46 @@ fn report_select[&h, &a, &b](heap: &!h Heap, c: Counts, head: &a buffer.Buffer, 
     if c.more {
         o = buffer.append(heap, o, "{\"from\":");
         o = buffer.push_nat(heap, o, c.next);
-        o = buffer.append(heap, o, "}}");
+        o = buffer.append(heap, o, "}");
     } else {
-        o = buffer.append(heap, o, "null}");
+        o = buffer.append(heap, o, "null");
     }
-    return o;
+    if grouped {
+        o = buffer.append(heap, o, ",\"group_count\":");
+        o = buffer.push_nat(heap, o, c.groups);
+    }
+    return buffer.push(heap, o, byte_of('}'));
+}
+
+// A list of names read with `plan.parse`, in the plan: slot 0 for --select,
+// slot 2 for --group. Refusals are added to `errs`.
+fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given: &g [byte], slot: int, flag: &static [byte]) -> [heap] (query.Query, fail.Errors) {
+    var e = errs;
+    let (toks, ends, kinds, listed) = plan.parse(heap, given);
+    var named = 0;
+    borrow ends as &ter in {
+        named = vec.size(ter);
+    }
+    if !listed {
+        e = flag_problem(heap, e, "args.bad-value", "a list of names is names separated by commas, and a backslash escapes only a comma, a backslash or a #", "--select 'a,b\\,c'", flag);
+    } else if named > plan.most_names() {
+        e = flag_problem(heap, e, "args.bad-value", "a list names more columns than the ceiling", "4096 is the most one flag names", flag);
+    }
+    var q = tree;
+    if listed {
+        borrow toks as &tr in {
+            borrow ends as &er in {
+                borrow kinds as &kr in {
+                    q = plan.fill(heap, q, tr, er, kr);
+                }
+            }
+        }
+        q = query.bump(q, slot, named);
+    }
+    buffer.drop(heap, toks);
+    vec.drop(heap, ends);
+    vec.drop(heap, kinds);
+    return (q, e);
 }
 
 fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read, io_write, err_write] int {
@@ -766,7 +1170,17 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     let form = cli.text(args, parsed, table, "format");
     let text_mode = bytes.equal(form, "text");
     let as_csv = bytes.equal(form, "csv");
-    let want = cli.has(parsed, table, "select");
+    let has_select = cli.has(parsed, table, "select");
+    let has_where = cli.has(parsed, table, "where");
+    let has_group = cli.has(parsed, table, "group");
+    let has_agg = cli.has(parsed, table, "agg");
+    let grouped = has_group || has_agg;
+    var mode = 0;
+    if grouped {
+        mode = 2;
+    } else if has_select || has_where {
+        mode = 1;
+    }
     let delim = delimiter_of(cli.text(args, parsed, table, "delimiter"));
     if delim < 0 {
         e = flag_problem(heap, e, "args.bad-value", "--delimiter is a comma, tab or a semicolon", "--delimiter tab", "--delimiter");
@@ -777,6 +1191,18 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     if cli.nat(args, parsed, table, "max-line-bytes") > line_ceiling() {
         e = flag_problem(heap, e, "args.bad-value", "--max-line-bytes is above the ceiling", "16777216 is the most this tool holds", "--max-line-bytes");
     }
+    let groups_most = cli.nat(args, parsed, table, "max-groups");
+    if groups_most < 1 || groups_most > 1000000 {
+        e = flag_problem(heap, e, "args.bad-value", "--max-groups is from 1 to 1000000", "--max-groups 100000", "--max-groups");
+    }
+    let distinct_most = cli.nat(args, parsed, table, "max-distinct");
+    if distinct_most < 1 || distinct_most > 10000000 {
+        e = flag_problem(heap, e, "args.bad-value", "--max-distinct is from 1 to 10000000", "--max-distinct 100000", "--max-distinct");
+    }
+    let state_most = cli.nat(args, parsed, table, "max-state-bytes");
+    if state_most < 1 || state_most > 1073741824 {
+        e = flag_problem(heap, e, "args.bad-value", "--max-state-bytes is from 1 to 1073741824", "--max-state-bytes 67108864", "--max-state-bytes");
+    }
     var budget = cli.nat(args, parsed, table, "max-bytes");
     if budget < 1 || budget > 67108864 {
         e = flag_problem(heap, e, "args.bad-value", "--max-bytes is from 1 to the ceiling", "67108864 is the most a page holds", "--max-bytes");
@@ -786,6 +1212,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         limit = 1000;
     }
     var from = 0;
+    var top = 0;
     if cli.has(parsed, table, "limit") {
         limit = cli.nat(args, parsed, table, "limit");
         if limit < 1 || limit > 1000000 {
@@ -795,30 +1222,77 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     if cli.has(parsed, table, "from") {
         from = cli.nat(args, parsed, table, "from");
     }
-    if !want {
+    if cli.has(parsed, table, "top") {
+        top = cli.nat(args, parsed, table, "top");
+        if top < 1 {
+            e = flag_problem(heap, e, "args.bad-value", "--top is at least 1", "--top 10", "--top");
+        }
+    }
+    if mode == 0 {
         if as_csv {
-            e = flag_problem(heap, e, "args.required-flag", "--format csv writes the selected columns, so it needs --select", "--select NAMES", "--format --select");
+            e = flag_problem(heap, e, "args.required-flag", "--format csv writes rows or groups, so it needs --select, --where or --group", "--select NAMES", "--format --select --where --group");
         }
         if cli.has(parsed, table, "limit") || cli.has(parsed, table, "from") {
-            e = flag_problem(heap, e, "args.required-flag", "--limit and --from page a selection, so they need --select", "--select NAMES", "--limit --from --select");
+            e = flag_problem(heap, e, "args.required-flag", "--limit and --from page rows or groups, so they need --select, --where or --group", "--select NAMES", "--limit --from --select");
         }
     } else if text_mode {
-        e = flag_problem(heap, e, "args.conflict", "--format text is for the shape; a selection is json or csv", "--format csv", "--select --format");
+        e = flag_problem(heap, e, "args.conflict", "--format text is for the shape; rows and groups are json or csv", "--format csv", "--format --select --where --group");
     }
-    var given = "";
-    if want {
-        given = cli.text(args, parsed, table, "select");
+    if grouped && has_select {
+        e = flag_problem(heap, e, "args.conflict", "--select picks columns, and with --group or --agg the columns are the groups and the aggregates", "drop --select", "--select --group --agg");
     }
-    let (toks, tends, tkinds, listed) = plan.parse(heap, given);
-    if want && !listed {
-        e = flag_problem(heap, e, "args.bad-value", "--select is names separated by commas, and a backslash escapes only a comma, a backslash or a #", "--select 'a,b\\,c'", "--select");
+    if !grouped && (cli.has(parsed, table, "sort") || cli.has(parsed, table, "top")) {
+        e = flag_problem(heap, e, "args.required-flag", "--sort and --top order and cut groups, so they need --group or --agg", "--group NAMES", "--sort --top --group");
     }
-    var named = 0;
-    borrow tends as &ter in {
-        named = vec.size(ter);
+    // The plan.
+    var tree = query.empty(heap);
+    if has_select {
+        let (t2, e2) = add_names(heap, tree, e, cli.text(args, parsed, table, "select"), 0, "--select");
+        tree = t2;
+        e = e2;
     }
-    if named > plan.most_names() {
-        e = flag_problem(heap, e, "args.bad-value", "--select names more columns than the ceiling", "4096 is the most one call selects", "--select");
+    if has_where {
+        let given = cli.text(args, parsed, table, "where");
+        let (t2, what, at) = expr.parse(heap, tree, given);
+        tree = t2;
+        if what != 0 {
+            var w = fail.open_in(heap, extra(), "where.syntax", "--where is not an expression", "see docs/filter.md for the grammar: COLUMN OP VALUE joined by and");
+            w = fail.repair_none(heap, w, "what the expression was meant to say is not known");
+            w = fail.detail_open(heap, w);
+            w = json.put_key(heap, w, "offset");
+            w = json.put_int(heap, w, at);
+            w = json.put_key(heap, w, "expected");
+            w = json.put_string(heap, w, expr.expected(what));
+            w = json.put_key(heap, w, "expression");
+            w = text.put(heap, w, given);
+            e = fail.add(heap, e, w);
+        }
+    }
+    if has_group {
+        let (t2, e2) = add_names(heap, tree, e, cli.text(args, parsed, table, "group"), 2, "--group");
+        tree = t2;
+        e = e2;
+    }
+    if grouped {
+        if has_agg {
+            let given = cli.text(args, parsed, table, "agg");
+            let (t2, bad) = agg.parse_aggs(heap, tree, given);
+            tree = t2;
+            if bad == -2 {
+                e = flag_problem(heap, e, "args.bad-value", "--agg is items separated by commas, and a backslash escapes only a comma, a backslash or a #", "--agg count,sum:bytes", "--agg");
+            } else if bad >= 0 {
+                var w = fail.open_in(heap, extra(), "agg.bad-spec", "an item of --agg is not count, sum:COL, min:COL, max:COL or distinct:COL", "--agg count,sum:bytes,max:bytes,distinct:status");
+                w = fail.no_repair(heap, w);
+                w = fail.detail_open(heap, w);
+                w = json.put_key(heap, w, "item");
+                w = json.put_int(heap, w, bad);
+                w = json.put_key(heap, w, "agg");
+                w = json.put_string(heap, w, given);
+                e = fail.add(heap, e, w);
+            }
+        } else {
+            tree = query.add_agg(heap, tree, 0, -1);
+        }
     }
     let (root, after_root) = path.root(heap, args, cli.text(args, parsed, table, "root"), cli.value_index(parsed, table, "root"), e);
     e = after_root;
@@ -835,7 +1309,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         refused = fail.count(er) > 0;
     }
     var names_at = -1;
-    if want && cli.value_is_whole(parsed, table, "select") {
+    if has_select && cli.value_is_whole(parsed, table, "select") {
         names_at = cli.value_index(parsed, table, "select");
     }
     if !refused {
@@ -852,42 +1326,38 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
                             var file = opened;
                             borrow mut file as &!handle in {
                                 var wrote = 0;
-                                borrow toks as &tr in {
-                                    borrow tends as &ter in {
-                                        borrow tkinds as &tkr in {
-                                            let (c, head, rows, names, hends, after) = read_file(heap, args, parsed, handle, path.shown(tp), io, delim, want, as_csv, from, limit, budget, tr, ter, tkr, names_at, e);
-                                            e = after;
-                                            // What was read is the answer unless the read had to
-                                            // stop short of the end: a ragged row is an error
-                                            // about rows that were all counted.
-                                            streamed = as_csv;
-                                            wrote = c.abort;
-                                            if c.abort == 0 && !as_csv {
-                                                buffer.drop(heap, payload);
-                                                buffer.drop(heap, plain);
-                                                if want {
-                                                    borrow head as &hr in {
-                                                        borrow rows as &wr in {
-                                                            payload = report_select(heap, c, hr, wr);
-                                                        }
-                                                    }
-                                                    plain = buffer.empty(heap, 1);
-                                                } else {
-                                                    borrow names as &nr in {
-                                                        borrow hends as &er2 in {
-                                                            let (d, t) = report_shape(heap, c, nr, er2);
-                                                            payload = d;
-                                                            plain = t;
-                                                        }
-                                                    }
+                                borrow tree as &tq in {
+                                    let (c, head, rows, names, hends, after) = read_file(heap, args, parsed, handle, path.shown(tp), io, delim, mode, as_csv, from, limit, budget, top, tq, names_at, e);
+                                    e = after;
+                                    // What was read is the answer unless the read had to
+                                    // stop short of the end: a ragged row is an error
+                                    // about rows that were all counted.
+                                    streamed = as_csv;
+                                    wrote = c.abort;
+                                    if c.abort == 0 && !as_csv {
+                                        buffer.drop(heap, payload);
+                                        buffer.drop(heap, plain);
+                                        if mode != 0 {
+                                            borrow head as &hr in {
+                                                borrow rows as &wr in {
+                                                    payload = report_select(heap, c, hr, wr, mode == 2);
                                                 }
                                             }
-                                            buffer.drop(heap, head);
-                                            buffer.drop(heap, rows);
-                                            buffer.drop(heap, names);
-                                            vec.drop(heap, hends);
+                                            plain = buffer.empty(heap, 1);
+                                        } else {
+                                            borrow names as &nr in {
+                                                borrow hends as &er2 in {
+                                                    let (d, t) = report_shape(heap, c, nr, er2);
+                                                    payload = d;
+                                                    plain = t;
+                                                }
+                                            }
                                         }
                                     }
+                                    buffer.drop(heap, head);
+                                    buffer.drop(heap, rows);
+                                    buffer.drop(heap, names);
+                                    vec.drop(heap, hends);
                                 }
                                 if wrote == 9 {
                                     streamed = false;
@@ -903,9 +1373,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         }
     }
     buffer.drop(heap, root);
-    buffer.drop(heap, toks);
-    vec.drop(heap, tends);
-    vec.drop(heap, tkinds);
+    query.drop(heap, tree);
     var status = 0;
     if streamed || as_csv {
         // csv has no document: its errors are sentences on standard error and
@@ -924,7 +1392,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         borrow e as &er in {
             borrow payload as &d in {
                 borrow plain as &t in {
-                    status = out.respond(heap, io, "table", "table.v2", "0.2.0", buffer.bytes(d), "", er, text_mode, buffer.bytes(t), 0);
+                    status = out.respond(heap, io, "table", "table.v2", "0.3.0", buffer.bytes(d), "", er, text_mode, buffer.bytes(t), 0);
                 }
             }
         }

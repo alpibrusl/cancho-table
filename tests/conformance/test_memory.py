@@ -72,6 +72,32 @@ class Memory(unittest.TestCase):
             self.assertLess(large - small, 1 << 20, flags)
             self.assertLess(large, 8 << 20, flags)
 
+    def test_filter_and_group_are_flat_too(self):
+        make(self.s.dir / "small.csv", 60_000)
+        make(self.s.dir / "large.csv", 960_000)
+        for flags in (["--where", "status=200 and bytes:int>50", "--select", "id", "--format", "csv"],
+                      ["--where", "bytes:int>50", "--limit", "1000"],
+                      ["--group", "status", "--agg", "count,sum:bytes,min:bytes,max:bytes"],
+                      ["--group", "status", "--agg", "count,distinct:status", "--sort", "-count"]):
+            rc1, small = peak_rss("--root", self.s.dir, *flags, "small.csv")
+            rc2, large = peak_rss("--root", self.s.dir, *flags, "large.csv")
+            self.assertEqual((rc1, rc2), (0, 0), flags)
+            print("\npeak RSS %s: %d KB on 2 MB, %d KB on 37 MB" % (" ".join(flags), small // 1024, large // 1024), file=sys.stderr)
+            self.assertLess(large - small, 1 << 20, flags)
+            self.assertLess(large, 8 << 20, flags)
+
+    def test_a_grouping_is_bounded_by_its_limits(self):
+        # Every id is a group: the default 100,000 groups stop it, and memory is
+        # what 100,000 short keys take, not what a million rows would.
+        make(self.s.dir / "ids.csv", 960_000)
+        rc, peak = peak_rss("--root", self.s.dir, "--group", "id", "ids.csv")
+        self.assertEqual(rc, 8)
+        print("\npeak RSS at --max-groups 100000: %d KB" % (peak // 1024), file=sys.stderr)
+        self.assertLess(peak, 48 << 20)
+        rc, peak = peak_rss("--root", self.s.dir, "--group", "id", "--agg", "distinct:path", "--max-groups", "1000000", "--max-state-bytes", "4000000", "ids.csv")
+        self.assertEqual(rc, 8)
+        self.assertLess(peak, 48 << 20)
+
     def test_a_selected_record_of_many_lines_is_bounded(self):
         # One selected field of 20 MB over 200,000 lines is a record past the
         # limit, refused, not held.
