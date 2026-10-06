@@ -48,10 +48,10 @@ MUTANTS = [
     ("a row of one empty field is a blank line", "engine.ls", "        if picked == 1 && held == begun {", "        if false && picked == 1 && held == begun {"),
     ("--max-rows allows one more", "table.ls", "header && !quoted && a[engine.k_records()] >= most {", "header && !quoted && a[engine.k_records()] > most {"),
     ("a record is not bounded", "table.ls", "                            if held + 1 > cap {", "                            if held + 1 > cap + 100000000 {"),
-    ("csv hides that --max-rows stopped it", "table.ls", "    } else if as_csv && c.capped {", "    } else if false && as_csv && c.capped {"),
+    ("csv hides that --max-rows stopped it", "table.ls", "    } else if (as_csv || query.count_of(tree, 4) > 0) && c.capped {", "    } else if false && (as_csv || query.count_of(tree, 4) > 0) && c.capped {"),
     ("a record of several lines is one field short", "table.ls", "                                    var found = n + 1;", "                                    var found = n;"),
     ("a record of several lines is not kept for select", "table.ls", "                        } else if inside {\n                            quoted = true;\n                            opened = number;\n                            borrow mut rec as &!rw in {\n                                buffer.clear(rw);\n                            }\n                            if mode != 0 {", "                        } else if inside {\n                            quoted = true;\n                            opened = number;\n                            borrow mut rec as &!rw in {\n                                buffer.clear(rw);\n                            }\n                            if false {"),
-    ("the number of names is not capped", "table.ls", "} else if named > plan.most_names() {", "} else if named > 99999999 {"),
+    ("the number of names is not capped", "table.ls", "    } else if named > plan.most_names() {\n        e = flag_problem(heap, e, \"args.bad-value\", \"a list names more columns than the ceiling\", \"4096 is the most one flag names\", flag);", "    } else if named > 99999999 {\n        e = flag_problem(heap, e, \"args.bad-value\", \"a list names more columns than the ceiling\", \"4096 is the most one flag names\", flag);"),
     ("the header is kept as a name list of the wrong width", "table.ls", "                                    picked = fpicked;", "                                    picked = fpicked - 1;"),
 ]
 

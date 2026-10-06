@@ -67,7 +67,7 @@ MUTANTS = [
     ("the row of a refused aggregate cell is one low, in place", "engine.ls", "    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return (0, e2, keep_value", "    a[k_err_row()] = a[k_records()] - 1;\n    a[k_err_line()] = opened;\n    return (0, e2, keep_value"),
     ("the row of a refused aggregate cell is one low, when recorded after the fast way", "engine.ls", "    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return keep_value", "    a[k_err_row()] = a[k_records()] - 1;\n    a[k_err_line()] = opened;\n    return keep_value"),
     ("a refused value is kept whole", "engine.ls", "    if last - first > 64 {", "    if last - first > 6400 {"),
-    ("every unknown name is in --select", "table.ls", "            if c.bad_name >= ns + nw + ng {", "            if c.bad_name >= ns + nw + ng + 5 {"),
+    ("every unknown name is in --select", "table.ls", "            } else if c.bad_name >= ns + nw + ng {", "            } else if c.bad_name >= ns + nw + ng + 5 {"),
     ("a grouping with no --agg counts nothing", "table.ls", "            tree = query.add_agg(heap, tree, 0, -1);", "            tree = query.add_agg(heap, tree, 1, 0);"),
 ]
 

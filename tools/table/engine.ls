@@ -16,6 +16,7 @@ import std.vec;
 import agg;
 import expr;
 import query;
+import sorter;
 import toolbox.out;
 import writer;
 
@@ -410,4 +411,50 @@ pub fn fast_ok[&q](tree: &q query.Query) -> [] bool {
         k = k + 1;
     }
     return true;
+}
+
+// A counted row that is not ragged, for `--order-by`: tested by `--where`, then held by the sorter (or, when only the
+// first rows are wanted and it is known which is the last of them, dropped at once if it is not before that one). Sets
+// `abort` for a bound passed (20 rows, 21 bytes) or a key that is not an integer (as `--where` does, with
+// `err_fn` -2); once `2 * cap + 1` rows are held they are cut back to `cap`.
+pub fn order_row[&h, &q, &c, &k, &d, &e, &a](heap: &!h Heap, held: sorter.Sorter, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], keys: &k [int], record: &d [byte], cells: &e [int], opened: int, max_rows: int, max_state: int, a: &!a [int]) -> [heap] (sorter.Sorter, buffer.Buffer, buffer.Buffer) {
+    let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
+    if verdict != 1 {
+        return (held, e2, k2);
+    }
+    var rejected = 0;
+    borrow held as &hr in {
+        rejected = sorter.reject(hr, keys, record, cells);
+    }
+    if rejected == 1 {
+        return (held, e2, k2);
+    }
+    let (s2, e3, status, which) = sorter.add(heap, held, keys, record, cells, e2, max_rows, max_state);
+    if status == 0 {
+        var out = s2;
+        var full = false;
+        borrow out as &or in {
+            full = or.cap > 0 && sorter.held(or) >= 2 * or.cap + 1;
+        }
+        if full {
+            out = sorter.cut_back(heap, out, keys);
+        }
+        return (out, e3, k2);
+    }
+    a[k_stop()] = 1;
+    if status == 1 {
+        a[k_abort()] = 20;
+        return (s2, e3, k2);
+    }
+    if status == 2 {
+        a[k_abort()] = 21;
+        return (s2, e3, k2);
+    }
+    a[k_abort()] = 8 + status;
+    let column = keys[3 * which];
+    a[k_err_col()] = column;
+    a[k_err_fn()] = -2;
+    a[k_err_row()] = a[k_records()];
+    a[k_err_line()] = opened;
+    return (s2, e3, keep_value(heap, k2, record, cells[3 * column], cells[3 * column + 1]));
 }
