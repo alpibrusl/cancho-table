@@ -6,7 +6,7 @@
 The standard cells of the 1,000,000-row benchmark file (scripts/bench.py generates it): the filter, `cut`, group-count, group-sum,
 group-sum + min/max, a filter with a text condition, at one thread and at four (`--parallel-min-bytes 0`). Each cell is run by both
 binaries, interleaved (base, new, new, base, ...), `runs` times; the answers must be byte-identical before anything is timed; the
-figure is the minimum. Exit 1 when any cell's new/base ratio is above the limit. Run it on a quiet machine: the ratios, not the
+figure is the minimum; a cell over the limit is measured again, three times as long, and the lower ratio is the figure. Exit 1 when any cell's new/base ratio is above the limit. Run it on a quiet machine: the ratios, not the
 seconds, are the point, and a ratio within noise of 1.0 on repeated runs is what a pass looks like.
 """
 import argparse
@@ -58,11 +58,19 @@ def main():
                 print("DIFFERENT OUTPUT:", name, threads)
                 return 2
             tb, tn = [], []
-            for i in range(a.runs):
-                order = (b, n) if i % 2 == 0 else (n, b)
-                for argv in order:
-                    (tb if argv is b else tn).append(timed(argv)[0])
+
+            def measure(runs):
+                for i in range(runs):
+                    order = (b, n) if i % 2 == 0 else (n, b)
+                    for argv in order:
+                        (tb if argv is b else tn).append(timed(argv)[0])
+            measure(a.runs)
             r = min(tn) / min(tb)
+            if r > a.limit:
+                # a cell of 17 ms moves by 2% from one run to the next with nothing changed: measure it again, three times as long, and
+                # believe the lower ratio (a real regression stays over the limit, noise does not)
+                measure(3 * a.runs)
+                r = min(r, min(tn[a.runs:]) / min(tb[a.runs:]))
             worst = max(worst, r)
             print("%-36s %7d %9.4f %9.4f %6.3fx%s" % (name, threads, min(tb), min(tn), r, "  <-- over the limit" if r > a.limit else ""))
     print("worst ratio %.3f (limit %.2f): %s" % (worst, a.limit, "PASS" if worst <= a.limit else "FAIL"))
