@@ -309,8 +309,8 @@ of them); that was already so on `main`; it is in the backlog.
 
 The scripts that mutate the source one defect at a time (`select_mutants.py`, `filter_mutants.py`, `parallel_mutants.py`,
 `cellcost_mutants.py`) are a gate that cannot be seen failing: a mutant whose text no longer occurs in the source tests
-nothing, and when the engine was split out of `table.ls` in the parallel round, 21 of the 66 mutants of the select and filter scripts
-stopped applying. The old runner noticed only when it *reached* one, after the unmutated build, and stopped there: nobody ran them again.
+nothing, and when the engine was split out of `table.ls` in the parallel round, 22 of the 66 mutants of the select and filter scripts
+stopped applying (and two more now matched twice). The old runner noticed only when it *reached* one, after the unmutated build, and stopped there: nobody ran them again.
 
 **The runner is one shared module now** (`scripts/mutlib.py`; each script is a list of mutants and the tests that judge them):
 
@@ -322,8 +322,8 @@ stopped applying. The old runner noticed only when it *reached* one, after the u
   (`test_mutants_apply.py`), which also tests the check itself against a missing pattern, a repeated one, a no-op and a
   missing file.
 
-**The repair.** 24 sites no longer matched (15 in the select script, 9 in the filter script; and 2 sites that now
-occur twice because the in-place add of the cell-cost round copied `add`'s min and first-value lines). Each was re-pointed
+**The repair.** 24 sites no longer matched: 22 not at all (15 in the select script, 7 in the filter script) and 2 that now
+occur twice, because the in-place add of the cell-cost round copied `add`'s min and first-value lines. Each was re-pointed
 at the current source (the formatter had turned `else { if }` into `else if`, and the sites had moved to `engine.ls`,
 `scan.ls`, `writer.ls`, `reader.ls`); where one function became several (the refusals of a grouping are written in three
 places now), each place has its own mutant. A mutant's text is matched as a substring, so a site that was meant for one function can
