@@ -58,8 +58,8 @@ status,count,sum:bytes
   paging, and is applied before grouping;
 * **group and aggregate**: `--group NAMES --agg count,sum:COL,min:COL,max:COL,distinct:COL
   [--sort [-]COLUMN] [--top N]`, as json (`table.v2` rows plus `group_count`) or csv.
-  Sums, minima and maxima are exact integers and a sum past 64 bits is
-  `agg.sum-overflow`, never a wrap. Groups come out in key order (bytewise, field by
+  Sums, minima and maxima are exact integers; a sum is a pair of integers, never wraps
+  and is printed in full past 64 bits (`docs/numbers.md` N0p). Groups come out in key order (bytewise, field by
   field), or `--sort` order with ties by key, so the same rows give the same bytes
   in any order. Bounded by `--max-groups`, `--max-distinct` and `--max-state-bytes`,
   each its own rule. All of it is one plan (`tools/table/query.ls`); design and
@@ -69,7 +69,7 @@ status,count,sum:bytes
   refusal naming the same row, line and column (the first in file order), the same ragged-row
   report, the same page. A range of the file whose first line is not where the previous record
   ended (a quoted newline) is read again by the parent, and so is anything that depends on order
-  (a page, a bound, an integer sum that could leave 64 bits). Memory is O(threads x range), not the
+  (a page, a bound). Memory is O(threads x range), not the
   file. 4 to 7x faster on a 16-core Mac, 2 to 2.4x on three physical cores; the design, what the
   language did and did not allow, and the measurements are in [`docs/parallel.md`](parallel.md);
 * an RFC 4180 reader of its own ([`tools/table/`](../tools/table)): quoted fields,

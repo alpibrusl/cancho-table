@@ -102,10 +102,7 @@ def run(table, plan):
                 return None, ragged, (bad, {"row": n, "column": column, "context": function})
             cur = entry["values"][k]
             if function == "sum":
-                total = (cur or 0) + v
-                if total < INT_MIN or total > INT_MAX:
-                    return None, ragged, ("agg.sum-overflow", {"row": n, "column": column, "context": "sum"})
-                entry["values"][k] = total
+                entry["values"][k] = (cur or 0) + v      # exact, whatever the width: a sum is a pair of integers (docs/numbers.md N0p)
             elif cur is None:
                 entry["values"][k] = v
             elif function == "min":

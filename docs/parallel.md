@@ -104,16 +104,13 @@ nothing after a range that stopped is looked at.
 - *Groups.* Each thread counts its range into groups of its own and writes them out as bytes.
   Counts add, minima and maxima take the smaller and the larger, distinct values are a union
   (the pairs are remapped to the parent's group numbers), and the groups are a set: the output is
-  sorted by key, so no order of merging shows. **Sums are the one thing that order shows**, because
-  the sequential read refuses at the first row where a *running* sum leaves 64 bits: a range's
-  own sum, from zero, says nothing about that. So each thread also keeps, per group and sum, the
-  largest absolute value its running sum took (`peak`), and a range is merged into a group that
-  already has a total `S` only if `|S| + peak` fits 64 bits: then every running sum of the
-  sequential read, which is `S` plus one of the range's, fits, and the merged total is exact. If
-  it does not fit, or if the thread's own running sum overflowed, the parent reads the range itself
-  and the sequential code finds the row. This is conservative (a group whose sum goes near the
-  edge and back is read in order) and the tests cover the cases that matter: an edge touched in
-  order, an overflow only in the total, partial sums that overflow when the total does not.
+  sorted by key, so no order of merging shows. **Sums are a pair of integers** (the low 32 bits of
+  every cell in one, the rest in the other), added in any order: the merge of a range is a plain add and
+  the sum is exact whatever the width. (The first version refused a sum that left 64 bits, at the first row
+  where a *running* sum did, which a range's own sum from zero cannot tell: each thread kept the largest running
+  sum (`peak`), and a range was merged only if `|S| + peak` fit; otherwise the parent read it again. Both the refusal
+  and the `peak` are gone, `docs/numbers.md` stage N0p; a range of this read is now re-read for a bound, a refusal or a
+  page, never for a sum.)
 - *Group bounds* (`--max-groups`, `--max-distinct`, `--max-state-bytes`). The sequential read
   refuses at the first row that passes one, and which of several refusals comes first depends on
   the row. A range whose merge would pass any bound is not merged, it is read again by the parent,
@@ -146,7 +143,7 @@ requires the sequential bytes:
   file smaller than the ranges, a BOM, CRLF, tab and semicolon delimiters, non-UTF-8 bytes;
 - errors in two different ranges (the first in file order wins), an unterminated quote, a bad
   quote, a single 40,000-line record;
-- sums at the edge of 64 bits in every order that matters;
+- sums at and past the edge of 64 bits, in every order, equal to Python's `int`;
 - every limit: `--limit`, `--from`, `--max-rows`, `--max-bytes`, `--max-groups`, `--max-distinct`,
   `--max-state-bytes`, as csv and as JSON;
 - 350 generated tables and plans (the generators of the sequential tests), 4 configurations each;

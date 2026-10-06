@@ -198,17 +198,6 @@ pub fn parse_int[&d](data: &d [byte]) -> [] (int, int) {
     return (0 - acc, 0);
 }
 
-// a + b, or ok = false when it does not fit.
-pub fn add_checked(a: int, b: int) -> [] (int, bool) {
-    if b > 0 && a > int_max() - b {
-        return (0, false);
-    }
-    if b < 0 && a < int_min() - b {
-        return (0, false);
-    }
-    return (a + b, true);
-}
-
 // One more literal: its bytes (kept in `ltext`) and its integer value.
 pub fn add_lit[&h, &d](heap: &!h Heap, q: Query, given: &d [byte], value: int) -> [heap] Query {
     let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta } = q;

@@ -122,17 +122,15 @@ class Grammar(unittest.TestCase):
         got = self.s.table("n.csv", "k,n\nx,\ny,3\n", "--where", "n != '' and n:int > 0", "--select", "k")
         self.assertEqual(got.data()["rows"], [["y"]])
 
-    def test_sums_do_not_wrap(self):
+    def test_sums_are_exact_and_never_wrap_or_refuse(self):
+        # N0p: a sum is a pair of integers; past 64 bits it is printed in full (Python's int is the oracle)
         mx, mn = "9223372036854775807", "-9223372036854775808"
-        for rows, ok in ((["9223372036854775806", "1"], True), ([mn.replace("8", "7"), "-1"], True), ([mn, "-1"], False), (["1", mx], False), ([mx, "1"], False), ([mn, "-1"], False), ([mx, "-1", "1"], True), ([mx, "0"], True), ([mn, "1", "-1"], True), ([mx, mn], True)):
+        for rows in (["9223372036854775806", "1"], [mn.replace("8", "7"), "-1"], [mn, "-1"], ["1", mx], [mx, "1"], [mx, "-1", "1"], [mx, "0"], [mn, "1", "-1"], [mx, mn],
+                     [mx] * 3, [mn] * 3, ["5000000000000000000"] * 2, ["5000000000000000000"] * 4 + ["7"], ["-5000000000000000000"] * 4, ["5000000000000000000"] * 200 + ["1"], [mx] * 1000, [mn] * 999 + ["5"], ["4294967296", "4294967295"] * 7, ["-4294967297"] * 5):
             with self.subTest(rows):
                 got = self.s.table("s.csv", "v\n" + "\n".join(rows) + "\n", "--agg", "sum:v")
-                if ok:
-                    self.assertEqual(got.status, 0, got)
-                    self.assertEqual(got.data()["rows"], [[str(sum(int(r) for r in rows))]])
-                else:
-                    self.assertEqual((got.status, got.first_rule()), (8, "agg.sum-overflow"), got)
-                    self.assertEqual(got.error()["detail"]["context"], "sum")
+                self.assertEqual(got.status, 0, got)
+                self.assertEqual(got.data()["rows"], [[str(sum(int(r) for r in rows))]])
         got = self.s.table("s.csv", "v\n%s\n%s\n" % (mx, mn), "--agg", "min:v,max:v,count")
         self.assertEqual(got.data()["rows"], [[mn, mx, "2"]])
         got = self.s.table("s.csv", "v\n3\nx\n", "--agg", "min:v")

@@ -35,7 +35,6 @@ LOCAL = {
     "sort.unknown-key": (2, "never", "no output column"),
     "value.not-integer": (8, "never", "exact integer"),
     "value.integer-overflow": (8, "never", "64 bits"),
-    "agg.sum-overflow": (8, "never", "64 bits"),
 }
 LINUX_ONLY = {"io.read-failed"}
 
@@ -104,7 +103,6 @@ class Rules(unittest.TestCase):
             ("sort.unknown-key", root + ["--group", "a", "--sort", "zz", "ok.csv"], None),
             ("value.not-integer", root + ["--where", "b:int > 0", "text.csv"], None),
             ("value.integer-overflow", root + ["--where", "a:int > 0", "big.csv"], None),
-            ("agg.sum-overflow", root + ["--agg", "sum:a", "sum.csv"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")

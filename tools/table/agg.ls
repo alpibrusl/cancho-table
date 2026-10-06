@@ -14,11 +14,17 @@ module agg;
 // file a group first appeared, so it is the same for the same rows in any
 // order.
 //
-// Each group has `1 + aggregates` integers: its row count, then one per
+// Each group has `1 + 2 * aggregates` integers: its row count, then one per
 // aggregate: the sum, the minimum, the maximum, or the number of distinct
-// values. Sum, min and max need every cell they see to be an exact integer
-// (an empty cell is not: filter it out with --where first) and a sum that would
-// leave 64 bits is refused, never wrapped. `distinct` counts bytes, and keeps
+// values; then, for each aggregate, a second one that only a sum uses. Sum, min
+// and max need every cell they see to be an exact integer (an empty cell is not:
+// filter it out with --where first). A **sum is a pair**: the low 32 bits of every
+// cell are added in the aggregate's own integer and the rest (the cell shifted right
+// by 32, signed) in its second one, so the sum is `hi * 2^32 + lo` and nothing can
+// leave 64 bits for as many as 10^9 rows (`--max-rows`' ceiling): `lo` stays below 2^62
+// and `hi` below 2^61. There is no refusal and no wrap, a sum may be wider than an `int`
+// (it is printed in full: `put_sum`), and the sum of ranges read by threads is the same
+// pair, added in any order (docs/numbers.md, stage N0p). `distinct` counts bytes, and keeps
 // every (group, value) pair it has seen, which is what `--max-distinct` bounds.
 //
 // Three bounds, each its own refusal: groups (`--max-groups`), distinct pairs
@@ -81,17 +87,6 @@ fn length_at[&k](key: &k [byte], at: int) -> [] int {
     return int_of(key[at]) | int_of(key[at + 1]) << 8 | int_of(key[at + 2]) << 16 | int_of(key[at + 3]) << 24;
 }
 
-// |v|, with the one value that has none (the minimum) answered as the maximum.
-fn int_max_of(v: int) -> [] int {
-    if v >= 0 {
-        return v;
-    }
-    if v == query.int_min() {
-        return query.int_max();
-    }
-    return 0 - v;
-}
-
 // A field of a record, as the bytes it holds, appended after its length.
 fn put_cell[&h, &d](heap: &!h Heap, out: buffer.Buffer, scratch: buffer.Buffer, record: &d [byte], first: int, last: int, quoted: int) -> [heap] (buffer.Buffer, buffer.Buffer) {
     var scr = scratch;
@@ -148,8 +143,8 @@ fn set_at(acc: vec.Vec[int], at: int, value: int) -> [] vec.Vec[int] {
 // One more row into its group. Answers the groups, the scratch, a status and
 // which aggregate it is about: 0 added; 1 more than `max_groups`; 2 more than
 // `max_distinct` pairs; 3 more than `max_state` bytes of keys; 4 a cell that is
-// not an integer; 5 an integer of more than 64 bits; 6 a sum past 64 bits.
-pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer, max_groups: int, max_distinct: int, max_state: int, track: bool, keyed: bool) -> [heap] (Groups, buffer.Buffer, int, int) {
+// not an integer; 5 an integer of more than 64 bits.
+pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer, max_groups: int, max_distinct: int, max_state: int, keyed: bool) -> [heap] (Groups, buffer.Buffer, int, int) {
     let Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
     var key = keyb;
     var scr = scratch;
@@ -261,24 +256,12 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
                     } else if bad == 2 {
                         status = 5;
                     } else if function == 1 {
-                        let (sum, fits) = query.add_checked(now, v);
-                        if fits {
-                            a = set_at(a, at + 1 + k, sum);
-                            if track {
-                                // The largest the running sum has been in size: what lets the sum of
-                                // several ranges be checked without reading them in order (par.ls).
-                                var magnitude = int_max_of(sum);
-                                var seen_peak = 0;
-                                borrow a as &ar in {
-                                    seen_peak = vec.get(ar, at + 1 + (stride - 1) / 2 + k);
-                                }
-                                if magnitude > seen_peak {
-                                    a = set_at(a, at + 1 + (stride - 1) / 2 + k, magnitude);
-                                }
-                            }
-                        } else {
-                            status = 6;
+                        var high = 0;
+                        borrow a as &ar in {
+                            high = vec.get(ar, at + 1 + (stride - 1) / 2 + k);
                         }
+                        a = set_at(a, at + 1 + k, now + (v & 0xffffffff));
+                        a = set_at(a, at + 1 + (stride - 1) / 2 + k, high + (v >> 32));
                     } else if before == 0 {
                         a = set_at(a, at + 1 + k, v);
                     } else if function == 2 && v < now {
@@ -302,7 +285,7 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
 // a unique reference to the groups, so the state is not moved in and out of a call for each row (a `Groups`
 // is some forty words). Answers (status, which) as `add` does, or (-1, 0) when the row has to take `add`'s
 // way; in that case nothing was changed but the key buffer, which `add` clears anyway.
-pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], track: bool) -> [] (int, int) {
+pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int]) -> [] (int, int) {
     // A run of rows that are each a new group (a key that is nearly unique) gets nothing from this way, which
     // builds the key and looks for it before `add` puts it: after 32 in a row the next 2048 rows take `add`'s
     // way at once. `memo[size + 2]` is how many are left, `memo[size + 3]` the run so far.
@@ -451,18 +434,9 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
                 return (5, k);
             }
             if function == 1 {
-                let (sum, fits) = query.add_checked(now, v);
-                if !fits {
-                    return (6, k);
-                }
-                vec.set(g.acc, slot + 1 + k, sum);
-                if track {
-                    let magnitude = int_max_of(sum);
-                    let peak_at = slot + 1 + (stride - 1) / 2 + k;
-                    if magnitude > vec.get(g.acc, peak_at) {
-                        vec.set(g.acc, peak_at, magnitude);
-                    }
-                }
+                let high_at = slot + 1 + (stride - 1) / 2 + k;
+                vec.set(g.acc, slot + 1 + k, now + (v & 0xffffffff));
+                vec.set(g.acc, high_at, vec.get(g.acc, high_at) + (v >> 32));
             } else if before == 0 {
                 vec.set(g.acc, slot + 1 + k, v);
             } else if function == 2 && v < now {
@@ -502,6 +476,17 @@ fn compare_keys[&a, &b](x: &a [byte], y: &b [byte], fields: int) -> [] int {
 // that is -1, by the integer at `slot` of the group's row) ascending or
 // descending, then by key; neither given orders by key alone.
 fn before[&m, &v, &r](index: &m map.Map[int], acc: &v vec.Vec[int], pre: &r [int], stride: int, fields: int, field: int, slot: int, descending: bool, x: int, y: int) -> [] bool {
+    if slot >= 1 {
+        // A sum is (high, low), settled; the second integer of any other aggregate is 0.
+        let hx = vec.get(acc, x * stride + slot + (stride - 1) / 2);
+        let hy = vec.get(acc, y * stride + slot + (stride - 1) / 2);
+        if hx != hy {
+            if descending {
+                return hx > hy;
+            }
+            return hx < hy;
+        }
+    }
     if slot >= 0 {
         let vx = vec.get(acc, x * stride + slot);
         let vy = vec.get(acc, y * stride + slot);
@@ -625,6 +610,98 @@ fn append_int[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.B
     return buffer.push_nat(heap, o, 0 - v);
 }
 
+// Carry the low half of every sum into the high half, so that `low` is in [0, 2^32): done once, when
+// the groups are complete and before they are sorted or written. A sum is then `high * 2^32 + low`.
+pub fn settle[&g, &q](g: &!g Groups, tree: &q query.Query) -> [] int {
+    let n = map.size(g.index);
+    let na = query.agg_count(tree);
+    var x = 0;
+    while x < n {
+        var k = 0;
+        while k < na {
+            if query.agg_at(tree, k, 0) == 1 {
+                let low_at = x * g.stride + 1 + k;
+                let high_at = low_at + (g.stride - 1) / 2;
+                let low = vec.get(g.acc, low_at);
+                vec.set(g.acc, high_at, vec.get(g.acc, high_at) + (low >> 32));
+                vec.set(g.acc, low_at, low & 0xffffffff);
+            }
+            k = k + 1;
+        }
+        x = x + 1;
+    }
+    return 0;
+}
+
+// `high * 2^32 + low` (low in [0, 2^32)) as decimal text, whatever its width: up to 2^93, 28 digits.
+// Negative values are written as `-` and the magnitude, taken as 3 limbs of 32 bits and divided by 10^9
+// until nothing is left (a limb times 2^32 plus the next stays below 10^9 * 2^32, which an `int` holds).
+fn put_sum[&h](heap: &!h Heap, out: buffer.Buffer, high: int, low: int) -> [heap] buffer.Buffer {
+    if high >= 0 - 2147483648 && high < 2147483648 {
+        return append_int(heap, out, high * 4294967296 + low);
+    }
+    var o = out;
+    var h = high;
+    var l = low;
+    if high < 0 {
+        o = buffer.push(heap, o, byte_of('-'));
+        // negate: 0 - (high * 2^32 + low)
+        if low == 0 {
+            h = 0 - high;
+        } else {
+            h = 0 - high - 1;
+            l = 4294967296 - low;
+        }
+    }
+    var limb2 = h >> 32;
+    var limb1 = h & 0xffffffff;
+    var limb0 = l;
+    // the digits, least significant group of nine first
+    var groups = box_slice(heap, 4, 0);
+    var count = 0;
+    borrow mut groups as &!gw in {
+        while limb2 > 0 || limb1 > 0 || limb0 > 0 {
+            var rem = 0;
+            var cur = limb2;
+            limb2 = cur / 1000000000;
+            rem = cur - limb2 * 1000000000;
+            cur = rem * 4294967296 + limb1;
+            limb1 = cur / 1000000000;
+            rem = cur - limb1 * 1000000000;
+            cur = rem * 4294967296 + limb0;
+            limb0 = cur / 1000000000;
+            rem = cur - limb0 * 1000000000;
+            contents(gw)[count] = rem;
+            count = count + 1;
+        }
+        var i = count - 1;
+        while i >= 0 {
+            let v = contents(gw)[i];
+            if i == count - 1 {
+                o = buffer.push_nat(heap, o, v);
+            } else {
+                var pad = 100000000;
+                while pad > v && pad > 1 {
+                    o = buffer.push(heap, o, byte_of('0'));
+                    pad = pad / 10;
+                }
+                o = buffer.push_nat(heap, o, v);
+            }
+            i = i - 1;
+        }
+    }
+    unbox_slice(heap, groups);
+    return o;
+}
+
+// The value of aggregate `k` (function `function`) of group `x`, as text.
+pub fn put_value[&h, &g](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, x: int, k: int, function: int) -> [heap] buffer.Buffer {
+    if function == 1 {
+        return put_sum(heap, out, vec.get(g.acc, x * g.stride + 1 + k + (g.stride - 1) / 2), vec.get(g.acc, x * g.stride + 1 + k));
+    }
+    return append_int(heap, out, value_of(g, x, k, function));
+}
+
 // The value of aggregate `k` (function `function`) of group `x`.
 pub fn value_of[&g](g: &g Groups, x: int, k: int, function: int) -> [] int {
     var slot = 1 + k;
@@ -658,7 +735,7 @@ pub fn row_json[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, tr
             o = buffer.push(heap, o, byte_of(','));
         }
         o = buffer.push(heap, o, byte_of(34));
-        o = append_int(heap, o, value_of(g, x, k, query.agg_at(tree, k, 0)));
+        o = put_value(heap, o, g, x, k, query.agg_at(tree, k, 0));
         o = buffer.push(heap, o, byte_of(34));
         k = k + 1;
     }
@@ -754,14 +831,11 @@ pub fn parse_aggs[&h, &s](heap: &!h Heap, tree: query.Query, given: &s [byte]) -
 //
 // What a merge may and may not do is what keeps the answer the sequential one:
 // the groups are a set, so their order does not matter, and counts, minima, maxima and
-// distinct values combine in any order; a sum does not, because the sequential read
-// refuses at the first row where a *running* sum leaves 64 bits, and a range's sum
-// starting from zero says nothing of that. So a worker also keeps, per group and sum,
-// the largest absolute value its running sum took (`peak`), and the merge of a range
-// into a group that already has a total `S` is allowed only when `|S| + peak` fits: then
-// no running sum of the sequential read, which is `S` plus one of the range's, can have
-// left 64 bits. Otherwise the merge refuses and the parent reads the range again itself.
-// So does it for a bound that would be passed (groups, distinct values, key bytes): the
+// distinct values combine in any order, and so does a sum, which is a pair of integers
+// that nothing can overflow (the first versions refused a sum past 64 bits, which a range
+// read from zero could not tell, and kept a `peak` to merge only the ranges whose
+// running sums could not have crossed the edge: gone with the refusal, docs/numbers.md N0p).
+// What can still make the merge refuse, and the parent read the range again itself, is a bound that would be passed (groups, distinct values, key bytes): the
 // sequential read says which refusal comes first only by reading in order.
 // ---------------------------------------------------------------------------------
 
@@ -885,20 +959,6 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
                 if found < 0 {
                     new_groups = new_groups + 1;
                     new_bytes = new_bytes + klen;
-                } else {
-                    var k = 0;
-                    while k < na {
-                        if query.agg_at(tree, k, 0) == 1 {
-                            var total = 0;
-                            borrow a as &ar in {
-                                total = vec.get(ar, found * stride + 1 + k);
-                            }
-                            if get_i64(blob, acc_at + 8 * (1 + na + k)) > query.int_max() - int_max_of(total) {
-                                refuse = true;
-                            }
-                        }
-                        k = k + 1;
-                    }
                 }
                 at = acc_at + 8 * stride;
                 i = i + 1;
@@ -974,8 +1034,13 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
                             }
                             let theirs = get_i64(blob, acc_at + 8 * (1 + k));
                             if function == 1 {
-                                let (sum, fits) = query.add_checked(mine, theirs);
-                                a = set_at(a, entry * stride + 1 + k, sum);
+                                // a sum is a pair, and a pair adds: the order of the ranges is of no consequence
+                                var mine_high = 0;
+                                borrow a as &ar in {
+                                    mine_high = vec.get(ar, entry * stride + 1 + na + k);
+                                }
+                                a = set_at(a, entry * stride + 1 + k, mine + theirs);
+                                a = set_at(a, entry * stride + 1 + na + k, mine_high + get_i64(blob, acc_at + 8 * (1 + na + k)));
                             } else if function == 2 && theirs < mine {
                                 a = set_at(a, entry * stride + 1 + k, theirs);
                             } else if function == 3 && theirs > mine {

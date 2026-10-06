@@ -91,7 +91,10 @@ the offset of each.
 `min:COL`, `max:COL`, `distinct:COL` separated by commas (default `count`). `COL` is a
 name or `#N`; a name with a comma is written `\,` as in a list. `sum`, `min` and `max`
 read their cell as an exact integer (same refusals, with `context` naming the
-function) and a **sum that would leave 64 bits is `agg.sum-overflow`, never a wrap**;
+function). **A sum is exact whatever its width: it is a pair of integers** (the low 32 bits of every cell in
+one, the rest in the other), so it cannot wrap or refuse, and one past 64 bits is printed in full (up to 28
+digits; `--max-rows`' ceiling of 10^9 keeps the pair below 2^93). The first versions refused it
+(`agg.sum-overflow`); the rule is gone, `docs/numbers.md` stage N0p;
 `distinct` counts distinct byte strings, empty included. `mean` and `describe` of the
 design are not built: an exact fixed-point mean needs a stated rounding rule and a
 scale flag, and none was needed to answer the first question.
@@ -135,7 +138,7 @@ and 17 MB when 100,000 groups are kept (`--group id`, stopped by `--max-groups`)
 | filtered rows and groups are what a reference implementation of the stated semantics computes, in the same order | `test_plan.py` + `refimpl.py`: 1,800 generated tables (quoted fields, embedded delimiters and newlines, ragged rows, empties, integers at the edges of 64 bits) and generated plans (up to three conditions, `in`, `contains`, `:int`, select, group, aggregates, sort, top), rendered with quoting and escapes, as json and as csv |
 | a cell that has to be an integer and is not is refused naming the same row and column as the reference | the same, 309 of the 1,800 are refusals |
 | the grammar's errors are at the stated offsets | `test_filter.py` (24 expressions, offset and wording) |
-| integers are exact, sums do not wrap | `test_filter.py`: the edges of 64 bits, signs, 14 non-integers |
+| integers are exact, sums are exact and never wrap or refuse | `test_filter.py`: the edges of 64 bits, signs, 14 non-integers, sums past 64 bits against Python's `int` |
 | group order does not depend on the rows' order | `test_group_order_is_the_same_whatever_the_order_of_rows` |
 | paging a filter or a grouping equals slicing | `test_filter_pages`, `test_group_pages_and_csv` |
 | every rule has a fixture, exit code and summary | `test_rules.py` |
