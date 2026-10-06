@@ -4,16 +4,13 @@
   Hand-written, except between the paired "gen:NAME" comment lines: scripts/site.py
   writes those from the built binary and from the committed manifest (run
   python3 scripts/site.py; CI runs it with --check). The benchmark numbers are
-  hand-copied from the docs, each next to its conditions: they come from machines
-  the script cannot run on.
+  hand-copied from the docs, each next to its conditions.
 -->
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>table: select, filter and group CSV for agents and scripts</title>
-<meta name="description" content="A small command-line tool that selects, filters, groups and aggregates CSV and TSV in one bounded pass: exact integers, the same bytes every time, every refusal a rule with a repair. Written in lex-sys. Early, and not pandas.">
-<meta property="og:title" content="table: CSV for agents and scripts">
-<meta property="og:description" content="Bounded memory, exact integer arithmetic, byte-stable output, and every refusal a named rule with a repair. One binary, written in lex-sys.">
+<title>table: ask a CSV a question, get an exact answer</title>
+<meta name="description" content="A small command-line tool that picks columns, filters rows and counts or sums by a key in one pass over a CSV or TSV file. Exact whole-number arithmetic, small memory, every refusal a named rule with a repair. Early.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b7a75'/%3E%3Cpath d='M7 11h18M7 17h18M7 23h18M13 8v18' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
@@ -120,6 +117,13 @@ table.fit td.lose { color: var(--bad); font-weight: 600; } table.fit td.win { co
 .cols .no h3 { color: var(--muted); }
 details.rules { margin-top: 1.4rem; } details.rules summary { cursor: pointer; font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+h3.task { margin: 0 0 .15rem; font-size: 1.1rem; }
+.task + p { color: var(--muted); margin: 0 0 .2rem; max-width: 42rem; }
+.tasks { display: grid; gap: 1.6rem; margin-top: 2rem; grid-template-columns: minmax(0, 1fr); }
+.tasks > * { min-width: 0; }
+.tasks pre.code { margin-top: .6rem; }
+ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .35rem 0; }
+.fn { color: var(--muted); font-size: .85rem; margin-top: .8rem; }
 </style>
 </head>
 <body>
@@ -127,7 +131,7 @@ details.rules { margin-top: 1.4rem; } details.rules summary { cursor: pointer; f
 <header class="top"><div class="wrap">
   <a class="brand" href="#top">table</a>
   <nav aria-label="Sections">
-    <a href="#why" class="opt">Why</a><a href="#proof" class="opt">We try to break it</a><a href="#fit" class="opt">Where it fits</a><a href="#start">Try it</a>
+    <a href="#can" class="opt">What you can do</a><a href="#cannot" class="opt">What you cannot</a><a href="#fast" class="opt">How fast</a><a href="#start">Try it</a>
     <a href="https://github.com/alpibrusl/lexsys-table">GitHub</a>
   </nav>
 </div></header>
@@ -136,244 +140,155 @@ details.rules { margin-top: 1.4rem; } details.rules summary { cursor: pointer; f
 
 <div class="hero" id="top">
   <div>
-    <a class="badge" href="#status"><i></i>Early · built and measured, not finished</a>
-    <h1>CSV, answered exactly, or refused with a repair.</h1>
-    <p class="lead">A small command-line tool that selects, filters, groups and aggregates CSV and TSV in one bounded pass, for agents and scripts. The same file gives the same bytes; a cell that is not a number is a named refusal, not a guess.</p>
-    <div class="cta"><a class="btn primary" href="#start">Try it</a><a class="btn ghost" href="#proof">See where it loses</a></div>
+    <a class="badge" href="#status"><i></i>Early · it works, it is not finished</a>
+    <h1>Ask a CSV a question. Get an exact answer.</h1>
+    <p class="lead">A small command-line tool. Pick columns, filter rows, count and sum by a key, in one pass over a CSV or TSV file. Memory stays small however big the file is.</p>
+    <div class="cta"><a class="btn primary" href="#can">What you can do</a><a class="btn ghost" href="#start">Try it</a></div>
   </div>
 <!-- gen:hero -->
-<div class="term" role="img" aria-label="Three example commands on a small file and what they print"><div class="bar"><i></i><i></i><i></i></div>
-<pre><span class="c">$</span> table --select customer,bytes --format csv orders.csv
-customer,bytes
-"Doe, Jane",512
-Acme,
-"Doe, Jane",2048
-Acme,128
-Zed,64
-
-<span class="c">$</span> table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv
+<div class="term" role="img" aria-label="One command on a small file and what it prints"><div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="c">$</span> table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv
 customer,count,sum:bytes
 "Doe, Jane",2,2560
 Acme,1,128
-Zed,1,64
-
-<span class="c">$</span> table --where 'bytes:int&gt;100' --select id --format csv orders.csv
-table: value.not-integer: a cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)
-id
-1
-<span class="r"># exit status 8</span></pre></div>
+Zed,1,64</pre></div>
 <!-- /gen:hero -->
 </div>
 
-<div class="three">
-  <div><h3>Bounded memory</h3><p>The file is read in 64 KiB chunks. Peak memory is about 2 MB on a 31 MB file, and flat on a 1 GB one.</p></div>
-  <div><h3>Exact, never a float</h3><p><code>bytes:int &gt; 50000</code> compares 64-bit integers. A sum past 64 bits is a refusal, not a wrap.</p></div>
-  <div><h3>A rule for every refusal</h3><p>A stable tag, an exit code, the row and column it found, and a repair when one exists.</p></div>
-</div>
-
-<section id="why">
-  <h2>cut, awk and sort | uniq do not know they are reading CSV.</h2>
-  <p class="sub">They work until a field has a comma in it, or a cell is empty, or the file is big. An agent that runs them gets an answer either way, and cannot tell which kind it got. Below, the same five-line file.</p>
-<!-- gen:problem -->
-<div class="two">
-<div class="figure"><h3>cut and awk, on the file</h3>
-<pre class="code" tabindex="0"><span class="c">$</span> cut -d, -f2,4 orders.csv
-customer,bytes
-"Doe,200
-Acme,
-"Doe,200
-Acme,128
-Zed,64
-
-<span class="c">$</span> awk -F, '{s+=$4} END {print s}' orders.csv
-592</pre></div>
-<div class="figure"><h3>table, on the same file</h3>
+<section id="can">
+  <h2>What you can do now</h2>
+  <p class="sub">Every example below runs on this five-line file, and the output is what the program prints.</p>
+  <pre class="code" tabindex="0"><code>id,customer,status,bytes
+1,"Doe, Jane",200,512
+2,Acme,404,
+3,"Doe, Jane",200,2048
+4,Acme,500,128
+5,Zed,200,64</code></pre>
+  <div class="tasks">
+  <div>
+    <h3 class="task">Pick some columns</h3>
+    <p>Name them; they come out in the order you give. A comma inside a quoted field stays inside it, and the output is quoted again.</p>
+<!-- gen:t-select -->
 <pre class="code" tabindex="0"><span class="c">$</span> table --select customer,bytes --format csv orders.csv
 customer,bytes
 "Doe, Jane",512
 Acme,
 "Doe, Jane",2048
 Acme,128
-Zed,64
-
-<span class="c">$</span> table --agg sum:bytes --format csv orders.csv
-table: value.not-integer: a cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)
-sum:bytes
-<span class="r"># exit status 8</span></pre></div>
-</div>
-<!-- /gen:problem -->
-  <p class="note">The quoted comma in <code>"Doe, Jane"</code> moved every column after it: <code>cut</code> returned the wrong one, and <code>awk</code> summed <code>status</code> for two rows and <code>bytes</code> for the others, with the empty cell as a zero. Neither said anything. <code>table</code> gave the right columns, and refused to add up a cell that is not a number.</p>
-  <div class="fitwrap"><table class="fit">
-    <thead><tr><th>What goes wrong</th><th>What <code>table</code> does</th></tr></thead>
-    <tbody>
-      <tr><th>A quoted comma splits a field</th><td>An RFC 4180 reader of its own: quoted fields, doubled quotes, delimiters and newlines inside quotes, CRLF, a byte order mark. Checked against Python&rsquo;s <code>csv</code>.</td></tr>
-      <tr><th>An empty or odd cell is silently a zero</th><td>An <code>:int</code> column is exact 64-bit integers; anything else, an empty cell included, is <code>value.not-integer</code> naming its row, line and column.</td></tr>
-      <tr><th>Memory grows with the file or the keys</th><td>Memory is the longest record, the header and one page of output. A grouping is bounded by three limits, each its own rule. On the 1M-row file the incumbents measured 20 to 337 MB; <code>table</code> 2 MB (see <a href="#numbers">numbers</a>).</td></tr>
-      <tr><th>The error is prose, and the repair is a guess</th><td>A rule tag that does not change, an exit code, and a <code>repair</code> that is either a whole command to run, a retry, or an honest &ldquo;none&rdquo;.</td></tr>
-      <tr><th>The answer changes with the order or the threads</th><td>Groups come out in key order, and <code>--threads N</code> gives the sequential bytes, the same refusal included.</td></tr>
-    </tbody>
-  </table></div>
-</section>
-
-<section id="how">
-  <h2>How it works</h2>
-  <p class="sub">One plan, one engine, one pass. The flags do not each do something: they fill one query, resolved against the header before any row is read, so a refusal about a column costs one line, not a scan.</p>
-  <div class="two">
-    <figure class="figure">
-      <svg viewBox="0 0 440 210" role="img" aria-label="The flags fill one plan; the plan is resolved against the header; rows are read in 64 KiB chunks and each is skipped, emitted or added to a group; the answer is a JSON page or CSV.">
-        <defs><marker id="h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--muted)"/></marker></defs>
-        <rect class="box" x="6" y="14" width="118" height="44" rx="9"/><text class="t" x="65" y="34" text-anchor="middle">flags</text><text class="s" x="65" y="50" text-anchor="middle">--select --where --group</text>
-        <rect class="hot" x="160" y="14" width="118" height="44" rx="9"/><text class="t" x="219" y="34" text-anchor="middle">one plan</text><text class="s" x="219" y="50" text-anchor="middle">against the header</text>
-        <rect class="box" x="314" y="14" width="120" height="44" rx="9"/><text class="t" x="374" y="34" text-anchor="middle">refusal?</text><text class="s" x="374" y="50" text-anchor="middle">before row one</text>
-        <path class="ar" d="M124 36H158" marker-end="url(#h)"/><path class="ar" d="M278 36H312" marker-end="url(#h)"/>
-        <rect class="box" x="6" y="100" width="150" height="44" rx="9"/><text class="t" x="81" y="120" text-anchor="middle">read 64 KiB at a time</text><text class="s" x="81" y="136" text-anchor="middle">one record in memory</text>
-        <rect class="box" x="190" y="100" width="116" height="44" rx="9"/><text class="t" x="248" y="120" text-anchor="middle">per row</text><text class="s" x="248" y="136" text-anchor="middle">skip, emit, or count</text>
-        <rect class="box" x="340" y="100" width="94" height="44" rx="9"/><text class="t" x="387" y="120" text-anchor="middle">answer</text><text class="s" x="387" y="136" text-anchor="middle">json page or csv</text>
-        <path class="ar" d="M219 58V80H81V98" marker-end="url(#h)"/><path class="ar" d="M156 122H188" marker-end="url(#h)"/><path class="ar" d="M306 122H338" marker-end="url(#h)"/>
-        <text class="s" x="6" y="184">--threads N reads ranges of the file at once and answers</text>
-        <text class="s" x="6" y="200">with the sequential bytes: a range that guessed wrong is read again.</text>
-      </svg>
-    </figure>
-    <figure class="figure">
-      <h3>The contract</h3>
-      <ul>
-        <li><strong>Streaming.</strong> No row is kept after it is handled, except the groups.</li>
-        <li><strong>Paged.</strong> JSON is a page (<code>--limit</code>, a byte budget) with a <code>next</code> cursor. Resuming re-reads the file from the start, so paging a huge file is quadratic.</li>
-        <li><strong>CSV is a stream.</strong> Standard output is only CSV; the verdict is the exit status and standard error. A non-zero exit means the output is a prefix.</li>
-        <li><strong>Ragged rows are never selected,</strong> and are reported once, as <code>parse.csv-ragged-row</code>.</li>
-        <li><strong>Confined.</strong> With <code>--root</code>, paths are checked and opened beneath it, following no symlink.</li>
-      </ul>
-    </figure>
+Zed,64</pre>
+<!-- /gen:t-select -->
   </div>
-  <h3 style="margin-top:2.2rem">A refusal, as the tool prints it</h3>
-  <p class="sub">Not an English sentence to parse: a tag, an exit status, the detail, and a repair. The first one names the header and carries the corrected command. The second names the row, the line and the column; its repair is &ldquo;none&rdquo; because what the cell was meant to be is not known, and the hint says how to say which rows you mean.</p>
-<!-- gen:refusals -->
-<div class="two">
-<figure class="figure"><h3>A name that is not in the header</h3>
+  <div>
+    <h3 class="task">Keep the rows that match</h3>
+    <p>Text compares byte by byte; <code>:int</code> compares whole numbers exactly. Conditions run left to right and stop at the first false one, so the first one here keeps the empty cell away from the number test.</p>
+<!-- gen:t-filter -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --where "bytes != '' and bytes:int &gt; 100" --select id,customer --format csv orders.csv
+id,customer
+1,"Doe, Jane"
+3,"Doe, Jane"
+4,Acme</pre>
+<!-- /gen:t-filter -->
+  </div>
+  <div>
+    <h3 class="task">Count and sum by a key</h3>
+    <p><code>count</code>, <code>sum</code>, <code>min</code>, <code>max</code> and <code>distinct</code>, sorted by what you ask for. Sums are exact whole numbers; a sum that would not fit in 64 bits is refused, not wrapped.</p>
+<!-- gen:t-group -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv
+customer,count,sum:bytes
+"Doe, Jane",2,2560
+Acme,1,128
+Zed,1,64</pre>
+<!-- /gen:t-group -->
+  </div>
+  <div>
+    <h3 class="task">Page through the results</h3>
+    <p>JSON answers come in pages. <code>next</code> tells you where the next one starts. Resuming re-reads the file from the start, so paging deep into a huge file gets slow.</p>
+<!-- gen:t-page -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --select id,customer --limit 2 orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["id","customer"],"rows":[["1","Doe, Jane"],["2","Acme"]],"row_count":2,"truncated":true,"next":{"from":2}},"meta":{"version":"0.3.0"}}
+<span class="c">$</span> table --select id,customer --limit 2 --from 2 orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["id","customer"],"rows":[["3","Doe, Jane"],["4","Acme"]],"row_count":2,"truncated":true,"next":{"from":4}},"meta":{"version":"0.3.0"}}</pre>
+<!-- /gen:t-page -->
+  </div>
+  <div>
+    <h3 class="task">Get CSV back</h3>
+    <p><code>--format csv</code> writes the rows as CSV as they are read, whatever the file size. Every column when you do not pick any. A non-zero exit means the output is only the start of the answer.</p>
+<!-- gen:t-csv -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --where "status = 200" --format csv orders.csv
+id,customer,status,bytes
+1,"Doe, Jane",200,512
+3,"Doe, Jane",200,2048
+5,Zed,200,64</pre>
+<!-- /gen:t-csv -->
+  </div>
+  <div>
+    <h3 class="task">Use several cores</h3>
+    <p><code>--threads N</code> reads the file with N cores (1 to 64). The answer is the same bytes as with one core, refusals included. Files under 1 MiB are read on one core whatever you ask, so this tiny example only shows the same answer.</p>
+<!-- gen:t-cores -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --threads 4 --group status --agg count --format csv orders.csv
+status,count
+200,3
+404,1
+500,1</pre>
+<!-- /gen:t-cores -->
+  </div>
+  <div>
+    <h3 class="task">See what a bad request looks like</h3>
+    <p>A refusal has a fixed rule name, an exit status and, where one exists, a repair: here, the command with the right spelling. A cell that is not a whole number (an empty one too) is refused with its row, line and column.</p>
+<!-- gen:t-refuse -->
 <pre class="code" tabindex="0"><span class="c">$</span> table --select Status orders.csv
-<span class="c"># exit status 3; the "error" member of the one line printed, reformatted</span>
-{
-  "code": "NOT_FOUND",
-  "rule": "select.unknown-column",
-  "message": "--select names a column the header does not have",
-  "hint": "pick from detail.available",
-  "repair": {
-    "kind": "choose",
-    "options": [
-      {
-        "argv": [
-          "table",
-          "--select",
-          "status",
-          "orders.csv"
-        ]
-      }
-    ]
-  },
-  "detail": {
-    "path": "orders.csv",
-    "flag": "--select",
-    "name": "Status",
-    "columns": 4,
-    "available": [
-      "id",
-      "customer",
-      "status",
-      "bytes"
-    ],
-    "available_truncated": false
-  }
-}</pre></figure>
-<figure class="figure"><h3>A cell that is not an integer</h3>
-<pre class="code" tabindex="0"><span class="c">$</span> table --where 'bytes:int&gt;100' orders.csv
-<span class="c"># exit status 8; the "error" member of the one line printed, reformatted</span>
-{
-  "code": "PRECONDITION_FAILED",
-  "rule": "value.not-integer",
-  "message": "a cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)",
-  "hint": "keep out the rows with such a cell with --where, or do not ask for an integer of this column",
-  "repair": {
-    "kind": "none",
-    "reason": "what the cell was meant to be is not known"
-  },
-  "detail": {
-    "path": "orders.csv",
-    "context": "where",
-    "column": "bytes",
-    "row": 2,
-    "line": 3,
-    "value": "",
-    "value_truncated": false
-  }
-}</pre></figure>
-</div>
-<!-- /gen:refusals -->
+{"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--select", "status", "orders.csv"]}]}}
+<span class="r"># exit status 3; the rule, the hint and the repair from the JSON line it prints</span></pre>
+<!-- /gen:t-refuse -->
+  </div>
+  </div>
+  <details class="more"><summary>All <!-- gen:nrules -->
+40
+<!-- /gen:nrules --> refusal rules</summary>
 <!-- gen:rules -->
-<details class="rules"><summary>All 40 rules, as <code>table introspect</code> lists them</summary><div class="fitwrap"><table class="fit"><thead><tr><th>rule</th><th>exit</th><th>a repair?</th><th>what it refuses</th></tr></thead><tbody><tr><th><code>args.unknown-flag</code></th><td class="num">2</td><td>sometimes</td><td>a flag that is not in the tool's table</td></tr><tr><th><code>args.missing-value</code></th><td class="num">2</td><td>never</td><td>a flag that takes a value was given none</td></tr><tr><th><code>args.bad-value</code></th><td class="num">2</td><td>never</td><td>a flag's value is not of the flag's kind</td></tr><tr><th><code>args.duplicate-flag</code></th><td class="num">2</td><td>never</td><td>the same flag was given twice</td></tr><tr><th><code>args.conflict</code></th><td class="num">2</td><td>never</td><td>two flags that exclude each other were both given</td></tr><tr><th><code>args.required-flag</code></th><td class="num">2</td><td>never</td><td>a flag the tool needs was not given</td></tr><tr><th><code>args.missing-operand</code></th><td class="num">2</td><td>never</td><td>an operand the tool needs was not given</td></tr><tr><th><code>args.too-many-operands</code></th><td class="num">2</td><td>never</td><td>more operands than the tool takes</td></tr><tr><th><code>path.empty</code></th><td class="num">2</td><td>never</td><td>an empty path</td></tr><tr><th><code>path.dotdot</code></th><td class="num">2</td><td>sometimes</td><td>a path with a `..` component</td></tr><tr><th><code>path.absolute</code></th><td class="num">2</td><td>always</td><td>an absolute path where one relative to --root is wanted</td></tr><tr><th><code>path.outside-root</code></th><td class="num">4</td><td>never</td><td>an absolute path that is not under --root</td></tr><tr><th><code>path.too-long</code></th><td class="num">2</td><td>never</td><td>a path longer than 4096 bytes</td></tr><tr><th><code>path.symlink</code></th><td class="num">4</td><td>never</td><td>a path that runs through a symbolic link, which the tool does not follow</td></tr><tr><th><code>io.not-found</code></th><td class="num">3</td><td>never</td><td>a named input does not exist</td></tr><tr><th><code>io.not-a-directory</code></th><td class="num">3</td><td>never</td><td>a path runs through something that is not a directory</td></tr><tr><th><code>io.is-a-directory</code></th><td class="num">2</td><td>never</td><td>a directory where a file is wanted</td></tr><tr><th><code>io.permission-denied</code></th><td class="num">4</td><td>never</td><td>the operating system refused access</td></tr><tr><th><code>io.read-failed</code></th><td class="num">1</td><td>never</td><td>the operating system failed a read</td></tr><tr><th><code>limit.line-too-long</code></th><td class="num">8</td><td>sometimes</td><td>a line longer than --max-line-bytes</td></tr><tr><th><code>limit.header-too-large</code></th><td class="num">8</td><td>never</td><td>the header record holds more than --max-line-bytes bytes</td></tr><tr><th><code>limit.record-too-large</code></th><td class="num">8</td><td>never</td><td>a record read for --select, --where or --group holds more than --max-line-bytes bytes</td></tr><tr><th><code>limit.output-too-large</code></th><td class="num">8</td><td>never</td><td>the first row of a page is longer than --max-bytes</td></tr><tr><th><code>limit.too-many-rows</code></th><td class="num">8</td><td>never</td><td>--format csv reached --max-rows with rows left unread</td></tr><tr><th><code>limit.too-many-groups</code></th><td class="num">8</td><td>never</td><td>more groups than --max-groups</td></tr><tr><th><code>limit.too-many-distinct</code></th><td class="num">8</td><td>never</td><td>more distinct values than --max-distinct</td></tr><tr><th><code>limit.state-too-large</code></th><td class="num">8</td><td>never</td><td>the keys and values kept for groups hold more than --max-state-bytes bytes</td></tr><tr><th><code>parse.csv-ragged-row</code></th><td class="num">8</td><td>never</td><td>a row has a different number of fields than the header</td></tr><tr><th><code>parse.csv-bad-quote</code></th><td class="num">8</td><td>never</td><td>a closing quote is followed by something other than the delimiter or the end of the record</td></tr><tr><th><code>parse.csv-unterminated-quote</code></th><td class="num">8</td><td>never</td><td>a quoted field is still open at the end of the input</td></tr><tr><th><code>select.unknown-column</code></th><td class="num">3</td><td>sometimes</td><td>a name or position in --select that is not a column of the header</td></tr><tr><th><code>select.ambiguous-column</code></th><td class="num">8</td><td>never</td><td>a name in --select that is the name of more than one column</td></tr><tr><th><code>column.unknown</code></th><td class="num">3</td><td>never</td><td>a name or position in --where, --group or --agg that is not a column of the header</td></tr><tr><th><code>column.ambiguous</code></th><td class="num">8</td><td>never</td><td>a name in --where, --group or --agg that is the name of more than one column</td></tr><tr><th><code>where.syntax</code></th><td class="num">2</td><td>never</td><td>--where is not an expression of the grammar, at the offset the detail gives</td></tr><tr><th><code>agg.bad-spec</code></th><td class="num">2</td><td>never</td><td>an item of --agg that is not count, sum:COL, min:COL, max:COL or distinct:COL</td></tr><tr><th><code>sort.unknown-key</code></th><td class="num">2</td><td>never</td><td>--sort names no output column of the grouping</td></tr><tr><th><code>value.not-integer</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not)</td></tr><tr><th><code>value.integer-overflow</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max does not fit 64 bits</td></tr><tr><th><code>agg.sum-overflow</code></th><td class="num">8</td><td>never</td><td>a sum that would not fit 64 bits</td></tr></tbody></table></div></details>
+<div class="fitwrap"><table class="fit"><thead><tr><th>rule</th><th>exit</th><th>a repair?</th><th>what it refuses</th></tr></thead><tbody><tr><th><code>args.unknown-flag</code></th><td class="num">2</td><td>sometimes</td><td>a flag that is not in the tool's table</td></tr><tr><th><code>args.missing-value</code></th><td class="num">2</td><td>never</td><td>a flag that takes a value was given none</td></tr><tr><th><code>args.bad-value</code></th><td class="num">2</td><td>never</td><td>a flag's value is not of the flag's kind</td></tr><tr><th><code>args.duplicate-flag</code></th><td class="num">2</td><td>never</td><td>the same flag was given twice</td></tr><tr><th><code>args.conflict</code></th><td class="num">2</td><td>never</td><td>two flags that exclude each other were both given</td></tr><tr><th><code>args.required-flag</code></th><td class="num">2</td><td>never</td><td>a flag the tool needs was not given</td></tr><tr><th><code>args.missing-operand</code></th><td class="num">2</td><td>never</td><td>an operand the tool needs was not given</td></tr><tr><th><code>args.too-many-operands</code></th><td class="num">2</td><td>never</td><td>more operands than the tool takes</td></tr><tr><th><code>path.empty</code></th><td class="num">2</td><td>never</td><td>an empty path</td></tr><tr><th><code>path.dotdot</code></th><td class="num">2</td><td>sometimes</td><td>a path with a `..` component</td></tr><tr><th><code>path.absolute</code></th><td class="num">2</td><td>always</td><td>an absolute path where one relative to --root is wanted</td></tr><tr><th><code>path.outside-root</code></th><td class="num">4</td><td>never</td><td>an absolute path that is not under --root</td></tr><tr><th><code>path.too-long</code></th><td class="num">2</td><td>never</td><td>a path longer than 4096 bytes</td></tr><tr><th><code>path.symlink</code></th><td class="num">4</td><td>never</td><td>a path that runs through a symbolic link, which the tool does not follow</td></tr><tr><th><code>io.not-found</code></th><td class="num">3</td><td>never</td><td>a named input does not exist</td></tr><tr><th><code>io.not-a-directory</code></th><td class="num">3</td><td>never</td><td>a path runs through something that is not a directory</td></tr><tr><th><code>io.is-a-directory</code></th><td class="num">2</td><td>never</td><td>a directory where a file is wanted</td></tr><tr><th><code>io.permission-denied</code></th><td class="num">4</td><td>never</td><td>the operating system refused access</td></tr><tr><th><code>io.read-failed</code></th><td class="num">1</td><td>never</td><td>the operating system failed a read</td></tr><tr><th><code>limit.line-too-long</code></th><td class="num">8</td><td>sometimes</td><td>a line longer than --max-line-bytes</td></tr><tr><th><code>limit.header-too-large</code></th><td class="num">8</td><td>never</td><td>the header record holds more than --max-line-bytes bytes</td></tr><tr><th><code>limit.record-too-large</code></th><td class="num">8</td><td>never</td><td>a record read for --select, --where or --group holds more than --max-line-bytes bytes</td></tr><tr><th><code>limit.output-too-large</code></th><td class="num">8</td><td>never</td><td>the first row of a page is longer than --max-bytes</td></tr><tr><th><code>limit.too-many-rows</code></th><td class="num">8</td><td>never</td><td>--format csv reached --max-rows with rows left unread</td></tr><tr><th><code>limit.too-many-groups</code></th><td class="num">8</td><td>never</td><td>more groups than --max-groups</td></tr><tr><th><code>limit.too-many-distinct</code></th><td class="num">8</td><td>never</td><td>more distinct values than --max-distinct</td></tr><tr><th><code>limit.state-too-large</code></th><td class="num">8</td><td>never</td><td>the keys and values kept for groups hold more than --max-state-bytes bytes</td></tr><tr><th><code>parse.csv-ragged-row</code></th><td class="num">8</td><td>never</td><td>a row has a different number of fields than the header</td></tr><tr><th><code>parse.csv-bad-quote</code></th><td class="num">8</td><td>never</td><td>a closing quote is followed by something other than the delimiter or the end of the record</td></tr><tr><th><code>parse.csv-unterminated-quote</code></th><td class="num">8</td><td>never</td><td>a quoted field is still open at the end of the input</td></tr><tr><th><code>select.unknown-column</code></th><td class="num">3</td><td>sometimes</td><td>a name or position in --select that is not a column of the header</td></tr><tr><th><code>select.ambiguous-column</code></th><td class="num">8</td><td>never</td><td>a name in --select that is the name of more than one column</td></tr><tr><th><code>column.unknown</code></th><td class="num">3</td><td>never</td><td>a name or position in --where, --group or --agg that is not a column of the header</td></tr><tr><th><code>column.ambiguous</code></th><td class="num">8</td><td>never</td><td>a name in --where, --group or --agg that is the name of more than one column</td></tr><tr><th><code>where.syntax</code></th><td class="num">2</td><td>never</td><td>--where is not an expression of the grammar, at the offset the detail gives</td></tr><tr><th><code>agg.bad-spec</code></th><td class="num">2</td><td>never</td><td>an item of --agg that is not count, sum:COL, min:COL, max:COL or distinct:COL</td></tr><tr><th><code>sort.unknown-key</code></th><td class="num">2</td><td>never</td><td>--sort names no output column of the grouping</td></tr><tr><th><code>value.not-integer</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not)</td></tr><tr><th><code>value.integer-overflow</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max does not fit 64 bits</td></tr><tr><th><code>agg.sum-overflow</code></th><td class="num">8</td><td>never</td><td>a sum that would not fit 64 bits</td></tr></tbody></table></div>
 <!-- /gen:rules -->
-</section>
-
-<section id="proof">
-  <h2>We try to break it.</h2>
-  <p class="sub">The adversarial round looked for the shapes of file and question that are not kind to <code>table</code>: 16 cells, written down <strong>before any of them was run</strong> (the first commit of <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/adversarial.md">docs/adversarial.md</a> is the registration), with the incumbents, how each is run, what counts as a loss (a ratio above 1.25 is a material one) and a prediction for each. Every loss is reported with its ratio and its cause, and nothing was tuned to avoid one.</p>
-  <h3 style="margin-top:2rem">Where <code>table</code> loses, after the cell-cost round</h3>
-  <p class="note" style="margin-top:0">Apple-silicon Mac, 16 cores; <code>table</code> at one thread unless said; minimum of 5 (3 for the 1 GB file) interleaved runs, output to /dev/null; every contender&rsquo;s answer checked first. Copied from the &ldquo;After the cell-cost round&rdquo; section of <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/adversarial.md">docs/adversarial.md</a>; the causes are from a profile on the Mac or, where it says so, inferred.</p>
-  <div class="fitwrap" tabindex="0" role="region" aria-label="Where table loses"><table class="fit wide">
-    <thead><tr><th>Cell</th><th class="num">table</th><th>Against</th><th>Cause</th></tr></thead>
-    <tbody>
-      <tr><th>Group-count by 1,000,000 distinct keys (B3)</th><td class="num">0.792 s</td><td class="lose">3.4x slower than DuckDB at one thread, 9.4x than its default</td><td>Each row makes a group; the end-phase sort of a million keys is about two thirds of the profile. Threads do not help: the parent merges eight million-key maps one by one.</td></tr>
-      <tr><th>Group-sum by 1,000,000 keys (B4)</th><td class="num">0.840 s</td><td class="lose">3.1x, and 9.2x</td><td>The same. (csvtk took 49x longer and 14.8 GB.)</td></tr>
-      <tr><th>Sort rows by a column (A1, A2)</th><td class="num">none</td><td class="lose">a missing feature</td><td>There is no row sort. A proxy for the text sort (grouping by the column) is 1.59x slower than DuckDB at one thread.</td></tr>
-      <tr><th><code>distinct</code> of a unique column (I1)</th><td class="num">0.287 s</td><td class="lose">1.40x (2.5x at 8 threads)</td><td>A million-entry pair set with a probe per row, then a sort of the output. (Measured before round 15 of docs/history.md, which made it 9 percent faster on the Mac.)</td></tr>
-      <tr><th>Group by 100,000 keys, 8 threads (B1, B2)</th><td class="num">0.087 s</td><td class="lose">1.09x and 1.11x slower than DuckDB&rsquo;s default</td><td>A cache-missing probe per row. At one thread it wins, 1.37x and 1.39x.</td></tr>
-      <tr><th>1 GB group-count, 4 threads (G2)</th><td class="num">0.473 s</td><td class="lose">1.36x slower than DuckDB&rsquo;s default (0.348 s)</td><td>At 8 threads it wins, 1.23x (it was a 1.59x loss before the round). Not profiled further.</td></tr>
-      <tr><th>Fields of 1 to 10 KB (E1, E2)</th><td class="num">0.184 s</td><td>a tie with csvtk (1.01x faster; it was a 1.11x loss before the round); no thread scaling</td><td>A memory copy dominates; a range&rsquo;s guess that it starts outside quotes is wrong far more often when quoted fields hold newlines.</td></tr>
-    </tbody>
-  </table></div>
-  <p class="note">On Linux (cores 0 to 5 of a shared box, a soak running) it also loses to the plain shell pipeline <code>cut | sort | uniq -c</code>, which is not CSV-aware and uses all the cores it is given: 1.19x on 100,000 keys, 5.5x on a million, 1.8x on <code>distinct</code>, and 1.8x to GNU <code>sort</code> on the sort proxy. It beats csvtk and Miller on every Linux cell they can answer after the round. <a href="evidence.html#adversarial">All the cells, both machines</a>.</p>
-  <div class="stats">
-    <div><b>16</b><span>cells registered before they were run</span></div>
-    <div><b>0</b><span>memory losses by the registered definition (4x and above 64 MB); a million groups took 135 to 183 MB, with the group-state limit raised to 1 GiB for those cells</span></div>
-    <div><b>49x</b><span>how much longer csvtk took on a group-sum with a million keys, using 14.8 GB (Mac); killed on Linux</span></div>
-  </div>
-  <p class="note">Where it is ahead, in the same round: all-quoted files (3.1x to 5.5x faster than csvtk at one thread on the Mac), 200 columns (4.3x), a filter that keeps 90 percent of the rows (3.7x), the 1 GB filter (6.8x csvtk at one thread; 1.8x faster than DuckDB&rsquo;s default at 8). <a href="evidence.html">The tests, the mutants and how a claim is corrected</a>.</p>
-</section>
-
-<section id="fit">
-  <h2>Where it fits, and where it does not</h2>
-  <p class="sub">A tool for the questions an agent asks of one file, where a wrong answer is worse than a refusal. It is not trying to replace the tools below; the second column is what each is for.</p>
-  <div class="fitwrap" tabindex="0" role="region" aria-label="Comparison with other tools"><table class="fit wide">
-    <thead><tr><th></th><th>What it is for</th><th>What you give up to use it</th></tr></thead>
-    <tbody>
-      <tr class="us"><th>table</th><td>Shape, columns, filtered rows, counts and exact integer sums by group, of one CSV or TSV, bounded and repeatable.</td><td>No row sort yet, no joins, no floats or decimals, no type inference, no JSON lines, no stdin, no <code>--query</code>.</td></tr>
-      <tr><th>csvtk</th><td>A CSV toolkit: cut, filter, freq, summary, sort. Computes floats; sorts rows.</td><td>Memory: <code>summary</code> used 11.8 to 14.8 GB on sums with 100,000 or a million keys. Exactness and refusals are not its aim.</td></tr>
-      <tr><th>Miller</th><td>A whole language over records, in many formats.</td><td>Much more memory here (110 to 337 MB on the 31 MB file) and more time on these questions.</td></tr>
-      <tr><th>DuckDB</th><td>SQL, a planner, joins, window functions, spill to disk, typed columns, type inference, Parquet and JSON readers.</td><td>It is a database engine; <code>table</code> does a small part of what it does. DuckDB wins the high-cardinality groupings by 3x and more.</td></tr>
-      <tr><th>pandas</th><td>Arbitrary computation over a table.</td><td>Arbitrary code is unbounded; giving that up is what keeps this tool bounded.</td></tr>
-    </tbody>
-  </table></div>
-  <div class="cols">
-    <div><h3>Built for</h3><ul><li>An agent that has to answer a question about a file and know the answer is right</li><li>Scripts that need the same bytes on every run</li><li>Files that may be large, quoted, or damaged</li></ul></div>
-    <div class="no"><h3>Not for</h3><ul><li>Joins, a row sort, window functions</li><li>Floats, dates, decimals</li><li>Parquet, JSON lines, a pipe on standard input</li></ul></div>
-  </div>
-</section>
-
-<section id="features">
-  <h2>What you get</h2>
-  <div class="grid">
-    <div><h3>The shape</h3><p>Headers, column and row counts, and whether <code>--max-rows</code> cut the count.</p></div>
-    <div><h3>Select</h3><p>By name, in the order given, or by position (<code>#3</code>); a repeated name repeats the column. An ambiguous name is refused.</p></div>
-    <div><h3>Filter</h3><p><code>= != &lt; &lt;= &gt; &gt;= contains in (...)</code> joined by <code>and</code>. Text is bytewise; <code>:int</code> is exact.</p></div>
-    <div><h3>Group and aggregate</h3><p><code>count</code>, <code>sum</code>, <code>min</code>, <code>max</code>, <code>distinct</code>, with <code>--sort</code> and <code>--top</code>, as JSON or CSV.</p></div>
-    <div><h3>Pages</h3><p>JSON pages with a cursor and a byte budget; CSV streamed as it is read.</p></div>
-    <div><h3>Threads</h3><p><code>--threads N</code>, 1 to 64, with the sequential answer byte for byte.</p></div>
-    <div><h3>Limits with rules</h3><p>Rows, line and record size, groups, distinct values and group state are each bounded, each its own rule.</p></div>
-    <div><h3>Self-describing</h3><p><code>table introspect</code> and <code>table skill</code>, generated from the tables the parser runs on; output against <code>table.v2</code>.</p></div>
-  </div>
+  </details>
+  <details class="more"><summary>The limits, and what they default to</summary>
 <!-- gen:limits -->
 <div class="fitwrap"><table class="fit"><thead><tr><th>limit</th><th>default</th><th>ceiling</th></tr></thead><tbody><tr><th><code>--threads</code></th><td class="num">1</td><td class="num">64</td></tr><tr><th><code>--chunk-bytes</code></th><td class="num">4,194,304</td><td class="num">1,073,741,824</td></tr><tr><th><code>--parallel-min-bytes</code></th><td class="num">1,048,576</td><td class="num">1,073,741,824</td></tr><tr><th><code>--limit</code></th><td class="num">1,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-bytes</code></th><td class="num">1,048,576</td><td class="num">67,108,864</td></tr><tr><th><code>--max-groups</code></th><td class="num">100,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-distinct</code></th><td class="num">100,000</td><td class="num">10,000,000</td></tr><tr><th><code>--max-state-bytes</code></th><td class="num">67,108,864</td><td class="num">1,073,741,824</td></tr><tr><th><code>--max-rows</code></th><td class="num">10,000,000</td><td class="num">1,000,000,000</td></tr><tr><th><code>--max-line-bytes</code></th><td class="num">1,048,576</td><td class="num">16,777,216</td></tr></tbody></table></div>
 <!-- /gen:limits -->
-  <p class="note">The limits and their ceilings, as <code>table introspect</code> lists them.</p>
+  </details>
+</section>
+
+<section id="cannot">
+  <h2>What it cannot do yet</h2>
+  <ul class="plain">
+    <li><strong>Whole numbers only.</strong> A decimal in a number column is refused. Decimals, as exact numbers and never as floats, are on the <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">backlog</a>.</li>
+    <li><strong>No row sort yet.</strong> You can sort the groups of a count or a sum, not the rows. A row sort is in progress.</li>
+    <li><strong>No joins,</strong> and <strong>one input file</strong> at a time, named on the command line (no standard input).</li>
+    <li><strong>No JSON lines,</strong> no Parquet. Only CSV and TSV (comma, tab or semicolon).</li>
+    <li><strong>No guessing.</strong> Every column is text unless you say <code>:int</code>. There is no mean, no computed or renamed column, no <code>or</code> in a filter.</li>
+  </ul>
+  <p class="note">JSON lines, joins, <code>mean</code>, decimals and standard input are on the <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
+</section>
+
+<section id="fast">
+  <h2>How fast</h2>
+  <p class="sub">A <em>core</em> is one of the independent workers inside a processor. By default <code>table</code> uses one; <code>--threads 16</code> uses sixteen. <a href="https://duckdb.org">DuckDB</a> is a full database engine and a popular, fast way to query a CSV, so it is a fair yardstick. On these four questions one core of <code>table</code> is about as fast as, or faster than, DuckDB on all sixteen. With many distinct keys in a group-by, DuckDB on all cores wins.</p>
+  <h3 style="margin-top:2rem">Time to answer on the same 1,000,000-row, 32 MB CSV, in seconds (lower is better)</h3>
+  <div class="fitwrap" tabindex="0" role="region" aria-label="Time to answer on one million rows"><table class="fit bench">
+    <thead><tr><th>question</th><th class="num">table, 1 core</th><th class="num">table, 16 cores</th><th class="num">csvtk</th><th class="num">DuckDB, 1 core</th><th class="num">DuckDB, 16 cores</th></tr></thead>
+    <tbody>
+      <tr><th>filter rows</th><td class="num">0.046</td><td class="num"><b>0.0087</b></td><td class="num">0.293</td><td class="num">0.170</td><td class="num">0.075</td></tr>
+      <tr><th>count by a key</th><td class="num">0.057</td><td class="num"><b>0.0099</b></td><td class="num">0.181</td><td class="num">0.132</td><td class="num">0.065</td></tr>
+      <tr><th>sum by a key</th><td class="num">0.062</td><td class="num"><b>0.011</b></td><td class="num">0.395</td><td class="num">0.141</td><td class="num">0.067</td></tr>
+      <tr><th>pick 2 columns</th><td class="num">0.050</td><td class="num"><b>0.011</b></td><td class="num">0.188</td><td class="num">0.190</td><td class="num">0.078</td></tr>
+    </tbody>
+  </table></div>
+  <p class="fn">Apple-silicon Mac with 16 cores. The file has five columns and a key with a few distinct values. Best of five runs, output thrown away, each tool&rsquo;s answer checked against a Python answer first. csvtk 0.38.0 on one core (its filter is <code>filter</code> piped to <code>grep</code>); DuckDB 1.5.6. DuckDB&rsquo;s 16-core times for filter and pick-2-columns are from an earlier run on the same machine. Miller is not installed on the Mac: on a different machine (Linux, 6 shared cores) Miller took 0.300 s to filter, 0.438 s to count and 0.649 s to sum, against <code>table</code>&rsquo;s 0.074, 0.128 and 0.140 s there. <a href="benchmarks.html">All the tables, and how to rerun them</a>.</p>
+  <h3 style="margin-top:2rem">Where it is slower</h3>
+  <ul class="plain">
+    <li><strong>A group-by with a million distinct keys:</strong> 3.4 times slower than DuckDB on one core, and 9.4 times slower than DuckDB on all 16 (Mac). More cores do not help it.</li>
+    <li><strong>Sorting rows:</strong> there is no row sort yet.</li>
+    <li><strong><code>distinct</code> over a column of unique values:</strong> 1.4 times slower than DuckDB on one core.</li>
+  </ul>
+  <p class="note">Memory: about 2 MB on the 32 MB file, and 1.6 to 1.8 MB on a 1 GB file, on one core (more cores use more: 36 to 50 MB with eight on the 1 GB file).</p>
 </section>
 
 <section id="start">
@@ -384,112 +299,35 @@ REV=$(sed -n 's/^lex-sys *= *"\([0-9a-f]*\)".*/\1/p' lex-sys.toml)
 (cd ../lex-sys &amp;&amp; git fetch -q origin &amp;&amp; git checkout "$REV" &amp;&amp; cargo build --release -p lex-sys)
 export PATH=$PWD/../lex-sys/target/release:$PWD/build:$PATH
 lex-sys build                       # builds build/table
-
-cat &gt; orders.csv &lt;&lt;'EOF'
-id,customer,status,bytes
-1,"Doe, Jane",200,512
-2,Acme,404,
-3,"Doe, Jane",200,2048
-4,Acme,500,128
-5,Zed,200,64
-EOF</code></pre>
-  <p class="note" style="margin-top:.8rem">The compiler is the commit <code>lex-sys.toml</code> pins; you need Rust, <code>clang</code> and Python 3. Then, with the output the built binary prints (generated from it, and checked in CI):</p>
-<!-- gen:demo -->
-<pre class="code" tabindex="0"><span class="c">$</span> table orders.csv
-{"ok":true,"command":"table","schema":"table.v2","data":{"headers":["id","customer","status","bytes"],"column_count":4,"row_count":5,"truncated":false},"meta":{"version":"0.3.0"}}
-
-<span class="c">$</span> table --select customer,bytes --format csv orders.csv
-customer,bytes
-"Doe, Jane",512
-Acme,
-"Doe, Jane",2048
-Acme,128
-Zed,64
-
-<span class="c">$</span> table --where "bytes != '' and bytes:int &gt; 100" --select id,customer --format csv orders.csv
-id,customer
-1,"Doe, Jane"
-3,"Doe, Jane"
-4,Acme
-
-<span class="c">$</span> table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv
-customer,count,sum:bytes
-"Doe, Jane",2,2560
-Acme,1,128
-Zed,1,64
-
-<span class="c">$</span> table --where 'bytes:int&gt;100' --select id --format csv orders.csv
-table: value.not-integer: a cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)
-id
-1
-<span class="r"># exit status 8</span></pre>
-<!-- /gen:demo -->
+table --select customer,bytes --format csv orders.csv    # with the file above saved as orders.csv</code></pre>
+  <p class="note" style="margin-top:.8rem">The compiler is the commit <code>lex-sys.toml</code> pins. You need Rust, <code>clang</code> and Python 3. <code>table introspect</code> lists every flag, rule and limit; <code>table skill</code> prints a short guide for an agent.</p>
 </section>
 
 <section id="lexsys">
-  <h2>Built in lex-sys, with an authority the compiler wrote</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> is a typed systems language whose compiler writes down what a program may do. For this tool that report is the row below: it is derived over the sources and the installed contract package, embedded in the binary, kept in <code>manifests/table.authority.json</code>, and CI fails when the binary says something else or when it exceeds the ceiling a person reviews in <code>tools.toml</code>. No network, no foreign function, no clock, and nothing written to disk: a new capability would be a change somebody has to approve.</p>
+  <h2>Built in lex-sys</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> is a language whose compiler writes down what a program may do. For <code>table</code> that is the line below: it can read its arguments and the file, allocate memory, start threads and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file. The compiler derived it, and CI fails if the binary says otherwise.</p>
 <!-- gen:authority -->
-<pre class="code" tabindex="0"><span class="c"># manifests/table.authority.json, as `python3 scripts/manifest.py --check` prints it</span>
+<pre class="code" tabindex="0"><span class="c"># manifests/table.authority.json</span>
 table    args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_write
 <span class="c"># bounded: true; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>
-<div class="fitwrap"><table class="fit auth"><thead><tr><th>label</th><th>what it lets the program do <span class="note">(the gloss is hand-written)</span></th></tr></thead><tbody><tr><th><code>args</code></th><td>reads its command line</td></tr><tr><th><code>conc</code></th><td>threads, for --threads</td></tr><tr><th><code>dir_read</code></th><td>directory reads, to open the path</td></tr><tr><th><code>err_write</code></th><td>writes standard error</td></tr><tr><th><code>file_read</code></th><td>reads the input file</td></tr><tr><th><code>fs_read("")</code></th><td>a path given at run time</td></tr><tr><th><code>heap</code></th><td>allocates memory</td></tr><tr><th><code>io_write</code></th><td>writes standard output</td></tr></tbody></table></div>
 <!-- /gen:authority -->
-  <p class="note">The row is generated from the committed manifest, and the script checks it is what <code>table introspect</code> prints and that it holds no <code>net_out</code>, <code>net_in</code>, <code>ffi</code> or <code>clock</code>. The authority says what the program <em>may</em> do, not that it is correct: that is the tests&rsquo; job (<a href="evidence.html">evidence</a>). <code>table</code> is built on <a href="https://github.com/alpibrusl/lexsys-tools">lexsys-tools</a>&rsquo; contract, taken as a package.</p>
-</section>
-
-<section id="numbers">
-  <h2>Small and bounded</h2>
-  <p class="sub">The file is the design&rsquo;s benchmark: 1,000,000 rows of <code>id,status,bytes,path,note</code> (the last quoted), seeded, 31,667,311 bytes. Minimum of 5 interleaved runs, output to /dev/null, peak memory from <code>/usr/bin/time</code>, and every contender&rsquo;s answer checked against one computed in Python before any timing. One file, two integer columns, one low-cardinality group key: that is the whole claim.</p>
-  <div class="stats">
-    <div><b>2 MB</b><span>peak memory on the 31 MB file, for the shape, a selection, a filter or a grouping (2.0 to 2.2 MB, Linux)</span></div>
-    <div><b>1.6 to 1.8 MB</b><span>on a 1 GB file, one thread (Mac, 33.8 million rows); 36 to 50 MB at 8 threads, which is threads times the range</span></div>
-    <div><b>20 to 337 MB</b><span>csvtk and Miller on the same questions (Linux)</span></div>
-  </div>
-  <h3 style="margin-top:2.2rem">Mac, with DuckDB (seconds)</h3>
-  <p class="note" style="margin-top:0">Apple silicon, 16 cores. DuckDB 1.5.6 is <code>COPY (...) TO '/dev/null'</code> over <code>read_csv</code> with type detection; csvtk 0.38.0. One run of <code>scripts/bench_parallel.py</code>, <strong>before the cell-cost round</strong>; from <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">docs/parallel.md</a> section 5.</p>
-  <div class="fitwrap" tabindex="0" role="region" aria-label="Benchmark on the Mac, with DuckDB"><table class="fit bench">
-    <thead><tr><th>question</th><th class="num">table, 1 thread</th><th class="num">table, 4</th><th class="num">table, 16</th><th class="num">DuckDB, 1 thread</th><th class="num">DuckDB, 4</th><th class="num">DuckDB, default (16)</th><th class="num">csvtk -j 1</th></tr></thead>
-    <tbody>
-      <tr><th>filter <code>status=404 and bytes&gt;50000</code></th><td class="num">0.051</td><td class="num">0.020</td><td class="num"><b>0.012</b></td><td class="num">0.176</td><td class="num">0.074</td><td class="num">0.075</td><td class="num">0.308</td></tr>
-      <tr><th>cut two columns, csv</th><td class="num">0.058</td><td class="num">0.021</td><td class="num"><b>0.011</b></td><td class="num">0.187</td><td class="num">0.079</td><td class="num">0.078</td><td class="num">0.185</td></tr>
-      <tr><th>group-count by status</th><td class="num">0.110</td><td class="num">0.033</td><td class="num"><b>0.015</b></td><td class="num">0.129</td><td class="num">0.062</td><td class="num">0.062</td><td class="num">0.186</td></tr>
-      <tr><th>group sum of bytes by status</th><td class="num">0.121</td><td class="num">0.037</td><td class="num"><b>0.018</b></td><td class="num">0.135</td><td class="num">0.064</td><td class="num">0.063</td><td class="num">0.403</td></tr>
-    </tbody>
-  </table></div>
-  <p class="note">After the cell-cost round the one-thread grouping times are about half: group-count 0.057 s and group sum 0.062 s, filter 0.046 s, cut 0.050 s (<a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">docs/backlog.md</a>, another run). <strong>What this is not:</strong> DuckDB does type inference, planning and much more, and stops improving at 4 threads on a file this small; <code>table</code> does a small fraction of it. The comparison is of four questions answered with the same bytes, not of the tools. On the shapes in the adversarial round the picture is the table of losses above.</p>
-  <h3 style="margin-top:2.2rem">Linux x86-64, with Miller (seconds, peak memory)</h3>
-  <p class="note" style="margin-top:0">The pinned compiler; 6 cores of a shared box, niced, a soak running on the rest; csvtk 0.38.0, Miller 6.22.0; measured again after the cell-cost round. From the Benchmark section of <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/reference.md">docs/reference.md</a>. DuckDB is not installed on that machine.</p>
-  <div class="fitwrap" tabindex="0" role="region" aria-label="Benchmark on Linux, with Miller"><table class="fit bench">
-    <thead><tr><th>question</th><th class="num">table</th><th class="num">csvtk -j 1</th><th class="num">Miller</th><th>reference floor</th></tr></thead>
-    <tbody>
-      <tr><th>shape</th><td class="num"><b>0.054 s, 2.0 MB</b></td><td class="num">0.560 s, 20.7 MB</td><td class="num">0.347 s, 110 MB</td><td>wc -l 0.0075 s</td></tr>
-      <tr><th>cut two columns, csv</th><td class="num"><b>0.115 s, 2.2 MB</b></td><td class="num">0.507 s, 20.1 MB</td><td class="num">0.764 s, 337 MB</td><td></td></tr>
-      <tr><th>filter</th><td class="num"><b>0.074 s, 2.2 MB</b></td><td class="num">0.818 s (<code>filter | grep</code>, two processes) / 7.16 s (<code>filter2</code>, one)</td><td class="num">0.300 s, 120 MB</td><td>awk -F, 0.494 s</td></tr>
-      <tr><th>group-count by status</th><td class="num"><b>0.128 s, 2.0 MB</b></td><td class="num">0.566 s (<code>freq</code>)</td><td class="num">0.438 s, 134 MB</td><td>cut | sort | uniq -c 0.211 s</td></tr>
-      <tr><th>group sum of bytes</th><td class="num"><b>0.140 s, 2.0 MB</b></td><td class="num">1.278 s (<code>summary</code>), 115 MB</td><td class="num">0.649 s (<code>stats1</code>), 310 MB</td><td></td></tr>
-    </tbody>
-  </table></div>
-  <p class="note">Against the best <code>csvtk -j 1</code> invocation: filter 11.0x faster on Linux (6.6x on the Mac), group-count 4.4x (3.5x), group sum 9.2x (6.5x). Against Miller on Linux: filter 4.0x, group-count 3.4x, group sum 4.7x, at a hundredth of the memory. The <code>awk</code> and <code>uniq</code> rows are floors where CSV quoting does not matter; the <code>uniq</code> pipeline is three processes running in parallel on the box&rsquo;s other cores, which is why it matches <code>table</code> there. Linux threads scale less (1.7x to 2.4x at six) because the six logical cores are three physical ones; that was checked (<a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">docs/parallel.md</a> section 5). Every table, with the Mac numbers and the 1 GB cells, is on the <a href="evidence.html">evidence page</a>.</p>
 </section>
 
 <aside class="status" id="status">
-  <h2>Early: what is built, and what is not</h2>
+  <h2>Status: early</h2>
   <ul>
-    <li>Built and tested: the shape, <code>--select</code>, <code>--where</code>, <code>--group</code> and <code>--agg</code>, <code>--sort</code> and <code>--top</code> of the groups, <code>--threads</code>. Not built: a row sort (a branch is in progress), JSON lines, joins, <code>--query</code>, stdin, <code>mean</code> and <code>describe</code>, decimals, a second sort key, <code>or</code>. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">The list, in the order it would be taken</a>.</li>
-    <li>The measurements are of one file shape on two machines, plus the 16 adversarial cells. The mutant lists for <code>--select</code> and <code>--where</code> are stale (their code moved) and have not been run since; the lists for <code>--threads</code> and the cell-cost paths are current.</li>
-    <li>High-cardinality groupings are the known weakness, and <code>--threads</code> should not be used for them.</li>
-    <li>It is one of the first tools built outside lexsys-tools on its contract package, on a compiler that is itself changing: the sources pin a compiler commit.</li>
+    <li>What is listed above works and is tested. The list of what is missing is above too.</li>
+    <li>The speed numbers are for one file shape on two machines, plus a set of harder cases on <a href="benchmarks.html">the benchmarks page</a>, where it loses some.</li>
+    <li>The program is built with one pinned compiler version, and that compiler is still changing.</li>
   </ul>
-  <p style="margin:.8rem 0 0"><a href="evidence.html">The evidence</a> · <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/adversarial.md">The adversarial round</a></p>
 </aside>
 
 </main>
 
 <footer><div class="wrap">
-  <a href="https://github.com/alpibrusl/lexsys-table">Repository</a><a href="evidence.html">Evidence</a>
+  <a href="https://github.com/alpibrusl/lexsys-table">Repository</a><a href="benchmarks.html">Benchmarks</a>
   <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/select.md">Select</a><a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/filter.md">Filter and group</a>
-  <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">Threads</a><a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/history.md">History</a>
+  <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">Threads</a><a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">Backlog</a>
   <span>Built on <a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> · EUPL-1.2</span>
 </div></footer>
 </body>
