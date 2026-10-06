@@ -36,6 +36,7 @@ How `table` is put together, and what its authority row says. Short on purpose: 
 | `engine.ls` | what is done with one row: counted, ragged (never used), kept by `--where`, then written or added to its group. Both reads call the same functions |
 | `agg.ls` | groups and their sums, in bounded memory; the output order is the key order or `--sort` |
 | `scan.ls`, `par.ls` | `--threads`: ranges of the file read by threads, each assuming it starts at a record; the parent takes them in file order and reads again any it cannot trust, so the answer is the one-core answer |
+| `sorter.ls` | `--order-by`: the rows held, their keys and an index sorted by a stable merge; with `--top` or a page it keeps only the best rows, and past `--max-sort-rows` it refuses. Its state is the grouping's value, used for rows; it reads on one core |
 | `writer.ls` | the fields as CSV (minimal quoting) or JSON |
 | `generated/table/built.ls` | the authority, the schema and the compiler pin, embedded in the binary; written by `scripts/manifest.py` |
 
