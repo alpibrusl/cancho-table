@@ -51,7 +51,7 @@ lex-sys programs get their capabilities (files, directories, standard streams, t
 | `args` | the flags and the file name |
 | `file_read` | reading the input file |
 | `fs_read("")` | the path is only known at run time, so the row cannot name it; `table introspect` lists this under `not_narrowable` |
-| `dir_read` | directory access used to open the path (`--root` confinement) |
+| `dir_read` | read through a directory handle: a label that names no path, because the handle is the authority (lex-sys `docs/directory-handles.md`); a row with `dir_read` and not `fs_read` can reach only what handles it was given |
 | `heap` | memory for the record, the page and the groups |
 | `io_write` | standard output |
 | `err_write` | standard error |
