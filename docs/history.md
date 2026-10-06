@@ -295,7 +295,7 @@ length byte); `distinct` over text; the second aggregate refusing (which one is 
 longer than `--max-line-bytes` that is more than a chunk (and one that ends 100 bytes into the next chunk, the case where
 a line held over looks like a whole one). Each plan runs sequentially and with 3, 4, 16 and 64 threads and ranges of
 7 to 4096 bytes, and the answers must be equal and equal to Python's.
-`scripts/cellcost_mutants.py` (new) has 45 mutants of the new paths, **all killed** (on the Linux box; the Mac run of an earlier
+`scripts/cellcost_mutants.py` (new) lists 44 mutants of the new paths (this said 45; the script is the count), **all killed** (on the Linux box; the Mac run of an earlier
 version of the list too), and three more that are equivalent and are said so in the script: an unquoted field is never able to hold a delimiter or an LF, so testing for them changes nothing; and the
 key `add_fast` builds is only looked for, so a wrong length byte in it makes a miss and the row takes the slow way, with
 the same answer. The first run of the mutants had seven survivors, two of them those equivalent ones and five real (the tests checked a refusal's status and not its
