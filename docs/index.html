@@ -9,8 +9,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>table: ask a CSV a question, get an exact answer</title>
-<meta name="description" content="A small command-line tool that picks columns, filters rows and counts or sums by a key in one pass over a CSV or TSV file. Exact whole-number arithmetic, small memory, every refusal a named rule with a repair. Early.">
+<title>table: a deterministic data primitive for AI agents</title>
+<meta name="description" content="Query CSV and TSV data with explicit semantics, bounded resources, structured refusals and machine-verifiable capabilities. A command line for people and AI agents, written in lex-sys. Early.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b7a75'/%3E%3Cpath d='M7 11h18M7 17h18M7 23h18M13 8v18' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
@@ -124,6 +124,14 @@ h3.task { margin: 0 0 .15rem; font-size: 1.1rem; }
 .tasks pre.code { margin-top: .6rem; }
 ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .35rem 0; }
 .fn { color: var(--muted); font-size: .85rem; margin-top: .8rem; }
+svg .tt { fill: var(--fg); font: 600 13px var(--font); } svg .ss { fill: var(--muted); font: 11.5px var(--font); }
+svg .bad { fill: var(--surface); stroke: var(--bad); stroke-width: 1.6; } svg .arb { stroke: var(--bad); stroke-width: 1.5; fill: none; }
+.diagram { max-width: 26rem; margin: 1.6rem auto 0; }
+ul.why { list-style: none; padding: 0; margin: 1.4rem 0 0; display: grid; gap: .8rem; }
+ul.why li { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .8rem 1.1rem; }
+ul.why b { display: block; }
+ul.why span { color: var(--muted); font-size: .95rem; }
+.big { font-size: 1.25rem; font-weight: 650; letter-spacing: -.01em; margin: 1.2rem 0 0; }
 </style>
 </head>
 <body>
@@ -131,7 +139,7 @@ ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .3
 <header class="top"><div class="wrap">
   <a class="brand" href="#top">table</a>
   <nav aria-label="Sections">
-    <a href="#can" class="opt">What you can do</a><a href="#cannot" class="opt">What you cannot</a><a href="#fast" class="opt">How fast</a><a href="#start">Try it</a>
+    <a href="#flow" class="opt">A flow</a><a href="#why" class="opt">Why table</a><a href="#can" class="opt">What you can do</a><a href="#agent" class="opt">For agents</a><a href="#start">Quick start</a>
     <a href="https://github.com/alpibrusl/lexsys-table">GitHub</a>
   </nav>
 </div></header>
@@ -141,9 +149,10 @@ ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .3
 <div class="hero" id="top">
   <div>
     <a class="badge" href="#status"><i></i>Early · it works, it is not finished</a>
-    <h1>Ask a CSV a question. Get an exact answer.</h1>
-    <p class="lead">A small command-line tool. Pick columns, filter rows, count and sum by a key, in one pass over a CSV or TSV file. Memory stays small however big the file is.</p>
-    <div class="cta"><a class="btn primary" href="#can">What you can do</a><a class="btn ghost" href="#start">Try it</a></div>
+    <h1>A deterministic data primitive for AI agents.</h1>
+    <p class="lead">Query CSV and TSV data with explicit semantics, bounded resources, structured refusals, and machine-verifiable capabilities.</p>
+    <p class="sub">Ask a CSV a question, get an exact answer: with a command line and flags, not a chat box. The same tool for a person and for an agent.</p>
+    <div class="cta"><a class="btn primary" href="#flow">See a complete flow</a><a class="btn ghost" href="#start">Quick start</a></div>
   </div>
 <!-- gen:hero -->
 <div class="term" role="img" aria-label="One command on a small file and what it prints"><div class="bar"><i></i><i></i><i></i></div>
@@ -155,9 +164,60 @@ Zed,1,64</pre></div>
 <!-- /gen:hero -->
 </div>
 
+<section id="flow">
+  <h2>One complete flow</h2>
+  <p class="sub">Ask, get refused with a repair, run the repair. The repair is the corrected command, and every line below is what the built program prints, on the five-line file shown under &ldquo;What you can do now&rdquo;.</p>
+<!-- gen:flow -->
+<pre class="code" tabindex="0"><span class="c"># Ask: the customer and bytes of the orders with status 200</span>
+<span class="c">$</span> table --where "status = 200" --select Customer,bytes orders.csv
+{"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "status = 200", "--select", "customer,bytes", "orders.csv"]}]}}
+<span class="r"># exit status 3; the rule, hint, repair of the JSON line it prints</span>
+<span class="c"># The tool offered the corrected command. Run it:</span>
+<span class="c">$</span> table --where 'status = 200' --select customer,bytes orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["customer","bytes"],"rows":[["Doe, Jane","512"],["Doe, Jane","2048"],["Zed","64"]],"row_count":3,"truncated":false,"next":null},"meta":{"version":"0.3.0"}}</pre>
+<!-- /gen:flow -->
+</section>
+
+<section id="why">
+  <h2>Why table?</h2>
+  <p class="big">Most data tools optimise for flexibility. <code>table</code> optimises for predictability.</p>
+  <ul class="why">
+<li><b>Explicit types</b><span>A column is text unless you write <code>:int</code>; then it is an exact 64-bit integer, and a cell that is not one is refused. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/filter.md">docs/filter.md</a></span></li>
+<li><b>Explicit operations</b><span>One plan from flags, resolved against the header before any row is read. No expressions, no functions. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/filter.md">docs/filter.md</a></span></li>
+<li><b>Bounded resource use</b><span>Rows, line and record size, groups, distinct values and group state each have a limit with its own rule (<a href="#limits">the limits</a>). Peak memory was about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). <a href="benchmarks.html">Benchmarks</a></span></li>
+<li><b>No implicit network access</b><span>The authority row below lists what the program can reach: no <code>net_out</code>, <code>net_in</code>, <code>ffi</code> or <code>clock</code>, and nothing written to disk. <code>lex-sys authority</code> derives it, and CI fails if the binary differs from the committed <a href="https://github.com/alpibrusl/lexsys-table/blob/main/manifests/table.authority.json">manifest</a>. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/architecture.md">docs/architecture.md</a></span></li>
+<li><b>Machine-readable errors</b><span>One JSON line against a schema (<code>table.v2</code>). A refusal is <code>{code, rule, message, hint, repair, detail}</code>. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/refusals.md">docs/refusals.md</a></span></li>
+<li><b>Repair hints</b><span>A refusal says how to fix the request: a command to run, a choice of commands, or why there is none. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/refusals.md">docs/refusals.md</a></span></li>
+<li><b>Capability introspection</b><span><code>table introspect</code> prints the flags, limits, rules and authority; <code>table skill</code> prints a guide for an agent. <a href="#agent">Excerpts below</a></span></li>
+<li><b>The same bytes on any number of cores</b><span><code>--threads N</code> gives the one-core answer, the same refusal included. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">docs/parallel.md</a></span></li>
+  </ul>
+<figure class="figure diagram">
+  <svg viewBox="0 0 340 400" role="img" aria-labelledby="dg-t dg-d">
+    <title id="dg-t">How an agent uses table</title>
+    <desc id="dg-d">A user or agent reads the declared interface (introspect and skill), sends a validated command, which runs in capability-bounded execution and returns an exact result. Validation or execution can instead return a structured refusal with a rule, a hint and a repair. The repair options (retry, choose, none) lead back to the command.</desc>
+    <defs>
+      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--muted)"/></marker>
+      <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--bad)"/></marker>
+    </defs>
+    <rect class="box" x="8" y="8" width="150" height="50" rx="9"/><text class="tt" x="83" y="30" text-anchor="middle">User or agent</text><text class="ss" x="83" y="47" text-anchor="middle">asks with flags</text>
+    <rect class="box" x="8" y="88" width="150" height="50" rx="9"/><text class="tt" x="83" y="110" text-anchor="middle">Declared interface</text><text class="ss" x="83" y="127" text-anchor="middle">introspect, skill</text>
+    <rect class="hot" x="8" y="168" width="150" height="50" rx="9"/><text class="tt" x="83" y="190" text-anchor="middle">Validated command</text><text class="ss" x="83" y="207" text-anchor="middle">checked on the header</text>
+    <rect class="box" x="8" y="248" width="150" height="50" rx="9"/><text class="tt" x="83" y="270" text-anchor="middle">Bounded execution</text><text class="ss" x="83" y="287" text-anchor="middle">limits, authority row</text>
+    <rect class="box" x="8" y="328" width="150" height="50" rx="9"/><text class="tt" x="83" y="350" text-anchor="middle">Exact result</text><text class="ss" x="83" y="367" text-anchor="middle">JSON line or CSV</text>
+    <path class="ar" d="M83 58V86" marker-end="url(#ah)"/><path class="ar" d="M83 138V166" marker-end="url(#ah)"/><path class="ar" d="M83 218V246" marker-end="url(#ah)"/><path class="ar" d="M83 298V326" marker-end="url(#ah)"/>
+    <rect class="bad" x="182" y="248" width="150" height="50" rx="9"/><text class="tt" x="257" y="270" text-anchor="middle">Structured refusal</text><text class="ss" x="257" y="287" text-anchor="middle">rule, hint, repair</text>
+    <rect class="box" x="182" y="168" width="150" height="50" rx="9"/><text class="tt" x="257" y="190" text-anchor="middle">Repair options</text><text class="ss" x="257" y="207" text-anchor="middle">retry, choose, none</text>
+    <path class="arb" d="M158 273H180" marker-end="url(#ab)"/><path class="arb" d="M158 205L180 262" marker-end="url(#ab)" stroke-dasharray="4 3"/>
+    <path class="arb" d="M257 248V220" marker-end="url(#ab)"/><path class="arb" d="M182 193H160" marker-end="url(#ab)"/>
+    <text class="ss" x="170" y="238">refused</text><text class="ss" x="166" y="160">run the repair</text>
+  </svg>
+  <figcaption>A request is checked before it runs, runs inside its limits and authority, and either answers exactly or is refused with a way back.</figcaption>
+</figure>
+</section>
+
 <section id="can">
   <h2>What you can do now</h2>
-  <p class="sub">Every example below runs on this five-line file, and the output is what the program prints.</p>
+  <p class="sub">Every example runs on this five-line file, and the output is what the program prints.</p>
   <pre class="code" tabindex="0"><code>id,customer,status,bytes
 1,"Doe, Jane",200,512
 2,Acme,404,
@@ -234,14 +294,19 @@ status,count
   </div>
   <div>
     <h3 class="task">See what a bad request looks like</h3>
-    <p>A refusal has a fixed rule name, an exit status and, where one exists, a repair: here, the command with the right spelling. A cell that is not a whole number (an empty one too) is refused with its row, line and column.</p>
+    <p>A refusal has a fixed rule name, an exit status and, where one exists, a repair. A cell that is not a whole number, an empty one too, is refused with its row, line and column; there is no repair here, because what the cell was meant to be is not known.</p>
 <!-- gen:t-refuse -->
-<pre class="code" tabindex="0"><span class="c">$</span> table --select Status orders.csv
-{"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--select", "status", "orders.csv"]}]}}
-<span class="r"># exit status 3; the rule, the hint and the repair from the JSON line it prints</span></pre>
+<pre class="code" tabindex="0"><span class="c">$</span> table --where "bytes:int &gt; 100" --select id orders.csv
+{"rule": "value.not-integer", "hint": "keep out the rows with such a cell with --where, or do not ask for an integer of this column", "detail": {"path": "orders.csv", "context": "where", "column": "bytes", "row": 2, "line": 3, "value": "", "value_truncated": false}}
+<span class="r"># exit status 8; the rule, hint, detail of the JSON line it prints</span></pre>
 <!-- /gen:t-refuse -->
   </div>
   </div>
+  <details class="more" id="limits"><summary>The limits, and what they default to</summary>
+<!-- gen:limits -->
+<div class="fitwrap"><table class="fit"><thead><tr><th>limit</th><th>default</th><th>ceiling</th></tr></thead><tbody><tr><th><code>--threads</code></th><td class="num">1</td><td class="num">64</td></tr><tr><th><code>--chunk-bytes</code></th><td class="num">4,194,304</td><td class="num">1,073,741,824</td></tr><tr><th><code>--parallel-min-bytes</code></th><td class="num">1,048,576</td><td class="num">1,073,741,824</td></tr><tr><th><code>--limit</code></th><td class="num">1,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-bytes</code></th><td class="num">1,048,576</td><td class="num">67,108,864</td></tr><tr><th><code>--max-groups</code></th><td class="num">100,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-distinct</code></th><td class="num">100,000</td><td class="num">10,000,000</td></tr><tr><th><code>--max-state-bytes</code></th><td class="num">67,108,864</td><td class="num">1,073,741,824</td></tr><tr><th><code>--max-rows</code></th><td class="num">10,000,000</td><td class="num">1,000,000,000</td></tr><tr><th><code>--max-line-bytes</code></th><td class="num">1,048,576</td><td class="num">16,777,216</td></tr></tbody></table></div>
+<!-- /gen:limits -->
+  </details>
   <details class="more"><summary>All <!-- gen:nrules -->
 40
 <!-- /gen:nrules --> refusal rules</summary>
@@ -249,11 +314,63 @@ status,count
 <div class="fitwrap"><table class="fit"><thead><tr><th>rule</th><th>exit</th><th>a repair?</th><th>what it refuses</th></tr></thead><tbody><tr><th><code>args.unknown-flag</code></th><td class="num">2</td><td>sometimes</td><td>a flag that is not in the tool's table</td></tr><tr><th><code>args.missing-value</code></th><td class="num">2</td><td>never</td><td>a flag that takes a value was given none</td></tr><tr><th><code>args.bad-value</code></th><td class="num">2</td><td>never</td><td>a flag's value is not of the flag's kind</td></tr><tr><th><code>args.duplicate-flag</code></th><td class="num">2</td><td>never</td><td>the same flag was given twice</td></tr><tr><th><code>args.conflict</code></th><td class="num">2</td><td>never</td><td>two flags that exclude each other were both given</td></tr><tr><th><code>args.required-flag</code></th><td class="num">2</td><td>never</td><td>a flag the tool needs was not given</td></tr><tr><th><code>args.missing-operand</code></th><td class="num">2</td><td>never</td><td>an operand the tool needs was not given</td></tr><tr><th><code>args.too-many-operands</code></th><td class="num">2</td><td>never</td><td>more operands than the tool takes</td></tr><tr><th><code>path.empty</code></th><td class="num">2</td><td>never</td><td>an empty path</td></tr><tr><th><code>path.dotdot</code></th><td class="num">2</td><td>sometimes</td><td>a path with a `..` component</td></tr><tr><th><code>path.absolute</code></th><td class="num">2</td><td>always</td><td>an absolute path where one relative to --root is wanted</td></tr><tr><th><code>path.outside-root</code></th><td class="num">4</td><td>never</td><td>an absolute path that is not under --root</td></tr><tr><th><code>path.too-long</code></th><td class="num">2</td><td>never</td><td>a path longer than 4096 bytes</td></tr><tr><th><code>path.symlink</code></th><td class="num">4</td><td>never</td><td>a path that runs through a symbolic link, which the tool does not follow</td></tr><tr><th><code>io.not-found</code></th><td class="num">3</td><td>never</td><td>a named input does not exist</td></tr><tr><th><code>io.not-a-directory</code></th><td class="num">3</td><td>never</td><td>a path runs through something that is not a directory</td></tr><tr><th><code>io.is-a-directory</code></th><td class="num">2</td><td>never</td><td>a directory where a file is wanted</td></tr><tr><th><code>io.permission-denied</code></th><td class="num">4</td><td>never</td><td>the operating system refused access</td></tr><tr><th><code>io.read-failed</code></th><td class="num">1</td><td>never</td><td>the operating system failed a read</td></tr><tr><th><code>limit.line-too-long</code></th><td class="num">8</td><td>sometimes</td><td>a line longer than --max-line-bytes</td></tr><tr><th><code>limit.header-too-large</code></th><td class="num">8</td><td>never</td><td>the header record holds more than --max-line-bytes bytes</td></tr><tr><th><code>limit.record-too-large</code></th><td class="num">8</td><td>never</td><td>a record read for --select, --where or --group holds more than --max-line-bytes bytes</td></tr><tr><th><code>limit.output-too-large</code></th><td class="num">8</td><td>never</td><td>the first row of a page is longer than --max-bytes</td></tr><tr><th><code>limit.too-many-rows</code></th><td class="num">8</td><td>never</td><td>--format csv reached --max-rows with rows left unread</td></tr><tr><th><code>limit.too-many-groups</code></th><td class="num">8</td><td>never</td><td>more groups than --max-groups</td></tr><tr><th><code>limit.too-many-distinct</code></th><td class="num">8</td><td>never</td><td>more distinct values than --max-distinct</td></tr><tr><th><code>limit.state-too-large</code></th><td class="num">8</td><td>never</td><td>the keys and values kept for groups hold more than --max-state-bytes bytes</td></tr><tr><th><code>parse.csv-ragged-row</code></th><td class="num">8</td><td>never</td><td>a row has a different number of fields than the header</td></tr><tr><th><code>parse.csv-bad-quote</code></th><td class="num">8</td><td>never</td><td>a closing quote is followed by something other than the delimiter or the end of the record</td></tr><tr><th><code>parse.csv-unterminated-quote</code></th><td class="num">8</td><td>never</td><td>a quoted field is still open at the end of the input</td></tr><tr><th><code>select.unknown-column</code></th><td class="num">3</td><td>sometimes</td><td>a name or position in --select that is not a column of the header</td></tr><tr><th><code>select.ambiguous-column</code></th><td class="num">8</td><td>never</td><td>a name in --select that is the name of more than one column</td></tr><tr><th><code>column.unknown</code></th><td class="num">3</td><td>never</td><td>a name or position in --where, --group or --agg that is not a column of the header</td></tr><tr><th><code>column.ambiguous</code></th><td class="num">8</td><td>never</td><td>a name in --where, --group or --agg that is the name of more than one column</td></tr><tr><th><code>where.syntax</code></th><td class="num">2</td><td>never</td><td>--where is not an expression of the grammar, at the offset the detail gives</td></tr><tr><th><code>agg.bad-spec</code></th><td class="num">2</td><td>never</td><td>an item of --agg that is not count, sum:COL, min:COL, max:COL or distinct:COL</td></tr><tr><th><code>sort.unknown-key</code></th><td class="num">2</td><td>never</td><td>--sort names no output column of the grouping</td></tr><tr><th><code>value.not-integer</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not)</td></tr><tr><th><code>value.integer-overflow</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max does not fit 64 bits</td></tr><tr><th><code>agg.sum-overflow</code></th><td class="num">8</td><td>never</td><td>a sum that would not fit 64 bits</td></tr></tbody></table></div>
 <!-- /gen:rules -->
   </details>
-  <details class="more"><summary>The limits, and what they default to</summary>
-<!-- gen:limits -->
-<div class="fitwrap"><table class="fit"><thead><tr><th>limit</th><th>default</th><th>ceiling</th></tr></thead><tbody><tr><th><code>--threads</code></th><td class="num">1</td><td class="num">64</td></tr><tr><th><code>--chunk-bytes</code></th><td class="num">4,194,304</td><td class="num">1,073,741,824</td></tr><tr><th><code>--parallel-min-bytes</code></th><td class="num">1,048,576</td><td class="num">1,073,741,824</td></tr><tr><th><code>--limit</code></th><td class="num">1,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-bytes</code></th><td class="num">1,048,576</td><td class="num">67,108,864</td></tr><tr><th><code>--max-groups</code></th><td class="num">100,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-distinct</code></th><td class="num">100,000</td><td class="num">10,000,000</td></tr><tr><th><code>--max-state-bytes</code></th><td class="num">67,108,864</td><td class="num">1,073,741,824</td></tr><tr><th><code>--max-rows</code></th><td class="num">10,000,000</td><td class="num">1,000,000,000</td></tr><tr><th><code>--max-line-bytes</code></th><td class="num">1,048,576</td><td class="num">16,777,216</td></tr></tbody></table></div>
-<!-- /gen:limits -->
-  </details>
+</section>
+
+<section id="agent">
+  <h2>Built to be read by an agent</h2>
+  <p class="sub"><code>table introspect</code> and <code>table skill</code> are generated from the same tables the code parses its flags with, so they cannot disagree with the program. An agent can learn the interface, the limits, the rules and the authority from the binary itself. The protocol for acting on a refusal is in <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/refusals.md">docs/refusals.md</a>.</p>
+  <div class="two">
+    <div class="figure"><h3><code>table introspect</code></h3>
+<!-- gen:agentio -->
+<pre class="code" tabindex="0">$ table introspect          # one JSON document; excerpts, long lines cut
+
+tool        table 0.3.0   (compiler f8ebe98e)
+flags       20, for example
+  --root     path  resolve FILE relative to this directory and refuse paths outs…
+  --select   text  the columns to return, named by their header separated by com…
+  --where    text  only the rows that satisfy this: conditions joined by and, ea…
+  --group    text  count the rows by these columns, named as for select, instead…
+  --agg      text  with --group (or alone), what to compute per group: count, su…
+  --threads  nat   how many threads read the file (1 to 64), for rows and groups…
+limits      10, for example
+  --max-rows         default 10,000,000   ceiling 1,000,000,000
+  --max-groups       default 100,000      ceiling 1,000,000
+  --max-state-bytes  default 67,108,864   ceiling 1,073,741,824
+  --threads          default 1            ceiling 64
+rules       40, for example
+  args.unknown-flag        exit 2   a repair: sometimes
+  select.unknown-column    exit 3   a repair: sometimes
+  value.not-integer        exit 8   a repair: never
+  limit.line-too-long      exit 8   a repair: sometimes
+  limit.too-many-groups    exit 8   a repair: never
+guarantees  deterministic: true   bounded memory: true   read-only
+            reads environment: false   reads clock: false   integers only: true
+authority   args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_write
+            bounded: true   foreign symbols: 0</pre>
+<!-- /gen:agentio -->
+    </div>
+    <div class="figure"><h3><code>table skill</code></h3>
+<!-- gen:skill -->
+<pre class="code" tabindex="0">$ table skill          # a guide in Markdown; the first lines, long lines cut
+---
+name: table
+description: A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its sh…
+---
+
+# table 0.3.0
+
+A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some col…
+
+```
+table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE | tabl…
+```
+
+## Output
+
+One JSON object on one line, schema `table.v2`: `{ok, command, schema, data, error, errors, meta}`. `ok` is f…</pre>
+<!-- /gen:skill -->
+    </div>
+  </div>
 </section>
 
 <section id="cannot">
@@ -268,10 +385,60 @@ status,count
   <p class="note">JSON lines, joins, <code>mean</code>, decimals and standard input are on the <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
 </section>
 
+<section id="start">
+  <h2>Quick start</h2>
+  <p class="sub">You need Rust, <code>git</code>, <code>clang</code> and Python 3. On a 16-core Mac with Rust installed and its dependencies already downloaded, the compiler built in 19 seconds and <code>table</code> in 3. The clones and a first-time dependency download are extra: allow a few minutes the first time.</p>
+  <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/lex-sys
+git clone https://github.com/alpibrusl/lexsys-table &amp;&amp; cd lexsys-table
+REV=$(sed -n 's/^lex-sys *= *"\([0-9a-f]*\)".*/\1/p' lex-sys.toml)
+(cd ../lex-sys &amp;&amp; git fetch -q origin &amp;&amp; git checkout "$REV" &amp;&amp; cargo build --release -p lex-sys)
+export PATH=$PWD/../lex-sys/target/release:$PWD/build:$PATH
+lex-sys build                       # builds build/table
+
+cat &gt; orders.csv &lt;&lt;'EOF'
+id,customer,status,bytes
+1,"Doe, Jane",200,512
+2,Acme,404,
+3,"Doe, Jane",200,2048
+4,Acme,500,128
+5,Zed,200,64
+EOF</code></pre>
+  <p class="note" style="margin-top:.8rem">The compiler is the commit <code>lex-sys.toml</code> pins. Then three commands, and a refusal:</p>
+<!-- gen:qs -->
+<pre class="code" tabindex="0"><span class="c">$</span> table orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"headers":["id","customer","status","bytes"],"column_count":4,"row_count":5,"truncated":false},"meta":{"version":"0.3.0"}}
+<span class="c">$</span> table --select customer,bytes --format csv orders.csv
+customer,bytes
+"Doe, Jane",512
+Acme,
+"Doe, Jane",2048
+Acme,128
+Zed,64
+<span class="c">$</span> table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv
+customer,count,sum:bytes
+"Doe, Jane",2,2560
+Acme,1,128
+Zed,1,64
+<span class="c">$</span> table --where "status = 200" --select Customer,bytes orders.csv
+{"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "status = 200", "--select", "customer,bytes", "orders.csv"]}]}}
+<span class="r"># exit status 3; the rule, hint, repair of the JSON line it prints</span></pre>
+<!-- /gen:qs -->
+</section>
+
+<section id="lexsys">
+  <h2>Built in lex-sys, with an authority the compiler wrote</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> is a language whose compiler writes down what a program may do (<code>lex-sys authority</code>). For <code>table</code> that is the line below: it can read its arguments and the file, allocate memory, start threads and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file. CI fails if the binary says otherwise. Why each label is there, and what a row cannot say: <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/architecture.md">docs/architecture.md</a>.</p>
+<!-- gen:authority -->
+<pre class="code" tabindex="0"><span class="c"># manifests/table.authority.json</span>
+table    args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_write
+<span class="c"># bounded: true; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>
+<!-- /gen:authority -->
+</section>
+
 <section id="fast">
   <h2>How fast</h2>
-  <p class="sub">A <em>core</em> is one of the independent workers inside a processor. By default <code>table</code> uses one; <code>--threads 16</code> uses sixteen. <a href="https://duckdb.org">DuckDB</a> is a full database engine and a popular, fast way to query a CSV, so it is a fair yardstick. On these four questions one core of <code>table</code> is about as fast as, or faster than, DuckDB on all sixteen. With many distinct keys in a group-by, DuckDB on all cores wins.</p>
-  <h3 style="margin-top:2rem">Time to answer on the same 1,000,000-row, 32 MB CSV, in seconds (lower is better)</h3>
+  <p class="sub">Supporting evidence, not the point: predictability costs little speed. A <em>core</em> is one of the independent workers inside a processor; <code>table</code> uses one by default and <code>--threads 16</code> uses sixteen. <a href="https://duckdb.org">DuckDB</a> is a full database engine and a popular, fast way to query a CSV, so it is a fair yardstick. On these four questions one core of <code>table</code> is about as fast as, or faster than, DuckDB on all sixteen; with many distinct keys in a group-by, DuckDB on all cores wins.</p>
+  <h3 style="margin-top:1.6rem">Time to answer on the same 1,000,000-row, 32 MB CSV, in seconds (lower is better)</h3>
   <div class="fitwrap" tabindex="0" role="region" aria-label="Time to answer on one million rows"><table class="fit bench">
     <thead><tr><th>question</th><th class="num">table, 1 core</th><th class="num">table, 16 cores</th><th class="num">csvtk</th><th class="num">DuckDB, 1 core</th><th class="num">DuckDB, 16 cores</th></tr></thead>
     <tbody>
@@ -282,35 +449,12 @@ status,count
     </tbody>
   </table></div>
   <p class="fn">Apple-silicon Mac with 16 cores. The file has five columns and a key with a few distinct values. Best of five runs, output thrown away, each tool&rsquo;s answer checked against a Python answer first. csvtk 0.38.0 on one core (its filter is <code>filter</code> piped to <code>grep</code>); DuckDB 1.5.6. DuckDB&rsquo;s 16-core times for filter and pick-2-columns are from an earlier run on the same machine. Miller is not installed on the Mac: on a different machine (Linux, 6 shared cores) Miller took 0.300 s to filter, 0.438 s to count and 0.649 s to sum, against <code>table</code>&rsquo;s 0.074, 0.128 and 0.140 s there. <a href="benchmarks.html">All the tables, and how to rerun them</a>.</p>
-  <h3 style="margin-top:2rem">Where it is slower</h3>
+  <h3 style="margin-top:1.6rem">Where it is slower</h3>
   <ul class="plain">
     <li><strong>A group-by with a million distinct keys:</strong> 3.4 times slower than DuckDB on one core, and 9.4 times slower than DuckDB on all 16 (Mac). More cores do not help it.</li>
     <li><strong>Sorting rows:</strong> there is no row sort yet.</li>
     <li><strong><code>distinct</code> over a column of unique values:</strong> 1.4 times slower than DuckDB on one core.</li>
   </ul>
-  <p class="note">Memory: about 2 MB on the 32 MB file, and 1.6 to 1.8 MB on a 1 GB file, on one core (more cores use more: 36 to 50 MB with eight on the 1 GB file).</p>
-</section>
-
-<section id="start">
-  <h2>Try it</h2>
-  <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/lex-sys
-git clone https://github.com/alpibrusl/lexsys-table &amp;&amp; cd lexsys-table
-REV=$(sed -n 's/^lex-sys *= *"\([0-9a-f]*\)".*/\1/p' lex-sys.toml)
-(cd ../lex-sys &amp;&amp; git fetch -q origin &amp;&amp; git checkout "$REV" &amp;&amp; cargo build --release -p lex-sys)
-export PATH=$PWD/../lex-sys/target/release:$PWD/build:$PATH
-lex-sys build                       # builds build/table
-table --select customer,bytes --format csv orders.csv    # with the file above saved as orders.csv</code></pre>
-  <p class="note" style="margin-top:.8rem">The compiler is the commit <code>lex-sys.toml</code> pins. You need Rust, <code>clang</code> and Python 3. <code>table introspect</code> lists every flag, rule and limit; <code>table skill</code> prints a short guide for an agent.</p>
-</section>
-
-<section id="lexsys">
-  <h2>Built in lex-sys</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> is a language whose compiler writes down what a program may do. For <code>table</code> that is the line below: it can read its arguments and the file, allocate memory, start threads and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file. The compiler derived it, and CI fails if the binary says otherwise.</p>
-<!-- gen:authority -->
-<pre class="code" tabindex="0"><span class="c"># manifests/table.authority.json</span>
-table    args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_write
-<span class="c"># bounded: true; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>
-<!-- /gen:authority -->
 </section>
 
 <aside class="status" id="status">
@@ -326,6 +470,7 @@ table    args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_write
 
 <footer><div class="wrap">
   <a href="https://github.com/alpibrusl/lexsys-table">Repository</a><a href="benchmarks.html">Benchmarks</a>
+  <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/refusals.md">Refusals</a><a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/architecture.md">Architecture</a>
   <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/select.md">Select</a><a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/filter.md">Filter and group</a>
   <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">Threads</a><a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">Backlog</a>
   <span>Built on <a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> · EUPL-1.2</span>

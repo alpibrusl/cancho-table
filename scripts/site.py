@@ -19,7 +19,14 @@ cites, next to its conditions). What is generated:
 
     t-NAME        README.md, index.html   the example for one task: the command and
                                           what the built binary prints for it
+    flow          README.md, index.html   one complete flow: a command, a refusal with
+                                          its repair, the repair run
+    qs            README.md, index.html   the quick start's commands and output
     hero          index.html              the first example
+    agentio       index.html              excerpts of `table introspect`
+    skill         index.html              the first lines of `table skill`
+    exit-codes, rules, examples   docs/refusals.md   the refusal protocol, from introspect
+                                          and from real refusals
     authority     index.html              the row of manifests/table.authority.json
                                           (checked against `table introspect`, and
                                           for net, ffi and clock)
@@ -55,6 +62,7 @@ FIXTURE = """id,customer,status,bytes
 
 # What is shown is what is typed; the argv run is shlex.split of it.
 DEMOS = {
+    "shape": "table orders.csv",
     "select": "table --select customer,bytes --format csv orders.csv",
     "where": """table --where "bytes != '' and bytes:int > 100" --select id,customer --format csv orders.csv""",
     "group": """table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv""",
@@ -62,13 +70,18 @@ DEMOS = {
     "page2": "table --select id,customer --limit 2 --from 2 orders.csv",
     "csv": """table --where "status = 200" --format csv orders.csv""",
     "cores": "table --threads 4 --group status --agg count --format csv orders.csv",
-    "unknown": "table --select Status orders.csv",
+    "notint": """table --where "bytes:int > 100" --select id orders.csv""",
+    "flow_bad": """table --where "status = 200" --select Customer,bytes orders.csv""",
+    "retry_bad": "table --max-line-bytes 10 orders.csv",
 }
+# demos shown as the members of the JSON line that matter, since the line is long
+SUMMARY = {"flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"]}
 # task name -> the demos shown for it
 TASKS = {
     "select": ["select"], "filter": ["where"], "group": ["group"], "page": ["page1", "page2"],
-    "csv": ["csv"], "cores": ["cores"], "refuse": ["unknown"],
+    "csv": ["csv"], "cores": ["cores"], "refuse": ["notint"],
 }
+QS = ["shape", "select", "group"]
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
 
 
@@ -83,10 +96,7 @@ def e(s):
 # --- running things ----------------------------------------------------------
 
 
-def run(display, binary, tmp):
-    """Run a typed command in the fixture directory, `table` being the binary
-    (named `table` in argv). Returns (output, exit status)."""
-    words = shlex.split(display)
+def run_words(words, binary, tmp):
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"}
     r = subprocess.run(words, executable=str(binary), cwd=tmp, env=env,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -99,24 +109,44 @@ def introspect(binary, tmp):
     return json.loads(r.stdout)
 
 
-def shown(ctx, key):
-    """(typed command, what is printed, status). The refusal is shown as the three
-    members of the JSON line that matter, since the line is long."""
-    out, status = ctx["run"](DEMOS[key])
-    if key == "unknown":
+def item(ctx, key):
+    """(typed command, what is printed, status, note). A refusal is shown as the
+    members of its JSON line that matter."""
+    words = shlex.split(DEMOS[key])
+    out, status = ctx["run"](words)
+    if key in SUMMARY:
         doc = json.loads(out)
-        err = doc["error"]
         if doc["ok"] or status == 0:
             raise Drift("the demo %s no longer refuses" % key)
-        out = json.dumps({"rule": err["rule"], "hint": err["hint"], "repair": err["repair"]}, ensure_ascii=False)
-        return DEMOS[key], out, status, "the rule, the hint and the repair from the JSON line it prints"
+        err = doc["error"]
+        out = json.dumps({k: err[k] for k in SUMMARY[key]}, ensure_ascii=False)
+        return DEMOS[key], out, status, "the %s of the JSON line it prints" % ", ".join(SUMMARY[key])
     return DEMOS[key], out, status, None
 
 
-def lines(ctx, task, html_mode):
+def flow_items(ctx):
+    """Ask, be refused with a repair, run the repair."""
+    first = item(ctx, "flow_bad")
+    out, status = ctx["run"](shlex.split(DEMOS["flow_bad"]))
+    repair = json.loads(out)["error"]["repair"]
+    if repair is None or repair["kind"] != "choose":
+        raise Drift("the flow's refusal no longer carries a choose repair")
+    argv = repair["options"][0]["argv"]
+    out2, status2 = ctx["run"](argv)
+    if status2 != 0:
+        raise Drift("the repair of the flow does not run")
+    return [("# Ask: the customer and bytes of the orders with status 200", None, 0, None),
+            first,
+            ("# The tool offered the corrected command. Run it:", None, 0, None),
+            (shlex.join(argv), out2, status2, None)]
+
+
+def render(items, html_mode):
     out = []
-    for key in TASKS[task]:
-        display, text, status, note = shown(ctx, key)
+    for display, text, status, note in items:
+        if text is None:
+            out.append(('<span class="c">%s</span>' % e(display)) if html_mode else display)
+            continue
         if html_mode:
             out.append('<span class="c">$</span> ' + e(display))
             out.append(e(text.rstrip("\n")))
@@ -130,18 +160,25 @@ def lines(ctx, task, html_mode):
     return "\n".join(out)
 
 
-def task_md(task):
-    return lambda ctx: "```console\n" + lines(ctx, task, False) + "\n```"
+def md_block(items):
+    return "```console\n" + render(items, False) + "\n```"
 
 
-def task_html(task):
-    return lambda ctx: '<pre class="code" tabindex="0">' + lines(ctx, task, True) + "</pre>"
+def html_pre(items):
+    return '<pre class="code" tabindex="0">' + render(items, True) + "</pre>"
+
+
+def task_items(ctx, task):
+    return [item(ctx, k) for k in TASKS[task]]
 
 
 def hero(ctx):
-    display, text, status, _ = shown(ctx, "group")
     return ('<div class="term" role="img" aria-label="One command on a small file and what it prints">'
-            '<div class="bar"><i></i><i></i><i></i></div>\n<pre>' + lines(ctx, "group", True) + "</pre></div>")
+            '<div class="bar"><i></i><i></i><i></i></div>\n<pre>' + render([item(ctx, "group")], True) + "</pre></div>")
+
+
+def qs_items(ctx):
+    return [item(ctx, k) for k in QS] + [item(ctx, "flow_bad")]
 
 
 def authority(ctx):
@@ -167,26 +204,95 @@ def limits(ctx):
             + rows + "</tbody></table></div>")
 
 
-def rules(ctx):
+def rules_html(ctx):
     rs = ctx["introspect"]["rules"]
     rows = "".join("<tr><th><code>%s</code></th><td class=\"num\">%d</td><td>%s</td><td>%s</td></tr>"
                    % (e(r["rule"]), r["exit"], e(r["repairable"]), e(r["summary"])) for r in rs)
     return ('<div class="fitwrap"><table class="fit"><thead><tr><th>rule</th><th>exit</th><th>a repair?</th><th>what it refuses</th></tr></thead><tbody>%s</tbody></table></div>'
-            % rows), len(rs)
+            % rows)
 
 
-def rules_region(ctx):
-    return rules(ctx)[0]
+def nrules(ctx):
+    return str(len(ctx["introspect"]["rules"]))
 
 
-def rules_count(ctx):
-    return str(rules(ctx)[1])
+def cut(s, n):
+    return s if len(s) <= n else s[: n - 1] + "\u2026"
+
+
+SAMPLE_RULES = ["args.unknown-flag", "select.unknown-column", "value.not-integer", "limit.line-too-long", "limit.too-many-groups"]
+SAMPLE_FLAGS = ["--root", "--select", "--where", "--group", "--agg", "--threads"]
+
+
+def agentio(ctx):
+    d = ctx["introspect"]
+    flags = {f["name"]: f for f in d["flags"]}
+    rules = {r["rule"]: r for r in d["rules"]}
+    lim = {l["name"]: l for l in d["limits"]}
+    try:
+        L = ["$ table introspect          # one JSON document; excerpts, long lines cut", "",
+             "tool        %s %s   (compiler %s)" % (d["tool"], d["version"], d["compiler"][:8]),
+             "flags       %d, for example" % len(d["flags"])]
+        for n in SAMPLE_FLAGS:
+            f = flags[n]
+            L.append("  %-10s %-5s %s" % (n, f["kind"], cut(f["help"], 62)))
+        L.append("limits      %d, for example" % len(d["limits"]))
+        for n in ("max-rows", "max-groups", "max-state-bytes", "threads"):
+            L.append("  --%-16s default %-12s ceiling %s" % (n, format(lim[n]["default"], ","), format(lim[n]["ceiling"], ",")))
+        L.append("rules       %d, for example" % len(d["rules"]))
+        for n in SAMPLE_RULES:
+            r = rules[n]
+            L.append("  %-24s exit %d   a repair: %s" % (n, r["exit"], r["repairable"]))
+        g = d["guarantees"]
+        L += ["guarantees  deterministic: %s   bounded memory: %s   read-only" % (str(g["deterministic"]).lower(), str(g["bounded_memory"]).lower()),
+              "            reads environment: %s   reads clock: %s   integers only: %s"
+              % (str(d["reads_environment"]).lower(), str(d["reads_clock"]).lower(), str(d["integers_only"]).lower()),
+              "authority   " + ", ".join(l["name"] + ('("%s")' % l["argument"] if l["argument"] is not None else "") for l in d["authority"]["labels"]),
+              "            bounded: %s   foreign symbols: %d" % (str(d["authority"]["bounded"]).lower(), len(d["authority"]["foreign_symbols"]))]
+    except KeyError as exc:
+        raise Drift("`table introspect` no longer lists %s" % exc)
+    return '<pre class="code" tabindex="0">' + e("\n".join(L)) + "</pre>"
+
+
+def skill(ctx):
+    out, status = ctx["run"](["table", "skill"])
+    if status != 0:
+        raise Drift("`table skill` failed")
+    head = out.splitlines()[:16]
+    return ('<pre class="code" tabindex="0">' + e("$ table skill          # a guide in Markdown; the first lines, long lines cut\n"
+            + "\n".join(cut(l, 110) for l in head)) + "</pre>")
+
+
+def exit_codes(ctx):
+    rows = "".join("| %d | `%s` | %s |\n" % (c["code"], c["name"], c["meaning"]) for c in ctx["introspect"]["exit_codes"])
+    return "| exit | `code` | meaning |\n|---:|---|---|\n" + rows.rstrip("\n")
+
+
+def rules_md(ctx):
+    rows = "".join("| `%s` | %d | %s | %s |\n" % (r["rule"], r["exit"], r["repairable"], r["summary"]) for r in ctx["introspect"]["rules"])
+    return "| `rule` | exit | repair | what it refuses |\n|---|---:|---|---|\n" + rows.rstrip("\n")
+
+
+def examples(ctx):
+    blocks = []
+    for key, kind in (("retry_bad", "retry"), ("flow_bad", "choose"), ("notint", "none")):
+        out, status = ctx["run"](shlex.split(DEMOS[key]))
+        err = json.loads(out)["error"]
+        if (err["repair"] or {}).get("kind") != kind:
+            raise Drift("the %s example no longer has a %s repair" % (key, kind))
+        text = "$ %s          # exit status %d\n%s" % (DEMOS[key], status, json.dumps(err, ensure_ascii=False))
+        blocks.append("```console\n" + text + "\n```")
+    return "\n\n".join(blocks)
 
 
 REGIONS = {
-    "README.md": {"t-" + t: task_md(t) for t in TASKS},
-    "docs/index.html": dict({"t-" + t: task_html(t) for t in TASKS},
-                            hero=hero, authority=authority, limits=limits, rules=rules_region, nrules=rules_count),
+    "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
+                      flow=lambda c: md_block(flow_items(c)), qs=lambda c: md_block(qs_items(c))),
+    "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
+                            hero=hero, flow=lambda c: html_pre(flow_items(c)), qs=lambda c: html_pre(qs_items(c)),
+                            agentio=agentio, skill=skill, authority=authority, limits=limits,
+                            rules=rules_html, nrules=nrules),
+    "docs/refusals.md": {"exit-codes": exit_codes, "rules": rules_md, "examples": examples},
 }
 
 
@@ -211,7 +317,7 @@ def main():
     bad = 0
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "orders.csv").write_text(FIXTURE)
-        ctx = {"run": lambda display: run(display, binary, tmp), "introspect": introspect(binary, tmp)}
+        ctx = {"run": lambda words: run_words(words, binary, tmp), "introspect": introspect(binary, tmp)}
         for rel, regions in REGIONS.items():
             path = ROOT / rel
             old = path.read_text()
