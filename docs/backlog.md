@@ -119,11 +119,13 @@ otherwise said to be inferred.
    JSON array is refused with a pointer to `jsonq`.
 3. **`--query`**, the string front end to the same `Query` plan (the typed-flags form must equal it byte for byte:
    the gate is written in the design, not yet in code).
-4. **`mean` and `describe`** with the design's exact fixed-point rule (half to even, integers only), per-column
-   count/empty/distinct/min/max.
-5. **Decimals** declared per column, read as exact scaled integers, never floats.
+4. **`mean` and `describe`** with the design's exact fixed-point rule (half to even), per-column
+   count/empty/distinct/min/max. `mean` is specified in `docs/numbers.md` (3.6: `mean:COL[@N]`, exact, no float).
+5. **Decimals and floats**, designed in `docs/numbers.md` (not built): `:dec(S)` declared per column, read as exact scaled integers, a cell
+   with more digits than the scale refused, never rounded; and `:float`, correctly rounded, with `sum` and `mean` from an exact accumulator so
+   that `--threads` cannot change a digit. Stages N1 to N6 and the gates that must be fixed first are in that document.
 6. **A second sort key**, and `or` in `--where` (the grammar is the thing to keep unambiguous).
-7. **Type inference** as a *report* (`describe`), never as a silent coercion.
+7. **Type inference** as a *report* (`describe`), never as a silent coercion (designed: `--report types`, `docs/numbers.md` 5.2).
 8. **stdin** as an input.
 9. **Joins**, a hash join with the build side bounded by `--max-state-bytes` and a refusal past it. This is the first
    feature where DuckDB's shape is the model; it needs its own design, the memory bound is the whole difficulty.

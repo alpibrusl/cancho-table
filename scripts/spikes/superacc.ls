@@ -1,0 +1,529 @@
+// SPIKE (throwaway, docs/numbers.md section B): an exact accumulator for doubles.
+//
+//     superacc check < cases.json     one JSON array of cases (arrays of numbers); one line per case:
+//                                       n sum_bits split3_bits interleave5_bits mean_bits
+//     superacc time MODE ROUNDS < flat.json    MODE: plain | int | acc | accn ; the sum of the flat array, ROUNDS times
+//
+// The accumulator is 72 limbs of 32 bits, least significant first, in an `int` slice (a limb holds a *signed*
+// piece, up to 2^60 before it is carried: `normalize` every 2^27 additions). Limb i has weight 2^(32 i - 1074):
+// the unit is the smallest subnormal, so every finite double is an integer number of units. A slot after the limbs
+// counts the additions since the last carry. Nothing here rounds until `finalize`, which rounds ONCE, to nearest
+// even. Adding is three limb updates and no branch but the sign; merging two accumulators is a limbwise add, so
+// the merge is exact and does not depend on order. Written against what lex-sys has: `bits_of` (no
+// `float_of_bits`, so the result is built as `float_of(m) * 2^k` with `std.math.ldexp`, exact for m <= 2^53), a
+// signed 64-bit `int` that traps, no 128-bit and no unsigned.
+import std.buffer;
+import std.io;
+import std.json;
+import std.math;
+
+fn limbs() -> [] int {
+    return 72;
+}
+
+fn stride() -> [] int {
+    return 73;
+}
+
+// Add x (finite) into the accumulator at `at`. Answers 1 for an infinity or a NaN (nothing added), else 0.
+fn add[&a](acc: &!a [int], at: int, x: float) -> [] int {
+    let bits = bits_of(x);
+    let e = bits >> 52 & 0x7ff;
+    if e == 0x7ff {
+        return 1;
+    }
+    var m = bits & 0xfffffffffffff;
+    var p = 0;
+    if e != 0 {
+        m = m | 0x10000000000000;
+        p = e - 1;
+    }
+    let i = at + (p >> 5);
+    let s = p & 31;
+    let a = (m & 0xffffffff) << s;
+    let b = (m >> 32) << s;
+    let c0 = a & 0xffffffff;
+    let c1 = (a >> 32) + (b & 0xffffffff);
+    let c2 = b >> 32;
+    if bits < 0 {
+        acc[i] = acc[i] - c0;
+        acc[i + 1] = acc[i + 1] - c1;
+        acc[i + 2] = acc[i + 2] - c2;
+    } else {
+        acc[i] = acc[i] + c0;
+        acc[i + 1] = acc[i + 1] + c1;
+        acc[i + 2] = acc[i + 2] + c2;
+    }
+    let n = acc[at + 72] + 1;
+    if n >= 134217728 {
+        normalize(acc, at);
+    } else {
+        acc[at + 72] = n;
+    }
+    return 0;
+}
+
+// Carry so that every limb but the top is in [0, 2^32) and the top limb is the sign (0 or -1).
+fn normalize[&a](acc: &!a [int], at: int) -> [] int {
+    var carry = 0;
+    var i = 0;
+    while i < 71 {
+        let v = acc[at + i] + carry;
+        acc[at + i] = v & 0xffffffff;
+        carry = v >> 32;
+        i = i + 1;
+    }
+    acc[at + 71] = acc[at + 71] + carry;
+    acc[at + 72] = 0;
+    return 0;
+}
+
+fn clear[&a](acc: &!a [int], at: int) -> [] int {
+    var i = 0;
+    while i < 73 {
+        acc[at + i] = 0;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// dst += src, exactly. Both are normalized first, so a limb is at most 2^33 afterwards.
+fn merge[&a](acc: &!a [int], dst: int, src: int) -> [] int {
+    normalize(acc, dst);
+    normalize(acc, src);
+    var i = 0;
+    while i < 72 {
+        acc[dst + i] = acc[dst + i] + acc[src + i];
+        i = i + 1;
+    }
+    normalize(acc, dst);
+    return 0;
+}
+
+fn bit_length(v: int) -> [] int {
+    var n = 0;
+    var x = v;
+    while x > 0 {
+        n = n + 1;
+        x = x >> 1;
+    }
+    return n;
+}
+
+fn bit_at[&a](t: &a [int], pos: int) -> [] int {
+    if pos < 0 {
+        return 0;
+    }
+    return t[pos >> 5] >> (pos & 31) & 1;
+}
+
+// The magnitude `t` (limbs, normalized, non-negative), as a double, rounded once to nearest even; `unit` is the
+// bit index of 2^-1074 (0 for a sum; 64 for a mean computed with 64 fractional bits) and `sticky` says that
+// bits below the lowest limb bit were non-zero (the remainder of a division).
+fn round_magnitude[&a](t: &a [int], n: int, unit: int, sticky: bool) -> [] float {
+    var h = n - 1;
+    while h >= 0 && t[h] == 0 {
+        h = h - 1;
+    }
+    if h < 0 {
+        return 0.0;
+    }
+    let top = 32 * h + bit_length(t[h]) - 1;
+    var lsb = top - 52;
+    if lsb < unit {
+        lsb = unit;
+    }
+    var m = 0;
+    var k = top;
+    while k >= lsb {
+        m = m * 2 + bit_at(t, k);
+        k = k - 1;
+    }
+    var guard = 0;
+    var rest = sticky;
+    if lsb > 0 {
+        guard = bit_at(t, lsb - 1);
+        var j = lsb - 2;
+        while j >= 0 && !rest {
+            if bit_at(t, j) == 1 {
+                rest = true;
+            }
+            j = j - 1;
+        }
+    } else if sticky {
+        // bits below the limbs: only a division produces them and it always has 64 fractional bits
+        rest = true;
+    }
+    if guard == 1 && (rest || m & 1 == 1) {
+        m = m + 1;
+    }
+    return math.ldexp(float_of(m), lsb - unit - 1074);
+}
+
+// The accumulator at `at` as a double, rounded once. Leaves the accumulator unchanged in value.
+fn finalize[&a](acc: &!a [int], at: int) -> [] float {
+    normalize(acc, at);
+    var negative = false;
+    if acc[at + 71] < 0 {
+        negative = true;
+        var carry = 0;
+        var i = 0;
+        while i < 72 {
+            let v = carry - acc[at + i];
+            if i < 71 {
+                acc[at + i] = v & 0xffffffff;
+            } else {
+                acc[at + i] = v;
+            }
+            carry = v >> 32;
+            i = i + 1;
+        }
+    }
+    var out = 0.0;
+    region r {
+        let t = alloc_slice[r](71, 0);
+        var i = 0;
+        while i < 71 {
+            t[i] = acc[at + i];
+            i = i + 1;
+        }
+        out = round_magnitude(t, 71, 0, false);
+    }
+    if negative {
+        // restore: negate back (it is its own inverse)
+        var carry = 0;
+        var i = 0;
+        while i < 72 {
+            let v = carry - acc[at + i];
+            if i < 71 {
+                acc[at + i] = v & 0xffffffff;
+            } else {
+                acc[at + i] = v;
+            }
+            carry = v >> 32;
+            i = i + 1;
+        }
+        return 0.0 - out;
+    }
+    return out;
+}
+
+// The mean: the exact sum over n, rounded once. |sum| * 2^64 is divided by n in 16-bit digits (the remainder of
+// a digit is below n <= 2^40, so 16 more bits fit in an `int`); the remainder of the whole division is the
+// sticky bit.
+fn mean_of[&a](acc: &!a [int], at: int, n: int) -> [] float {
+    if n <= 0 {
+        return 0.0;
+    }
+    finalize(acc, at);
+    var negative = false;
+    var out = 0.0;
+    region r {
+        // magnitude, shifted left by 64 bits: 73 limbs (two more below)
+        let t = alloc_slice[r](75, 0);
+        var neg = acc[at + 71] < 0;
+        var carry = 0;
+        var i = 0;
+        while i < 71 {
+            var v = acc[at + i];
+            if neg {
+                v = carry - acc[at + i];
+                carry = v >> 32;
+                v = v & 0xffffffff;
+            }
+            t[i + 2] = v;
+            i = i + 1;
+        }
+        negative = neg;
+        // long division by n, from the top, 16 bits at a time
+        var rem = 0;
+        var j = 74;
+        while j >= 0 {
+            let limb = t[j];
+            let cur_hi = rem * 65536 + (limb >> 16);
+            let q_hi = cur_hi / n;
+            rem = cur_hi - q_hi * n;
+            let cur_lo = rem * 65536 + (limb & 0xffff);
+            let q_lo = cur_lo / n;
+            rem = cur_lo - q_lo * n;
+            t[j] = q_hi * 65536 + q_lo;
+            j = j - 1;
+        }
+        out = round_magnitude(t, 75, 64, rem != 0);
+    }
+    if negative {
+        return 0.0 - out;
+    }
+    return out;
+}
+
+fn read_stdin[&h, &i](heap: &!h Heap, io: &!i Io, text: buffer.Buffer) -> [heap, io_read] buffer.Buffer {
+    var out = text;
+    var c = getchar(io);
+    while c >= 0 {
+        out = buffer.push(heap, out, byte_of(c));
+        c = getchar(io);
+    }
+    return out;
+}
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+// One case: the numbers of the array at tape node `arr`, into floats `xs`; answers how many.
+fn load[&s, &t, &x](src: &s [byte], tape: &t [int], arr: int, xs: &!x [float]) -> [] int {
+    let n = json.count(tape, arr);
+    var k = 0;
+    var node = arr + 1;
+    while k < n {
+        xs[k] = json.to_float(src, tape, node);
+        node = json.skip(tape, node);
+        k = k + 1;
+    }
+    return n;
+}
+
+fn check[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, src: &s [byte], tape: &t [int], nodes: int) -> [heap, io_write] int {
+    let cases = json.count(tape, 0);
+    var c = 0;
+    var node = 1;
+    while c < cases {
+        let n = json.count(tape, node);
+        let xbox = box_slice(heap, n + 1, 0.0);
+        borrow mut xbox as &!xw in {
+            let xs = contents(xw);
+            region r {
+            let acc = alloc_slice[r](73 * 12, 0);
+            load(src, tape, node, xs);
+            // one accumulator
+            var k = 0;
+            while k < n {
+                add(acc, 0, xs[k]);
+                k = k + 1;
+            }
+            let whole = finalize(acc, 0);
+            let mean = mean_of(acc, 0, n);
+            // three contiguous parts, merged in the order c, a, b into a fresh accumulator
+            k = 0;
+            while k < n {
+                var which = 1;
+                if k >= n / 3 {
+                    which = 2;
+                }
+                if k >= 2 * n / 3 {
+                    which = 3;
+                }
+                add(acc, 73 * which, xs[k]);
+                k = k + 1;
+            }
+            merge(acc, 73 * 4, 73 * 3);
+            merge(acc, 73 * 4, 73 * 1);
+            merge(acc, 73 * 4, 73 * 2);
+            let split3 = finalize(acc, 73 * 4);
+            // five interleaved parts (slots 6..10), merged in reverse into slot 11
+            k = 0;
+            while k < n {
+                add(acc, 73 * (6 + k % 5), xs[k]);
+                k = k + 1;
+            }
+            merge(acc, 73 * 11, 73 * 10);
+            merge(acc, 73 * 11, 73 * 9);
+            merge(acc, 73 * 11, 73 * 8);
+            merge(acc, 73 * 11, 73 * 7);
+            merge(acc, 73 * 11, 73 * 6);
+            let inter5 = finalize(acc, 73 * 11);
+            io.print_int(io, n);
+            io.space(io);
+            io.print_int(io, bits_of(whole));
+            io.space(io);
+            io.print_int(io, bits_of(split3));
+            io.space(io);
+            io.print_int(io, bits_of(inter5));
+            io.space(io);
+            io.print_int(io, bits_of(mean));
+            io.newline(io);
+            }
+        }
+        unbox_slice(heap, xbox);
+        node = json.skip(tape, node);
+        c = c + 1;
+    }
+    return 0;
+}
+
+fn timing[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, src: &s [byte], tape: &t [int], mode: int, rounds: int) -> [heap, io_write] int {
+    let n = json.count(tape, 0);
+    let xbox = box_slice(heap, n + 1, 0.0);
+    let ibox = box_slice(heap, n + 1, 0);
+    borrow mut xbox as &!xw in {
+      borrow mut ibox as &!iw in {
+        let xs = contents(xw);
+        let ints = contents(iw);
+        region r {
+        let acc = alloc_slice[r](73 * 2, 0);
+        load(src, tape, 0, xs);
+        var k = 0;
+        while k < n {
+            if xs[k] < 9.0e18 && xs[k] > 0.0 - 9.0e18 {
+                ints[k] = truncate(xs[k]);
+            }
+            k = k + 1;
+        }
+        var plain = 0.0;
+        var total = 0;
+        var round = 0;
+        while round < rounds {
+            if mode == 0 {
+                var s = 0.0;
+                k = 0;
+                while k < n {
+                    s = s + xs[k];
+                    k = k + 1;
+                }
+                plain = plain + s;
+            } else if mode == 1 {
+                // the table's int path: a checked add that refuses to leave 64 bits
+                var s = 0;
+                k = 0;
+                while k < n {
+                    let v = ints[k];
+                    if v > 0 && s > 9223372036854775807 - v {
+                        s = 0;
+                    } else if v < 0 && s < (0 - 9223372036854775807 - 1) - v {
+                        s = 0;
+                    } else {
+                        s = s + v;
+                    }
+                    k = k + 1;
+                }
+                total = total + s % 1000003;
+            } else if mode == 5 {
+                // the decimal sum: lo += v, and when lo leaves (-2^62, 2^62) its carries move to hi (units of 2^32);
+                // it cannot refuse for values below 10^18 and fewer than 2^30 rows
+                var hi = 0;
+                var lo = 0;
+                k = 0;
+                while k < n {
+                    lo = lo + ints[k];
+                    if lo > 4611686018427387904 || lo < 0 - 4611686018427387904 {
+                        hi = hi + (lo >> 32);
+                        lo = lo & 0xffffffff;
+                    }
+                    k = k + 1;
+                }
+                total = total + (hi * 4294967296 + lo) % 1000003;
+            } else if mode == 3 {
+                // `merge`: a second accumulator holding the first 1000 values is merged into the first, `rounds` times
+                var g = 0;
+                while g < 2 {
+                    k = 0;
+                    while k < 1000 {
+                        add(acc, 73 * g, xs[k]);
+                        k = k + 1;
+                    }
+                    g = g + 1;
+                }
+                merge(acc, 0, 73);
+                if round == rounds - 1 {
+                    plain = finalize(acc, 0);
+                }
+            } else if mode == 4 {
+                // `finalize` of a populated accumulator (it also normalizes, which is the part that is not free)
+                k = 0;
+                while k < 1000 {
+                    add(acc, 0, xs[k]);
+                    k = k + 1;
+                }
+                plain = plain + finalize(acc, 0) + mean_of(acc, 0, 1000);
+            } else {
+                k = 0;
+                while k < n {
+                    add(acc, 0, xs[k]);
+                    k = k + 1;
+                }
+                if round == rounds - 1 {
+                    plain = finalize(acc, 0);
+                }
+            }
+            round = round + 1;
+        }
+        io.print_int(io, bits_of(plain));
+        io.space(io);
+        io.print_int(io, total);
+        io.newline(io);
+        }
+      }
+    }
+    unbox_slice(heap, xbox);
+    unbox_slice(heap, ibox);
+    return 0;
+}
+
+fn run[&h, &i](heap: &!h Heap, io: &!i Io, mode: int, rounds: int) -> [heap, io_read, io_write] int {
+    var text = buffer.empty(heap, 1048576);
+    text = read_stdin(heap, io, text);
+    var status = 0;
+    borrow text as &b in {
+        let src = buffer.bytes(b);
+        let tape = box_slice(heap, json.tape_len(src), 0);
+        borrow mut tape as &!w in {
+            let nodes = json.parse(src, contents(w));
+            if nodes < 0 {
+                status = 2;
+            } else if mode == 9 {
+                status = check(heap, io, src, contents(w), nodes);
+            } else {
+                status = timing(heap, io, src, contents(w), mode, rounds);
+            }
+        }
+        unbox_slice(heap, tape);
+    }
+    buffer.drop(heap, text);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(fs);
+    release(ffi);
+    var mode = 9;
+    var rounds = 1;
+    borrow args as &g in {
+        if arg_count(g) > 1 {
+            let a1 = arg(g, 1);
+            if len(a1) == 5 && int_of(a1[0]) == 'p' {
+                mode = 0;
+            } else if len(a1) == 3 && int_of(a1[0]) == 'i' {
+                mode = 1;
+            } else if len(a1) == 3 && int_of(a1[0]) == 'a' {
+                mode = 2;
+            } else if len(a1) == 4 && int_of(a1[0]) == 'p' {
+                mode = 5;
+            } else if len(a1) == 5 && int_of(a1[0]) == 'm' {
+                mode = 3;
+            } else if len(a1) == 5 && int_of(a1[0]) == 'f' {
+                mode = 4;
+            }
+        }
+        if arg_count(g) > 2 {
+            rounds = number_of(arg(g, 2));
+        }
+    }
+    release(args);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            status = run(h, i, mode, rounds);
+        }
+    }
+    release(heap);
+    release(io);
+    return status;
+}
