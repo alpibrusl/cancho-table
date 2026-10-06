@@ -137,7 +137,7 @@ sources **and the installed dependency sources** in `build/deps`, and with
 `--against DIR` checks that it is the same report the package's origin sources
 (`lexsys-tools/contract`) give.
 
-The contract revision is `5634a4a7` (which adds `extra_rules`). The compiler pin is
+The contract revision is `a636daa7` (which adds `extra_rules`). The compiler pin is
 `f8ebe98e6867e1b7af3a5636b180b56eb3dd3cc1`.
 
 ## Gates

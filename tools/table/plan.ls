@@ -252,12 +252,7 @@ pub fn refusal[&h, &g, &n, &e, &t, &k, &j, &s](heap: &!h Heap, errs: fail.Errors
         i = i + 1;
     }
     if at_arg >= 0 && kept > 0 && bytes.equal(rule, "select.unknown-column") {
-        var o = json.put_key(heap, w, "repair");
-        o = json.begin_object(heap, o);
-        o = json.put_key(heap, o, "kind");
-        o = json.put_string(heap, o, "choose");
-        o = json.put_key(heap, o, "options");
-        o = json.begin_array(heap, o);
+        var o = fail.choose_open(heap, w);
         var k2 = 0;
         while k2 < kept {
             var column = 0;
@@ -270,40 +265,22 @@ pub fn refusal[&h, &g, &n, &e, &t, &k, &j, &s](heap: &!h Heap, errs: fail.Errors
             }
             let spelled = buffer.bytes(header)[start..vec.get(header_ends, column)];
             let list = rewritten(heap, toks, ends, kinds, bad, upto, spelled);
-            o = json.begin_object(heap, o);
-            o = json.put_key(heap, o, "argv");
-            o = json.begin_array(heap, o);
-            var a = 0;
-            while a < arg_count(args) {
-                if a == at_arg {
-                    borrow list as &lr in {
-                        o = json.put_string(heap, o, buffer.bytes(lr));
-                    }
-                } else {
-                    o = json.put_string(heap, o, arg(args, a));
-                }
-                a = a + 1;
+            borrow list as &lr in {
+                o = fail.choose_option_replacing(heap, o, args, at_arg, buffer.bytes(lr));
             }
-            o = json.end_array(heap, o);
-            o = json.end_object(heap, o);
             buffer.drop(heap, list);
             k2 = k2 + 1;
         }
-        o = json.end_array(heap, o);
-        w = json.end_object(heap, o);
+        w = fail.choose_close(heap, o);
     } else {
         w = fail.repair_none(heap, w, "which column was meant is not known; detail.available lists the header");
     }
     vec.drop(heap, options);
     w = fail.detail_open(heap, w);
-    w = json.put_key(heap, w, "path");
-    w = text.put(heap, w, shown);
-    w = json.put_key(heap, w, "flag");
-    w = json.put_string(heap, w, flag);
-    w = json.put_key(heap, w, "name");
-    w = text.put(heap, w, wanted);
-    w = json.put_key(heap, w, "columns");
-    w = json.put_int(heap, w, vec.size(header_ends));
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_str(heap, w, "flag", flag);
+    w = fail.detail_text(heap, w, "name", wanted);
+    w = fail.detail_int(heap, w, "columns", vec.size(header_ends));
     w = json.put_key(heap, w, "available");
     w = json.begin_array(heap, w);
     var j = 0;
@@ -315,8 +292,7 @@ pub fn refusal[&h, &g, &n, &e, &t, &k, &j, &s](heap: &!h Heap, errs: fail.Errors
         j = j + 1;
     }
     w = json.end_array(heap, w);
-    w = json.put_key(heap, w, "available_truncated");
-    w = json.put_bool(heap, w, vec.size(header_ends) > 50);
+    w = fail.detail_bool(heap, w, "available_truncated", vec.size(header_ends) > 50);
     return fail.add(heap, errs, w);
 }
 

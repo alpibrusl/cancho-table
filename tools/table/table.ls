@@ -100,8 +100,7 @@ fn flag_problem[&h](heap: &!h Heap, e: fail.Errors, rule: &static [byte], messag
     var w = fail.open(heap, rule, message, hint);
     w = fail.no_repair(heap, w);
     w = fail.detail_open(heap, w);
-    w = json.put_key(heap, w, "flags");
-    w = json.put_string(heap, w, flags);
+    w = fail.detail_str(heap, w, "flags", flags);
     return fail.add(heap, e, w);
 }
 
@@ -261,10 +260,8 @@ fn at_line[&h, &s](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message
     var w = fail.open_in(heap, extra(), rule, message, hint);
     w = fail.repair_none(heap, w, reason);
     w = fail.detail_open(heap, w);
-    w = json.put_key(heap, w, "path");
-    w = text.put(heap, w, shown);
-    w = json.put_key(heap, w, "line");
-    w = json.put_int(heap, w, line);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_int(heap, w, "line", line);
     return fail.add(heap, e, w);
 }
 
@@ -273,10 +270,8 @@ fn over_limit[&h, &s](heap: &!h Heap, e: fail.Errors, rule: &static [byte], mess
     var w = fail.open_in(heap, extra(), rule, message, hint);
     w = fail.repair_none(heap, w, "how large the whole is was not measured past the limit");
     w = fail.detail_open(heap, w);
-    w = json.put_key(heap, w, "path");
-    w = text.put(heap, w, shown);
-    w = json.put_key(heap, w, "limit");
-    w = json.put_int(heap, w, bound);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_int(heap, w, "limit", bound);
     return fail.add(heap, e, w);
 }
 
@@ -363,29 +358,21 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         var w = fail.open_in(heap, extra(), rule, what, hint);
         w = fail.repair_none(heap, w, "what the cell was meant to be is not known");
         w = fail.detail_open(heap, w);
-        w = json.put_key(heap, w, "path");
-        w = text.put(heap, w, shown);
-        w = json.put_key(heap, w, "context");
-        w = json.put_string(heap, w, context);
-        w = json.put_key(heap, w, "column");
-        w = text.put(heap, w, name_of(names, hends, c.err_col));
-        w = json.put_key(heap, w, "row");
-        w = json.put_int(heap, w, c.err_row);
-        w = json.put_key(heap, w, "line");
-        w = json.put_int(heap, w, c.err_line);
+        w = fail.detail_text(heap, w, "path", shown);
+        w = fail.detail_str(heap, w, "context", context);
+        w = fail.detail_text(heap, w, "column", name_of(names, hends, c.err_col));
+        w = fail.detail_int(heap, w, "row", c.err_row);
+        w = fail.detail_int(heap, w, "line", c.err_line);
         if c.abort != 18 {
-            w = json.put_key(heap, w, "value");
-            w = text.put(heap, w, buffer.bytes(kept));
-            w = json.put_key(heap, w, "value_truncated");
-            w = json.put_bool(heap, w, buffer.size(kept) >= 64);
+            w = fail.detail_text(heap, w, "value", buffer.bytes(kept));
+            w = fail.detail_bool(heap, w, "value_truncated", buffer.size(kept) >= 64);
         }
         e = fail.add(heap, e, w);
     } else if c.abort == 19 {
         var w = fail.open_in(heap, extra(), "sort.unknown-key", "--sort names no output column of the grouping", "pick from detail.available, with a - before it to sort descending");
         w = fail.repair_none(heap, w, "which column was meant is not known");
         w = fail.detail_open(heap, w);
-        w = json.put_key(heap, w, "sort");
-        w = json.put_string(heap, w, cli.text(args, parsed, table, "sort"));
+        w = fail.detail_str(heap, w, "sort", cli.text(args, parsed, table, "sort"));
         w = json.put_key(heap, w, "available");
         w = json.begin_array(heap, w);
         var i = 0;
@@ -404,18 +391,12 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         var w = fail.open_in(heap, extra(), "parse.csv-ragged-row", "a row has a different number of fields than the header", "make every row as wide as the header, quoting fields that hold the delimiter");
         w = fail.repair_none(heap, w, "which fields a short or long row is missing or has too many of is not known");
         w = fail.detail_open(heap, w);
-        w = json.put_key(heap, w, "path");
-        w = text.put(heap, w, shown);
-        w = json.put_key(heap, w, "ragged_rows");
-        w = json.put_int(heap, w, c.ragged);
-        w = json.put_key(heap, w, "first_row");
-        w = json.put_int(heap, w, c.first_row);
-        w = json.put_key(heap, w, "first_line");
-        w = json.put_int(heap, w, c.first_line);
-        w = json.put_key(heap, w, "expected");
-        w = json.put_int(heap, w, c.columns);
-        w = json.put_key(heap, w, "found");
-        w = json.put_int(heap, w, c.first_found);
+        w = fail.detail_text(heap, w, "path", shown);
+        w = fail.detail_int(heap, w, "ragged_rows", c.ragged);
+        w = fail.detail_int(heap, w, "first_row", c.first_row);
+        w = fail.detail_int(heap, w, "first_line", c.first_line);
+        w = fail.detail_int(heap, w, "expected", c.columns);
+        w = fail.detail_int(heap, w, "found", c.first_found);
         e = fail.add(heap, e, w);
     }
     return e;
@@ -1049,12 +1030,9 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
             var w = fail.open_in(heap, extra(), "where.syntax", "--where is not an expression", "see docs/filter.md for the grammar: COLUMN OP VALUE joined by and");
             w = fail.repair_none(heap, w, "what the expression was meant to say is not known");
             w = fail.detail_open(heap, w);
-            w = json.put_key(heap, w, "offset");
-            w = json.put_int(heap, w, at);
-            w = json.put_key(heap, w, "expected");
-            w = json.put_string(heap, w, expr.expected(what));
-            w = json.put_key(heap, w, "expression");
-            w = text.put(heap, w, given);
+            w = fail.detail_int(heap, w, "offset", at);
+            w = fail.detail_str(heap, w, "expected", expr.expected(what));
+            w = fail.detail_text(heap, w, "expression", given);
             e = fail.add(heap, e, w);
         }
     }
@@ -1074,10 +1052,8 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
                 var w = fail.open_in(heap, extra(), "agg.bad-spec", "an item of --agg is not count, sum:COL, min:COL, max:COL or distinct:COL", "--agg count,sum:bytes,max:bytes,distinct:status");
                 w = fail.no_repair(heap, w);
                 w = fail.detail_open(heap, w);
-                w = json.put_key(heap, w, "item");
-                w = json.put_int(heap, w, bad);
-                w = json.put_key(heap, w, "agg");
-                w = json.put_string(heap, w, given);
+                w = fail.detail_int(heap, w, "item", bad);
+                w = fail.detail_str(heap, w, "agg", given);
                 e = fail.add(heap, e, w);
             }
         } else {
