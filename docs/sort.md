@@ -61,8 +61,9 @@ A sort has state; every bound is a rule with a repair that suggests the way out.
   the `K = from + limit + 1` best rows (`N` for `--top`), not the file. A row that does not beat the current K-th is
   dropped at once, its key compared where it lies in the record; every `K` rows or so the held rows are sorted and
   cut back to `K`. Memory is `O(K)`, the file can be any size, and a million-row file sorts for its first 1000 in a
-  megabyte or two. At most `2K + 1` rows are held between cuts, and that is what `--max-sort-rows` bounds: a page
-  past it is refused (`--from` too deep) with the same rule and a hint to narrow with `--where`.
+  megabyte or two. At most `2K + 1` rows are held between cuts, and that is what `--max-sort-rows` bounds: when `2K + 1`
+  would pass it (a page too deep, or a `--top` too large), `table` does not refuse at once: it falls back to holding every row
+  (a full sort), and refuses with `limit.too-many-sort-rows` only if the file has more rows than the bound.
 * **A full sort** (csv with no `--top`, or `--limit` large) holds every row, within the two bounds above. There is no
   external sort in this version: past the bound the answer is the refusal, and that is the design, not a gap to be hidden.
 * `--max-line-bytes` still bounds a record.
