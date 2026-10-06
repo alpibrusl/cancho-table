@@ -81,6 +81,12 @@ jobs:
         working-directory: table
         run: python3 -W ignore -m unittest discover -s tests/conformance -v
 
+      # The README's example and the project pages' terminals, authority row, rules
+      # and counts are written from the built binary; this fails if they differ.
+      - name: The README and the project pages say what the binary says
+        working-directory: table
+        run: python3 scripts/site.py --check
+
       # No csvtk here: this only keeps the script working. The numbers in the
       # README are from a machine that has it.
       - name: The benchmark script runs
