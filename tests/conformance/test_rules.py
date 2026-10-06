@@ -3,20 +3,23 @@ fixture's first error is its rule with the right exit code, the declared rule
 list is exactly what the fixtures reach, and every `retry` repair works when
 applied.
 
-The rule catalogue is lexsys-tools' (`toolbox.rules`, in the installed
-package). Four of this tool's rules are not in it -- a package's consumer cannot
-add to the catalogue -- so they get the exit code the package gives an
-unknown tag, 1, and `test_local_rules` says so rather than hiding it.
+The shared rules are lexsys-tools' catalogue (`toolbox.rules`, in the installed
+package). Four of this tool's rules are its own, listed in `extra_rules` in
+tools/table/table.ls; their exit codes and summaries are asserted here.
 """
 
 import os
-import pathlib
-import sys
 import unittest
 
 from harness import Scratch, introspect, package_catalogue, run, run_argv, binary
 
-LOCAL = {"limit.header-too-large", "parse.csv-ragged-row", "parse.csv-bad-quote", "parse.csv-unterminated-quote"}
+# The tool's own rules: tag -> (exit code, repairable, a word of the summary).
+LOCAL = {
+    "limit.header-too-large": (8, "never", "header"),
+    "parse.csv-ragged-row": (8, "never", "different number of fields"),
+    "parse.csv-bad-quote": (8, "never", "closing quote"),
+    "parse.csv-unterminated-quote": (8, "never", "still open"),
+}
 LINUX_ONLY = {"io.read-failed"}
 
 
@@ -88,7 +91,7 @@ class Rules(unittest.TestCase):
                 if not errs or errs[0]["rule"] != rule:
                     failures.append("%s: first error is %s (status %d) %r" % (rule, errs[0]["rule"] if errs else None, p.returncode, p.stdout[:200]))
                     continue
-                want = cat[rule][0] if rule in cat else 1
+                want = cat[rule][0] if rule in cat else LOCAL[rule][0]
                 if p.returncode != want:
                     failures.append("%s: exit %d, the package catalogue gives %d" % (rule, p.returncode, want))
                 reached.add(rule)
@@ -113,16 +116,23 @@ class Rules(unittest.TestCase):
             self.assertRegex(r["rule"], r"^[a-z]+\.[a-z0-9-]+$")
 
     def test_local_rules(self):
-        """The rules this tool has that the package catalogue lacks, and what
-        that costs: exit 1 (a tool's own bug, in D4's table), no summary and no
-        repairability in `introspect`."""
+        """The tool's own rules are not in the shared catalogue, are in
+        `introspect` with their real exit code, repairability and summary, and
+        the exit codes the declared table names include theirs."""
         cat = package_catalogue()
         declared = {r["rule"]: r for r in introspect()["rules"]}
-        missing = sorted(t for t in declared if t not in cat)
-        self.assertEqual(set(missing), LOCAL, "the rules outside the package catalogue changed: %s" % missing)
-        for t in missing:
-            self.assertEqual(declared[t]["exit"], 1)
-        print("\nnot in the package catalogue (exit 1, no summary): %s" % ", ".join(missing), file=sys.stderr)
+        self.assertEqual({t for t in declared if t not in cat}, set(LOCAL))
+        for tag, (exit_code, repairable, word) in LOCAL.items():
+            r = declared[tag]
+            self.assertEqual((r["exit"], r["repairable"]), (exit_code, repairable), tag)
+            self.assertIn(word, r["summary"], tag)
+        self.assertIn(8, {c["code"] for c in introspect()["exit_codes"]})
+
+    def test_the_skill_lists_the_local_rules_with_their_exit(self):
+        import subprocess
+        text = subprocess.run([binary(), "skill"], capture_output=True, check=True).stdout.decode()
+        for tag in LOCAL:
+            self.assertIn(tag, text)
 
 
 if __name__ == "__main__":

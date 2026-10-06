@@ -6,7 +6,8 @@ columns id,status,bytes,path,note with the last one quoted.
     python3 scripts/bench.py [--rows N] [--runs N] [--bin PATH] [--file PATH]
 
 The generator is seeded, so the file is the same everywhere: status is one of
-200 200 200 301 404 500, bytes is 0..99999, path is /p/N, note is "a,b N". Each
+200 200 200 301 404 500, bytes is 0..99999, path is /p/0..999, note is "a,b N%7"
+(31,667,311 bytes for 1,000,000 rows, the design's file). Each
 tool answers the same question, the file's shape; before any timing the row
 count each one reports is checked against the generator's. The rounds are
 interleaved (every tool once per round, in a rotating order), the minimum of
@@ -35,12 +36,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def generate(path, rows):
-    rng = random.Random(1)
-    statuses = [200, 200, 200, 301, 404, 500]
+    """The design file, exactly: seed 1, and per row the draws in this order."""
+    random.seed(1)
     with open(path, "w", newline="") as f:
         f.write("id,status,bytes,path,note\n")
         for i in range(rows):
-            f.write('%d,%d,%d,/p/%d,"a,b %d"\n' % (i, rng.choice(statuses), rng.randrange(100000), i, i))
+            f.write(f"{i},{random.choice([200, 200, 200, 301, 404, 500])},{random.randint(0, 99999)},/p/{random.randint(0, 999)},\"a,b {i % 7}\"\n")
 
 
 def tools(table, data, rows):

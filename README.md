@@ -93,7 +93,7 @@ sources **and the installed dependency sources** in `build/deps`, and with
 `--against DIR` checks that it is the same report the package's origin sources
 (`lexsys-tools/contract`) give.
 
-The compiler pin is `f8ebe98e6867e1b7af3a5636b180b56eb3dd3cc1`.
+The contract revision is `5634a4a7` (which adds `extra_rules`). The compiler pin is `f8ebe98e6867e1b7af3a5636b180b56eb3dd3cc1`.
 
 ## Gates
 
@@ -132,26 +132,38 @@ x86-64 machine with the compiler it pins.
 
 `python3 scripts/bench.py` generates the file of design section 5's benchmark
 (1,000,000 rows of `id,status,bytes,path,note`, the last quoted; `status` one of
-200 200 200 301 404 500, `bytes` 0..99999, path `/p/N`, note `"a,b N"`; seeded)
+200 200 200 301 404 500, `bytes` 0..99999, path `/p/0..999`, note `"a,b N%7"`; seeded)
 and times each tool answering the same question, the file's shape, with output to
 `/dev/null`; the row count each reports is checked first. Minimum of 5 interleaved
-runs. The file this generator writes is **39.6 MB**, not the 31.7 MB the design
-section states for its file; the design gives the columns and ranges but not the
-generator, so this is a reconstruction.
+runs. The file is 31,667,311 bytes, the design's.
 
-Apple silicon Mac, 16 cores, load average 5 to 8 from other work, csvtk 0.38.0
-(Homebrew), `mlr` not installed. `table` was built by the compiler at
-`db7d5bc` (the pinned one's fix, another revision):
+**Caveat: this is not a parity claim.** `table` today only counts rows and keeps
+the header; `csvtk nrow` and `mlr count` are general tools answering the same
+question. Peak RSS is from `/usr/bin/time`.
+
+Linux x86-64 (the pinned compiler; 6 cores of a shared box, niced, with a soak
+running; csvtk 0.38.0, Miller 6.22.0):
 
 | tool | min | median | peak RSS |
 |---|---:|---:|---:|
-| `table` | 0.033 s | 0.033 s | 1.5 MB |
-| `csvtk -j 1 nrow` | 0.200 s | 0.203 s | 24.4 MB |
-| `wc -l` (the floor: bytes read, newlines found) | 0.036 s | 0.037 s | 2.4 MB |
+| `table` | 0.053 s | 0.065 s | 1.8 MB |
+| `csvtk -j 1 nrow` | 0.455 s | 0.500 s | 21.2 MB |
+| `mlr --icsv --ojson count` | 0.298 s | 0.315 s | 123.9 MB |
+| `wc -l` (the floor: bytes read, newlines found) | 0.006 s | 0.007 s | 7.4 MB |
 
-On Linux x86-64 (the pinned compiler, 6 cores of a shared box; no `csvtk` or
-`mlr` there): `table` 0.070 s and 1.8 MB, `wc -l` 0.008 s. So on the Mac `table` is at the floor of reading the file, and on Linux it is about nine times it: this was measured, not explained. Not measured: other questions than the shape (nothing else is
-built), wider files, a file where every field is quoted.
+Apple silicon Mac (16 cores, load average 5 to 8 from other work; csvtk 0.38.0;
+`mlr` not installed there). `table` was built by the compiler at `db7d5bc` (the
+pinned one's fix, another revision):
+
+| tool | min | median | peak RSS |
+|---|---:|---:|---:|
+| `table` | 0.030 s | 0.034 s | 1.5 MB |
+| `csvtk -j 1 nrow` | 0.198 s | 0.224 s | 23.7 MB |
+| `wc -l` | 0.028 s | 0.032 s | 2.5 MB |
+
+On Linux `table` is about nine times the `wc -l` floor and on the Mac at it; that
+was measured, not explained. Not measured: other questions than the shape
+(nothing else is built), wider files, a file where every field is quoted.
 
 ## Layout
 

@@ -8,47 +8,47 @@ lex-sys = "f8ebe98e6867e1b7af3a5636b180b56eb3dd3cc1"   # the compiler these sour
 
 [dependencies.cli]
 git = "https://github.com/alpibrusl/lexsys-tools"
-rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+rev = "5634a4a7108a675c0eab0412e96a57685beac9cb"
 path = ".lex-sys-vcs/toolbox.cli"
 
 [dependencies.describe]
 git = "https://github.com/alpibrusl/lexsys-tools"
-rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+rev = "5634a4a7108a675c0eab0412e96a57685beac9cb"
 path = ".lex-sys-vcs/toolbox.describe"
 
 [dependencies.fail]
 git = "https://github.com/alpibrusl/lexsys-tools"
-rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+rev = "5634a4a7108a675c0eab0412e96a57685beac9cb"
 path = ".lex-sys-vcs/toolbox.fail"
 
 [dependencies.limit]
 git = "https://github.com/alpibrusl/lexsys-tools"
-rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+rev = "5634a4a7108a675c0eab0412e96a57685beac9cb"
 path = ".lex-sys-vcs/toolbox.limit"
 
 [dependencies.lines]
 git = "https://github.com/alpibrusl/lexsys-tools"
-rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+rev = "5634a4a7108a675c0eab0412e96a57685beac9cb"
 path = ".lex-sys-vcs/toolbox.lines"
 
 [dependencies.out]
 git = "https://github.com/alpibrusl/lexsys-tools"
-rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+rev = "5634a4a7108a675c0eab0412e96a57685beac9cb"
 path = ".lex-sys-vcs/toolbox.out"
 
 [dependencies.path]
 git = "https://github.com/alpibrusl/lexsys-tools"
-rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+rev = "5634a4a7108a675c0eab0412e96a57685beac9cb"
 path = ".lex-sys-vcs/toolbox.path"
 
 [dependencies.place]
 git = "https://github.com/alpibrusl/lexsys-tools"
-rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+rev = "5634a4a7108a675c0eab0412e96a57685beac9cb"
 path = ".lex-sys-vcs/toolbox.place"
 
 [dependencies.text]
 git = "https://github.com/alpibrusl/lexsys-tools"
-rev = "7e1a910b6723aac4e0871dddec1fe8a3d8e3d8cc"
+rev = "5634a4a7108a675c0eab0412e96a57685beac9cb"
 path = ".lex-sys-vcs/toolbox.text"
 
 [[bin]]

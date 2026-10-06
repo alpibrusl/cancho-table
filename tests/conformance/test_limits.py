@@ -47,7 +47,7 @@ class Limits(unittest.TestCase):
         data = b'"' + b"abcdefgh\n" * 1000 + b'",c\n1,2\n'
         got = self.s.table("h.csv", data, "--max-line-bytes", "1000")
         self.assertEqual(validate(got), [])
-        self.assertEqual((got.status, got.first_rule()), (1, "limit.header-too-large"))
+        self.assertEqual((got.status, got.first_rule()), (8, "limit.header-too-large"))
         self.assertEqual(got.error()["detail"]["line"], 1)
 
     def test_data_rows_may_span_any_number_of_lines(self):
@@ -107,7 +107,7 @@ class Limits(unittest.TestCase):
         self.assertEqual(got.status, 0)
         self.assertEqual(got.stdout, b"rows\t1\ncolumns\t2\ntruncated\tfalse\nheader\tid\tna,me\n")
         got = self.s.table("t.csv", "a,b\n1\n", "--format", "text")
-        self.assertEqual(got.status, 1)
+        self.assertEqual(got.status, 8)
         self.assertEqual(got.stdout, b"")
         self.assertIn(b"parse.csv-ragged-row", got.stderr)
 

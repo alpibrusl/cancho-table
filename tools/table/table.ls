@@ -55,7 +55,13 @@ fn flag_table() -> [] &static [byte] {
 }
 
 fn tool() -> [] describe.Tool {
-    return describe.Tool { name: "table", version: "0.1.0", summary: "The shape of a CSV or TSV file: header names, data rows and columns, from one bounded streaming pass over an RFC 4180 reader. A ragged row, an unterminated quote and a line past the limit are errors with a rule; a row count past --max-rows is truncated.", usage: "table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE", output: "document", schema: "table.v1", flags: flag_table(), operands: "FILE|path-read|1|1|the CSV file to describe", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;limit.line-too-long;limit.header-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote", limits: "max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
+    return describe.Tool { name: "table", version: "0.1.0", summary: "The shape of a CSV or TSV file: header names, data rows and columns, from one bounded streaming pass over an RFC 4180 reader. A ragged row, an unterminated quote and a line past the limit are errors with a rule; a row count past --max-rows is truncated.", usage: "table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE", output: "document", schema: "table.v1", flags: flag_table(), operands: "FILE|path-read|1|1|the CSV file to describe", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;limit.line-too-long;limit.header-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote", extra_rules: extra(), limits: "max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
+}
+
+// The tool's own rules, beside the contract's catalogue: tag, exit code,
+// repairable, summary.
+fn extra() -> [] &static [byte] {
+    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes;parse.csv-ragged-row|8|never|a row has a different number of fields than the header;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input";
 }
 
 fn built() -> [] describe.Built {
@@ -336,7 +342,7 @@ fn read_file[&h, &g, &p, &f, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.P
         let over = limit.more(limit.none(), s.abort_line, s.long_length);
         e = limit.too_long(heap, e, args, parsed, table, shown, over, cap, line_ceiling(), "a line is longer than --max-line-bytes; the file was not read past it");
     } else if s.abort == 3 {
-        var w = fail.open(heap, "limit.header-too-large", "the header record holds more than --max-line-bytes bytes", "raise --max-line-bytes, up to the ceiling introspect names");
+        var w = fail.open_in(heap, extra(), "limit.header-too-large", "the header record holds more than --max-line-bytes bytes", "raise --max-line-bytes, up to the ceiling introspect names");
         w = fail.repair_none(heap, w, "how large the header is was not read to the end");
         w = fail.detail_open(heap, w);
         w = json.put_key(heap, w, "path");
@@ -347,7 +353,7 @@ fn read_file[&h, &g, &p, &f, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.P
         w = json.put_int(heap, w, cap);
         e = fail.add(heap, e, w);
     } else if s.abort == 2 {
-        var w = fail.open(heap, "parse.csv-unterminated-quote", "a quoted field is open at the end of the input", "close the quote, or double the quotes that are text");
+        var w = fail.open_in(heap, extra(), "parse.csv-unterminated-quote", "a quoted field is open at the end of the input", "close the quote, or double the quotes that are text");
         w = fail.repair_none(heap, w, "which quote was meant to close is not known");
         w = fail.detail_open(heap, w);
         w = json.put_key(heap, w, "path");
@@ -356,7 +362,7 @@ fn read_file[&h, &g, &p, &f, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.P
         w = json.put_int(heap, w, s.abort_line);
         e = fail.add(heap, e, w);
     } else if s.abort == 1 {
-        var w = fail.open(heap, "parse.csv-bad-quote", "a closing quote is followed by something other than the delimiter or the end of the record", "double a quote that is text, or put the delimiter after the closing quote");
+        var w = fail.open_in(heap, extra(), "parse.csv-bad-quote", "a closing quote is followed by something other than the delimiter or the end of the record", "double a quote that is text, or put the delimiter after the closing quote");
         w = fail.repair_none(heap, w, "what the field was meant to hold is not known");
         w = fail.detail_open(heap, w);
         w = json.put_key(heap, w, "path");
@@ -365,7 +371,7 @@ fn read_file[&h, &g, &p, &f, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.P
         w = json.put_int(heap, w, s.abort_line);
         e = fail.add(heap, e, w);
     } else if s.ragged > 0 {
-        var w = fail.open(heap, "parse.csv-ragged-row", "a row has a different number of fields than the header", "make every row as wide as the header, quoting fields that hold the delimiter");
+        var w = fail.open_in(heap, extra(), "parse.csv-ragged-row", "a row has a different number of fields than the header", "make every row as wide as the header, quoting fields that hold the delimiter");
         w = fail.repair_none(heap, w, "which fields a short or long row is missing or has too many of is not known");
         w = fail.detail_open(heap, w);
         w = json.put_key(heap, w, "path");
@@ -513,7 +519,7 @@ fn run[&h, &g, &f, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io)
     if which != 0 {
         return describe.answer(heap, io, which, tool(), built());
     }
-    let (parsed, e) = cli.parse(heap, args, flag_table(), fail.empty(heap));
+    let (parsed, e) = cli.parse(heap, args, flag_table(), fail.empty_in(heap, extra()));
     var status = 0;
     borrow parsed as &p in {
         status = body(heap, args, p, fs, io, e);
