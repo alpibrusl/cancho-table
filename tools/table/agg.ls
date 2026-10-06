@@ -309,7 +309,7 @@ fn compare_keys[&a, &b](x: &a [byte], y: &b [byte], fields: int) -> [] int {
 // Whether group `x` is before group `y`: by group column `field` (or, when
 // that is -1, by the integer at `slot` of the group's row) ascending or
 // descending, then by key; neither given orders by key alone.
-fn before[&m, &v](index: &m map.Map[int], acc: &v vec.Vec[int], stride: int, fields: int, field: int, slot: int, descending: bool, x: int, y: int) -> [] bool {
+fn before[&m, &v, &r](index: &m map.Map[int], acc: &v vec.Vec[int], pre: &r [int], stride: int, fields: int, field: int, slot: int, descending: bool, x: int, y: int) -> [] bool {
     if slot >= 0 {
         let vx = vec.get(acc, x * stride + slot);
         let vy = vec.get(acc, y * stride + slot);
@@ -319,6 +319,12 @@ fn before[&m, &v](index: &m map.Map[int], acc: &v vec.Vec[int], stride: int, fie
             }
             return vx < vy;
         }
+    } else if field == 0 && pre[x] != pre[y] {
+        // The first seven bytes of the first column already say.
+        if descending {
+            return pre[x] > pre[y];
+        }
+        return pre[x] < pre[y];
     } else if field >= 0 {
         let c = compare_field(map.key_at(index, x), map.key_at(index, y), field);
         if c != 0 {
@@ -328,7 +334,29 @@ fn before[&m, &v](index: &m map.Map[int], acc: &v vec.Vec[int], stride: int, fie
             return c < 0;
         }
     }
+    if fields >= 1 && pre[x] != pre[y] {
+        return pre[x] < pre[y];
+    }
     return compare_keys(map.key_at(index, x), map.key_at(index, y), fields) < 0;
+}
+
+// The first seven bytes of a key's first column as one number, bytewise order kept
+// (a shorter value is padded with zero bytes, and a tie is settled by the whole keys).
+fn prefix_of[&k](key: &k [byte], fields: int) -> [] int {
+    if fields < 1 {
+        return 0;
+    }
+    let n = length_at(key, 0);
+    var v = 0;
+    var i = 0;
+    while i < 7 {
+        v = v * 256;
+        if i < n {
+            v = v + int_of(key[4 + i]);
+        }
+        i = i + 1;
+    }
+    return v;
 }
 
 // The `n`th field of two keys, compared.
@@ -349,11 +377,12 @@ fn compare_field[&a, &b](x: &a [byte], y: &b [byte], n: int) -> [] int {
 // Fill `order[0..n]` with the groups' numbers in output order (n is the number
 // of groups): by group column `field` or integer `slot` (see `before`), else
 // by key; a bottom-up merge sort through `spare`, stable and O(n log n).
-pub fn sort_into[&g, &o, &s](g: &g Groups, order: &!o [int], spare: &!s [int], fields: int, field: int, slot: int, descending: bool) -> [] int {
+pub fn sort_into[&g, &o, &s, &p](g: &g Groups, order: &!o [int], spare: &!s [int], pre: &!p [int], fields: int, field: int, slot: int, descending: bool) -> [] int {
     let n = map.size(g.index);
     var i = 0;
     while i < n {
         order[i] = i;
+        pre[i] = prefix_of(map.key_at(g.index, i), fields);
         i = i + 1;
     }
     var width = 1;
@@ -372,7 +401,7 @@ pub fn sort_into[&g, &o, &s](g: &g Groups, order: &!o [int], spare: &!s [int], f
             var q = mid;
             var k = lo;
             while k < hi {
-                if p < mid && (q >= hi || !before(g.index, g.acc, g.stride, fields, field, slot, descending, order[q], order[p])) {
+                if p < mid && (q >= hi || !before(g.index, g.acc, pre, g.stride, fields, field, slot, descending, order[q], order[p])) {
                     spare[k] = order[p];
                     p = p + 1;
                 } else {

@@ -50,6 +50,35 @@ So with threads `table` is ahead of DuckDB's default on all four, **on this file
 planning and everything in the list below, and `table` does none of it. The adversarial round
 (`docs/adversarial.md`) is where this claim is tested against shapes that are not kind to `table`.
 
+## From the adversarial round (`docs/adversarial.md`), with the cause of each
+
+Each is a measured loss or a missing thing; the cause is from a profile where one was possible (`sample`, Mac) and
+otherwise said to be inferred.
+
+* **A row sort (`--sort-rows COL`, text and integer).** Missing: A1/A2. The group-sort machinery (`agg.sort_into`) is
+  the starting point for text; an integer key needs a numeric compare. The bound is the whole file in memory unless
+  it is an external merge, so the first version would refuse past `--max-state-bytes`.
+* **The end-phase sort of a million groups: `compare_keys` is still two thirds of B3's profile** after the prefix
+  sort of round 4, because keys share their first bytes. Next steps in order of cost: an MSD radix or a longer prefix
+  (skip the shared leading bytes of the whole key set, which is one pass); store the key hash-map in insertion order
+  and sort only the output when `--sort`/the key order is wanted (it is always wanted today, as bytewise order is the
+  documented output order, so this is a change of contract, not an optimisation).
+* **High cardinality does not parallelise: B3/B4/I1 at `--threads 8` are 0 to 14 percent slower than at 1** and use
+  8 times the state (327 MB against 183). Cause (read from the code and the 8-thread RSS; not profiled): each thread
+  builds its own map of up to a million keys and the parent merges them one by one. Options: a hash-partitioned
+  merge (threads own key ranges); or a pre-sample that declines threads when the first wave's groups are more than
+  a fraction of its rows. Until then `--threads` should not be used for a high-cardinality grouping.
+* **`csv_value` does four `memchr`s per cell** (visible in the `sample` of B3 and in G2: 290 MB/s sequential
+  against DuckDB's 3.2 GB/s default). One fused scan for quote, delimiter and newline per cell would remove three.
+  This is the one change that helps every cell, and also needs the byte-identical gate.
+* **Long fields (1-10 KB) do not scale with threads and tie with csvtk (E1/E2).** Inferred: a record boundary found
+  by speculation "outside quotes" is wrong more often when long text holds newlines and quotes; a wrong guess is a
+  re-read by the parent. The time per MB is not a cliff. To check: count the re-reads in a `--threads 8` run.
+* **100k-key grouping is 1.07-1.17x DuckDB (B1/B2):** a cache-missing probe per row. A smaller key table (store the
+  hash, not only the key) is the guess; not tried.
+* **Peak memory of grouping is N threads x groups.** Bounded by `--max-state-bytes` per state, so the true bound is
+  N times it; the documentation says the per-state bound, and should say this.
+
 ## Ideas, roughly in order
 
 1. ~~**Parallel scan**~~ (done: `--threads N`, byte-identical to the sequential engine, `docs/parallel.md`).

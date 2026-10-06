@@ -157,85 +157,88 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
     let ng = query.count_of(tree, 2);
     let order = box_slice(heap, n + 1, 0);
     let spare = box_slice(heap, n + 1, 0);
+    let prefixes = box_slice(heap, n + 1, 0);
     var pending = rows;
     var row = scratch;
     borrow mut order as &!ow in {
         borrow mut spare as &!sw in {
-            agg.sort_into(groups, contents(ow), contents(sw), ng, a[engine.k_sort_field()], a[engine.k_sort_slot()], a[engine.k_sort_desc()] == 1);
-            var end = n;
-            if top > 0 && top < n {
-                end = top;
-            }
-            var pos = from;
-            var going = true;
-            while pos < end && going {
-                let x = contents(ow)[pos];
-                if a[engine.k_emitted()] >= limit {
-                    a[engine.k_more()] = 1;
-                    a[engine.k_next()] = pos;
-                    going = false;
-                } else if as_csv {
-                    var j = 0;
-                    while j < ng {
-                        if j > 0 {
-                            pending = buffer.push(heap, pending, byte_of(delim));
-                        }
-                        pending = writer.csv_value(heap, pending, agg.key_field(groups, x, j), delim);
-                        j = j + 1;
-                    }
-                    var k = 0;
-                    while k < query.agg_count(tree) {
-                        if ng + k > 0 {
-                            pending = buffer.push(heap, pending, byte_of(delim));
-                        }
-                        pending = agg.put_int(heap, pending, agg.value_of(groups, x, k, query.agg_at(tree, k, 0)));
-                        k = k + 1;
-                    }
-                    pending = buffer.push(heap, pending, byte_of(10));
-                    a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
-                    var held = 0;
-                    borrow pending as &pr in {
-                        held = buffer.size(pr);
-                    }
-                    if held >= 65536 {
-                        let (after, ok) = engine.flush(io, pending);
-                        pending = after;
-                        if !ok {
-                            a[engine.k_abort()] = 9;
-                            going = false;
-                        }
-                    }
-                    pos = pos + 1;
-                } else {
-                    borrow mut row as &!rw in {
-                        buffer.clear(rw);
-                    }
-                    row = agg.row_json(heap, row, groups, tree, x);
-                    var have = 0;
-                    var need = 0;
-                    borrow pending as &pr in {
-                        have = buffer.size(pr);
-                    }
-                    borrow row as &rr in {
-                        need = buffer.size(rr);
-                    }
-                    if have + need + 1 > budget {
+            borrow mut prefixes as &!pw in {
+                agg.sort_into(groups, contents(ow), contents(sw), contents(pw), ng, a[engine.k_sort_field()], a[engine.k_sort_slot()], a[engine.k_sort_desc()] == 1);
+                var end = n;
+                if top > 0 && top < n {
+                    end = top;
+                }
+                var pos = from;
+                var going = true;
+                while pos < end && going {
+                    let x = contents(ow)[pos];
+                    if a[engine.k_emitted()] >= limit {
+                        a[engine.k_more()] = 1;
+                        a[engine.k_next()] = pos;
                         going = false;
-                        if a[engine.k_emitted()] == 0 {
-                            a[engine.k_abort()] = 8;
-                        } else {
-                            a[engine.k_more()] = 1;
-                            a[engine.k_next()] = pos;
+                    } else if as_csv {
+                        var j = 0;
+                        while j < ng {
+                            if j > 0 {
+                                pending = buffer.push(heap, pending, byte_of(delim));
+                            }
+                            pending = writer.csv_value(heap, pending, agg.key_field(groups, x, j), delim);
+                            j = j + 1;
                         }
+                        var k = 0;
+                        while k < query.agg_count(tree) {
+                            if ng + k > 0 {
+                                pending = buffer.push(heap, pending, byte_of(delim));
+                            }
+                            pending = agg.put_int(heap, pending, agg.value_of(groups, x, k, query.agg_at(tree, k, 0)));
+                            k = k + 1;
+                        }
+                        pending = buffer.push(heap, pending, byte_of(10));
+                        a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
+                        var held = 0;
+                        borrow pending as &pr in {
+                            held = buffer.size(pr);
+                        }
+                        if held >= 65536 {
+                            let (after, ok) = engine.flush(io, pending);
+                            pending = after;
+                            if !ok {
+                                a[engine.k_abort()] = 9;
+                                going = false;
+                            }
+                        }
+                        pos = pos + 1;
                     } else {
-                        if a[engine.k_emitted()] > 0 {
-                            pending = buffer.push(heap, pending, byte_of(','));
+                        borrow mut row as &!rw in {
+                            buffer.clear(rw);
+                        }
+                        row = agg.row_json(heap, row, groups, tree, x);
+                        var have = 0;
+                        var need = 0;
+                        borrow pending as &pr in {
+                            have = buffer.size(pr);
                         }
                         borrow row as &rr in {
-                            pending = buffer.append(heap, pending, buffer.bytes(rr));
+                            need = buffer.size(rr);
                         }
-                        a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
-                        pos = pos + 1;
+                        if have + need + 1 > budget {
+                            going = false;
+                            if a[engine.k_emitted()] == 0 {
+                                a[engine.k_abort()] = 8;
+                            } else {
+                                a[engine.k_more()] = 1;
+                                a[engine.k_next()] = pos;
+                            }
+                        } else {
+                            if a[engine.k_emitted()] > 0 {
+                                pending = buffer.push(heap, pending, byte_of(','));
+                            }
+                            borrow row as &rr in {
+                                pending = buffer.append(heap, pending, buffer.bytes(rr));
+                            }
+                            a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
+                            pos = pos + 1;
+                        }
                     }
                 }
             }
@@ -243,6 +246,7 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
     }
     unbox_slice(heap, order);
     unbox_slice(heap, spare);
+    unbox_slice(heap, prefixes);
     return (pending, row);
 }
 
