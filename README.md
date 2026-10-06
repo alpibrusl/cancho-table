@@ -26,7 +26,7 @@ $ table --where 'status = 200' --select customer,bytes orders.csv
 
 Most data tools optimise for flexibility. `table` optimises for predictability.
 
-* **Explicit types.** A column is text unless you write `:int`; then it is an exact 64-bit integer, and a cell that is not one is refused. [docs/filter.md](docs/filter.md)
+* **Explicit types.** A column is text unless you write `:int` (an exact 64-bit integer) or `:dec(S)` (an exact decimal with S fractional digits, in `--where`); a cell that is not one is refused. [docs/filter.md](docs/filter.md)
 * **Explicit operations.** One plan from flags, no expressions or functions. [docs/filter.md](docs/filter.md)
 * **Bounded resource use.** Rows, line and record size, groups, distinct values and group state each have a limit with its own rule. Peak memory is about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). `table introspect` lists the limits; [benchmarks](https://alpibrusl.github.io/lexsys-table/benchmarks.html)
 * **No implicit network access.** The authority row, derived by `lex-sys authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, and nothing written to disk. CI fails if the binary differs from the committed [`manifests/table.authority.json`](manifests/table.authority.json). [docs/architecture.md](docs/architecture.md)
@@ -115,6 +115,22 @@ id,customer
 ```
 <!-- /gen:t-filter -->
 
+### Filter on decimals
+
+`price:dec(2)` reads the column as exact decimals with two fractional digits: `12.5` and `12.50` are one value, and the literal is read at the same scale. A cell with more digits than the scale is refused, never rounded, and the repair is the command with the scale the column needs. This second example uses a small `prices.csv`.
+
+<!-- gen:t-decimal -->
+```console
+$ table --where "price:dec(2) >= 12.50" --format csv prices.csv
+item,price
+book,12.50
+lamp,12.5
+$ table --where "price:dec(1) >= 12.5" prices.csv
+{"rule": "value.decimal-scale", "hint": "declare a larger scale, :dec(N) with N the most fractional digits the column holds", "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "price:dec(2) >= 12.5", "prices.csv"]}]}}
+# exit status 8; the rule, hint, repair of the JSON line it prints
+```
+<!-- /gen:t-decimal -->
+
 ### Sort rows
 
 `--order-by` takes keys: `-` before a name is descending, `:int` compares whole numbers, and rows that tie keep their order in the file. With `--limit` or `--top` it keeps only the best rows, so memory stays flat. A full sort holds every row, up to `--max-sort-rows` (1,000,000 by default); past that it refuses and suggests `--top`, a smaller `--limit` or a `--where`. There is no sort that spills to disk.
@@ -131,7 +147,7 @@ id,customer,bytes
 
 ### Count and sum by a key
 
-`count`, `sum`, `min`, `max` and `distinct`. Sums are exact whole numbers; one that would not fit in 64 bits is refused, not wrapped.
+`count`, `sum`, `min`, `max` and `distinct`. Sums are exact at any width: a sum past 64 bits is printed in full (up to 28 digits), and it is the same on any number of cores.
 
 <!-- gen:t-group -->
 ```console
@@ -191,7 +207,7 @@ Every refusal has a fixed rule name, an exit status and, where one exists, a rep
 <!-- gen:t-refuse -->
 ```console
 $ table --where "bytes:int > 100" --select id orders.csv
-{"rule": "value.not-integer", "hint": "keep out the rows with such a cell with --where, or do not ask for an integer of this column", "detail": {"path": "orders.csv", "context": "where", "column": "bytes", "row": 2, "line": 3, "value": "", "value_truncated": false}}
+{"rule": "value.not-integer", "hint": "keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N))", "detail": {"path": "orders.csv", "context": "where", "column": "bytes", "row": 2, "line": 3, "value": "", "value_truncated": false}}
 # exit status 8; the rule, hint, detail of the JSON line it prints
 ```
 <!-- /gen:t-refuse -->
@@ -202,7 +218,7 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## What it cannot do yet
 
-* **Whole numbers only.** A decimal in a number column is refused. Exact decimals and floats are decided and planned ([docs/numbers.md](docs/numbers.md)); they are not built.
+* **Decimals are only half built.** `:dec(S)` works in `--where`. Summing, min, max, mean, grouping by and `distinct` of a decimal column, printing decimals, and floats are decided and in progress ([docs/numbers.md](docs/numbers.md)); until then those are refused. In `sum`, `min` and `max`, cells must be whole numbers.
 * **One core for a sort.** `--threads` is accepted with `--order-by`, and gives the same bytes, but the sort runs on one core. There is no sort that spills to disk.
 * **No joins**, and **one input file** at a time, named on the command line (no standard input).
 * **No JSON lines**, no Parquet. Only CSV and TSV (comma, tab or semicolon).
