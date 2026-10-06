@@ -33,8 +33,10 @@ MUTANTS = [
     ("a descending key is compared ascending", "sorter.ls", "            if keys[3 * j + 1] == 1 {\n                return c > 0;\n            }", "            if keys[3 * j + 1] == 1 {\n                return c < 0;\n            }"),
     ("a descending first key is ascending by its prefix", "sorter.ls", "        if keys[1] == 1 {\n            return pre[x] > pre[y];\n        }", "        if false {\n            return pre[x] > pre[y];\n        }"),
     ("the prefix of an integer first key is its text", "sorter.ls", "            if keys[2] == 1 {\n                pre[i] = vec.get(s.rows, i * stride + 2);", "            if false {\n                pre[i] = vec.get(s.rows, i * stride + 2);"),
-    ("the merge takes the later of two equal runs first", "sorter.ls", "(q >= hi || !before(s, keys, pre, order[q], order[p]))", "(q >= hi || before(s, keys, pre, order[q], order[p]))"),
+    ("the merge takes the later of two equal runs first", "sorter.ls", "(q >= hi || !before(s, keys, pre, pre2, order[q], order[p]))", "(q >= hi || before(s, keys, pre, pre2, order[q], order[p]))"),
     ("the second key of two is not looked at", "sorter.ls", "    var j = 0;\n    while j < s.nk {\n        var c = 0;\n        if keys[3 * j + 2] == 1 {\n            let vx", "    var j = 0;\n    while j < 1 {\n        var c = 0;\n        if keys[3 * j + 2] == 1 {\n            let vx"),
+    ("the second prefix word is compared ascending for a descending key", "sorter.ls", "    if pre2[x] != pre2[y] {\n        if keys[1] == 1 {\n            return pre2[x] > pre2[y];\n        }", "    if pre2[x] != pre2[y] {\n        if false {\n            return pre2[x] > pre2[y];\n        }"),
+    ("the second prefix word starts at the first byte", "sorter.ls", "                pre2[i] = prefix_of(kb, 7);", "                pre2[i] = prefix_of(kb, 6);"),
     # the cut back
     ("the cut back keeps one row too few", "sorter.ls", "        while i < cap && i < count {", "        while i < cap - 1 && i < count {"),
     ("the cut back keeps the offsets of the old buffer", "sorter.ls", "                    fresh_rows = vec.push(heap, fresh_rows, at + a - old_off);", "                    fresh_rows = vec.push(heap, fresh_rows, a);"),
