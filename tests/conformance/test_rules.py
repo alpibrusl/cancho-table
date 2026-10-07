@@ -43,6 +43,7 @@ LOCAL = {
     "value.not-finite": (8, "never", "inf or nan"),
     "value.float-range": (8, "never", "double"),
     "limit.number-too-long": (8, "never", "1,100"),
+    "agg.float-overflow": (8, "never", "largest double"),
 }
 LINUX_ONLY = {"io.read-failed"}
 
@@ -62,6 +63,7 @@ class Rules(unittest.TestCase):
         s.write("text.csv", "a,b\n1,x\n")
         s.write("big.csv", "a\n99999999999999999999\n")
         s.write("ovf.csv", "a\n1e999\n")
+        s.write("ovfsum.csv", "a\n1.7976931348623157e308\n1.7976931348623157e308\n")
         s.write("scale.csv", "a\n1.25\n")
         s.write("nan.csv", "a\nnan\n")
         s.write("long.csv", "a\n" + "1" * 1101 + "\n")
@@ -123,6 +125,7 @@ class Rules(unittest.TestCase):
             ("value.not-finite", root + ["--where", "a:float > 0", "nan.csv"], None),
             ("value.float-range", root + ["--where", "a:float > 0", "ovf.csv"], None),
             ("limit.number-too-long", root + ["--where", "a:float > 0", "long.csv"], None),
+            ("agg.float-overflow", root + ["--agg", "sum:a:float", "ovfsum.csv"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")

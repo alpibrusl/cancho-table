@@ -126,6 +126,7 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `value.not-finite` | 8 | never | a cell of a :float column is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float > 5) |
 | `value.float-range` | 8 | never | a cell of a :float column is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which) |
 | `limit.number-too-long` | 8 | never | a cell of a :float column is longer than 1,100 bytes, the longest cell that can be a double |
+| `agg.float-overflow` | 8 | never | the exact sum of a :float column in a group is beyond the largest double, about 1.8e308 (detail.group names the group) |
 <!-- /gen:rules -->
 
 The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other cancho-tools; the rest are `table`'s own.

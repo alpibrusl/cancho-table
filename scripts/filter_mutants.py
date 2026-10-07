@@ -20,7 +20,7 @@ TESTS = ["test_plan", "test_filter", "test_select", "test_rules", "test_cellcost
 MUTANTS = [
     # the sum is a pair (docs/numbers.md N0p): the low 32 bits of a cell in one integer, the rest in the second
     ("the low half of a sum loses its top bit", "agg.cho", "a = set_at(a, at + 1 + k, now + (v & 0xffffffff));", "a = set_at(a, at + 1 + k, now + (v & 0x7fffffff));"),
-    ("the high half of a sum is shifted by 31", "agg.cho", "a = set_at(a, at + 1 + (stride - 1) / 2 + k, high + (v >> 32));", "a = set_at(a, at + 1 + (stride - 1) / 2 + k, high + (v >> 31));"),
+    ("the high half of a sum is shifted by 31", "agg.cho", "a = set_at(a, at + 1 + na + k, high + (v >> 32));", "a = set_at(a, at + 1 + na + k, high + (v >> 31));"),
     ("the high half of an in-place sum is not added", "agg.cho", "vec.set(g.acc, high_at, vec.get(g.acc, high_at) + (v >> 32));", "vec.set(g.acc, high_at, vec.get(g.acc, high_at));"),
     ("the low half of an in-place sum is not masked", "agg.cho", "vec.set(g.acc, slot + 1 + k, now + (v & 0xffffffff));", "vec.set(g.acc, slot + 1 + k, now + v);"),
     ("settling a sum forgets the carry", "agg.cho", "vec.set(g.acc, high_at, vec.get(g.acc, high_at) + (low >> 32));", "vec.set(g.acc, high_at, vec.get(g.acc, high_at));"),
@@ -51,7 +51,7 @@ MUTANTS = [
     ("a value is distinct every time", "agg.cho", "known = map.find(sr, buffer.bytes(dr)) >= 0;", "known = false;"),
     ("one more distinct value is allowed", "agg.cho", "if distinct_pairs >= max_distinct {", "if distinct_pairs > max_distinct {"),
     ("one more group is allowed", "agg.cho", "if size >= max_groups {", "if size > max_groups {"),
-    ("the state bound is not kept", "agg.cho", "} else if bytes_held + buffer.size(kr) > max_state {", "} else if bytes_held + buffer.size(kr) > max_state + 100000000 {"),
+    ("the state bound is not kept", "agg.cho", "} else if bytes_held + buffer.size(kr) + float_state(tree) > max_state {", "} else if bytes_held + buffer.size(kr) + float_state(tree) > max_state + 100000000 {"),
     ("groups sort descending by key", "agg.cho", "            if c < 0 {\n                return 0 - 1;\n            }\n            return 1;", "            if c < 0 {\n                return 1;\n            }\n            return 0 - 1;"),
     # (Not here: making the merge unstable. The order is total -- ties are broken by the keys, which are
     # all different -- so stability cannot be seen; the mutant is equivalent.)
