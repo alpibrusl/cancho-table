@@ -231,6 +231,27 @@ class Sums(unittest.TestCase):
             columns.append([cell(c) for c in col])
         self.check_columns(columns)
 
+    def test_a_hair_below_the_guard_bit_decides_a_tie(self):
+        """1 + 2^-53 is a tie between 1 and the next double; one more bit anywhere below the guard breaks it upward, whichever bit: the sticky scan reads them all."""
+        for j in range(0, 70):
+            col = ["1", repr(2.0 ** -53), repr(2.0 ** (-54 - j))] if -54 - j >= -1074 else None
+            if col is None:
+                continue
+            ws, wm = want_pair(col)
+            self.assertEqual(text_of(ws), "1.0000000000000002", j)
+            rows = self.groups([col])
+            self.assertEqual(rows[0][1], "1.0000000000000002", (j, rows))
+            col = ["-1", repr(-(2.0 ** -53)), repr(-(2.0 ** (-54 - j)))]
+            self.assertEqual(self.groups([col])[0][1], "-1.0000000000000002", j)
+
+    def test_a_mean_that_rounds_to_zero_is_zero_for_ordering_too(self):
+        """There is no negative zero: a group whose mean rounds to -0 is equal to a group whose mean is 0 and sorts after it by its key, not before it."""
+        data = "g,x\nz,-5e-324\nz,0\nz,0\na,0\nm,5e-324\nm,0\nm,0\n"
+        for sort in ("mean:x", "-mean:x"):
+            got = self.s.table("t.csv", data, "--group", "g", "--agg", "mean:x:float", "--sort", sort, "--format", "csv")
+            want = b"g,mean:x\na,0.0\nm,0.0\nz,0.0\n"
+            self.assertEqual(got.stdout, want if sort == "mean:x" else want, (sort, got))
+
     def test_the_mean_is_one_rounding_not_two(self):
         rng = random.Random(4405)
         columns = []
