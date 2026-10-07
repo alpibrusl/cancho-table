@@ -10,7 +10,11 @@ binaries byte-identical before anything is timed. Per binary the **minimum** of 
 
     pass  <=>  mean(new minima) / mean(old minima)  <=  1.02
 
-and the spread across builds (max - min over the mean, per side) is printed, so that one outlier build is visible. Exit 0 pass, 1 a cell over, 2 outputs differ.
+and the spread across builds (max - min over the mean, per side) is printed, so that one outlier build is visible. Exit 0 pass, 1 a cell over, 2 outputs differ, 3 the counter cannot be read.
+
+`--counter` counts **instructions retired** instead of time (macOS `/usr/bin/time -l`, Linux `perf stat -e instructions:u`): the same cells, the same arithmetic, a bound of 1.01 (the count of one
+binary on one cell varies by a few parts in a thousand, and the machine's load does not enter at all). It was added after the clock-based gate failed its own control (builds of identical
+sources) on both machines and the count found, in minutes, a regression of 27 instructions a row of every one-thread read that the clock had reported as noise (docs/numbers.md, G6, third revision).
 
 Why this form (revision three; the first two judged ONE new build against one or two builds of the old sources). A build of unchanged sources runs up to 2 to 5%
 slower or faster than another by code layout alone; a single new build is one random draw of that layout, and a gate that compares one draw with a bound
@@ -22,6 +26,7 @@ averaged draw (about 1%); and a cell much shorter than a few milliseconds. The r
 """
 import argparse
 import pathlib
+import re
 import statistics
 import subprocess
 import sys
@@ -29,6 +34,7 @@ import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LIMIT = 1.02
+COUNTER_LIMIT = 1.01
 SPREAD_WARN = 0.04
 CELLS = {
     "filter status=404 and bytes>50000": ["--where", "status=404 and bytes:int>50000", "--format", "csv"],
@@ -57,6 +63,19 @@ def timed(argv):
     return time.perf_counter() - t, p.returncode
 
 
+def counted(argv):
+    """Instructions retired by one run (the user-space instructions the process executed): deterministic to a few parts in a thousand, so it does not depend on the
+    machine's load or on where the code landed. macOS: `/usr/bin/time -l`; Linux: `perf stat` (needs perf_event_paranoid <= 2 or the privilege, which is the
+    machine's setting and not touched here). Answers (count, return code), count 0 when the counter could not be read."""
+    if sys.platform == "darwin":
+        p = subprocess.run(["/usr/bin/time", "-l", *argv], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        m = re.search(r"(\d+)\s+instructions retired", p.stderr)
+    else:
+        p = subprocess.run(["perf", "stat", "-x,", "-e", "instructions:u", "--", *argv], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        m = re.search(r"^(\d+),,instructions", p.stderr, re.M)
+    return (int(m.group(1)) if m else 0), p.returncode
+
+
 def judge(old, new):
     """old, new: per build, the minimum time of the runs. Returns (ratio of the means, spread old, spread new, medians ratio for information)."""
     mo, mn = statistics.mean(old), statistics.mean(new)
@@ -73,12 +92,18 @@ def main():
     ap.add_argument("--file", default=str(ROOT / "build" / "num" / "data.csv"))
     ap.add_argument("--threads", type=int, default=4, help="the second thread count (the first is 1); on a box of three physical cores use 3")
     ap.add_argument("--cell", default=None, help="only the cells whose name contains this text")
-    ap.add_argument("--limit", type=float, default=LIMIT)
+    ap.add_argument("--limit", type=float, default=None, help="the bound on the ratio of the means: %.2f for time, %.3f for --counter" % (LIMIT, COUNTER_LIMIT))
+    ap.add_argument("--counter", action="store_true", help="count instructions retired instead of timing (a few runs each: the count does not wander): the answer to a clock that cannot tell identical builds apart")
     a = ap.parse_args()
     if len(a.old) < 3 or len(a.new) < 3:
         ap.error("at least three builds of each side are needed (--old and --new): one build is one random draw of code layout (docs/numbers.md, G6, third revision)")
-    if a.runs < 21:
+    if a.limit is None:
+        a.limit = COUNTER_LIMIT if a.counter else LIMIT
+    if a.counter:
+        a.runs = min(a.runs, 3) if a.runs != 21 else 3
+    elif a.runs < 21:
         ap.error("--runs must be at least 21")
+    measure = counted if a.counter else timed
     data = pathlib.Path(a.file)
     if not data.exists():
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -87,7 +112,8 @@ def main():
     bins = list(a.old) + list(a.new)
     no = len(a.old)
     failed = False
-    print("%-34s %3s %9s %9s %7s %7s %7s  %s" % ("cell", "thr", "old s", "new s", "ratio", "spr old", "spr new", ""))
+    unit = "M instr" if a.counter else "s"
+    print("%-34s %3s %9s %9s %7s %7s %7s  %s" % ("cell", "thr", "old " + unit, "new " + unit, "ratio", "spr old", "spr new", ""))
     for name, args in CELLS.items():
         if a.cell and a.cell not in name:
             continue
@@ -97,8 +123,9 @@ def main():
             if any((o.stdout, o.stderr, o.returncode) != (outs[0].stdout, outs[0].stderr, outs[0].returncode) for o in outs):
                 print("DIFFERENT OUTPUT:", name, threads)
                 return 2
-            for x in argvs * 2:
-                timed(x)                       # warm-up, discarded
+            if not a.counter:
+                for x in argvs * 2:
+                    timed(x)                   # warm-up, discarded
             times = [[] for _ in bins]
             for i in range(a.runs):
                 order = list(range(len(bins)))
@@ -107,7 +134,10 @@ def main():
                 if i % 2:
                     order.reverse()
                 for k in order:
-                    times[k].append(timed(argvs[k])[0])
+                    times[k].append(measure(argvs[k])[0])
+            if a.counter and min(min(t) for t in times) == 0:
+                print("the instruction counter could not be read (perf_event_paranoid? /usr/bin/time -l?):", name, threads)
+                return 3
             mins = [min(t) for t in times]
             ratio, so, sn = judge(mins[:no], mins[no:])
             over = ratio > a.limit
@@ -115,7 +145,8 @@ def main():
             flag = ("<-- over %.2f" % a.limit) if over else ""
             if max(so, sn) > SPREAD_WARN:
                 flag += "  (a build is off: spread over %d%%)" % round(SPREAD_WARN * 100)
-            print("%-34s %3d %9.4f %9.4f %7.3f %6.1f%% %6.1f%%  %s" % (name, threads, statistics.mean(mins[:no]), statistics.mean(mins[no:]), ratio, so * 100, sn * 100, flag))
+            scale, fmt = (1e6, "%9.1f") if a.counter else (1.0, "%9.4f")
+            print(("%-34s %3d " + fmt + " " + fmt + " %7.3f %6.1f%% %6.1f%%  %s") % (name, threads, statistics.mean(mins[:no]) / scale, statistics.mean(mins[no:]) / scale, ratio, so * 100, sn * 100, flag))
     print("G6: %s" % ("FAIL" if failed else "PASS"))
     return 1 if failed else 0
 

@@ -79,6 +79,48 @@ class Gate(unittest.TestCase):
         code, out = self.run_gate([1.0, 1.0, 1.0], [1.0, 1.0, 1.0], {"n1": "different"})
         self.assertEqual(code, 2, out)
 
+    def test_the_counter_mode_has_a_tighter_bound_and_reads_a_count_not_a_clock(self):
+        d = tempfile.mkdtemp()
+        data = pathlib.Path(d) / "data.csv"
+        data.write_text("a\n1\n")
+        paths = {}
+        for i, t in enumerate([1000000, 1000000, 1000000, 1017000, 1017000, 1017000]):
+            p = pathlib.Path(d) / ("b%d" % i)
+            p.write_text("#!/bin/sh\necho same\n")
+            p.chmod(0o755)
+            paths[str(p)] = t
+        old, buf = gate_regress.counted, io.StringIO()
+        gate_regress.counted = lambda argv: (paths[argv[0]], 0)
+        sys.argv = ["g", "--counter", "--old", *[str(pathlib.Path(d) / ("b%d" % i)) for i in range(3)], "--new", *[str(pathlib.Path(d) / ("b%d" % i)) for i in range(3, 6)], "--file", str(data), "--cell", "cut"]
+        try:
+            with contextlib.redirect_stdout(buf):
+                code = gate_regress.main()
+        finally:
+            gate_regress.counted = old
+        self.assertEqual(code, 1, buf.getvalue())                  # +1.7% instructions is over 1.01, and would be within the clock's 1.02
+        self.assertIn("M instr", buf.getvalue())
+        self.assertIn("over 1.01", buf.getvalue())
+
+    def test_a_counter_that_cannot_be_read_is_not_a_pass(self):
+        d = tempfile.mkdtemp()
+        data = pathlib.Path(d) / "data.csv"
+        data.write_text("a\n1\n")
+        names = []
+        for i in range(6):
+            p = pathlib.Path(d) / ("b%d" % i)
+            p.write_text("#!/bin/sh\necho same\n")
+            p.chmod(0o755)
+            names.append(str(p))
+        old, buf = gate_regress.counted, io.StringIO()
+        gate_regress.counted = lambda argv: (0, 0)
+        sys.argv = ["g", "--counter", "--old", *names[:3], "--new", *names[3:], "--file", str(data), "--cell", "cut"]
+        try:
+            with contextlib.redirect_stdout(buf):
+                code = gate_regress.main()
+        finally:
+            gate_regress.counted = old
+        self.assertEqual(code, 3, buf.getvalue())
+
     def test_the_judgement_is_the_ratio_of_the_means_and_the_spread(self):
         r, so, sn = gate_regress.judge([1.0, 1.0, 1.0], [1.0, 1.0, 1.06])
         self.assertAlmostEqual(r, 1.02)
