@@ -41,8 +41,8 @@ MUTANTS = [
     ("a :dec scale is its digits plus one", "agg.cho", "            return (k - 5, 2 + v);\n        }\n    }\n    return (e, 0);", "            return (k - 5, 3 + v);\n        }\n    }\n    return (e, 0);"),
     ("a :dec of three digits is a scale", "agg.cho", "        if digits >= 1 && digits <= 2 && k >= 6 &&", "        if digits >= 1 && digits <= 3 && k >= 6 &&"),
     # the read of a key cell (engine.cho, query.cho)
-    ("a typed group takes the fast path", "agg.cho", "    if contents(g.memo)[rest_at + 2] != 0 {\n        return (0 - 1, 0);", "    if false && contents(g.memo)[rest_at + 2] != 0 {\n        return (0 - 1, 0);"),
-    ("the typed flag of a plan is never set", "agg.cho", "contents(mw)[memo_size() + 4] = query.typed_groups(tree);", "contents(mw)[memo_size() + 4] = 0;"),
+    ("a typed group takes the fast path", "agg.cho", "            contents(mw)[memo_size() + 2] = 1152921504606846976;", "            contents(mw)[memo_size() + 2] = 0;"),
+    ("the typed flag of a plan is never set", "agg.cho", "    if query.typed_groups(tree) != 0 {\n        borrow mut memo", "    if query.typed_groups(tree) == 99 {\n        borrow mut memo"),
     ("a text group column counts as typed", "query.cho", "    if kind != 0 {\n        borrow mut g as &!gw in {", "    if kind == 0 {\n        borrow mut g as &!gw in {"),
     ("a group refusal is read as an aggregate's", "engine.cho", "    if k >= 1000 {\n        column = cols[query.count_of(tree, 0)", "    if k >= 100000 {\n        column = cols[query.count_of(tree, 0)"),
     ("a group refusal has the context of an aggregate", "engine.cho", "    var function = -3;", "    var function = 2;"),
@@ -54,7 +54,7 @@ MUTANTS = [
     ("a group column is a type conflict with itself", "query.cho", "                return (gkind_at(q, k), name);", "                return (gkind_at(q, k) + 1, name);"),
     ("an order key's type is one more in the conflict", "query.cho", "                return (order_flags(q, k) / 2, order_name(q, k));", "                return (order_flags(q, k) / 2 + 1, order_name(q, k));"),
     ("an order key that is not an integer counts as one", "query.cho", "        if order_flags(q, k) / 2 != 0 && cols[order_name(q, k)] == column {", "        if order_flags(q, k) / 2 == 0 && cols[order_name(q, k)] == column {"),
-    ("a group column's type is the last one given", "query.cho", "    return vec.get(q.gkinds, j);", "    return vec.get(q.gkinds, vec.size(q.gkinds) - 1);"),
+    ("a group column's type is the last one given", "query.cho", "    return vec.get(q.gkinds, j + 1);", "    return vec.get(q.gkinds, vec.size(q.gkinds) - 1);"),
     # the row sorter (sorter.cho)
     ("a typed order key is read as an integer", "sorter.cho", "    if kind == 1 {\n        return query.parse_int(data);\n    }\n    return query.parse_typed(data, kind);", "    return query.parse_int(data);"),
     ("an integer order key is read as typed", "sorter.cho", "    if kind == 1 {\n        return query.parse_int(data);\n    }\n    return query.parse_typed(data, kind);", "    return query.parse_typed(data, kind);"),
