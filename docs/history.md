@@ -295,7 +295,7 @@ length byte); `distinct` over text; the second aggregate refusing (which one is 
 longer than `--max-line-bytes` that is more than a chunk (and one that ends 100 bytes into the next chunk, the case where
 a line held over looks like a whole one). Each plan runs sequentially and with 3, 4, 16 and 64 threads and ranges of
 7 to 4096 bytes, and the answers must be equal and equal to Python's.
-`scripts/cellcost_mutants.py` (new) has 45 mutants of the new paths, **all killed** (on the Linux box; the Mac run of an earlier
+`scripts/cellcost_mutants.py` (new) has 43 mutants of the new paths, **all killed** (on the Linux box; the Mac run of an earlier
 version of the list too), and three more that are equivalent and are said so in the script: an unquoted field is never able to hold a delimiter or an LF, so testing for them changes nothing; and the
 key `add_fast` builds is only looked for, so a wrong length byte in it makes a miss and the row takes the slow way, with
 the same answer. The first run of the mutants had seven survivors, two of them those equivalent ones and five real (the tests checked a refusal's status and not its
@@ -362,7 +362,7 @@ grouping's call, and select and filter are at 0.97x to 1.02x of `main`. Details 
 0.807 s to 0.455 s (-44%); two more ideas (insertion-sorted runs, the prefix carried through the merge) gained 1% to 4% and
 were reverted. The benchmark, the losses (3.4x to 3.9x behind DuckDB's default, 1.13x behind it at one thread with ties, 1.45x
 behind the shell's `sort -s -n` on Linux with ties) and what is left are in `docs/sort.md`.
-Tests: 1,600 random plans against Python's stable sort, 500 damaged inputs, bounded memory, pages, bounds; 44 mutants.
+Tests: 1,600 random plans against Python's stable sort, 500 damaged inputs, bounded memory, pages, bounds; 52 mutants.
 
 ## The sum becomes a pair (docs/numbers.md, stage N0p)
 

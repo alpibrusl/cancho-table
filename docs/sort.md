@@ -184,7 +184,7 @@ refusal, and its row, column, value and context must be the ones the oracle name
 refusal or an answer and never a trap; the bounded top-N cut back about 200 times over 600 rows with ties, descending,
 text and integer keys; the page chain; the byte budget; the bounds and their refusals; the names with a minus, a colon and a
 comma; quoted keys with doubled quotes against unquoted keys with a quote. `test_memory.py` gains the flat top-N and the
-full sort within and at its bound. `scripts/sort_mutants.py` has 44 mutants of the sorter, the plan and the way the rows are
+full sort within and at its bound. `scripts/sort_mutants.py` has 52 mutants of the sorter, the plan and the way the rows are
 written, with the equivalent ones said in the script. Its first run had four survivors, which were real gaps:
 a quoted key's doubled quotes (the test data had only quoted keys, so raw bytes sorted the same; a key `x"#`
 written without quotes sorts the other way round), and two equivalents (the rows' numbers, which stability makes unnecessary

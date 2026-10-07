@@ -153,7 +153,7 @@ requires the sequential bytes:
   first);
 - memory: peak resident set stays within the threads times the range, not the file.
 
-`scripts/parallel_mutants.py` has 33 mutants of the new logic (stitching, the speculation check,
+`scripts/parallel_mutants.py` has 27 mutants of the new logic (stitching, the speculation check,
 page and budget decisions, the merge of every aggregate, the peak of a sum, the signed encoding):
 the result is in the pull request.
 
