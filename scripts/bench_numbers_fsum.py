@@ -88,7 +88,7 @@ def main():
     counts = (1, 4, a.threads)
 
     def tbl(col, typ, q, threads):
-        items = ",".join(f"{fn}:{col}:{typ}" if typ != "int" else f"{fn}:{col}" for fn in QS[q])
+        items = ",".join((f"{fn}:{col}:{typ}" if typ != "int" else f"{fn}:{col}" + ("@4" if fn == "mean" else "")) for fn in QS[q])
         t = [] if threads == 1 else ["--threads", str(threads), "--parallel-min-bytes", "0"]
         return [a.bin, *root, "--group", "status", "--agg", items, "--format", "csv", *t, name]
 
@@ -114,7 +114,7 @@ def main():
         if shutil.which("mlr"):
             cells.append((f"mlr {col} both", ("mlr", col, "both", 1), ["mlr", "--icsv", "--ocsv", "--ofmt", "%.17g", "stats1", "-a", "sum,mean", "-f", col, "-g", "status", "then", "sort", "-f", "status", d], col, "both", True, 1))
 
-    good, accuracy = [], {}
+    good, accuracy, answers = [], {}, {}
     for label, key, argv, col, q, header, th in cells:
         t, p = timed(argv)
         if p.returncode != 0:
@@ -137,6 +137,7 @@ def main():
             print("WRONG ANSWER", label, exact_n, total, worst)
             continue
         accuracy[key] = (exact_n, total, worst)
+        answers[key] = got
         good.append((label, key, argv))
     times = {l: [] for l, _, _ in good}
     for i in range(a.runs):
@@ -147,6 +148,13 @@ def main():
     for label, key, _ in good:
         acc = accuracy.get(key)
         print("%-34s %9.4f   %s" % (label, best[label], "%d of %d (%.1f ulp)" % acc if acc else ""))
+    # a contender whose answer depends on the thread count: the answers (as parsed doubles) of one question at the thread counts, compared bit for bit
+    for who in ("table", "duck"):
+        for col in ("price", "ratio"):
+            for q in QS:
+                distinct = {repr(sorted(answers[(who, col, q, th)].items())) for th in counts if (who, col, q, th) in answers}
+                if distinct:
+                    print("threads: %-5s %-5s %-4s %d distinct answer(s) over %d thread counts" % (who, col, q, len(distinct), len(counts)))
     worst_g8 = 0.0
     for q in ("sum", "mean"):
         for th in counts:
