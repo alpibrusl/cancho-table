@@ -3,7 +3,7 @@
 **Status: designed, spiked, and built as a patch on this branch (`tools/table/flt.cho`, `tools/table/pow5.cho`); not merged.** The gap is `docs/numbers.md` section 4.2 and
 the "Floats" table of `docs/benchmarks.html`: a column of 17-digit doubles took 1.09 s to read with `min`/`max` (DuckDB: 0.208 s), and on macOS it got *slower* with threads.
 Everything here that is called *measured* was measured by the files in `scripts/spikes/float/` (listed in section 11) with the compiler the tool is pinned to
-(`a4572ea`, no change to `cancho` was needed or made). Numbers are the Apple M4 Max (16 cores, a Mac that other work was running on: load 6 to 15, so read ratios, not the last digit)
+(`a4572ea`, no change to `cancho` was needed or made). Numbers are the Apple M4 Max (16 cores, a shared machine: the load average was 6 to 15 in the per-cell runs and 16 to 26 in the final end-to-end run, and each table says which) 
 and `gram` (Linux x86-64, 16 cores, `taskset -c 0-6`, load under 2).
 
 ## 0. The result in one table
@@ -12,9 +12,9 @@ and `gram` (Linux x86-64, 16 cores, `taskset -c 0-6`, load under 2).
 |---|---:|---:|---:|
 | one 17-digit cell, ns (Mac; the 8 ns of the line scan included) | 1,151 | **29.6** | |
 | one 17-digit cell, ns (gram, the 6 ns of the line scan included) | 693 | **41.9** | |
-| `min` + `max` + `sum` + `count` of `ratio` by `status`, 1M rows, 1 thread (Mac) | 1.227 s | **0.114 s** | 0.230 s |
-| the same at 16 threads (Mac) | 2.093 s (*slower* with threads) | **0.016 s** | 0.085 s |
-| the same, gram, 1 thread / 4 threads | 0.859 s / 0.286 s | **0.156 s / 0.054 s** | 0.202 s / 0.108 s |
+| `min` + `max` + `sum` + `count` of `ratio` by `status`, 1M rows, 1 thread (Mac, shared, load 16 to 26, minimum of 7 interleaved runs, section 13.3) | 1.234 s | **0.112 s** | 0.230 s |
+| the same at 16 threads (Mac, same run) | 2.006 s (*slower* with threads) | **0.021 s** | 0.088 s |
+| the same, gram, 1 thread / 6 threads (`taskset -c 0-5`, load 1.2 at the start, minimum of 7 interleaved runs, section 13.3) | 0.866 s / 0.346 s | **0.154 s / 0.067 s** | 0.196 s / 0.116 s |
 | differential against Python `float()` | | **0 differences in 201,767,328 generated and adversarial cells on the Mac, 51,194,656 on gram, and 20,867,328 more with the exact tier forced**; the 640 cells of `test_float.py` | |
 
 * **Cost of a cell.** 17-digit cells: 1,151 ns to 29.6 ns (39x); the money-like column of 16 to 17 digits, 2,898 to 32.6 ns (89x); random doubles at any exponent, 4,451 to 42.6 ns (104x); the
@@ -173,7 +173,7 @@ the limbs and the cell is bounded (section 2.5).
 
 ## 4. Cost per cell (`fbench`, cells in memory; the difference of 11 rounds and 1, best of 3; ns)
 
-The line scan (`index_of_byte` to the next newline) is in every figure: 8 ns on the Mac, 6 ns on gram. Mac = Apple M4 Max, load 6 to 15 from other work; gram = one core of an x86-64 box, load under 2.
+The line scan (`index_of_byte` to the next newline) is in every figure: 8 ns on the Mac, 6 ns on gram. Source: `scripts/spikes/float/time_cells.py`, minimum of 3 runs of 11 rounds minus minimum of 3 runs of 1 round, divided by 10 rounds and the rows, one core, cells in memory. Mac = Apple M4 Max, a shared machine, load average at the start of each file 6.7 to 13.5; gram = one pinned core (`taskset -c 2`) of an x86-64 box, load 1.2 to 1.8.
 
 | shape | Mac `origin/main` | Mac new | gram `origin/main` | gram new |
 |---|---:|---:|---:|---:|
@@ -272,12 +272,14 @@ itself is about 22 of the 105 ns. At 16 threads: 15 ns a row.
 | mean by status | 0.18 / 0.06 / 0.04 | **2.05 / 2.79 / 4.56** |
 | sum and mean | 0.18 / 0.05 / 0.05 | **1.91 / 2.83 / 4.91** |
 
-(`.`: not run at 4 threads by that script.) The "5.7x to 24x slower" of `docs/numbers.md` N4 reproduces (1/0.18 = 5.6, 1/0.04 = 24 at 16 threads for `sum`) and becomes **1.9x to 6.2x faster**. Gate G9 of `docs/numbers.md`
+(`.`: not run at 4 threads by that script. Load not recorded per run: `uptime` at the time said 6 to 15 on the shared Mac.) The "5.7x to 24x slower" of `docs/numbers.md` N4 reproduces (1/0.18 = 5.6, 1/0.04 = 24 at 16 threads for `sum`) and becomes **1.9x to 6.2x faster**. Gate G9 of `docs/numbers.md`
 ("not slower than DuckDB at one thread on the same file") passes with 2x to spare.
 
-**The realistic ratio.** For a column of 15 to 17 digit doubles, one thread, a CSV file in the page cache: `table` is **0.5x of DuckDB's time (Mac) and 0.6x to 0.75x (gram)**; more cores widen it on the Mac (0.2x at 16) and
-narrow it on gram (0.45x to 0.6x at 4 to 6). The 2x is where the numbers are measured; I would not quote better than "about twice as fast as DuckDB's `read_csv` + `min`/`max`/`sum` on this file, and exact where it is not". What this does *not* say: DuckDB
-was run with its defaults (`read_csv` sniffing off, columns declared), nothing was tuned for either side, and the file is the benchmark's, not a customer's.
+**The realistic ratio, measured at the end (section 13.3: minimum of 7 interleaved runs, order alternating).** One thread, a CSV file in the page cache, `min`/`max`/`sum`/`count` of `ratio`: `table` is **0.47x to 0.49x of DuckDB's
+time on the Mac (shared, load 16 to 26): 2.0x faster; and 0.73x to 0.78x on gram (load 1.2): 1.3x faster.** With more cores the Mac widens (0.21x to 0.24x at 16 threads: 4x to 5x faster) and gram stays near 0.55x to 0.63x at 2 to 6 threads
+(1.6x to 1.8x faster). So **"about twice as fast" holds on the Mac and not on gram, and is not to be quoted for both**; "faster than DuckDB at every thread count on both machines, by 1.3x to 2.0x at one thread" is what the minima support.
+What this does *not* say: DuckDB was run with its defaults (`read_csv` with the columns declared), nothing was tuned for either side, and the file is the benchmark's, not a customer's. The tables of this section and of section 5 are an earlier run
+(5 runs, on the same shared Mac, load not recorded per run) and agree with the final one to within the load.
 
 gram, same file (7 cores of 16, `taskset -c 0-6`; table / DuckDB seconds):
 
@@ -305,15 +307,15 @@ gram, same file (7 cores of 16, `taskset -c 0-6`; table / DuckDB seconds):
 * **The pages and the numbers they quote.** `docs/benchmarks.html`'s "Floats" table, `docs/numbers.md` G9/N4's "5.7x to 24x slower", sections 4.2 (tier 3 of the reader) and 11 (the "what the language lacks" row for the multiply-high, "not known": the real cost of Eisel-Lemire) are now
   out of date. This branch does not edit them: `scripts/site.py` regenerates the pages and the counts in the README from the benchmark files, which should be rerun on a quiet machine, not on this one (load 6 to 15) and not with the page's
   numbers mixed with mine. The suggested text is sections 0, 5 and 7 here.
-* **Quiet-machine numbers.** Both machines were shared (Mac: other sessions; gram: another session's `taskset` builds at times). The ratios agree between the Mac and gram and between the spike (`fbench`) and the tool
-  (`table`); the absolute nanoseconds are +-10% at best.
+* **Quiet-machine numbers.** Both machines were shared (Mac: other sessions, load 6 to 26; gram: another session's benchmarks on the same cores at times). The ratios agree between the Mac and gram and between the spike (`fbench`) and the tool
+  (`table`); the absolute times are +-10% at best. The instruction counts of section 13.1 do not depend on the load.
 * **The `lo <= 1` rule** (section 6): not distinguishable from `lo == 0` by anything I could build. If Lemire's proof is right it does not matter; if it is wrong, only for exact halfway cells with `q` in -4..23.
 * **Tier 3 allocates.** One `region` of 200 limbs per cell that gets there, so on macOS a file of *only* adversarial cells would again scale badly with threads (the cost is 1.5 to 10 microseconds a cell either way). A real column does not do this; if a
   column ever does, a per-call stack buffer (the language has none for 200 `int`s) or the compiler's per-thread chunk cache of `alpibrusl/cancho#361`'s finding 4 would fix it.
 * **The 19-digit `m` as an unsigned pattern in a signed `int`** is the one place the checked arithmetic is turned off (`wrapping_mul`, `wrapping_add` in the digit loop and in `mul128`). Every other operation is the checked one; the
   `edge` shape puts a mantissa on each side of 2^63 and 2^64 to look at exactly this.
-* **Not tested:** other CPUs than M4 Max and one x86-64 box (the arithmetic is integer and the table is generated, so a different result would be a compiler bug, and both backends have run it); inputs that are not ASCII (the grammar
-  refuses them before any of this; `test_float`'s refusals pass); the `--threads` run of `test_float_sum` on Linux (it passed on the Mac only).
+* **Not tested:** other CPUs than the M4 Max and one x86-64 box (an i7-1260P: the arithmetic is integer and the table is generated, so a different result would be a compiler bug); inputs that are not ASCII (the grammar
+  refuses them before any of this; `test_float`'s refusals pass on both machines).
 * **`float_of_bits`** (`alpibrusl/cancho#361`): not needed here. With it the printer and the accumulator's `finalize` could drop `ldexp` (section 2.7); that is a separate change.
 * **A faster scan** is the next gain and is not an Eisel-Lemire matter: the digit loop is about 1.2 ns a digit; reading eight digits at a time (SWAR) needs an unaligned 8-byte load the language does not have, and the line scan is already 8 of the
   29.6 ns. Not pursued.
@@ -353,3 +355,90 @@ The Mac compiler is `a4572ea` (the pin); gram's was built from the same sources 
 Section 4.2 "Correctly rounded reading": tier 3 becomes "Eisel-Lemire on a 19-digit window, with `exact_bits` (bignum) only when the window and the window + 1 differ", the "1.0 to 1.6 microseconds a cell" and "N3b" paragraphs become "stage N3b,
 built, section 6 of `gap-float.md`", the row of section 8 (G9) is met: 0.5x of DuckDB's time at one thread (Mac), the N4 paragraph "5.7x to 24x slower" is replaced by 1.9x to 2.1x faster at one thread, and section 11's "what the language lacks": the multiply-high
 is *not* an urgent ask (2.35 ns of latency, hidden by the scan), `float_of_bits` is wanted only by the printer and the accumulator, and "the tape-free correctly rounded `text -> float`" is no longer needed by `table`.
+
+## 13. The gates of a patch meant to merge (measured for this PR)
+
+Everything below was run on the branch at the commit named in the PR; builds are of the pinned compiler `a4572ea` (the Mac's from the repository checkout, gram's built from a fresh clone of `alpibrusl/cancho` at that commit). The file is
+`scripts/bench_numbers.py`'s (`bn.generate(path, 1_000_000)`, seed 1, 58.6 MB, columns `id,status,bytes,price,ratio,path,cents`); `ratio` is `repr(uniform(0, 1000))`.
+
+### 13.1 Instruction counts (`scripts/gate_regress.py --counter`, bound 1.01, 3 builds per side, 1 and 4 threads)
+
+`--old` = three builds of `origin/main` (`7d04b9f`), `--new` = three builds of this branch, each in its own directory, outputs of all six byte-identical before counting, three runs each, the minimum per build, the mean over builds. Instructions retired do not depend on
+the load. Mac: `/usr/bin/time -l` (the six builds are byte-identical per side: same md5, so the "spread" is 0 up to counting noise). gram: `perf stat -e instructions:u` on the hybrid CPU (`cpu_core` and `cpu_atom` events added), `nice -n 5 taskset -c 0-5`. Two cells were added to
+the gate for this change (`float17 filter`, `float17 sum,min,max`: the 17-digit column).
+
+| cell (1M rows) | thr | Mac old M instr | Mac new | ratio | gram old | gram new | ratio |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| filter status=404 and bytes>50000 | 1 / 4 | 1505.9 / 1626.3 | 1505.7 / 1626.7 | 1.000 / 1.000 | 1546.8 / 1672.3 | same | 1.000 / 1.000 |
+| cut status,bytes | 1 / 4 | 1557.9 / 1691.3 | 1557.6 / 1690.7 | 1.000 / 1.000 | 1568.1 / 1700.1 | same | 1.000 / 1.000 |
+| group-count status | 1 / 4 | 1660.9 / 1696.0 | 1660.9 / 1695.5 | 1.000 / 1.000 | 1660.7 / 1696.9 | same | 1.000 / 1.000 |
+| group-sum bytes by status | 1 / 4 | 1867.5 / 1903.5 | 1866.8 / 1902.6 | 1.000 / 1.000 | 1870.3 / 1906.5 | same | 1.000 / 1.000 |
+| group count,sum,min,max | 1 / 4 | 2024.0 / 2058.8 | 2023.5 / 2058.7 | 1.000 / 1.000 | 2043.3 / 2079.6 | same | 1.000 / 1.000 |
+| text filter path contains | 1 / 4 | 1541.8 / 1656.4 | 1542.2 / 1656.5 | 1.000 / 1.000 | 1570.5 / 1696.1 | same | 1.000 / 1.000 |
+| sum of everything | 1 / 4 | 1662.5 / 1698.0 | 1663.2 / 1698.4 | 1.000 / 1.000 | 1677.1 / 1713.2 | same | 1.000 / 1.000 |
+| dec filter price:dec(2)>=500 | 1 / 4 | 1457.9 / 1573.7 | 1457.1 / 1573.6 | 0.999 / 1.000 | 1500.1 / 1626.0 | same | 1.000 / 1.000 |
+| dec group-sum cents | 1 / 4 | 2387.0 / 2422.1 | 2387.0 / 2421.3 | 1.000 / 1.000 | 2444.1 / 2480.3 | same | 1.000 / 1.000 |
+| **float filter price:float>=500** (Clinger, tier 1) | 1 / 4 | 1467.6 / 1583.4 | 1467.2 / 1582.0 | 1.000 / 0.999 | 1507.4 / 1633.3 | 1512.1 / 1638.0 | **1.003 / 1.003** |
+| order-by -bytes:int top 100 | 1 / 4 | 1570.9 / 1572.1 | 1571.2 / 1572.2 | 1.000 / 1.000 | 1566.2 / 1567.9 | same | 1.000 / 1.000 |
+| order-by status,path rows | 1 / 4 | 1655.9 / 1657.1 | 1655.9 / 1657.3 | 1.000 / 1.000 | 1673.0 / 1674.7 | same | 1.000 / 1.000 |
+| **float min/max by status** (`ratio`) | 1 / 4 | 18945.5 / 23923.5 | 2361.0 / 2398.5 | **0.125 / 0.100** | 12535.6 / 12620.5 | 2432.8 / 2469.0 | **0.194 / 0.196** |
+| **float17 filter ratio:float>=500** | 1 / 4 | 4244.2 / 5180.3 | 1490.6 / 1605.1 | **0.351 / 0.310** | 3238.2 / 3353.7 | 1542.3 / 1667.8 | **0.476 / 0.497** |
+| **float17 sum,min,max ratio** | 1 / 4 | 19098.5 / 21840.9 | 2512.2 / 2546.8 | **0.132 / 0.117** | 12691.5 / 12777.8 | 2588.6 / 2625.9 | **0.204 / 0.206** |
+
+(`same`: the new count equals the old to the printed digit.) Result: **G6 PASS on both machines.** Every integer, decimal, text, sort and group path is at 1.000 (0.999 at worst); the one existing cell that moved is the two-decimal float filter on gram, +0.3% (+4.7M instructions in 1,507M, 5 per
+row: the scanner counts a 19-digit window now), inside the bound; on the Mac it is 1.000. The float cells that were slow are 3 to 10 times *cheaper* in instructions: 0.100 to 0.351 of the old count on the Mac, 0.194 to 0.497 on gram.
+
+### 13.2 The clock form, and its control
+
+`scripts/gate_regress.py` without `--counter`, bound 1.02, 21 runs interleaved, minimum per build, 3 builds per side, threads 1 and 4. Mac (shared, load average 16.5 at the start of the new-vs-old run, 21 at its end, 14.7 after the control): **new vs old FAILED two cells, both on code this change does not
+touch** (`sum of everything` 1 thread, 1.024, and `dec group-sum cents` 4 threads, 1.025, whose instruction counts are 1.000 and 1.000); the 17-digit cells: 0.270 and 0.088 (filter), 0.095 and 0.022 (sum,min,max), 0.085 and 0.020 (min/max). **The control** (the same sources against three other builds, which on the Mac are
+byte-identical binaries) passed, with ratios from 0.984 to 1.020 and spreads up to 13.7%: so the clock at that load cannot tell 1.02 from 1.00, and the 1.024/1.025 are inside what identical binaries produce. gram (`nice -n 5 taskset -c 0-5`, load average 1.4 at the start): new vs old
+three cells over (1.025, 1.026, 1.022: `filter status=404 and bytes>50000` 1 thread, `group count,sum,min,max` 4 threads, `sum of everything` 4 threads, all at instruction count 1.000); **the control FAILED six cells** (up to 1.066, `group count,sum,min,max` 4 threads) with identical sources, while another session was running its own benchmark on the
+same cores (load 2.5 to 3.0). **So the clock form cannot be the gate here, and it did what `docs/numbers.md` G6 says it does (it fails its own control); the counter of 13.1 is the gate.** Float cells on the clock, gram: 0.169 and 0.181 (min/max), 0.445 and 0.496 (filter), 0.186 and 0.201 (sum,min,max).
+
+### 13.3 End to end against DuckDB, interleaved minimum of 7, with the load
+
+`scripts/spikes/float/e2e.py`: the answers checked first (the table's `min`/`max`/`sum` equal `math.fsum` exactly; DuckDB's sum within 1e-9 relative), then 7 interleaved rounds (the order reversed every other round), the minimum per contender. Seconds, `ratio` of the file above.
+
+| machine, conditions | question | threads | `origin/main` | **this branch** | DuckDB 1.5.6 | branch / DuckDB |
+|---|---|---:|---:|---:|---:|---:|
+| Mac M4 Max, shared, load average 15.9 before and 25.6 after | min, max, sum, count by status | 1 | 1.234 | **0.112** | 0.230 | **0.49** |
+| | | 16 | 2.006 | **0.021** | 0.088 | **0.24** |
+| | min, max | 1 / 16 | 1.234 / 1.994 | **0.105 / 0.020** | 0.223 / 0.098 | 0.47 / 0.21 |
+| | sum | 1 / 16 | 1.235 / 1.988 | **0.108 / 0.020** | 0.220 / 0.099 | 0.49 / 0.21 |
+| | count where `ratio >= 500` | 1 / 16 | 0.269 / 0.345 | **0.082 / 0.016** | 0.216 / 0.086 | 0.38 / 0.19 |
+| gram i7-1260P, `nice -n 5 taskset -c 0-5`, load average 1.2 at the start (this version of the script does not print the load afterwards) | min, max, sum, count by status | 1 / 2 / 4 / 6 | 0.866 / 0.457 / 0.381 / 0.346 | **0.154 / 0.086 / 0.077 / 0.067** | 0.196 / 0.142 / 0.122 / 0.116 | **0.78 / 0.61 / 0.63 / 0.58** |
+| | min, max | 1 / 6 | 0.854 / 0.345 | **0.144 / 0.065** | 0.198 / 0.112 | 0.73 / 0.58 |
+| | sum | 1 / 6 | 0.881 / 0.340 | **0.140 / 0.063** | 0.191 / 0.115 | 0.73 / 0.55 |
+| | count where `ratio >= 500` | 1 / 6 | 0.234 / 0.095 | **0.110 / 0.048** | 0.190 / 0.109 | 0.58 / 0.44 |
+
+Mac load was 16 to 26 here (the machine is shared with other sessions), higher than the 6 to 15 of the earlier runs of this document, so the Mac figures are slower than the ones above and the ratios are the ones to use. **Against DuckDB at one thread: 2.0x faster on the Mac, 1.3x faster on gram.**
+
+### 13.4 The corpus
+
+`scripts/corpus.py` (the md5 of the output, the exit code, stdout and stderr of every plan over the benchmark and adversarial files, sequential and with threads and tiny ranges): 134 existing plans, and 32 new ones over the 17-digit column (min/max, sum, mean, distinct, filters, order-by) added for this change. `origin/main`'s binary and this branch's: **166 of 166 lines identical on the Mac and on gram**
+(and the 134 existing ones identical on gram before the new plans were added). All 166 exit 0.
+
+### 13.5 Linux conformance, gram, from a clean clone
+
+A fresh `git clone` of the branch (`06ee222`), the compiler built from a fresh clone at `a4572ea`, `cancho build` in the clone, `TMPDIR` a unique directory removed afterwards, `nice -n 10 taskset -c 0-5`: `test_float` 26, `test_float_sum` 34, `test_numbers` 34, `test_typed_keys` 25, `test_limits` 14, `test_differential` 7,
+`test_parallel` 22, `test_mcp` 43, `test_skill` 20: **all OK**. (On the Mac, on the final binary: the first seven, all OK.)
+
+### 13.6 Mutants
+
+`--check` of every mutant script (`cellcost`, `filter`, `float`, `float_sum`, `mcp`, `numbers`, `parallel`, `report`, `select`, `skill`, `sort`, `typed_keys`): **all pass**, after repairing `float_mutants.py`, 11 of whose 37 patterns described the old reader (they now describe the new one: the Clinger bound, the fraction count, the overflow and
+zero verdicts, the rounding of a subnormal, the exact tier's rounding and remainder, the window, the bits). A real run of those 11 on gram: **11 of 11 killed** (by `test_random_float_plans`, `test_hard_cells_are_rounded_as_python_rounds_them` and the million-cell test). The 24 mutants of `scripts/spikes/float/mutants.py`, really run on gram (the same corpus, regenerated there):
+**16 killed, 8 survive, and each survivor has its explanation and evidence in the script** (`NOTES`): seven are equivalent by construction (the condition is weaker or the result is clamped by the caller) and the eighth, `lo <= 1` against `lo <= 0`, is equivalent on everything tried: `scripts/spikes/float/lo_search.py` found `lo == 1` in none of 2,800,000
+draws (28 values of q, half of them multiples of 5^-q, the only operands that can be exact halfways) and all 31,979 exact halfways among them have `lo == 0`; the argument is in the script (the dropped part `j * d` of the product cannot reach bit 64). No input is known that distinguishes them, so no test can kill it.
+
+### 13.7 The 100-million-cell differential: commands, seeds, results
+
+```
+python3 scripts/spikes/float/differential.py --bin OUT/fbench --cells 100000000 --workers 5 --seed 1     # Mac        101,400,000 cells, 0 files with a difference (122 s)
+python3 scripts/spikes/float/differential.py --bin OUT/fbench --cells 100000000 --workers 5 --seed 7     # Mac        100,367,328 cells, 0 (120 s); the final code
+python3 scripts/spikes/float/differential.py --bin OUT_EXACT/fbench --cells 20000000 --workers 5 --seed 11   # Mac    20,867,328 cells with tiers 1 and 2 switched off, 0 (28 s)
+python3 scripts/spikes/float/differential.py --bin OUT/fbench --cells 30000000 --workers 6 --seed 2      # gram       30,327,328 cells, 0 (69 s)
+python3 scripts/spikes/float/differential.py --bin OUT/fbench --cells 20000000 --workers 6 --seed 9      # gram       20,867,328 cells, 0 (88 s); the final code
+```
+
+The seed of a file is `seed * 1000 + i` (`i` the file's number in its shape), so the seeds above generate disjoint files. The first Mac run is of the build before `cancho fmt` (same tokens; the formatter only rewrote spacing and parentheses); the others are of the final code. `OUT_EXACT` is `flt.cho` with the two tier conditions replaced by `if false {` and `bits = 0 - 1;`.
