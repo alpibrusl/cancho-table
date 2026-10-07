@@ -34,7 +34,7 @@ every time is the minimum of 9 (7 for the longest), and ratios are between numbe
 
   **The integrated sort is 7.5x to 8x faster than today's and 2.0x to 2.2x faster than DuckDB's default; the spike, which moves less data, is 11x
   and 3.0x.** The loss of `docs/sort.md` (3.4x to 3.9x slower than DuckDB's default) becomes a lead of 2x to 3x.
-* **Linux, 6 threads on the box's cores 0 to 5 (three physical cores):** `table` 0.72 (A1) and 0.77 (A2); integrated `--threads 6` 0.38 and 0.37 (**1.9x and 2.1x**);
+* **Linux, 6 threads on the box's cores 0 to 5 (three physical cores):** (quiet box: `table` 0.63 and 0.62, `table --threads 6` 0.28 and 0.25, DuckDB on the same cores 0.27 and 0.23, section 6.2); in the busier session below `table` 0.72 (A1) and 0.77 (A2); integrated `--threads 6` 0.38 and 0.37 (**1.9x and 2.1x**);
   spike 0.26 and 0.27 (2.8x); GNU `sort` 0.47 and 0.84. It is 1.2x (A1) and 2.3x (A2) faster than GNU `sort`, where today it is 1.5x slower (A1) and level (A2). Three physical cores cap the gain near 3x.
 * **Per core the new way is cheaper, not only parallel (Mac):** the algorithm on one thread (the spike's single run) is 0.21 s for the integer key against 0.47 to 0.50 for the
   sequential sort; the integrated build's CPU time at 2 to 4 threads is 0.25 to 0.37 s for one key (0.44 to 0.46 for two) for what takes 0.47 to 0.50 s of CPU sequentially (0.93 for two keys). **On the x86-64 box the per-core gain is small** (one core, two threads
@@ -52,7 +52,10 @@ every time is the minimum of 9 (7 for the longest), and ratios are between numbe
 ## 1. The gap, reproduced
 
 `scripts/adversarial.py --cells A1,A2,A3,A4` on the Mac (16 cores: 12 performance and 4 efficiency), the 1M-row file `F2` the script generates. The harness times DuckDB through `COPY (...) TO '/dev/null'`;
-in its run on the loaded Mac it timed `duckdb -t1` of A1 and A2 at 0.059 and 0.055 s, which is not possible (0.50 and 0.42 s by hand, and the same command from a shell); the cause was not found, and the answer it checks is right.
+in its first run on the loaded Mac it timed `duckdb -t1` of A1 and A2 at 0.059 and 0.055 s, against 0.50 and 0.42 s by hand. **The by-hand numbers (and the 0.522 and 0.429 of `docs/sort.md`) are right; the script's were runs that failed.**
+DuckDB takes a lock on the file it writes, and `COPY ... TO '/dev/null'` finds `/dev/null` locked by any other DuckDB on the machine (another session's benchmark, on this shared Mac): `IO Error: Could not set lock on file "/dev/null": Conflicting lock is held in ... duckdb`, exit status 1, after 50 ms.
+The timing loop of `adversarial.py` did not look at the status, so the minimum of five was a failed run (reproduced: 24 DuckDBs started 8 at a time, 5 of the fastest are 0.048 to 0.052 s with that message). The answer is checked before the timing, with `/dev/stdout`, which is why the check passed. The same script run again, alone, gives 0.52 and 0.42 s (`duckdb -t1`) and
+0.13 to 0.17 and 0.12 (default). `scripts/bench.py` and `scripts/bench_parallel.py` stop on a non-zero status and were not affected. The fix is a separate commit, `timed_run` in `adversarial.py` with `tests/conformance/test_adversarial_harness.py` (4 tests; they fail on the old script).
 `scripts/spikes/sort/bench_sort.py` times the same questions, checks every contender's whole output first (the sequential `table` is the oracle; the others "same rows, in key order") and has the rest of this document.
 
 | | `docs/sort.md` | this run, min of 9 |
@@ -63,7 +66,7 @@ in its run on the loaded Mac it timed `duckdb -t1` of A1 and A2 at 0.059 and 0.0
 | A4 | 0.487 / 0.432 / 0.125 | 0.504 / 0.419 / 0.126 |
 
 Linux (i7-1260P, `taskset -c 0-5`, another session's jobs came and went, GNU `sort` is `/usr/bin/gnusort`, the `sort` there being uutils): `table` 0.68 to 0.74 s (A1), 0.69 to 0.86 (A2), 0.75 to 0.90 (A4);
-GNU `sort` 0.47 to 0.50, 0.70 to 0.84, 0.68 to 0.80 across three sessions. `docs/sort.md` had 0.912, 0.958, 1.080 under the soak. No DuckDB there (not installed; downloading it was not asked for).
+GNU `sort` 0.47 to 0.50, 0.70 to 0.84, 0.68 to 0.80 across three sessions. `docs/sort.md` had 0.912, 0.958, 1.080 under the soak. DuckDB 1.5.6 is in `~/bin` there (the gram session of section 6.2 used it).
 
 ## 2. Where the sequential sort spends its time
 
@@ -291,6 +294,9 @@ From 12 to 16 threads the gain is a few ms: four of the 16 cores are efficiency 
 |---|---:|---:|---:|---:|
 | A1 text | 0.724 | **0.381** | 0.263 | 0.470 |
 | A2 integer | 0.767 | **0.371** | 0.268 | 0.842 |
+
+On the quiet box (load 0.3, the same cores, DuckDB `SET threads=1` and with the affinity mask of 6 cpus, its output compared by md5 with the sequential `table` first: equal), minimum of 7: A1 `table` 0.634, `table --threads 6` **0.277**, DuckDB 0.625 (1 thread) and **0.268**
+(6 cpus); A2 `table` 0.620, `table --threads 6` **0.246**, DuckDB 0.520 and **0.230**. On Linux the integrated sort is level with DuckDB at the same cores, and today's is level with DuckDB's one thread.
 
 The full session of nine runs, same machine: A4 0.899 / 0.421 / 0.284 / 0.799; B1 1.717 / 0.597 / 0.320 / 2.682; A3 0.086 / 0.088 (sequential) / 0.040 / 0.486; one thread of the spike 0.60, 0.57, 0.56, 0.68 (A1, A2, A4, B1), two threads 0.36, 0.35, 0.35, 0.43. The gain at 6 threads is 2.0x to 2.3x
 over the spike's own one thread, which is what three cores and their second threads give (`docs/parallel.md` measured 2.4x for the groups there). The first quiet session had `table` at 0.68 (A1) and 0.69 (A2); the box was not quiet in the later ones.
