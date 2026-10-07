@@ -26,22 +26,22 @@ class MutantsApply(unittest.TestCase):
     def test_the_check_fails_loudly(self):
         with tempfile.TemporaryDirectory() as d:
             src = pathlib.Path(d)
-            (src / "a.ls").write_text("one two two\n")
-            problems = mutlib.check([("gone", "a.ls", "three", "x"), ("twice", "a.ls", "two", "x"), ("same", "a.ls", "one", "one"),
-                                     ("nofile", "b.ls", "one", "x"), ("fine", "a.ls", "one", "x")], src)
+            (src / "a.cho").write_text("one two two\n")
+            problems = mutlib.check([("gone", "a.cho", "three", "x"), ("twice", "a.cho", "two", "x"), ("same", "a.cho", "one", "one"),
+                                     ("nofile", "b.cho", "one", "x"), ("fine", "a.cho", "one", "x")], src)
             self.assertEqual(len(problems), 4, problems)
-            self.assertIn("mutant gone: pattern not found in a.ls", problems)
+            self.assertIn("mutant gone: pattern not found in a.cho", problems)
             self.assertTrue(any(p.startswith("mutant twice: pattern occurs 2 times") for p in problems))
             self.assertTrue(any(p.startswith("mutant same:") for p in problems))
             self.assertTrue(any(p.startswith("mutant nofile:") for p in problems))
 
     def test_a_script_with_a_stale_mutant_exits_nonzero(self):
         with tempfile.TemporaryDirectory() as d:
-            (pathlib.Path(d) / "a.ls").write_text("one\n")
+            (pathlib.Path(d) / "a.cho").write_text("one\n")
             mutlib.SRC = pathlib.Path(d)
             try:
-                self.assertEqual(mutlib.main([("gone", "a.ls", "three", "x")], [], ["--check"]), 1)
-                self.assertEqual(mutlib.main([("fine", "a.ls", "one", "x")], [], ["--check"]), 0)
+                self.assertEqual(mutlib.main([("gone", "a.cho", "three", "x")], [], ["--check"]), 1)
+                self.assertEqual(mutlib.main([("fine", "a.cho", "one", "x")], [], ["--check"]), 0)
             finally:
                 mutlib.SRC = ROOT / "tools" / "table"
 

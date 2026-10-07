@@ -182,7 +182,7 @@ class Differential(unittest.TestCase):
                 data = write_csv(rows, delimiter)                              # a ragged row
             if damage < 0.36 and re.search(rb"\r(?!\n)", data):
                 # Python ends a record at a lone CR; this reader does not (see
-                # tools/table/table.ls). They can differ only on damaged input.
+                # tools/table/table.cho). They can differ only on damaged input.
                 continue
             with self.subTest(case=case):
                 self.agree(data, delimiter, "case %d" % case)

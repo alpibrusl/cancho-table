@@ -1,6 +1,6 @@
-"""Shared pieces of the conformance gates, after lexsys-tools' harness.
+"""Shared pieces of the conformance gates, after cancho-tools' harness.
 
-The binary is build/table, built by `lex-sys build` before the tests run
+The binary is build/table, built by `cancho build` before the tests run
 (TOOLBOX_BIN overrides the directory). Every test runs a real process and
 judges it from outside: exit status, the bytes on standard output.
 """
@@ -127,9 +127,9 @@ def name_text(item):
 
 
 def package_catalogue():
-    """The rule catalogue of the installed lexsys-tools package (toolbox.rules,
+    """The rule catalogue of the installed cancho-tools package (toolbox.rules,
     in build/deps): tag -> (exit code, repairable). Empty when not installed."""
-    for f in sorted((ROOT / "build" / "deps").glob("*.ls")):
+    for f in sorted((ROOT / "build" / "deps").glob("*.cho")):
         text = f.read_text()
         if "module toolbox.rules;" not in text:
             continue

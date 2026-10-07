@@ -1,8 +1,8 @@
 # table
 
-[![ci](https://github.com/alpibrusl/lexsys-table/actions/workflows/ci.yml/badge.svg)](https://github.com/alpibrusl/lexsys-table/actions/workflows/ci.yml)
+[![ci](https://github.com/alpibrusl/cancho-table/actions/workflows/ci.yml/badge.svg)](https://github.com/alpibrusl/cancho-table/actions/workflows/ci.yml)
 
-**A deterministic data primitive for AI agents.** `table` queries CSV and TSV data with explicit semantics, bounded resources, structured refusals and machine-verifiable capabilities. It is a command line, not a chat box: you (or an agent) give it flags, it gives back exact answers or a named refusal with a repair. For a person with a CSV and a question: ask it, get an exact answer. One small binary, written in [lex-sys](https://github.com/alpibrusl/lex-sys). The [project page](https://alpibrusl.github.io/lexsys-table/) has the same in pages.
+**A deterministic data primitive for AI agents.** `table` queries CSV and TSV data with explicit semantics, bounded resources, structured refusals and machine-verifiable capabilities. It is a command line, not a chat box: you (or an agent) give it flags, it gives back exact answers or a named refusal with a repair. For a person with a CSV and a question: ask it, get an exact answer. One small binary, written in [cancho](https://github.com/alpibrusl/cancho). The [project page](https://alpibrusl.github.io/cancho-table/) has the same in pages.
 
 **Status: early.** It works and is tested; what it cannot do yet is listed below.
 
@@ -28,8 +28,8 @@ Most data tools optimise for flexibility. `table` optimises for predictability.
 
 * **Explicit types.** A column is text unless you write `:int` (an exact 64-bit integer) or `:dec(S)` (an exact decimal with S fractional digits, in `--where`); a cell that is not one is refused. [docs/filter.md](docs/filter.md)
 * **Explicit operations.** One plan from flags, no expressions or functions. [docs/filter.md](docs/filter.md)
-* **Bounded resource use.** Rows, line and record size, groups, distinct values and group state each have a limit with its own rule. Peak memory is about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). `table introspect` lists the limits; [benchmarks](https://alpibrusl.github.io/lexsys-table/benchmarks.html)
-* **No implicit network access.** The authority row, derived by `lex-sys authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, and nothing written to disk. CI fails if the binary differs from the committed [`manifests/table.authority.json`](manifests/table.authority.json). [docs/architecture.md](docs/architecture.md)
+* **Bounded resource use.** Rows, line and record size, groups, distinct values and group state each have a limit with its own rule. Peak memory is about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). `table introspect` lists the limits; [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html)
+* **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, and nothing written to disk. CI fails if the binary differs from the committed [`manifests/table.authority.json`](manifests/table.authority.json). [docs/architecture.md](docs/architecture.md)
 * **Machine-readable errors.** One JSON line against a schema (`table.v2`); a refusal is `{code, rule, message, hint, repair, detail}`. [docs/refusals.md](docs/refusals.md)
 * **Repair hints.** A refusal says how to fix the request: a command to run, a choice of commands, or why there is none. [docs/refusals.md](docs/refusals.md)
 * **Capability introspection.** `table introspect` prints the flags, limits, rules and authority; `table skill` prints a guide for an agent. Both come from the tables the parser runs on.
@@ -40,12 +40,12 @@ Most data tools optimise for flexibility. `table` optimises for predictability.
 You need `git`, Rust, `clang` and `python3`. On a 16-core Mac with Rust installed and its dependencies already downloaded, the compiler built in 19 seconds and `table` in 3; the clones and a first-time dependency download are extra, so allow a few minutes the first time.
 
 ```sh
-git clone https://github.com/alpibrusl/lex-sys                           # the compiler
-git clone https://github.com/alpibrusl/lexsys-table && cd lexsys-table
-REV=$(sed -n 's/^lex-sys *= *"\([0-9a-f]*\)".*/\1/p' lex-sys.toml)        # the compiler these sources need
-(cd ../lex-sys && git fetch -q origin && git checkout "$REV" && cargo build --release -p lex-sys)
-export PATH=$PWD/../lex-sys/target/release:$PWD/build:$PATH
-lex-sys build                                                            # builds build/table
+git clone https://github.com/alpibrusl/cancho                           # the compiler
+git clone https://github.com/alpibrusl/cancho-table && cd cancho-table
+REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)        # the compiler these sources need
+(cd ../cancho && git fetch -q origin && git checkout "$REV" && cargo build --release -p cancho)
+export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
+cancho build                                                            # builds build/table
 
 cat > orders.csv <<'EOF'
 id,customer,status,bytes
@@ -214,7 +214,7 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## Built to be read by an agent
 
-`table introspect` and `table skill` are generated from the same tables the code parses its flags with, so they cannot disagree with the program. See [docs/refusals.md](docs/refusals.md) for how an agent should act on each kind of refusal, and [the project page](https://alpibrusl.github.io/lexsys-table/#agent) for excerpts of both.
+`table introspect` and `table skill` are generated from the same tables the code parses its flags with, so they cannot disagree with the program. See [docs/refusals.md](docs/refusals.md) for how an agent should act on each kind of refusal, and [the project page](https://alpibrusl.github.io/cancho-table/#agent) for excerpts of both.
 
 ## What it cannot do yet
 
@@ -241,25 +241,25 @@ Time to answer on the same 1,000,000-row, 32 MB CSV, in seconds (lower is better
 
 Apple-silicon Mac, 16 cores. Best of five runs, output thrown away, every answer checked against a Python answer first. csvtk 0.38.0 on one core (its filter is `filter` piped to `grep`); DuckDB 1.5.6; DuckDB's 16-core times for filter and pick-2-columns are from an earlier run on the same machine. Miller is not installed on the Mac; on a different machine (Linux, 6 shared cores) it took 0.300 s to filter, 0.438 s to count and 0.649 s to sum, against `table`'s 0.074, 0.128 and 0.140 s there.
 
-**Where it is slower:** a group-by with a million distinct keys is 3.4 times slower than DuckDB on one core and 9.4 times slower than DuckDB on 16 (Mac); `distinct` over a column of unique values is 1.4 times slower on one core; and sorting 1,000,000 rows takes 0.41 s on one core (about the same as DuckDB on one core, 0.43 s) against DuckDB's 0.12 s on all 16, because the sort runs on one core. All the tables, the harder cases and how to rerun them: [docs/benchmarks.html](https://alpibrusl.github.io/lexsys-table/benchmarks.html).
+**Where it is slower:** a group-by with a million distinct keys is 3.4 times slower than DuckDB on one core and 9.4 times slower than DuckDB on 16 (Mac); `distinct` over a column of unique values is 1.4 times slower on one core; and sorting 1,000,000 rows takes 0.41 s on one core (about the same as DuckDB on one core, 0.43 s) against DuckDB's 0.12 s on all 16, because the sort runs on one core. All the tables, the harder cases and how to rerun them: [docs/benchmarks.html](https://alpibrusl.github.io/cancho-table/benchmarks.html).
 
 ## Learn more
 
 | | |
 |---|---|
-| [project page](https://alpibrusl.github.io/lexsys-table/) | the flow, the agent view and the examples, in pages |
+| [project page](https://alpibrusl.github.io/cancho-table/) | the flow, the agent view and the examples, in pages |
 | [docs/refusals.md](docs/refusals.md) | the refusal and repair protocol: `{code, rule, message, hint, repair, detail}`, what each repair kind means, every rule |
 | [docs/architecture.md](docs/architecture.md) | the pieces, and the capability model: what the authority row says and why each label is there |
 | [docs/select.md](docs/select.md), [docs/filter.md](docs/filter.md) | how `--select`, `--where`, `--group` and `--agg` behave |
 | [docs/parallel.md](docs/parallel.md) | `--threads`: how it gives the one-core answer |
-| [benchmarks](https://alpibrusl.github.io/lexsys-table/benchmarks.html) | the latest timings, with conditions, and how to rerun them |
+| [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html) | the latest timings, with conditions, and how to rerun them |
 | [docs/backlog.md](docs/backlog.md) | what is not done yet |
 | [docs/reference.md](docs/reference.md) | the long description of every flag and of the layout |
 | [docs/history.md](docs/history.md), [docs/adversarial.md](docs/adversarial.md) | for contributors: what was measured and changed, and the harder cases |
 
 ## Contributing
 
-Every change goes through what CI runs: `lex-sys fmt --check tools generated`, `lex-sys build`, `scripts/schemas.py --check`, `scripts/manifest.py --check`, the conformance tests, and `scripts/site.py --check`. Design before code, in `docs/`; the gates are fixed before the build; new code gets mutants (`scripts/*_mutants.py`, not run in CI); claims are measured, with the conditions next to the number, and a false claim is corrected in place. After a change to the program, `python3 scripts/site.py` rewrites the generated parts of this file and of the pages.
+Every change goes through what CI runs: `cancho fmt --check tools generated`, `cancho build`, `scripts/schemas.py --check`, `scripts/manifest.py --check`, the conformance tests, and `scripts/site.py --check`. Design before code, in `docs/`; the gates are fixed before the build; new code gets mutants (`scripts/*_mutants.py`, not run in CI); claims are measured, with the conditions next to the number, and a false claim is corrected in place. After a change to the program, `python3 scripts/site.py` rewrites the generated parts of this file and of the pages.
 
 ## Licence
 

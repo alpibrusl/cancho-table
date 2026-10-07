@@ -40,7 +40,7 @@ not one is refused, naming the row, the line and the column.**
 refusal (`value.not-integer`, `value.integer-overflow`, `agg.sum-overflow`); empty cell refused; text keys and text
 group order, bytewise; no `mean`; `:int` sum refuses past 64 bits and so needs the `peak` rule when threads merge.
 
-**In lex-sys** (read, not edited; `docs/floating-point.md`, `docs/float-printing.md`, `docs/json.md`, `std/*.ls`):
+**In cancho** (read, not edited; `docs/floating-point.md`, `docs/float-printing.md`, `docs/json.md`, `std/*.cho`):
 
 | need | what the language has | what it lacks |
 |---|---|---|
@@ -176,9 +176,9 @@ lo += v;  if lo >= 2^62 or lo <= -2^62 { hi += lo >> 32;  lo &= 0xffffffff }    
 (an `int`) holds 2^95: **the sum of a `:dec` column cannot overflow and `agg.sum-overflow` does not exist for it.** The ceiling is
 what makes the claim a proof and not a hope; a test builds a table whose every value is 10^18-1 so the carry runs every fifth row.
 
-*Measured (`superacc.ls` mode `pair`, 1M prices, ns per value, minimum of 5, difference of 101 rounds and 1):*
+*Measured (`superacc.cho` mode `pair`, 1M prices, ns per value, minimum of 5, difference of 101 rounds and 1):*
 plain f64 add 0.48, today's checked i64 add 0.82, **the pair add 0.44**. The widened sum is not slower than the checked one it
-replaces (it has no data-dependent overflow branch to mispredict). Whole cell (`numparse.ls`, 8-digit cells, ns per cell above the
+replaces (it has no data-dependent overflow branch to mispredict). Whole cell (`numparse.cho`, 8-digit cells, ns per cell above the
 7.2 ns the line scan costs): `parse_int` + checked add **+2.2**, `parse_dec` at scale 0 + pair add **+3.6**: the decimal reader is
 **+1.4 ns a cell** over the integer one, about 2% of the 62-76 ns a row costs today.
 
@@ -227,7 +227,7 @@ the last digit. For `:int` (and an untyped `mean:COL`, which means `:int` like `
 | `0.001, 0.002` | `0.002` (1.5 thousandths: tie, to even) | `0.0015` | `0.0015` |
 | `0.001, 0.001, 0.002` | `0.001` | `0.0013` | `0.0013333333333333333` |
 
-Half to even was chosen over half away from zero (DuckDB's cast): it is the rule the design (`lexsys-tools` `docs/next-tools.md`
+Half to even was chosen over half away from zero (DuckDB's cast): it is the rule the design (`cancho-tools` `docs/next-tools.md`
 section 5) already named for this tool, and it has no drift when many means are averaged. The reference (`numbers_ref.dec_mean`,
 `Fraction` arithmetic) agrees with Python's `Decimal.quantize(ROUND_HALF_EVEN)` on 3,000 random cases.
 
@@ -263,12 +263,12 @@ FLOAT := [ "+" | "-" ] INT_PART? [ "." FRAC? ] [ ("e"|"E") [ "+" | "-" ] DIGITS 
 
 ### 4.2 Correctly rounded reading: what the language gives, and the path
 
-Does lex-sys give a correctly rounded text-to-double? **Yes, but only through `std.json.to_float`** (a tape of a JSON document), and
+Does cancho give a correctly rounded text-to-double? **Yes, but only through `std.json.to_float`** (a tape of a JSON document), and
 **through that door it costs about a microsecond a cell (measured: 1,017 ns for `12345.67`, 1,557 ns for a 17-digit double,
 1,038 ns for an exponent form**, by the difference of 21 rounds and 1 over a million cells; most of it is the tape and the region the
 call allocates, not the arithmetic). So the design is a scanner of its own, three tiers:
 
-1. **The scanner** (`numparse.ls` `scan_float`, about 60 lines): sign, digits into a mantissa `m` (up to 15 digits kept exactly), the decimal
+1. **The scanner** (`numparse.cho` `scan_float`, about 60 lines): sign, digits into a mantissa `m` (up to 15 digits kept exactly), the decimal
    exponent `e10`, the grammar check of the whole cell. Measured +3.7 ns a cell over the line scan on `12345.67`-shaped cells.
 2. **Clinger's fast path, inline**: if `m <= 2^53` and `abs(e10) <= 22`, `m` and `10^|e10|` are doubles and **one** division or multiplication is
    correctly rounded (a `static [float]` table of the 23 powers). Measured **bit-exact on 84,917 decided cells** against Python's
@@ -280,11 +280,11 @@ call allocates, not the arithmetic). So the design is a scanner of its own, thre
 
 What buys the third tier back, in order of cost (none built; none measured beyond the baseline above):
 
-* **N3a** (the gate is correctness only, speed is reported): tier 3 as above. Needs nothing from lex-sys.
+* **N3a** (the gate is correctness only, speed is reported): tier 3 as above. Needs nothing from cancho.
 * **N3b**: Eisel-Lemire (what DuckDB's reader does): one 64x64 to 128-bit multiply by an entry of a table of 650 128-bit powers of five, and a
-  rare fallback. lex-sys has no multiply-high, so the multiply is four 32x32 partial products with `wrapping_mul` and carries by hand; the table is generated
+  rare fallback. cancho has no multiply-high, so the multiply is four 32x32 partial products with `wrapping_mul` and carries by hand; the table is generated
   (as `std.math`'s 2/pi table was). The gate is in section 8. **Unknown**: its real cost here; the design records only that the spike was not written.
-* **Upstream** (`lex-sys`, section 11): a text-free entry `std.json.decimal_to_float(m, e10, digits, sticky...)` that skips the tape. If
+* **Upstream** (`cancho`, section 11): a text-free entry `std.json.decimal_to_float(m, e10, digits, sticky...)` that skips the tape. If
   the tape and region are most of the 1 microsecond, this alone could be the cheaper fix. Not measured separately.
 
 ### 4.3 Compare, min, max, count, distinct
@@ -301,7 +301,7 @@ not depend on which came first).
 `sum(double)` over 2,000,000 values gave a different answer for 2 threads on two runs, three different for 4, two for 16, and none equals the exact sum.
 The parallel guarantee of this tool (the sequential bytes for every `N`) cannot hold with `+`.
 
-**The accumulator** (`scripts/spikes/superacc.ls`): the sum of doubles kept as an exact integer multiple of 2^-1074 (every finite double is one),
+**The accumulator** (`scripts/spikes/superacc.cho`): the sum of doubles kept as an exact integer multiple of 2^-1074 (every finite double is one),
 in **72 limbs of 32 bits** (limb `i` has weight 2^(32i - 1074)) plus a counter. Adding a double is: split the sign, the biased exponent and the 53-bit mantissa
 from `bits_of` (a subnormal has no hidden bit and exponent 1), shift the mantissa by `p mod 32` and add three pieces of at most 2^33 into limbs `p/32`, `+1`, `+2`,
 **signed** (a negative double subtracts its pieces), with no carry. Every 2^27 additions a carry pass makes every limb but the top a value in `[0, 2^32)` and the top the sign.
@@ -346,7 +346,7 @@ with the sign bit flipped for a non-negative value and every bit flipped for a n
 same double. A `:dec(S)` key is its scaled `int` plus 2^63, big-endian: the same property. (`numbers_ref.float_key` and `dec_key` are checked against Python's sort on 2,000
 random values.) The consequences are the reason for choosing it:
 
-* the **group machinery is unchanged** (`agg.ls` keys are length-prefixed bytes in a `std.map`, sorted bytewise; a typed key is `8` plus 8 bytes, so a typed group sorts numerically for free);
+* the **group machinery is unchanged** (`agg.cho` keys are length-prefixed bytes in a `std.map`, sorted bytewise; a typed key is `8` plus 8 bytes, so a typed group sorts numerically for free);
 * **distinct** is the same key in the `seen` map;
 * a **row sort** (the other agent's `--sort-rows`) compares opaque key bytes: a text key is the cell, a typed key is these 8 bytes, descending is the complement, ties keep file order. Nothing in
   the sorter depends on the type; the single function it needs is `key(type, cell) -> 8 bytes or a refusal`. An empty or malformed cell in a typed sort key is the same refusal as everywhere (not "sorted first").
@@ -590,7 +590,7 @@ Nothing is left open in the design itself; what remains unknown is under "Not kn
 * The fast path `m <= 2^53` and `abs(e10) <= 22` was checked bit-exact against Python's `float()` on 84,917 cells; the claim for 10,000,000 is a gate (N3a).
 * The Mac compiler (`db7d5bc`) is not the pinned one (`f8ebe98`); `std.json`, `std.fmt.float_into`, `static` data and `index_of_byte` are in the pinned compiler's `std` (the JSON commit is an ancestor of the pin), and the spikes needed `edition 5`, as the tool is.
 
-**What the language lacks** (each a possible lex-sys change; none was made, `lex-sys` was only read).
+**What the language lacks** (each a possible cancho change; none was made, `cancho` was only read).
 
 | gap | what it costs here | the ask |
 |---|---|---|
@@ -601,5 +601,5 @@ Nothing is left open in the design itself; what remains unknown is under "Not kn
 | bignum divide | `mean` writes 16-bit-digit division in 20 lines | `std.bignum.divide_small` |
 | atomics | no work queue; unchanged by this design (`docs/parallel.md` section 7) | |
 
-**Not known, and said so.** The real cost of Eisel-Lemire in lex-sys (N3b). Whether the `std.json` tape or the arithmetic is most of the microsecond. The cost of the 584-byte state at 100,000 groups at 16 threads. Miller's answers on any cell (not installed). DuckDB's
+**Not known, and said so.** The real cost of Eisel-Lemire in cancho (N3b). Whether the `std.json` tape or the arithmetic is most of the microsecond. The cost of the 584-byte state at 100,000 groups at 16 threads. Miller's answers on any cell (not installed). DuckDB's
 behaviour on a cell under settings other than `read_csv` defaults and `try_cast` (it was measured under those). The Linux timings.

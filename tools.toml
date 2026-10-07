@@ -1,6 +1,6 @@
-# The authority ceiling of each tool (lex-sys docs/agent-toolbox.md D12), as in
-# lexsys-tools: a person writes and reviews this file; the authority is whatever
-# `lex-sys authority` derives from the source (manifests/<tool>.authority.json,
+# The authority ceiling of each tool (cancho docs/agent-toolbox.md D12), as in
+# cancho-tools: a person writes and reviews this file; the authority is whatever
+# `cancho authority` derives from the source (manifests/<tool>.authority.json,
 # embedded in the binary and printed by `table introspect`), and
 # scripts/manifest.py --check fails when a derived label is not allowed here.
 # Rows are exact in both directions in the sense that matters: the derived set

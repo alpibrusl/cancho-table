@@ -80,7 +80,7 @@ A sort has state; every bound is a rule with a repair that suggests the way out.
   comparison looks at two 7-byte words of the first text key (or the integer itself, for a first `:int` key) before the
   full keys. This is the group sort's merge sort (`agg.sort_into`) adapted to the row index; the contract's
   `toolbox.sort` has no comparison that can see two keys of one record, so it is not used (its limits do not allow it).
-* A new module, `sorter.ls`, holds the sort. **Its state is an `agg.Groups`**, the value the grouping holds, used for another
+* A new module, `sorter.cho`, holds the sort. **Its state is an `agg.Groups`**, the value the grouping holds, used for another
   purpose (`keyb` the records, `dkey` the unquoted keys, `acc` the index, `stride` the number of keys, `pairs` the rows
   held, `memo` the plan), and the read hands the rows to the grouping's call (`engine.group_plain`, `group_fast`, and
   `process_groups` for the cases that need the heap): a row is dropped or appended in place when the buffers have room

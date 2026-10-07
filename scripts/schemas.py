@@ -2,7 +2,7 @@
 """Write schemas/table.v2.json, the JSON Schema (Draft 2020-12) of `table`: the
 shape of a file, or a page of selected columns (v1, of the shape alone, is retired).
 
-Adapted from lexsys-tools' scripts/schemas.py: the parts every tool shares --
+Adapted from cancho-tools' scripts/schemas.py: the parts every tool shares --
 the envelope, the error object, the repair kinds, `text_or_bytes` -- are
 written here once, and the file is self-contained because it is embedded in
 the binary by scripts/manifest.py and printed by `table introspect`.
@@ -78,7 +78,7 @@ def document(tool, data):
     defs["data"] = data
     return {
         "$schema": DIALECT,
-        "$id": "https://github.com/alpibrusl/lexsys-table/schemas/%s.v2.json" % tool,
+        "$id": "https://github.com/alpibrusl/cancho-table/schemas/%s.v2.json" % tool,
         "title": "%s.v2" % tool,
         "description": "One JSON object on one line. ok is false exactly when errors is present; error is its first element. data is absent when the read stopped before the end of the input.",
         "type": "object",
