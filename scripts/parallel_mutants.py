@@ -19,9 +19,9 @@ TESTS = ["test_parallel"]
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file.
 MUTANTS = [
     # stitching: the parent takes ranges in file order, and only a range whose guess was right
-    ("a range whose first line is not where the last record ended is taken", "par.cho", "if agg.get_i64(sl, at) == 0 && first == cur {", "if agg.get_i64(sl, at) == 0 {"),
-    ("a range whose thread says it needs the parent is taken", "par.cho", "if agg.get_i64(sl, at) == 0 && first == cur {", "if first == cur {"),
-    ("the lines a range read are not counted", "par.cho", "lines_before = lines_before + l_lines(sl, at);", "lines_before = lines_before + 0;"),
+    ("a range whose first line is not where the last record ended is taken", "par.cho", "if agg.get_i64(sl, at) == 0 && first == cur {\n                        let r = agg.get_i64(sl, at + 32 + 8 * engine.k_records());\n                        let g = ", "if agg.get_i64(sl, at) == 0 {\n                        let r = agg.get_i64(sl, at + 32 + 8 * engine.k_records());\n                        let g = "),
+    ("a range whose thread says it needs the parent is taken", "par.cho", "if agg.get_i64(sl, at) == 0 && first == cur {\n                        let r = agg.get_i64(sl, at + 32 + 8 * engine.k_records());\n                        let g = ", "if first == cur {\n                        let r = agg.get_i64(sl, at + 32 + 8 * engine.k_records());\n                        let g = "),
+    ("the lines a range read are not counted", "par.cho", "lines_before = lines_before + l_lines(sl, at);\n                            cur = agg.get_i64(sl, at + 8);\n                        }\n                    }\n                }\n                if accepted {\n                    if as_csv", "lines_before = lines_before + 0;\n                            cur = agg.get_i64(sl, at + 8);\n                        }\n                    }\n                }\n                if accepted {\n                    if as_csv"),
     ("the first ragged row of a range is its own number", "par.cho", "a[engine.k_first_row()] = before + agg.get_i64(sl, at + 32 + 8 * engine.k_first_row());", "a[engine.k_first_row()] = agg.get_i64(sl, at + 32 + 8 * engine.k_first_row());"),
     ("the first ragged line of a range is its own number", "par.cho", "a[engine.k_first_line()] = lines_before + agg.get_i64(sl, at + 32 + 8 * engine.k_first_line());", "a[engine.k_first_line()] = agg.get_i64(sl, at + 32 + 8 * engine.k_first_line());"),
     ("a later ragged row can be the first", "par.cho", "if a[engine.k_ragged()] == 0 && g > 0 {", "if g > 0 {"),
@@ -46,7 +46,7 @@ MUTANTS = [
     ("a minimum is merged as a maximum", "agg.cho", "} else if function == 2 && theirs < mine {", "} else if function == 2 && theirs > mine {"),
     ("the count of a range is not added", "agg.cho", "a = set_at(a, entry * stride, before + get_i64(blob, acc_at));", "a = set_at(a, entry * stride, before);"),
     ("a negative integer is read as a large one", "agg.cho", "    if top >= 128 {\n        top = top - 256;\n    }", ""),
-    ("a new group is kept under an empty key", "agg.cho", "                        m = map.put(heap, m, key, 0);", "                        m = map.put(heap, m, key[0..0], 0);"),
+    ("a new group is kept under an empty key", "agg.cho", "                        m = gmap.put_new(heap, m, key, gmap.hash(key));", "                        m = gmap.put_new(heap, m, key[0..0], gmap.hash(key));"),
     # handing over
     ("a selection that starts later is read by threads", "table.cho", "threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0)", "threads > 1 && (!ordering || query.reporting(tree))"),
 ]

@@ -131,7 +131,7 @@ pub fn k_done() -> [] int {
 
 // The number of groups of the whole answer when the groups held are only the candidates of a page (par.run_groups): `group_count` says it.
 pub fn k_total() -> [] int {
-    return 28;
+    return 29;
 }
 
 pub fn k_size() -> [] int {
