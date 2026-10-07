@@ -22,7 +22,7 @@
 | `select *` alone | needs one new flag, **`--rows`** (rows, all columns, no condition): today `table FILE` is the shape, and there is no way to ask for every row without a condition | a small gap the front end found |
 | errors | `query.syntax` (offset, what was expected), `query.unsupported` (the feature, what to write), `query.group-mismatch`, `query.too-long`; all exit 2 | as `where.syntax` does |
 | the gate | **a random plan rendered twice (flags, SQL), both run on the same table: same stdout, same stderr, same exit, refusals included**; prototype run: 0 differences in 1,556 runs; 26 of 26 mutants killed | section 8 |
-| `table explain` | **`--explain`, a flag** (not a subcommand): the resolved plan, columns with positions and types, bounds, the work class, the refusals that are certain without reading data and the ones that are possible; it reads the first chunk of the file for the header and nothing else, and nothing from standard input | section 9. Open question 1: the maintainer may want the subcommand |
+| `table explain` | **`--explain`, a flag** (not a subcommand): the resolved plan, columns with positions and types, bounds, the work class, the refusals that are certain without reading data and the ones that are possible; it reads the first chunk of the file for the header and nothing else, and nothing from standard input | section 9. Decided (section 13, 1): the flag |
 | surface | `introspect` and `skill` stay generated from the flag table and the rule table; the grammar's lexical tables (keywords, functions, types) are static tables the lexer and `introspect` both read; the examples in the skill are tested by parsing them | section 10 |
 
 ## 1. Why a translator, and what it costs
@@ -238,7 +238,7 @@ Nothing here builds a join; the grammar is shaped so that one fits without break
 
 ## 9. `--explain`
 
-`table --explain [the flags or --query] [FILE]` answers what the call *would do*, without doing it. **Why a flag and not `table explain`:** the contract's `describe.Tool` describes one command, so a subcommand has no flag table of its own, no input schema in MCP and no entry in `introspect`; a flag appears in all three with no new mechanism, as `--dry-run` does in the writers. (Open question 1.)
+`table --explain [the flags or --query] [FILE]` answers what the call *would do*, without doing it. **Why a flag and not `table explain`:** the contract's `describe.Tool` describes one command, so a subcommand has no flag table of its own, no input schema in MCP and no entry in `introspect`; a flag appears in all three with no new mechanism, as `--dry-run` does in the writers. (Decided: section 13, 1.)
 
 **What it reads.** It opens the file and reads the first chunk (the 64 KiB `lines` reads) to take the header, and closes it: **no record after the header is framed, split or counted** (gate E2: the bytes read from the file are at most the first chunk plus a header longer than that, and it takes under 20 ms on a 1 GB file). For **standard input it reads nothing** (consuming it would take the first record from the pipeline for no one's gain): the columns are `unresolved`, and only the refusals that need no header are reported. For JSON lines there is no header: the declared `--fields` are the columns, and nothing is read. **A file that does not exist, cannot be read or has a header past `--max-line-bytes` is refused as the run would refuse it** (`io.not-found` exit 3, `limit.header-too-large` exit 8, and so on), because a call that cannot open its input has nothing to explain.
 
