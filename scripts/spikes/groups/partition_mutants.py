@@ -29,7 +29,7 @@ m("every wave is the last", "par.cho", "let last = cur >= size;", "let last = tr
 m("too many tables are kept", "par.cho", "nt + nused <= 64", "nt + nused <= 100000")
 m("the kept tables are not merged", "par.cho", "let nt = tabs[0];\n    var nb = nt;", "let nt = 0;\n    var nb = nt;")
 m("the group count of a page is the candidates'", "par.cho", "a[engine.k_total()] = total_groups;", "a[engine.k_total()] = 0;")
-m("a merge thread that did not finish is trusted", "par.cho", "if agg.get_i64(contents(s2r), at) != 0 {\n                            declined = 1;", "if false {\n                            declined = 1;")
+m("a merge thread that did not finish is trusted", "par.cho", "if agg.get_i64(contents(s2r), at) != 0 {\n                                declined = 1;", "if false {\n                                declined = 1;")
 m("the parent's own groups are not in the state", "par.cho", "borrow state as &str in {\n                acc = buffer.append(heap, acc, contents(str)[0..n0]);", "borrow state as &str in {\n                acc = buffer.append(heap, acc, contents(str)[0..0]);")
 # the cut
 m("a key at a splitter goes the wrong way round", "agg.cho", "contents(split)[0] + 0", "contents(split)[0] + 0") if False else None

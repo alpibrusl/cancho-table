@@ -602,7 +602,10 @@ fn work2[&r](w: &!r Job2) -> [heap] int {
     let mode = contents(w.par)[0];
     let delim = contents(w.par)[1];
     let nb = contents(w.par)[2];
-    let big = 1000000000000000000;
+    // the bounds of the read: a thread holds a part of the groups, so if the part passes one the whole does (the read is declined, the old one says which refusal)
+    let bound_groups = contents(w.par)[7];
+    let bound_distinct = contents(w.par)[8];
+    let bound_state = contents(w.par)[9];
     let inp = contents(w.inp);
     let offs = contents(w.offs);
     // the tables are made for the groups and pairs the blobs hold (the same group in two blobs is counted twice: a table too large, never too small)
@@ -619,7 +622,7 @@ fn work2[&r](w: &!r Job2) -> [heap] int {
     var b = 0;
     while b < nb && status == 0 {
         var refused = 0;
-        let (g2, r2) = agg.merge(w.heap, groups, inp[offs[b]..offs[b + 1]], w.tree, big, big, big);
+        let (g2, r2) = agg.merge(w.heap, groups, inp[offs[b]..offs[b + 1]], w.tree, bound_groups, bound_distinct, bound_state);
         groups = g2;
         refused = r2;
         if refused != 0 {
@@ -1241,7 +1244,7 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                     me[np + 1 + np] = total_out;
                 }
                 var slots2 = box_slice(heap, total_out + 1, byte_of(0));
-                var par2 = box_slice(heap, 8, 0);
+                var par2 = box_slice(heap, 12, 0);
                 borrow mut par2 as &!p2 in {
                     contents(p2)[0] = 1;
                     if !last {
@@ -1254,6 +1257,9 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                     contents(p2)[4] = a[engine.k_sort_field()];
                     contents(p2)[5] = a[engine.k_sort_slot()];
                     contents(p2)[6] = a[engine.k_sort_desc()];
+                    contents(p2)[7] = bound_groups;
+                    contents(p2)[8] = bound_distinct;
+                    contents(p2)[9] = bound_state;
                 }
                 borrow mut slots2 as &!s2w in {
                     borrow par2 as &p2r in {
