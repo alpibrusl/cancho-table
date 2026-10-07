@@ -300,16 +300,25 @@ fn abort_of(status: int) -> [] int {
 // Record that aggregate `k` refused a cell: which column, which function (a mean says 5), the aggregate (for its scale), the row and line, and for a
 // decimal with too many fractional digits how many it has. Answers the column.
 fn note_agg_refusal[&q, &c, &d, &e, &a](tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], k: int, status: int, opened: int, a: &!a [int]) -> [] int {
-    let column = cols[query.agg_at(tree, k, 1)];
+    // `k` of 1000 or more is a typed group column (1000 + its place): the refusal is of its cell, context `group` (err_fn -3)
+    var column = 0;
+    var function = -3;
+    var which = k - 1000;
+    if k >= 1000 {
+        column = cols[query.count_of(tree, 0) + query.count_of(tree, 1) + k - 1000];
+    } else {
+        column = cols[query.agg_at(tree, k, 1)];
+        function = query.agg_at(tree, k, 0);
+        if function == 1 && query.agg_at(tree, k, 3) != 0 {
+            function = 5;
+        }
+        which = k;
+    }
     a[k_stop()] = 1;
     a[k_abort()] = abort_of(status);
     a[k_err_col()] = column;
-    var function = query.agg_at(tree, k, 0);
-    if function == 1 && query.agg_at(tree, k, 3) != 0 {
-        function = 5;
-    }
     a[k_err_fn()] = function;
-    a[k_err_cond()] = k;
+    a[k_err_cond()] = which;
     if status == 7 {
         a[k_err_digits()] = digits_after_point(record, cells[3 * column], cells[3 * column + 1]);
     }
@@ -521,12 +530,20 @@ fn order_row[&h, &q, &c, &d, &e, &a](heap: &!h Heap, held: agg.Groups, escr: buf
         return (s2, e3, k2);
     }
     a[k_abort()] = 8 + status;
+    if status >= 5 {
+        // a typed key's cell (docs/numbers.md N5): the statuses and abort codes of an aggregate's cell of that type
+        a[k_abort()] = abort_of(status);
+    }
     var column = 0;
     borrow s2 as &sr in {
         column = contents(sr.memo)[4 + 3 * which];
     }
     a[k_err_col()] = column;
+    a[k_err_cond()] = which;
     a[k_err_fn()] = -2;
+    if status == 7 {
+        a[k_err_digits()] = digits_after_point(record, cells[3 * column], cells[3 * column + 1]);
+    }
     a[k_err_row()] = a[k_records()];
     a[k_err_line()] = opened;
     return (s2, e3, keep_value(heap, k2, record, cells[3 * column], cells[3 * column + 1]));

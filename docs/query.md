@@ -85,7 +85,7 @@ A query that names such a column writes it `"like"`; reserving them *now* is wha
 | an expression, a function, `cast` in the select list | a type says how a column is *read* in a condition, a sort or an aggregate; selecting returns its text |
 | `join`, a subquery, `union`, `having`, `select distinct` | one input and one statement; `group by` for distinct rows |
 | `order by` two keys of a grouping, by a position (`order by 2`), by `dec` or `float` | `--sort` takes one output column by name; numeric order is `int` only (`docs/sort.md`) |
-| `group by` a typed column | grouping by a typed column is not built (`docs/numbers.md` N5) |
+| `group by` a typed column | built (N5): `--group x:dec(2)`, `x:float`, `x:int` group by value, written back at the scale, in numeric order (`docs/numbers.md`) |
 
 **What the grammar does not say but the translator checks (`query.group-mismatch`, with a corrected query as the repair's hint):**
 

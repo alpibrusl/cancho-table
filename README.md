@@ -185,6 +185,36 @@ min:price,max:price,distinct:price
 ```
 <!-- /gen:t-decagg -->
 
+### Group and sort by numbers
+
+`--group` and `--order-by` take the same suffixes as `--where`: `:int`, `:dec(S)` and `:float`. The key is the **value** of the cell, not its text. Here `1.5`, `1.50`, `01.5` and `+1.5` are one group at `:dec(2)`, written back at the column's scale, where grouping by text gives four groups for them. Groups come out in numeric order, and `--order-by -price:dec(2)` puts `12.50` before `3.2`, where a text sort puts `3.2` first; rows that tie keep their order in the file. On a million rows with a number written in two spellings (20,001 values), csvtk and Miller grouped by text and reported 22,002 groups: see the [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html#typed).
+
+<!-- gen:t-typedkeys -->
+```console
+$ table --group level --agg count --format csv spell.csv
+level,count
++1.5,1
+01.5,1
+1.5,1
+1.50,1
+2.25,1
+$ table --group "level:dec(2)" --agg count --format csv spell.csv
+level,count
+1.50,4
+2.25,1
+$ table --order-by -price --limit 3 --select item,price --format csv prices.csv
+item,price
+cup,3.2
+book,12.50
+lamp,12.5
+$ table --order-by "-price:dec(2)" --limit 3 --select item,price --format csv prices.csv
+item,price
+book,12.50
+lamp,12.5
+cup,3.2
+```
+<!-- /gen:t-typedkeys -->
+
 ### Sort rows
 
 `--order-by` takes keys: `-` before a name is descending, `:int` compares whole numbers, and rows that tie keep their order in the file. With `--limit` or `--top` it keeps only the best rows, so memory stays flat. A full sort holds every row, up to `--max-sort-rows` (1,000,000 by default); past that it refuses and suggests `--top`, a smaller `--limit` or a `--where`. There is no sort that spills to disk.
@@ -272,11 +302,10 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## What it cannot do yet
 
-* **Floats are mostly built.** `:float` works in `--where` and in every aggregate, with exact sums and means. Not yet: grouping by a float column by value, `--order-by` on a float, and a faster reader for columns of 15- to 17-digit numbers (`min`, `max`, `sum` and `mean` read them slowly: planned).
-* **Decimals are mostly built.** `:dec(S)` filters and aggregates (`sum`, `min`, `max`, `mean`, `distinct`, `count`). Not yet: grouping by a decimal column by value and `--order-by price:dec(2)` ([docs/numbers.md](docs/numbers.md)).
+* **Numbers are mostly built.** `:int`, `:dec(S)` and `:float` work in `--where`, `--agg`, `--group` and `--order-by`. Not yet: a report of what type each column looks like, and a faster reader for columns of 15- to 17-digit numbers (`min`, `max`, `sum`, `mean` and a sort by them read those slowly: planned).
 * **One core for a sort.** `--threads` is accepted with `--order-by`, and gives the same bytes, but the sort runs on one core. There is no sort that spills to disk.
 * **No joins**, and **one input file** at a time, named on the command line (no standard input).
-* **No JSON lines**, no Parquet. Only CSV and TSV (comma, tab or semicolon).
+* **No JSON lines**, no Parquet, no `--query` string. Only CSV and TSV (comma, tab or semicolon). Readers and a query form are designed in [docs/readers.md](docs/readers.md) and [docs/query.md](docs/query.md), not built.
 * **No guessing.** Every column is text unless you say `:int`. No mean, no computed or renamed column, no `or` in a filter.
 
 JSON lines, joins, `mean`, decimals and standard input are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.

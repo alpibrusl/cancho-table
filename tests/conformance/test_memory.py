@@ -83,6 +83,9 @@ class Memory(unittest.TestCase):
                       ["--group", "status", "--agg", "count,min:bytes:float,max:bytes:float,distinct:status:float"],
                       ["--group", "status", "--agg", "count,sum:bytes:float,mean:bytes:float"],   # docs/numbers.md N4: the exact accumulator is 584 bytes a group, not a function of the rows
                       ["--group", "status", "--agg", "count,sum:bytes:dec(2),min:bytes:dec(2),max:bytes:dec(2),mean:bytes:dec(2)@4,distinct:status:dec(0)"],   # docs/numbers.md N2
+                      ["--group", "status:float", "--agg", "count,sum:bytes"],   # docs/numbers.md N5: a typed key is 12 bytes a group, not a function of the rows
+                      ["--group", "status:dec(2)", "--agg", "count,max:bytes"],
+                      ["--order-by", "-bytes:dec(0),status:float", "--select", "id", "--top", "10", "--format", "csv"],
                       ["--group", "status", "--agg", "count,sum:bytes,min:bytes,max:bytes"],
                       ["--group", "status", "--agg", "count,distinct:status", "--sort", "-count"]):
             rc1, small = peak_rss("--root", self.s.dir, *flags, "small.csv")

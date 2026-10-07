@@ -62,6 +62,7 @@
     "alphabet",
     "any_nul",
     "authority",
+    "bare_tail",
     "base",
     "before",
     "before",
@@ -146,6 +147,7 @@
     "get$int",
     "get$int",
     "get_i64",
+    "gkind_at",
     "groups",
     "guarantee_keys",
     "guarantees_has",
@@ -220,6 +222,7 @@
     "key_bytes",
     "key_field",
     "key_of",
+    "key_value",
     "kind",
     "kind_of",
     "l_lines",
@@ -327,6 +330,7 @@
     "tool",
     "type_conflict",
     "type_name",
+    "typed_groups",
     "typed_mention",
     "under",
     "uneven_neighbours",
@@ -334,10 +338,11 @@
     "value_index",
     "value_is_whole",
     "value_of",
+    "value_of_key",
     "width",
     "width_of"
   ],
-  "folded_operators": 93,
+  "folded_operators": 95,
   "folded_calls": 0,
-  "functions": 518
+  "functions": 526
 }

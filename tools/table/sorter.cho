@@ -35,6 +35,16 @@ import std.vec;
 import agg;
 import query;
 
+// The value of a key cell of type `kind` (1 `:int`, 2 + S `:dec(S)`, 21 `:float`): an `int` that orders as the value does (a float's is its
+// key, flt.cho), and a status: 0, or for an integer 1 (not one) or 2 (too large), or for a decimal or a float the status of `query.parse_typed`
+// (6 to 13). `--where` and `--agg` read the cell the same way.
+fn key_value[&d](data: &d [byte], kind: int) -> [] (int, int) {
+    if kind == 1 {
+        return query.parse_int(data);
+    }
+    return query.parse_typed(data, kind);
+}
+
 // Make the groups into a sorter of `nk` keys for `cap` wanted rows (0: all), the keys' columns and flags in `keys`.
 pub fn configure[&k](g: agg.Groups, nk: int, cap: int, max_rows: int, max_state: int, keys: &k [int]) -> [] agg.Groups {
     let agg.Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
@@ -113,8 +123,8 @@ pub fn reject[&s, &d, &c](s: &s agg.Groups, record: &d [byte], cells: &c [int]) 
         if cells[3 * column + 2] == 1 && index_of_byte(record[first..end], byte_of(34)) >= 0 {
             return 0;
         }
-        if keys[3 * j + 2] == 1 {
-            let (v, bad) = query.parse_int(record[first..end]);
+        if keys[3 * j + 2] != 0 {
+            let (v, bad) = key_value(record[first..end], keys[3 * j + 2]);
             if bad != 0 {
                 return 0;
             }
@@ -192,7 +202,7 @@ pub fn add[&h, &d, &c](heap: &!h Heap, s: agg.Groups, record: &d [byte], cells: 
         let first = cells[3 * column];
         let end = cells[3 * column + 1];
         let unquote = cells[3 * column + 2] == 1 && index_of_byte(record[first..end], byte_of(34)) >= 0;
-        if as_int == 1 {
+        if as_int != 0 {
             var v = 0;
             var bad = 0;
             if unquote {
@@ -201,12 +211,12 @@ pub fn add[&h, &d, &c](heap: &!h Heap, s: agg.Groups, record: &d [byte], cells: 
                 }
                 scr = query.unquote(heap, scr, record[first..end]);
                 borrow scr as &sr in {
-                    let (x, y) = query.parse_int(buffer.bytes(sr));
+                    let (x, y) = key_value(buffer.bytes(sr), as_int);
                     v = x;
                     bad = y;
                 }
             } else {
-                let (x, y) = query.parse_int(record[first..end]);
+                let (x, y) = key_value(record[first..end], as_int);
                 v = x;
                 bad = y;
             }
@@ -215,6 +225,9 @@ pub fn add[&h, &d, &c](heap: &!h Heap, s: agg.Groups, record: &d [byte], cells: 
                 which = j;
             } else if bad == 2 {
                 status = 4;
+                which = j;
+            } else if bad != 0 {
+                status = bad;
                 which = j;
             }
             r2 = vec.push(heap, r2, v);
@@ -264,7 +277,7 @@ fn before[&s, &k, &p, &q](s: &s agg.Groups, keys: &k [int], pre: &p [int], pre2:
     var j = 0;
     while j < s.stride {
         var c = 0;
-        if keys[3 * j + 2] == 1 {
+        if keys[3 * j + 2] != 0 {
             let vx = vec.get(s.acc, x * stride + 2 + 2 * j);
             let vy = vec.get(s.acc, y * stride + 2 + 2 * j);
             if vx < vy {
@@ -308,7 +321,7 @@ fn sort_into[&s, &k, &o, &t, &p, &q](s: &s agg.Groups, keys: &k [int], order: &!
     while i < n {
         order[i] = i;
         if s.stride > 0 {
-            if keys[2] == 1 {
+            if keys[2] != 0 {
                 pre[i] = vec.get(s.acc, i * stride + 2);
             } else {
                 let kb = key_bytes(s, i, 0);
@@ -414,7 +427,7 @@ pub fn cut_back[&h](heap: &!h Heap, old: agg.Groups) -> [heap] agg.Groups {
             while j < nk {
                 let a = vec.get(or.acc, x * width + 2 + 2 * j);
                 let b = vec.get(or.acc, x * width + 3 + 2 * j);
-                if keys[3 * j + 2] == 1 {
+                if keys[3 * j + 2] != 0 {
                     fresh_rows = vec.push(heap, fresh_rows, a);
                     fresh_rows = vec.push(heap, fresh_rows, b);
                 } else if a >= 0 {
@@ -483,8 +496,8 @@ pub fn hook[&g, &d, &c](g: &!g agg.Groups, record: &d [byte], cells: &c [int]) -
         if cells[3 * column + 2] == 1 && index_of_byte(record[first..end], byte_of(34)) >= 0 {
             return 1;
         }
-        if contents(g.memo)[6 + 3 * j] == 1 {
-            let (v, bad) = query.parse_int(record[first..end]);
+        if contents(g.memo)[6 + 3 * j] != 0 {
+            let (v, bad) = key_value(record[first..end], contents(g.memo)[6 + 3 * j]);
             if bad != 0 {
                 return 1;
             }

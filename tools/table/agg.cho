@@ -106,7 +106,15 @@ fn float_add(acc: vec.Vec[int], at: int, key: int) -> [] vec.Vec[int] {
 
 pub fn start[&h, &q](heap: &!h Heap, tree: &q query.Query) -> [heap] Groups {
     let stride = stride_of(tree);
-    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: box_slice(heap, memo_size() + 4, 0) };
+    var memo = box_slice(heap, memo_size() + 4, 0);
+    // A typed group column's key is the value, which `add_fast` does not build (it copies the cell's bytes): the count of rows `add_fast` stands aside for
+    // (`memo[memo_size() + 2]`, see there) starts so high that every row takes `add`, and costs the other plans nothing
+    if query.typed_groups(tree) != 0 {
+        borrow mut memo as &!mw in {
+            contents(mw)[memo_size() + 2] = 1152921504606846976;
+        }
+    }
+    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: memo };
 }
 
 pub fn drop[&h](heap: &!h Heap, g: Groups) -> [heap] int {
@@ -216,6 +224,8 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
     var dk = dkey;
     var bytes_held = held;
     var distinct_pairs = pairs;
+    var key_bad = 0;
+    var key_at = 0;
     // `keyed`: the key is already in the key buffer (`add_fast` built it and did not find it).
     if !keyed {
         borrow mut key as &!kw in {
@@ -224,38 +234,54 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
         let ng = query.count_of(tree, 2);
         let base = query.count_of(tree, 0) + query.count_of(tree, 1);
         var j = 0;
-        while j < ng {
+        while j < ng && key_bad == 0 {
             let column = cols[base + j];
-            let (k2, s2) = put_cell(heap, key, scr, record, cells[3 * column], cells[3 * column + 1], cells[3 * column + 2]);
-            key = k2;
-            scr = s2;
+            let gk = query.gkind_at(tree, j);
+            if gk != 0 {
+                // a typed group column: the key is the value, as its 8 order-preserving bytes (`1.5` and `1.50` are one group)
+                let (v, bad, s4) = typed_cell(heap, scr, record, cells[3 * column], cells[3 * column + 1], cells[3 * column + 2], gk);
+                scr = s4;
+                if bad != 0 {
+                    key_bad = bad;
+                    key_at = j;
+                } else {
+                    key = put_length(heap, key, 8);
+                    key = put_value_key(heap, key, v);
+                }
+            } else {
+                let (k2, s2) = put_cell(heap, key, scr, record, cells[3 * column], cells[3 * column + 1], cells[3 * column + 2]);
+                key = k2;
+                scr = s2;
+            }
             j = j + 1;
         }
     }
-    var status = 0;
-    var which = 0;
+    var status = key_bad;
+    var which = 1000 + key_at;
     var entry = -1;
     var size = 0;
-    borrow key as &kr in {
-        borrow m as &mr in {
-            if !keyed {
-                entry = map.find(mr, buffer.bytes(kr));
+    if status == 0 {
+        borrow key as &kr in {
+            borrow m as &mr in {
+                if !keyed {
+                    entry = map.find(mr, buffer.bytes(kr));
+                }
+                size = map.size(mr);
             }
-            size = map.size(mr);
-        }
-        if entry < 0 {
-            if size >= max_groups {
-                status = 1;
-            } else if bytes_held + buffer.size(kr) + float_state(tree) > max_state {
-                status = 3;
-            } else {
-                bytes_held = bytes_held + buffer.size(kr) + float_state(tree);
-                m = map.put(heap, m, buffer.bytes(kr), 0);
-                entry = size;
-                var z = 0;
-                while z < stride {
-                    a = vec.push(heap, a, 0);
-                    z = z + 1;
+            if entry < 0 {
+                if size >= max_groups {
+                    status = 1;
+                } else if bytes_held + buffer.size(kr) + float_state(tree) > max_state {
+                    status = 3;
+                } else {
+                    bytes_held = bytes_held + buffer.size(kr) + float_state(tree);
+                    m = map.put(heap, m, buffer.bytes(kr), 0);
+                    entry = size;
+                    var z = 0;
+                    while z < stride {
+                        a = vec.push(heap, a, 0);
+                        z = z + 1;
+                    }
                 }
             }
         }
@@ -830,7 +856,13 @@ pub fn row_json[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, tr
         if j > 0 {
             o = buffer.push(heap, o, byte_of(','));
         }
-        o = text.append_json(heap, o, key[at + 4..at + 4 + n]);
+        if query.gkind_at(tree, j) != 0 {
+            o = buffer.push(heap, o, byte_of(34));
+            o = put_key(heap, o, g, tree, x, j);
+            o = buffer.push(heap, o, byte_of(34));
+        } else {
+            o = text.append_json(heap, o, key[at + 4..at + 4 + n]);
+        }
         at = at + 4 + n;
         j = j + 1;
     }
@@ -858,6 +890,33 @@ pub fn key_field[&g](g: &g Groups, x: int, j: int) -> [] &g [byte] {
     }
     let n = length_at(key, at);
     return key[at + 4..at + 4 + n];
+}
+
+// The value a typed group key holds: the 8 bytes of `put_value_key` (the value with its sign bit flipped, big-endian), undone.
+fn value_of_key[&k](key: &k [byte]) -> [] int {
+    let hi = int_of(key[0]) << 24 | int_of(key[1]) << 16 | int_of(key[2]) << 8 | int_of(key[3]);
+    let lo = int_of(key[4]) << 24 | int_of(key[5]) << 16 | int_of(key[6]) << 8 | int_of(key[7]);
+    let signed_hi = hi - (hi >> 31) * 4294967296;
+    return signed_hi * 4294967296 + lo ^ 0 - 9223372036854775807 - 1;
+}
+
+// Field `j` of group `x` as the text it is written as: a text column's bytes, an `:int` in full, a `:dec(S)` at its scale `S` (`1.50`, whatever
+// cell the group first saw), a `:float` as the shortest decimal that reads back (`flt.put_float`). The value is what the key holds, so the output does
+// not depend on which row came first or on the thread count.
+pub fn put_key[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, tree: &q query.Query, x: int, j: int) -> [heap] buffer.Buffer {
+    let kind = query.gkind_at(tree, j);
+    let raw = key_field(g, x, j);
+    if kind == 0 {
+        return buffer.append(heap, out, raw);
+    }
+    let v = value_of_key(raw);
+    if kind == 1 {
+        return append_int(heap, out, v);
+    }
+    if kind == 21 {
+        return flt.put_float(heap, out, v);
+    }
+    return dec.put_scaled(heap, out, v, kind - 2);
 }
 
 pub fn put_int[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
@@ -930,6 +989,40 @@ fn tail_of[&d](item: &d [byte]) -> [] (int, int, int) {
         }
     }
     return (e, kind, mean);
+}
+
+// The type suffix of one item of a `--group` or `--order-by` list (no function in front of it, so a name is all that has to be left before it):
+// answers the length of the item without its suffix and its type (0 none, 1 `:int`, 2 + S `:dec(S)`, 21 `:float`, 99 a scale that is not 0 to 18).
+// An escaped colon (`x\:int`) is part of the name.
+pub fn bare_tail[&d](item: &d [byte]) -> [] (int, int) {
+    let e = len(item);
+    if e > 6 && bytes.equal(item[e - 6..e], ":float") && !escaped_at(item, e - 6) {
+        return (e - 6, 21);
+    }
+    if e > 4 && bytes.equal(item[e - 4..e], ":int") && !escaped_at(item, e - 4) {
+        return (e - 4, 1);
+    }
+    if e >= 7 && int_of(item[e - 1]) == ')' {
+        var k = e - 1;
+        var digits = 0;
+        while k > 0 && digits < 3 && bytes.is_digit(int_of(item[k - 1])) {
+            k = k - 1;
+            digits = digits + 1;
+        }
+        if digits >= 1 && digits <= 2 && k >= 6 && int_of(item[k - 1]) == '(' && bytes.equal(item[k - 5..k], ":dec(") && !escaped_at(item, k - 5) {
+            var v = 0;
+            var i = k;
+            while i < e - 1 {
+                v = v * 10 + int_of(item[i]) - '0';
+                i = i + 1;
+            }
+            if v > 18 {
+                return (e, 99);
+            }
+            return (k - 5, 2 + v);
+        }
+    }
+    return (e, 0);
 }
 
 // `--agg`: `count`, `sum:COL`, `min:COL`, `max:COL`, `mean:COL`, `distinct:COL`, separated by commas (the escapes of `--select`'s list apply,
