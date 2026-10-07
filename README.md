@@ -215,6 +215,20 @@ cup,3.2
 ```
 <!-- /gen:t-typedkeys -->
 
+### Check what is in a column
+
+`--report types` reads the file once and prints, for each column, how many cells are empty, whole numbers, decimals, floats or something else, the widest decimal scale, the first row and line that each declaration would refuse, and a **suggested declaration**: `:int`, `:dec(S)`, `:float`, or `none` when a cell is not a number. It prefers the exact reading: a column of `0.1`-shaped cells is `:dec(1)`, not `:float`. It never changes anything; no other flag reads a column as a type unless you write the suffix, and the report is the same on any number of cores. Here `price` has an `n/a` in its last row (suggestion `none`, first offender row 4, line 5), `bytes` has a `1e3` (`:float`, not `:int`) and `cents` has an empty cell (still `:int`; the empty cell is counted apart and refused by any numeric reading). On a million rows with three late wrong cells, DuckDB's type sniffing, which looks at a sample of 20,480 rows, still said `DOUBLE` and `BIGINT`, and its `SUMMARIZE` failed at line 900,001; Miller's `summary` showed the mixtures without counts or rows ([benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html#report)).
+
+<!-- gen:t-report -->
+```console
+$ table --report types --select price,bytes,cents --format csv dirty.csv
+name,cells,empty,int,dec,float,not_finite,other,dec_max_scale,int_digits_max,widest,suggest,first_empty_row,first_empty_line,first_not_int_row,first_not_int_line,first_not_dec_row,first_not_dec_line,first_not_float_row,first_not_float_line,first_other_row,first_other_line,first_other_cell,first_other_cell_truncated
+price,4,0,0,3,0,0,1,2,2,5,none,,,1,2,4,5,4,5,4,5,n/a,false
+bytes,4,0,3,0,1,0,0,0,2,3,:float,,,4,5,4,5,,,,,,
+cents,4,1,3,0,0,0,0,0,3,3,:int,4,5,,,,,,,,,,
+```
+<!-- /gen:t-report -->
+
 ### Sort rows
 
 `--order-by` takes keys: `-` before a name is descending, `:int` compares whole numbers, and rows that tie keep their order in the file. With `--limit` or `--top` it keeps only the best rows, so memory stays flat. A full sort holds every row, up to `--max-sort-rows` (1,000,000 by default); past that it refuses and suggests `--top`, a smaller `--limit` or a `--where`. There is no sort that spills to disk.
@@ -302,7 +316,7 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## What it cannot do yet
 
-* **Numbers are mostly built.** `:int`, `:dec(S)` and `:float` work in `--where`, `--agg`, `--group` and `--order-by`. Not yet: a report of what type each column looks like, and a faster reader for columns of 15- to 17-digit numbers (`min`, `max`, `sum`, `mean` and a sort by them read those slowly: planned).
+* **Numbers are mostly built.** `:int`, `:dec(S)` and `:float` work in `--where`, `--agg`, `--group` and `--order-by`. Not yet: a faster reader for columns of 15- to 17-digit numbers (`min`, `max`, `sum`, `mean` and a sort by them read those slowly: planned).
 * **One core for a sort.** `--threads` is accepted with `--order-by`, and gives the same bytes, but the sort runs on one core. There is no sort that spills to disk.
 * **No joins**, and **one input file** at a time, named on the command line (no standard input).
 * **No JSON lines**, no Parquet, no `--query` string. Only CSV and TSV (comma, tab or semicolon). Readers and a query form are designed in [docs/readers.md](docs/readers.md) and [docs/query.md](docs/query.md), not built.
