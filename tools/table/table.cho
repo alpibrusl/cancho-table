@@ -259,24 +259,6 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
     return (pending, row);
 }
 
-// `--report types` answers with its own columns, whatever the frame made of the selection: the frame's json header, or the report's (functions of their own: this
-// code inside the read function made the compiler spend more on every row of every one-thread read).
-fn report_head[&h](heap: &!h Heap, reporting: bool, head: buffer.Buffer) -> [heap] buffer.Buffer {
-    if reporting {
-        buffer.drop(heap, head);
-        return report.head_json(heap);
-    }
-    return head;
-}
-
-fn report_lead[&h](heap: &!h Heap, reporting: bool, lead: buffer.Buffer, delim: int) -> [heap] buffer.Buffer {
-    if reporting {
-        buffer.drop(heap, lead);
-        return report.head_csv(heap, delim);
-    }
-    return lead;
-}
-
 // The report's rows (report.cho), one for each column asked for, the page `--from` and `--limit` ask for, as csv written out or as json rows kept.
 fn finish_report[&h, &i, &q, &n, &e, &c, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, held: agg.Groups, tree: &q query.Query, names: &n buffer.Buffer, hends: &e vec.Vec[int], cols: &c [int], max_state: int, as_csv: bool, delim: int, from: int, limit: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, agg.Groups) {
     let ncols = report.columns_of(tree, a[engine.k_columns()]);
@@ -1103,7 +1085,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                     cols = fcols;
                                     sel = fsel;
                                     cells = fcells;
-                                    head = report_head(heap, query.reporting(tree), fhead);
+                                    head = fhead;
                                     labels = flabels;
                                     lends = flends;
                                     picked = fpicked;
@@ -1135,7 +1117,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                         going = false;
                                     }
                                     if as_csv && fabort == 0 {
-                                        rows = start_output(heap, rows, report_lead(heap, query.reporting(tree), flead, delim));
+                                        rows = start_output(heap, rows, flead);
                                     } else {
                                         buffer.drop(heap, flead);
                                     }
