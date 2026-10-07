@@ -130,6 +130,26 @@ pub fn start[&h, &q](heap: &!h Heap, tree: &q query.Query) -> [heap] Groups {
     return Groups { index: gmap.empty(heap, 64), acc: vec.empty(heap, 64, 0), seen: gmap.empty(heap, 4), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: memo };
 }
 
+// `start` for a set that is about to hold `n` groups and `q` distinct pairs: the tables are made that large at once and do not grow (and fault their pages in twice).
+pub fn start_sized[&h, &q](heap: &!h Heap, tree: &q query.Query, n: int, pairs: int) -> [heap] Groups {
+    let stride = stride_of(tree);
+    var cap = n;
+    if cap < 64 {
+        cap = 64;
+    }
+    var pcap = pairs;
+    if pcap < 4 {
+        pcap = 4;
+    }
+    var memo = box_slice(heap, memo_size() + 7, 0);
+    if query.typed_groups(tree) != 0 {
+        borrow mut memo as &!mw in {
+            contents(mw)[memo_size() + 2] = 1152921504606846976;
+        }
+    }
+    return Groups { index: gmap.empty(heap, cap), acc: vec.empty(heap, cap * stride, 0), seen: gmap.empty(heap, pcap), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: memo };
+}
+
 pub fn drop[&h](heap: &!h Heap, g: Groups) -> [heap] int {
     let Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
     gmap.drop(heap, index);
@@ -2048,4 +2068,62 @@ pub fn rows_csv[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, tr
     unbox_slice(heap, word2);
     unbox_slice(heap, hist);
     return pending;
+}
+
+// The groups' numbers in output order, for any `--sort` (the order of `sort_into`; the key order by the radix): the box is the caller's to free.
+pub fn order_groups[&h, &g](heap: &!h Heap, g: &g Groups, na: int, fields: int, field: int, slot: int, descending: bool) -> [heap] Box[[int]] {
+    let n = gmap.size(g.index);
+    let order = box_slice(heap, n + 1, 0);
+    let spare = box_slice(heap, n + 1, 0);
+    let word = box_slice(heap, n + 1, 0);
+    let word2 = box_slice(heap, n + 1, 0);
+    let hist = box_slice(heap, 1792, 0);
+    var ord = order;
+    borrow mut ord as &!ow in {
+        borrow mut spare as &!sw in {
+            borrow mut word as &!ww in {
+                borrow mut word2 as &!xw in {
+                    borrow mut hist as &!hw in {
+                        if field < 0 && slot < 0 && !descending {
+                            sort_keys(g, contents(ow), contents(sw), contents(ww), contents(xw), contents(hw), fields);
+                        } else {
+                            sort_into(g, contents(ow), contents(sw), contents(ww), na, fields, field, slot, descending);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, spare);
+    unbox_slice(heap, word);
+    unbox_slice(heap, word2);
+    unbox_slice(heap, hist);
+    return ord;
+}
+
+// The first `k` of the groups in `order`, as `serialize` writes them (and no distinct pairs): the candidates of a page. Answers the bytes used, or -1.
+pub fn serialize_top[&g, &p, &o](g: &g Groups, order: &p [int], k: int, out: &!o [byte]) -> [] int {
+    var at = 16;
+    if at > len(out) {
+        return 0 - 1;
+    }
+    put_i64(out, 0, k);
+    put_i64(out, 8, 0);
+    var i = 0;
+    while i < k {
+        let e = order[i];
+        let key = gmap.key_at(g.index, e);
+        if at + 4 + len(key) + 8 * g.stride > len(out) {
+            return 0 - 1;
+        }
+        at = put_u32(out, at, len(key));
+        at = put_bytes(out, at, key);
+        var j = 0;
+        while j < g.stride {
+            at = put_i64(out, at, vec.get(g.acc, e * g.stride + j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return at;
 }

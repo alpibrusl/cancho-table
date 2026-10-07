@@ -603,10 +603,19 @@ fn work2[&r](w: &!r Job2) -> [heap] int {
     let delim = contents(w.par)[1];
     let nb = contents(w.par)[2];
     let big = 1000000000000000000;
-    var groups = agg.start(w.heap, w.tree);
-    var status = 0;
     let inp = contents(w.inp);
     let offs = contents(w.offs);
+    // the tables are made for the groups and pairs the blobs hold (the same group in two blobs is counted twice: a table too large, never too small)
+    var hint_groups = 0;
+    var hint_pairs = 0;
+    var hb = 0;
+    while hb < nb {
+        hint_groups = hint_groups + agg.get_i64(inp, offs[hb]);
+        hint_pairs = hint_pairs + agg.get_i64(inp, offs[hb] + 8);
+        hb = hb + 1;
+    }
+    var groups = agg.start_sized(w.heap, w.tree, hint_groups, hint_pairs);
+    var status = 0;
     var b = 0;
     while b < nb && status == 0 {
         var refused = 0;
@@ -639,6 +648,32 @@ fn work2[&r](w: &!r Job2) -> [heap] int {
                     payload = n;
                 }
             }
+        } else if mode == 2 {
+            var over = 0;
+            borrow mut groups as &!gm in {
+                over = agg.settle(gm, w.tree);
+            }
+            if over != 0 {
+                status = 4;
+            } else {
+                let kk = contents(w.par)[3];
+                borrow groups as &gr in {
+                    let ord = agg.order_groups(w.heap, gr, query.agg_count(w.tree), query.count_of(w.tree, 2), contents(w.par)[4], contents(w.par)[5], contents(w.par)[6] == 1);
+                    borrow ord as &orr in {
+                        var take = ng;
+                        if kk < take {
+                            take = kk;
+                        }
+                        let n = agg.serialize_top(gr, contents(orr), take, o[hdr2()..len(o)]);
+                        if n < 0 {
+                            status = 5;
+                        } else {
+                            payload = n;
+                        }
+                    }
+                    unbox_slice(w.heap, ord);
+                }
+            }
         } else {
             var over = 0;
             borrow mut groups as &!gm in {
@@ -647,7 +682,7 @@ fn work2[&r](w: &!r Job2) -> [heap] int {
             if over != 0 {
                 status = 4;
             } else {
-                var rows = buffer.empty(w.heap, 4096);
+                var rows = buffer.empty(w.heap, offs[nb] + 4096);
                 borrow groups as &gr in {
                     rows = agg.rows_csv(w.heap, rows, gr, w.tree, delim);
                 }
@@ -763,7 +798,7 @@ fn fan2[&p, &t, &r, &l, &u, &v, &x, &m](parent: &!p Heap, tree: &t query.Query, 
 // Read everything from `start` to the end of the file in the partitioned way, writing the answer's rows into `rows` (and to the output, as they fill). Answers the
 // buffers and the groups as `run` does, and 0, or 1 when the read was declined (nothing was changed: `a`, `rows`, the groups and the output are as they were) and
 // the caller reads as before. `a[k_done]` is 1 when the answer is complete.
-pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups, int) {
+pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int, want: int) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups, int) {
     if threads < 2 {
         return (rows, scratch, escr, kept, groups, 1);
     }
@@ -784,15 +819,11 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
     if chunk < 1 {
         chunk = 1;
     }
-    // room for a range's answer: its groups cost no more than its bytes twice over, and each group with a float sum or mean is 584 bytes a float more than
-    // that, which `--max-state-bytes` bounds (a range that holds more than that is not clean): the allowance is that bound, to 64 MiB, and the pages of a slot
-    // that nothing writes are never resident (`box_slice` of zeros is `calloc`)
+    // room for a range's answer: its groups cost no more than its bytes twice over, and the exact float accumulators (584 bytes a float sum or mean, in each
+    // group) are room for 512 groups more; a range with more is not taken (the read is declined: the sums are exact, and bounded, but not cheap to move)
     var allowance = 0;
     if agg.float_state(tree) > 0 {
-        allowance = pp[scan.p_max_state()];
-        if allowance > 67108864 {
-            allowance = 67108864;
-        }
+        allowance = 512 * agg.float_state(tree);
     }
     let payload_cap = 2 * chunk + 65536 + allowance;
     let slot_bytes = header_bytes() + payload_cap;
@@ -934,6 +965,7 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
     var plan = box_slice(heap, threads + 2, 0);
     var used = box_slice(heap, threads + 2, 0);
     var meta = box_slice(heap, 2 * np + 4, 0);
+    var gfinal = groups;
     var rows2 = rows;
     var scratch2 = scratch;
     var escr2 = escr;
@@ -1110,7 +1142,7 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                     }
                     me[k] = inl;
                     me[np + 1 + k] = total_out;
-                    if last {
+                    if last && want == 0 {
                         total_out = total_out + hdr2() + 3 * inl + 4096;
                     } else {
                         total_out = total_out + hdr2() + inl + 64;
@@ -1120,13 +1152,19 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                 me[np + 1 + np] = total_out;
             }
             var slots2 = box_slice(heap, total_out + 1, byte_of(0));
-            var par2 = box_slice(heap, 4, 0);
+            var par2 = box_slice(heap, 8, 0);
             borrow mut par2 as &!p2 in {
                 contents(p2)[0] = 1;
                 if !last {
                     contents(p2)[0] = 0;
+                } else if want > 0 {
+                    contents(p2)[0] = 2;
                 }
                 contents(p2)[1] = delim;
+                contents(p2)[3] = want;
+                contents(p2)[4] = a[engine.k_sort_field()];
+                contents(p2)[5] = a[engine.k_sort_slot()];
+                contents(p2)[6] = a[engine.k_sort_desc()];
             }
             borrow mut slots2 as &!s2w in {
                 borrow par2 as &p2r in {
@@ -1167,7 +1205,33 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
             if ng_all > bound_groups || pairs_all > bound_distinct || held_all > bound_state {
                 declined = 1;
             }
-            if declined == 0 && last {
+            if declined == 0 && last && want > 0 {
+                // The candidates of the page, from every thread, are the groups of a fresh set: the caller finishes them as it finishes any (sort, page, rows).
+                var fg = agg.start(heap, tree);
+                borrow slots2 as &s2r in {
+                    borrow meta as &mr in {
+                        var k = 0;
+                        while k < np && declined == 0 {
+                            let at = contents(mr)[np + 1 + k];
+                            let len_k = agg.get_i64(contents(s2r), at + 8);
+                            let (g2, refused) = agg.merge(heap, fg, contents(s2r)[at + hdr2()..at + hdr2() + len_k], tree, wide, wide, wide);
+                            fg = g2;
+                            if refused != 0 {
+                                declined = 1;
+                            }
+                            k = k + 1;
+                        }
+                    }
+                }
+                if declined == 0 {
+                    agg.drop(heap, gfinal);
+                    gfinal = fg;
+                    total_groups = ng_all;
+                    finished = true;
+                } else {
+                    agg.drop(heap, fg);
+                }
+            } else if declined == 0 && last {
                 borrow slots2 as &s2r in {
                     borrow meta as &mr in {
                         var k = 0;
@@ -1236,12 +1300,16 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                 m = m + 1;
             }
         }
-        a[engine.k_groups()] = total_groups;
-        a[engine.k_emitted()] = total_groups;
-        a[engine.k_done()] = 1;
+        if want > 0 {
+            a[engine.k_total()] = total_groups;
+        } else {
+            a[engine.k_groups()] = total_groups;
+            a[engine.k_emitted()] = total_groups;
+            a[engine.k_done()] = 1;
+        }
         unbox_slice(heap, ta);
-        return (rows2, scratch2, escr2, kept2, groups, 0);
+        return (rows2, scratch2, escr2, kept2, gfinal, 0);
     }
     unbox_slice(heap, ta);
-    return (rows2, scratch2, escr2, kept2, groups, 1);
+    return (rows2, scratch2, escr2, kept2, gfinal, 1);
 }

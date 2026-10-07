@@ -1224,8 +1224,20 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                                 borrow cols as &kr in {
                                                     borrow sel as &sr in {
                                                         var partitioned = false;
-                                                        if mode == 2 && !query.reporting(tree) && as_csv && a[engine.k_sort_field()] < 0 && a[engine.k_sort_slot()] < 0 && from == 0 && top == 0 && limit >= 100000000 {
-                                                            let (r1, s1, e1, k1, g1, declined) = par.run_groups(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
+                                                        // The whole answer as csv rows is written by the merge threads (want 0); a page, a top or a sort is the first `want` groups
+                                                        // of each, finished here as any (one past the page, so that `more` is known).
+                                                        var want = 0;
+                                                        if !(as_csv && a[engine.k_sort_field()] < 0 && a[engine.k_sort_slot()] < 0 && from == 0 && top == 0 && limit >= 100000000) {
+                                                            if top > 0 {
+                                                                want = top;
+                                                            } else if limit < 100000000 {
+                                                                want = from + limit + 1;
+                                                            } else {
+                                                                want = 100000001;
+                                                            }
+                                                        }
+                                                        if mode == 2 && !query.reporting(tree) && want <= 100000 {
+                                                            let (r1, s1, e1, k1, g1, declined) = par.run_groups(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk, want);
                                                             rows = r1;
                                                             scratch = s1;
                                                             escr = e1;
@@ -1347,6 +1359,9 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                     let (r2, s2) = finish_groups(heap, io, finished, spare, gr, tree, as_csv, delim, from, limit, top, budget, a);
                     finished = r2;
                     spare = s2;
+                    if a[engine.k_total()] > 0 {
+                        a[engine.k_groups()] = a[engine.k_total()];
+                    }
                 }
             }
         }

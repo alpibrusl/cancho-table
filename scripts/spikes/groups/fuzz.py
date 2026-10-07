@@ -72,7 +72,12 @@ def plan(rng):
         args += ["--sort", rng.choice(["-count", "count", "-a"])]
     elif r < 0.25:
         args += ["--top", "3"]
-    return args + ["--format", "csv"]
+    r = rng.random()
+    if r < 0.15:
+        args += ["--limit", str(rng.choice([1, 3, 10, 100])), "--from", str(rng.choice([0, 0, 2, 50]))]
+    elif r < 0.2:
+        args += ["--sort", "-sum:c"] if any(x.startswith("sum:c") for x in aggs) else []
+    return args + (["--format", "csv"] if rng.random() < 0.5 else [])
 
 def main():
     ap = argparse.ArgumentParser()
