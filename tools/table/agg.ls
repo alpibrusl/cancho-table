@@ -447,9 +447,9 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
     let before = vec.get(g.acc, slot);
     vec.set(g.acc, slot, before + 1);
     k = 0;
-    // The cell an aggregate reads is read once for the ones that follow it on the same column and type (`sum, min, max, mean` of one column).
+    // The cell an aggregate reads is read once for the ones that follow it on the same column (`sum, min, max, mean` of one column: a column
+    // has one numeric type in a plan, `column.type-conflict`, so the type need not be compared).
     var seen_column = 0 - 1;
-    var seen_kind = 0;
     var v = 0;
     var bad = 0;
     while k < na {
@@ -457,13 +457,20 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
         if function != 0 {
             let column = cols[query.agg_at(tree, k, 1)];
             let now = vec.get(g.acc, slot + 1 + k);
-            let kind = query.agg_at(tree, k, 2);
-            if column != seen_column || kind != seen_kind {
-                let (v2, bad2) = query.parse_typed(record[cells[3 * column]..cells[3 * column + 1]], kind);
-                v = v2;
-                bad = bad2;
+            if column != seen_column {
                 seen_column = column;
-                seen_kind = kind;
+                if query.agg_at(tree, k, 2) >= 2 {
+                    let (v2, bad2) = query.parse_typed(record[cells[3 * column]..cells[3 * column + 1]], query.agg_at(tree, k, 2));
+                    v = v2;
+                    bad = bad2;
+                } else {
+                    let (v2, bad2) = query.parse_int(record[cells[3 * column]..cells[3 * column + 1]]);
+                    v = v2;
+                    bad = 0;
+                    if bad2 != 0 {
+                        bad = 3 + bad2;
+                    }
+                }
             }
             if bad != 0 {
                 return (bad, k);

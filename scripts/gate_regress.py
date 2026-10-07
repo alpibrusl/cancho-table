@@ -4,7 +4,7 @@
     python3 scripts/gate_regress.py --base BIN_BEFORE --new BIN_AFTER [--runs 9] [--file build/bench/data.csv] [--limit 1.02]
 
 The standard cells of the 1,000,000-row benchmark file (scripts/bench.py generates it): the filter, `cut`, group-count, group-sum,
-group-sum + min/max, a filter with a text condition, at one thread and at four (`--parallel-min-bytes 0`). Each cell is run by both
+group-sum + min/max, a filter with a text condition, at one thread and at `--threads` (default four; `--parallel-min-bytes 0`). Each cell is run by both
 binaries, interleaved (base, new, new, base, ...), `runs` times; the answers must be byte-identical before anything is timed; the
 figure is the minimum; a cell over the limit is measured again, three times as long, and the lower ratio is the figure. Exit 1 when any cell's new/base ratio is above the limit. Run it on a quiet machine: the ratios, not the
 seconds, are the point, and a ratio within noise of 1.0 on repeated runs is what a pass looks like.
@@ -45,12 +45,13 @@ def main():
     ap.add_argument("--runs", type=int, default=9)
     ap.add_argument("--file", default=str(ROOT / "build" / "bench" / "data.csv"))
     ap.add_argument("--limit", type=float, default=1.02)
+    ap.add_argument("--threads", type=int, default=4, help="the second thread count (the first is 1); on a box of three physical cores use 3")
     a = ap.parse_args()
     data = pathlib.Path(a.file)
     worst = 0.0
     print("%-36s %7s %9s %9s %7s" % ("cell", "threads", "base s", "new s", "ratio"))
     for name, args in CELLS.items():
-        for threads in (1, 4):
+        for threads in (1, a.threads):
             b, n = argv_of(a.base, data, args, threads), argv_of(a.new, data, args, threads)
             ob = subprocess.run(b, capture_output=True)
             on = subprocess.run(n, capture_output=True)
