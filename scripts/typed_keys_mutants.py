@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_typed_keys", "test_sort", "test_rules", "test_skill"]
+TESTS = ["test_typed_keys", "test_sort", "test_rules", "test_skill", "test_float_sum"]
 
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file.
 MUTANTS = [

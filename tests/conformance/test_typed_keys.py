@@ -549,6 +549,20 @@ class Typed(unittest.TestCase):
         got = self.t("k,v\n1,2\n2,zz\nq,1\n", "--group", "k:int", "--agg", "sum:v:float")
         self.assertEqual((got.first_rule(), got.error()["detail"]["context"], got.error()["detail"]["row"]), ("value.not-float", "sum", 2), got)
 
+    def test_when_two_key_cells_of_one_row_are_refused_the_first_column_is_named(self):
+        got = self.t("d,f,n\nx,y,1\n", "--group", "d:dec(2),f:float", "--agg", "count")
+        self.assertEqual((got.first_rule(), got.error()["detail"]["column"]), ("value.not-decimal", "d"), got)
+        got = self.t("d,f,n\n1,y,1\n", "--group", "d:dec(2),f:float", "--agg", "count")
+        self.assertEqual((got.first_rule(), got.error()["detail"]["column"]), ("value.not-float", "f"), got)
+        got = self.t("d,f,n\nx,y,1\n", "--group", "f:float,d:dec(2)", "--agg", "count")
+        self.assertEqual((got.first_rule(), got.error()["detail"]["column"]), ("value.not-float", "f"), got)
+
+    def test_the_overflowing_group_is_named_with_its_typed_and_text_keys_written_back(self):
+        big = "1.7976931348623157e308"
+        data = "k,x,v\nab,1.5,%s\nab,1.50,%s\nz,2,1\n" % (big, big)
+        got = self.t(data, "--group", "k,x:dec(2)", "--agg", "sum:v:float")
+        self.assertEqual((got.first_rule(), got.error()["detail"]["group"]), ("agg.float-overflow", "ab,1.50"), got)
+
     def test_a_scale_past_18_is_an_argument_error_and_select_takes_no_type(self):
         for flags in (["--group", "x:dec(19)"], ["--order-by", "x:dec(19)"]):
             got = self.t("x\n1\n", *flags)
