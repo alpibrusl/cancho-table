@@ -729,7 +729,7 @@ pub fn value_of[&g](g: &g Groups, x: int, k: int, function: int) -> [] int {
 }
 
 // One group as a row, into `out`: csv (fields joined by `delim`, quoted as
-// `writer.csv_value` does -- here passed in as `quote`, see table.ls) or json
+// `writer.csv_value` does -- here passed in as `quote`, see table.cho) or json
 // (an array of strings, numbers written as decimal strings).
 pub fn row_json[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, tree: &q query.Query, x: int) -> [heap] buffer.Buffer {
     var o = buffer.push(heap, out, byte_of('['));
@@ -995,7 +995,7 @@ pub fn parse_aggs[&h, &s](heap: &!h Heap, tree: query.Query, given: &s [byte]) -
 }
 
 // ---------------------------------------------------------------------------------
-// Groups across ranges (par.ls). A worker counts its range into groups of its own and
+// Groups across ranges (par.cho). A worker counts its range into groups of its own and
 // writes them out as bytes; the parent reads those bytes into its own groups, range by
 // range, in file order. The bytes are, little-endian:
 //

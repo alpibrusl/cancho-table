@@ -10,7 +10,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>table: a deterministic data primitive for AI agents</title>
-<meta name="description" content="Query CSV and TSV data with explicit semantics, bounded resources, structured refusals and machine-verifiable capabilities. A command line for people and AI agents, written in lex-sys. Early.">
+<meta name="description" content="Query CSV and TSV data with explicit semantics, bounded resources, structured refusals and machine-verifiable capabilities. A command line for people and AI agents, written in cancho. Early.">
 <meta name="color-scheme" content="light dark">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b7a75'/%3E%3Cpath d='M7 11h18M7 17h18M7 23h18M13 8v18' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
@@ -140,7 +140,7 @@ ul.why span { color: var(--muted); font-size: .95rem; }
   <a class="brand" href="#top">table</a>
   <nav aria-label="Sections">
     <a href="#flow" class="opt">A flow</a><a href="#why" class="opt">Why table</a><a href="#can" class="opt">What you can do</a><a href="#agent" class="opt">For agents</a><a href="#start">Quick start</a>
-    <a href="https://github.com/alpibrusl/lexsys-table">GitHub</a>
+    <a href="https://github.com/alpibrusl/cancho-table">GitHub</a>
   </nav>
 </div></header>
 
@@ -182,14 +182,14 @@ Zed,1,64</pre></div>
   <h2>Why table?</h2>
   <p class="big">Most data tools optimise for flexibility. <code>table</code> optimises for predictability.</p>
   <ul class="why">
-<li><b>Explicit types</b><span>A column is text unless you write <code>:int</code> (an exact 64-bit integer) or <code>:dec(S)</code> (an exact decimal with S fractional digits, in <code>--where</code>); a cell that is not one is refused. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/filter.md">docs/filter.md</a></span></li>
-<li><b>Explicit operations</b><span>One plan from flags, resolved against the header before any row is read. No expressions, no functions. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/filter.md">docs/filter.md</a></span></li>
+<li><b>Explicit types</b><span>A column is text unless you write <code>:int</code> (an exact 64-bit integer) or <code>:dec(S)</code> (an exact decimal with S fractional digits, in <code>--where</code>); a cell that is not one is refused. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/filter.md">docs/filter.md</a></span></li>
+<li><b>Explicit operations</b><span>One plan from flags, resolved against the header before any row is read. No expressions, no functions. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/filter.md">docs/filter.md</a></span></li>
 <li><b>Bounded resource use</b><span>Rows, line and record size, groups, distinct values and group state each have a limit with its own rule (<a href="#limits">the limits</a>). Peak memory was about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). <a href="benchmarks.html">Benchmarks</a></span></li>
-<li><b>No implicit network access</b><span>The authority row below lists what the program can reach: no <code>net_out</code>, <code>net_in</code>, <code>ffi</code> or <code>clock</code>, and nothing written to disk. <code>lex-sys authority</code> derives it, and CI fails if the binary differs from the committed <a href="https://github.com/alpibrusl/lexsys-table/blob/main/manifests/table.authority.json">manifest</a>. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/architecture.md">docs/architecture.md</a></span></li>
-<li><b>Machine-readable errors</b><span>One JSON line against a schema (<code>table.v2</code>). A refusal is <code>{code, rule, message, hint, repair, detail}</code>. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/refusals.md">docs/refusals.md</a></span></li>
-<li><b>Repair hints</b><span>A refusal says how to fix the request: a command to run, a choice of commands, or why there is none. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/refusals.md">docs/refusals.md</a></span></li>
+<li><b>No implicit network access</b><span>The authority row below lists what the program can reach: no <code>net_out</code>, <code>net_in</code>, <code>ffi</code> or <code>clock</code>, and nothing written to disk. <code>cancho authority</code> derives it, and CI fails if the binary differs from the committed <a href="https://github.com/alpibrusl/cancho-table/blob/main/manifests/table.authority.json">manifest</a>. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/architecture.md">docs/architecture.md</a></span></li>
+<li><b>Machine-readable errors</b><span>One JSON line against a schema (<code>table.v2</code>). A refusal is <code>{code, rule, message, hint, repair, detail}</code>. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">docs/refusals.md</a></span></li>
+<li><b>Repair hints</b><span>A refusal says how to fix the request: a command to run, a choice of commands, or why there is none. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">docs/refusals.md</a></span></li>
 <li><b>Capability introspection</b><span><code>table introspect</code> prints the flags, limits, rules and authority; <code>table skill</code> prints a guide for an agent. <a href="#agent">Excerpts below</a></span></li>
-<li><b>The same bytes on any number of cores</b><span><code>--threads N</code> gives the one-core answer, the same refusal included. <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">docs/parallel.md</a></span></li>
+<li><b>The same bytes on any number of cores</b><span><code>--threads N</code> gives the one-core answer, the same refusal included. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/parallel.md">docs/parallel.md</a></span></li>
   </ul>
 <figure class="figure diagram">
   <svg viewBox="0 0 340 400" role="img" aria-labelledby="dg-t dg-d">
@@ -342,7 +342,7 @@ status,count
 
 <section id="agent">
   <h2>Built to be read by an agent</h2>
-  <p class="sub"><code>table introspect</code> and <code>table skill</code> are generated from the same tables the code parses its flags with, so they cannot disagree with the program. An agent can learn the interface, the limits, the rules and the authority from the binary itself. The protocol for acting on a refusal is in <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/refusals.md">docs/refusals.md</a>.</p>
+  <p class="sub"><code>table introspect</code> and <code>table skill</code> are generated from the same tables the code parses its flags with, so they cannot disagree with the program. An agent can learn the interface, the limits, the rules and the authority from the binary itself. The protocol for acting on a refusal is in <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">docs/refusals.md</a>.</p>
   <div class="two">
     <div class="figure"><h3><code>table introspect</code></h3>
 <!-- gen:agentio -->
@@ -403,24 +403,24 @@ One JSON object on one line, schema `table.v2`: `{ok, command, schema, data, err
 <section id="cannot">
   <h2>What it cannot do yet</h2>
   <ul class="plain">
-    <li><strong>Decimals are only half built.</strong> <code>:dec(S)</code> works in <code>--where</code>. Summing, min, max, mean, grouping by and <code>distinct</code> of a decimal column, printing decimals, and floats are decided and in progress (<a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/numbers.md">docs/numbers.md</a>); until then those are refused. In <code>sum</code>, <code>min</code> and <code>max</code>, cells must be whole numbers.</li>
+    <li><strong>Decimals are only half built.</strong> <code>:dec(S)</code> works in <code>--where</code>. Summing, min, max, mean, grouping by and <code>distinct</code> of a decimal column, printing decimals, and floats are decided and in progress (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/numbers.md">docs/numbers.md</a>); until then those are refused. In <code>sum</code>, <code>min</code> and <code>max</code>, cells must be whole numbers.</li>
     <li><strong>One core for a sort.</strong> <code>--threads</code> is accepted with <code>--order-by</code> and gives the same bytes, but the sort runs on one core. There is no sort that spills to disk.</li>
     <li><strong>No joins,</strong> and <strong>one input file</strong> at a time, named on the command line (no standard input).</li>
     <li><strong>No JSON lines,</strong> no Parquet. Only CSV and TSV (comma, tab or semicolon).</li>
     <li><strong>No guessing.</strong> Every column is text unless you say <code>:int</code>. There is no mean, no computed or renamed column, no <code>or</code> in a filter.</li>
   </ul>
-  <p class="note">JSON lines, joins, <code>mean</code>, decimals and standard input are on the <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
+  <p class="note">JSON lines, joins, <code>mean</code>, decimals and standard input are on the <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
 </section>
 
 <section id="start">
   <h2>Quick start</h2>
   <p class="sub">You need Rust, <code>git</code>, <code>clang</code> and Python 3. On a 16-core Mac with Rust installed and its dependencies already downloaded, the compiler built in 19 seconds and <code>table</code> in 3. The clones and a first-time dependency download are extra: allow a few minutes the first time.</p>
-  <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/lex-sys
-git clone https://github.com/alpibrusl/lexsys-table &amp;&amp; cd lexsys-table
-REV=$(sed -n 's/^lex-sys *= *"\([0-9a-f]*\)".*/\1/p' lex-sys.toml)
-(cd ../lex-sys &amp;&amp; git fetch -q origin &amp;&amp; git checkout "$REV" &amp;&amp; cargo build --release -p lex-sys)
-export PATH=$PWD/../lex-sys/target/release:$PWD/build:$PATH
-lex-sys build                       # builds build/table
+  <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/cancho
+git clone https://github.com/alpibrusl/cancho-table &amp;&amp; cd cancho-table
+REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
+(cd ../cancho &amp;&amp; git fetch -q origin &amp;&amp; git checkout "$REV" &amp;&amp; cargo build --release -p cancho)
+export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
+cancho build                       # builds build/table
 
 cat &gt; orders.csv &lt;&lt;'EOF'
 id,customer,status,bytes
@@ -430,7 +430,7 @@ id,customer,status,bytes
 4,Acme,500,128
 5,Zed,200,64
 EOF</code></pre>
-  <p class="note" style="margin-top:.8rem">The compiler is the commit <code>lex-sys.toml</code> pins. Then three commands, and a refusal:</p>
+  <p class="note" style="margin-top:.8rem">The compiler is the commit <code>cancho.toml</code> pins. Then three commands, and a refusal:</p>
 <!-- gen:qs -->
 <pre class="code" tabindex="0"><span class="c">$</span> table orders.csv
 {"ok":true,"command":"table","schema":"table.v2","data":{"headers":["id","customer","status","bytes"],"column_count":4,"row_count":5,"truncated":false},"meta":{"version":"0.3.0"}}
@@ -452,9 +452,9 @@ Zed,1,64
 <!-- /gen:qs -->
 </section>
 
-<section id="lexsys">
-  <h2>Built in lex-sys, with an authority the compiler wrote</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> is a language whose compiler writes down what a program may do (<code>lex-sys authority</code>). For <code>table</code> that is the line below: it can read its arguments and the file, allocate memory, start threads and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file. CI fails if the binary says otherwise. Why each label is there, and what a row cannot say: <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/architecture.md">docs/architecture.md</a>.</p>
+<section id="cancho">
+  <h2>Built in cancho, with an authority the compiler wrote</h2>
+  <p class="sub"><a href="https://github.com/alpibrusl/cancho">cancho</a> is a language whose compiler writes down what a program may do (<code>cancho authority</code>). For <code>table</code> that is the line below: it can read its arguments and the file, allocate memory, start threads and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file. CI fails if the binary says otherwise. Why each label is there, and what a row cannot say: <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/architecture.md">docs/architecture.md</a>.</p>
 <!-- gen:authority -->
 <pre class="code" tabindex="0"><span class="c"># manifests/table.authority.json</span>
 table    args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_write
@@ -497,11 +497,11 @@ table    args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_write
 </main>
 
 <footer><div class="wrap">
-  <a href="https://github.com/alpibrusl/lexsys-table">Repository</a><a href="benchmarks.html">Benchmarks</a>
-  <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/refusals.md">Refusals</a><a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/architecture.md">Architecture</a>
-  <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/select.md">Select</a><a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/filter.md">Filter and group</a>
-  <a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/parallel.md">Threads</a><a href="https://github.com/alpibrusl/lexsys-table/blob/main/docs/backlog.md">Backlog</a>
-  <span>Built on <a href="https://github.com/alpibrusl/lex-sys">lex-sys</a> · EUPL-1.2</span>
+  <a href="https://github.com/alpibrusl/cancho-table">Repository</a><a href="benchmarks.html">Benchmarks</a>
+  <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">Refusals</a><a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/architecture.md">Architecture</a>
+  <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/select.md">Select</a><a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/filter.md">Filter and group</a>
+  <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/parallel.md">Threads</a><a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">Backlog</a>
+  <span>Built on <a href="https://github.com/alpibrusl/cancho">cancho</a> · EUPL-1.2</span>
 </div></footer>
 </body>
 </html>

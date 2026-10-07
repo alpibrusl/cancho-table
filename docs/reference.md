@@ -8,8 +8,8 @@ select.md, filter.md, parallel.md, history.md and adversarial.md. -->
 A command-line tool for AI agents that reads a CSV or TSV file and answers
 with a document: the file's **shape**, some of its **columns**, the **rows** that satisfy
 a condition, or **counts and sums by group**. Written in
-[lex-sys](https://github.com/alpibrusl/lex-sys), as one of the
-[lexsys-tools](https://github.com/alpibrusl/lexsys-tools) family (JSON out
+[cancho](https://github.com/alpibrusl/cancho), as one of the
+[cancho-tools](https://github.com/alpibrusl/cancho-tools) family (JSON out
 against a schema, every error a named rule, a self-description from
 `introspect`, an authority the compiler derived), and the first of them built
 outside that repository, on its `contract/` taken as a package.
@@ -65,7 +65,7 @@ status,count,sum:bytes
   and is printed in full past 64 bits (`docs/numbers.md` N0p). Groups come out in key order (bytewise, field by
   field), or `--sort` order with ties by key, so the same rows give the same bytes
   in any order. Bounded by `--max-groups`, `--max-distinct` and `--max-state-bytes`,
-  each its own rule. All of it is one plan (`tools/table/query.ls`); design and
+  each its own rule. All of it is one plan (`tools/table/query.cho`); design and
   deviations from the design document in [`docs/filter.md`](filter.md);
 * **threads**: `--threads N` (1 to 64, default 1) reads the file with N threads, for rows and
   groups, and the answer is **the sequential answer byte for byte**: the same output, the same
@@ -100,7 +100,7 @@ status,count,sum:bytes
 * **not pandas.** Arbitrary pandas is arbitrary code, and giving that up is what
   keeps these tools bounded.
 * **not yet all of the declarative core** the
-  [design](https://github.com/alpibrusl/lexsys-tools/blob/next-tools-design/docs/next-tools.md)
+  [design](https://github.com/alpibrusl/cancho-tools/blob/next-tools-design/docs/next-tools.md)
   (section 5) plans. **Not built:** `mean` (an exact fixed-point mean needs a stated
   rounding rule and a scale), `describe`, a second sort key, `or`, expressions and
   functions in `--where` (the design excludes them from v1), decimals (a decimal in an
@@ -121,29 +121,29 @@ You need Rust (for the compiler), `clang`, and network access once, for the
 dependencies.
 
 ```sh
-git clone https://github.com/alpibrusl/lex-sys
-git clone https://github.com/alpibrusl/lexsys-table
-cd lex-sys
-git checkout "$(sed -n 's/^lex-sys *= *"\([0-9a-f]*\)".*/\1/p' ../lexsys-table/lex-sys.toml)"
-cargo build --release -p lex-sys
+git clone https://github.com/alpibrusl/cancho
+git clone https://github.com/alpibrusl/cancho-table
+cd cancho
+git checkout "$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' ../cancho-table/cancho.toml)"
+cargo build --release -p cancho
 export PATH="$PWD/target/release:$PATH"
-cd ../lexsys-table
-lex-sys build             # installs the contract modules into build/deps, then builds build/table
+cd ../cancho-table
+cancho build             # installs the contract modules into build/deps, then builds build/table
 ```
 
 ### The contract, as a package
 
-`contract/` of lexsys-tools is not copied here. [`lex-sys.toml`](../lex-sys.toml)
+`contract/` of cancho-tools is not copied here. [`cancho.toml`](../cancho.toml)
 pins its commit and names each module `table` imports directly, one
 `[dependencies.NAME]` line each (`cli`, `describe`, `fail`, `limit`, `lines`,
-`out`, `path`, `place`, `text`); `lex-sys install` also brings the modules those
+`out`, `path`, `place`, `text`); `cancho install` also brings the modules those
 need (`rules`, `sha`). `toolbox.built` (the authority, the schema and the
 compiler pin, embedded in the binary) is not in the package: it is
-[`generated/table/built.ls`](../generated/table/built.ls), written by
+[`generated/table/built.cho`](../generated/table/built.cho), written by
 [`scripts/manifest.py`](../scripts/manifest.py), which derives the authority over the
 sources **and the installed dependency sources** in `build/deps`, and with
 `--against DIR` checks that it is the same report the package's origin sources
-(`lexsys-tools/contract`) give.
+(`cancho-tools/contract`) give.
 
 The contract revision is `a636daa7` (which adds `extra_rules`). The compiler pin is
 `f8ebe98e6867e1b7af3a5636b180b56eb3dd3cc1`.
@@ -151,8 +151,8 @@ The contract revision is `a636daa7` (which adds `extra_rules`). The compiler pin
 ## Gates
 
 ```sh
-lex-sys fmt --check tools generated
-lex-sys build
+cancho fmt --check tools generated
+cancho build
 python3 scripts/schemas.py --check      # the schema is generated, not edited
 python3 scripts/manifest.py --check     # authority = the compiler's, embedded, within tools.toml
 python3 -W ignore -m unittest discover -s tests/conformance -v   # needs jsonschema, cc; strace on Linux
@@ -262,10 +262,10 @@ measured in the same document.
 ## Layout
 
 ```
-tools/table/        the program: table.ls (flags, the read, the answers), engine.ls (what is done
-                    with a row), scan.ls (a byte range), par.ls (threads), reader.ls
-                    (RFC 4180), writer.ls (csv and json fields), plan.ls (name lists),
-                    query.ls (the plan), expr.ls (--where), agg.ls (groups), frame.ls
+tools/table/        the program: table.cho (flags, the read, the answers), engine.cho (what is done
+                    with a row), scan.cho (a byte range), par.cho (threads), reader.cho
+                    (RFC 4180), writer.cho (csv and json fields), plan.cho (name lists),
+                    query.cho (the plan), expr.cho (--where), agg.cho (groups), frame.cho
                     (the plan against the header)
 docs/               select.md, filter.md, parallel.md (the designs), history.md (the measurements)
 generated/table/    the embedded manifest (written by scripts/manifest.py)
@@ -277,4 +277,4 @@ scripts/            manifest.py, schemas.py, bench.py, bench_parallel.py, select
                     filter_mutants.py, parallel_mutants.py
 ```
 
-Licence: EUPL-1.2, as lexsys-tools.
+Licence: EUPL-1.2, as cancho-tools.

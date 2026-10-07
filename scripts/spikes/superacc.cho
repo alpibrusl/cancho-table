@@ -9,7 +9,7 @@
 // the unit is the smallest subnormal, so every finite double is an integer number of units. A slot after the limbs
 // counts the additions since the last carry. Nothing here rounds until `finalize`, which rounds ONCE, to nearest
 // even. Adding is three limb updates and no branch but the sign; merging two accumulators is a limbwise add, so
-// the merge is exact and does not depend on order. Written against what lex-sys has: `bits_of` (no
+// the merge is exact and does not depend on order. Written against what cancho has: `bits_of` (no
 // `float_of_bits`, so the result is built as `float_of(m) * 2^k` with `std.math.ldexp`, exact for m <= 2^53), a
 // signed 64-bit `int` that traps, no 128-bit and no unsigned.
 import std.buffer;

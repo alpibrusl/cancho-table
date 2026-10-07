@@ -1,12 +1,12 @@
 # `table --where`, `--group`, `--agg`, `--sort`, `--top`: filter and group-count
 
-Design, the choices made, where it deviates from section 5 of lexsys-tools'
+Design, the choices made, where it deviates from section 5 of cancho-tools'
 `docs/next-tools.md`, and what each claim rests on. `docs/select.md` covers the
 reader, `--select` and paging, which all of this composes with.
 
 ## One plan
 
-The flags do not each do something; they fill one `Query` (`tools/table/query.ls`):
+The flags do not each do something; they fill one `Query` (`tools/table/query.cho`):
 the column references (select's, then where's, then group's, then the aggregates'),
 the conditions with their literals, and the aggregates. After the header is read,
 every column the plan names is resolved together (`plan.resolve`: one name, one

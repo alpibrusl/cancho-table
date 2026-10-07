@@ -1,4 +1,4 @@
-"""SPIKE: ns per element of the sum loops of superacc.ls (plain f64, checked i64, pair, superacc), by the difference between 41 rounds and 1.
+"""SPIKE: ns per element of the sum loops of superacc.cho (plain f64, checked i64, pair, superacc), by the difference between 41 rounds and 1.
 Needs S (a directory holding the built `superacc` and prices.json / wide.json: 1,000,000 JSON numbers) in the environment."""
 import subprocess,sys,time,os
 S=os.environ['S']

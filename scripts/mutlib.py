@@ -12,7 +12,7 @@ module is for, after the scripts had gone stale without anyone being told:
     python3 scripts/X_mutants.py --check
     python3 scripts/X_mutants.py [name-substring ...]
 
-A run needs a compiler (`lex-sys` on PATH, or LEX_SYS; LEX_SYS_ARGS="--ignore-compiler-rev" for a compiler of
+A run needs a compiler (`cancho` on PATH, or CANCHO; CANCHO_ARGS="--ignore-compiler-rev" for a compiler of
 another revision), restores the sources after every mutant whatever happens, stops a mutant's tests at the first
 failure (killed), and exits 1 if one survives. The binary left in build/ is the last mutant's: rebuild after a run.
 Do not edit tools/table while it runs.
@@ -80,8 +80,8 @@ def main(mutants, tests, argv=None):
     if wanted and not chosen:
         print("!! no mutant matches %r" % wanted)
         return 1
-    compiler = os.environ.get("LEX_SYS", "lex-sys")
-    extra = os.environ.get("LEX_SYS_ARGS", "").split()
+    compiler = os.environ.get("CANCHO", "cancho")
+    extra = os.environ.get("CANCHO_ARGS", "").split()
     files = {n: (SRC / n).read_text() for n in {m[1] for m in mutants}}
 
     def restore(*_):

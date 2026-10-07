@@ -5,7 +5,7 @@
 //
 //   MODE  what a round does with every cell
 //   line  finds the line ends and adds the lengths               (the floor: the reading cost every mode shares)
-//   int   `parse_int` of query.ls (copied) + the checked 64-bit add of agg.ls
+//   int   `parse_int` of query.cho (copied) + the checked 64-bit add of agg.cho
 //   dec2  `parse_dec` at scale 2 + the pair-limb sum that cannot overflow (hi * 2^32 + lo, carried when lo leaves 2^62)
 //   fast  the float scanner of this file: digits, point, exponent, Clinger's fast path inline, then a plain f64 add
 //   D/F   `numparse D SCALE` / `numparse F`: print `status value` (F: the double's bits) for every cell, for the differential
@@ -13,7 +13,7 @@
 //   dec0  parse_dec at scale 0 (to compare with `int` on integer cells: same digits, the dec grammar and the pair sum)
 //   json  the same cell through std.json (`parse` of a one-number document + `to_float`: the language's
 //         correctly rounded reader, the only one it has) then a plain f64 add
-//   facc  the float scanner + the superaccumulator add (superacc.ls) -- the full proposed float-sum path
+//   facc  the float scanner + the superaccumulator add (superacc.cho) -- the full proposed float-sum path
 edition 5;
 
 import std.buffer;
@@ -40,7 +40,7 @@ fn number_of[&s](text: &s [byte]) -> [] int {
     return n;
 }
 
-// ---- the integer path, copied from tools/table/query.ls and agg.ls ---------------------------------------------
+// ---- the integer path, copied from tools/table/query.cho and agg.cho ---------------------------------------------
 
 fn int_min() -> [] int {
     return 0 - 9223372036854775807 - 1;
@@ -255,7 +255,7 @@ fn scan_float[&d](data: &d [byte]) -> [] (float, int) {
     return (x, 0);
 }
 
-// ---- the exact accumulator (superacc.ls), the add only ----------------------------------------------------------
+// ---- the exact accumulator (superacc.cho), the add only ----------------------------------------------------------
 
 fn facc_add[&a](acc: &!a [int], x: float) -> [] int {
     let bits = bits_of(x);

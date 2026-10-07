@@ -2,7 +2,7 @@
 
 `table --select NAMES FILE` returns some columns of a CSV/TSV file, as a page of
 JSON rows or as CSV. This is the design, the choices made and the claims the code
-relies on, each with how it was checked. Section 5 of lexsys-tools'
+relies on, each with how it was checked. Section 5 of cancho-tools'
 `docs/next-tools.md` is the plan this is a step of; it was not edited.
 
 ## The operation
@@ -40,7 +40,7 @@ that guesses which `id` is meant is wrong the day the file gets a second one.
 exist"), with `detail.available` (the first 50 header names, and the count) and, when
 the name differs from a header only in case, a repair of kind `choose` whose options
 are whole invocations (the same argv with that one name corrected; at most 5). The
-repair is built by hand in `plan.ls`: the contract's `fail` has `retry` and `none`
+repair is built by hand in `plan.cho`: the contract's `fail` has `retry` and `none`
 helpers and no `choose` one. With no near name the repair is `none` and says to read
 `detail.available`.
 

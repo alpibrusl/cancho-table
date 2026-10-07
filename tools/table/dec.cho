@@ -4,7 +4,7 @@ module dec;
 
 // Decimals as text, and the exact mean (docs/numbers.md, sections 3.3, 3.6 and 3.7).
 //
-// A decimal is an integer of 10^-S ("scaled"); a sum of them is a pair of integers (`hi * 2^32 + lo`, see agg.ls) and may be wider than an
+// A decimal is an integer of 10^-S ("scaled"); a sum of them is a pair of integers (`hi * 2^32 + lo`, see agg.cho) and may be wider than an
 // `int`, so a value is written from limbs of 32 bits (little endian, in an `int` slice: a limb times a number below 2^31 plus a carry fits an `int`).
 // Everything here is exact integer arithmetic. There is no float anywhere.
 

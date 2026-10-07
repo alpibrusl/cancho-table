@@ -12,10 +12,10 @@ edition 5;
 //           [--max-state-bytes N] [--format json|csv] [the same] FILE   groups
 //
 // Design and measurements: `docs/select.md`, `docs/filter.md`. The reader is
-// `reader.ls` (RFC 4180, one line at a time), what is written for a field
-// `writer.ls`, the plan `query.ls` (filled by `plan.ls` for column lists,
-// `expr.ls` for `--where`, `agg.ls` for `--agg`), and what the header lets the
-// plan become `frame.ls`; this file drives them and says what went wrong.
+// `reader.cho` (RFC 4180, one line at a time), what is written for a field
+// `writer.cho`, the plan `query.cho` (filled by `plan.cho` for column lists,
+// `expr.cho` for `--where`, `agg.cho` for `--agg`), and what the header lets the
+// plan become `frame.cho`; this file drives them and says what went wrong.
 //
 // * The first record is the header; every later non-blank record is a row.
 // * RFC 4180: a field may be quoted, a quote inside it is doubled, a quoted
@@ -30,7 +30,7 @@ edition 5;
 //   the rest of the file is still read and counted, and a ragged row is never
 //   among the rows a selection returns or a grouping counts. A quote left open
 //   at the end of the input is `parse.csv-unterminated-quote`.
-// * One plan, one engine: the flags fill a `Query` (query.ls); a row is
+// * One plan, one engine: the flags fill a `Query` (query.cho); a row is
 //   counted, then tested by `--where`, then either emitted or added to its
 //   group. `--where` is applied before grouping.
 // * `--max-rows` is a bound on work, not memory: reading stops at it. In JSON
@@ -43,7 +43,7 @@ edition 5;
 //
 // Memory is one 64 KiB chunk, the longest record, the header, one row of
 // output and, as JSON, the page asked for (`--limit`, within `--max-bytes`);
-// for a grouping, also its groups, bounded three ways (agg.ls).
+// for a grouping, also its groups, bounded three ways (agg.cho).
 
 import std.buffer;
 import std.bytes;
@@ -306,7 +306,7 @@ fn context_of(function: int) -> [] &static [byte] {
     return "where";
 }
 
-// A type code (`query.ls`: 1 :int, 2 + S :dec(S)) as it is written.
+// A type code (`query.cho`: 1 :int, 2 + S :dec(S)) as it is written.
 fn type_name(t: int) -> [] &static [byte] {
     if t == 1 {
         return ":int";
@@ -653,7 +653,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     let fast_ok = engine.fast_ok(tree);
     let ordering = query.count_of(tree, 4) > 0;
     let max_sort_rows = cli.nat(args, parsed, table, "max-sort-rows");
-    // `--order-by` goes where the grouping goes: the rows are held in the groups' place (sorter.ls), and the bound on the groups is
+    // `--order-by` goes where the grouping goes: the rows are held in the groups' place (sorter.cho), and the bound on the groups is
     // the bound on the rows. The loop below is not told: a third thing to do with a row, there, made it 15 percent slower for the other two.
     var row_mode = mode;
     if ordering {
@@ -935,7 +935,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                     }
                                 }
                                 // The rest of the file, by several threads, when that is asked for and
-                                // worth it (par.ls): it leaves the tally, the output and the groups as
+                                // worth it (par.cho): it leaves the tally, the output and the groups as
                                 // this loop would have.
                                 if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && !ordering && (mode == 2 || row_from == 0) {
                                     var size = 0;

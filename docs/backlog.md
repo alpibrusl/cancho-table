@@ -23,8 +23,8 @@ detection. Start-up of `duckdb -c "select 1"` is 0.013 s, so it does not explain
   run (a soak was running there).
 * So per core `table` is level with or ahead of DuckDB on these CSV questions, and DuckDB's threads win the
   groupings by about 1.8x. Neither says anything about the rest of what DuckDB is.
-* lex-sys's own scan primitives were measured level with DuckDB's single thread on 50 million `int64`
-  (lex-sys `docs/parallelism.md` §3.3).
+* cancho's own scan primitives were measured level with DuckDB's single thread on 50 million `int64`
+  (cancho `docs/parallelism.md` §3.3).
 
 **What DuckDB has that `table` is far from:** SQL and a planner, joins (hash and merge), window functions,
 spill-to-disk for large sorts and aggregations, vectorised execution, typed columns (decimal, date, timestamp,
@@ -116,7 +116,7 @@ otherwise said to be inferred.
 * **A new group costs what it cost**: the groups are moved by value to be added (the map grows by value), and the key is
   hashed twice (`find`, then `put`). A 1M-key grouping is 3x DuckDB at one thread and the cell-cost round did not touch
   it (B3 1.0x of `main`). A `std.map` with an `insert` that reports whether the key was new, working through `&!`, would
-  take both; that is lex-sys's, not this tool's.
+  take both; that is cancho's, not this tool's.
 * **Long fields (1-10 KB) do not scale with threads, and the cause is now known (E1/E2).** With no newline inside the
   quoted fields the same file scales 2x at eight threads (0.017 to 0.0086 s); with newlines every 17 bytes it does not
   (0.172 to 0.170 s), because the speculation "this range starts outside quotes" is wrong about as often as a boundary
@@ -134,7 +134,7 @@ otherwise said to be inferred.
 ## Ideas, roughly in order
 
 1. ~~**Parallel scan**~~ (done: `--threads N`, byte-identical to the sequential engine, `docs/parallel.md`).
-2. **JSON lines** as a second reader behind a record-reader interface (design: lexsys-tools `docs/next-tools.md`
+2. **JSON lines** as a second reader behind a record-reader interface (design: cancho-tools `docs/next-tools.md`
    §5, "Formats"): declared flat projection with dotted paths; a non-scalar in a cell is a tagged refusal; one big
    JSON array is refused with a pointer to `jsonq`.
 3. **`--query`**, the string front end to the same `Query` plan (the typed-flags form must equal it byte for byte:
@@ -151,24 +151,24 @@ otherwise said to be inferred.
    feature where DuckDB's shape is the model; it needs its own design, the memory bound is the whole difficulty.
 10. **Parquet, a read-only subset**: plain, dictionary and run-length encodings, uncompressed and snappy only; every
     other encoding or codec a tagged refusal. Not before a user has a file they need: it needs a Thrift decoder, none
-    of snappy/zstd/gzip is in lex-sys's `std`, and its gain over CSV (column pruning) implies a column-wise engine.
+    of snappy/zstd/gzip is in cancho's `std`, and its gain over CSV (column pruning) implies a column-wise engine.
 11. **Cheap paging**: `--from N` re-reads the file from the start, so paging a huge file is quadratic. An index file
     or a seekable cursor would fix it and is out of scope until someone pages a large file.
 
-## Friction in the contract package (lexsys-tools), from building this
+## Friction in the contract package (cancho-tools), from building this
 
-Found while building. **Closed and adopted:** `extra_rules` (lexsys-tools#28); `fail.choose_*` and `fail.detail_*`
-(#29: the hand-built `choose` repair of `plan.ls` and the key/value ladders of every error are one call each,
+Found while building. **Closed and adopted:** `extra_rules` (cancho-tools#28); `fail.choose_*` and `fail.detail_*`
+(#29: the hand-built `choose` repair of `plan.cho` and the key/value ladders of every error are one call each,
 48 lines fewer, the conformance suite unchanged). Still open:
 
 * `describe.Tool` allows one `schema` string, so a tool with several documents shares one `oneOf`.
 * A flag value cannot be empty, and a flag table cannot hold `;` or `|` (not even in help text).
-* No `Buffer` truncate/undo (a lex-sys `std` gap), so bounded JSON paging builds each row in a scratch buffer.
+* No `Buffer` truncate/undo (a cancho `std` gap), so bounded JSON paging builds each row in a scratch buffer.
 * A large `res` struct is copied when passed to a per-row call, and `buffer.append` consumes and returns, which pushes
   tools toward that pattern (it cost one measured regression, `docs/history.md`).
-* `toolbox.sort` (#29) was not adopted in `agg.ls`: its comparator is a captureless function over one of three
+* `toolbox.sort` (#29) was not adopted in `agg.cho`: its comparator is a captureless function over one of three
   concrete contexts (a `[int]`, or a `Map[int]`), and the groups' order needs the map **and** the accumulator
   array **and** the stride, the number of key fields, the column sorted by and its direction. Copying all of that
   into one context per mode would be more code than the merge sort it replaces.
-* Atomics and channels do not exist in lex-sys yet (design: lex-sys `docs/atomics.md`); until they do, a work queue
+* Atomics and channels do not exist in cancho yet (design: cancho `docs/atomics.md`); until they do, a work queue
   between threads is not available and workers are shared-nothing, merged in order.
