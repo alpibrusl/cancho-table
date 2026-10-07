@@ -253,10 +253,118 @@ revision it was copied from.
   one and to a fresh derivation, no `fs_*`/`net_*`/`ffi`, the gate failing for each label it must refuse.
 
 `scripts/mcp_mutants.py` has 65 mutants, one defect each, in the server (wire, call, answer, limits, command line) and
-in the generator (schema, gate); `--check` (CI) verifies each still applies exactly once. RESULTS_PLACEHOLDER
+in the generator (schema, gate); `--check` (CI) verifies each still applies exactly once.
+
+**Results.** 65 of 65 killed on macOS. The first run killed 61: four survived and each was a test that did not look,
+and each now has its test: *a line one byte past the bound is read* and *a line past the bound is taken for a request*
+(the tests sent lines far past the bound and one exactly at it, never one byte past it, nor an oversize last line ending
+the input without a newline); *csv is structured content* (no csv answer was ever a JSON object: a file whose header is
+`{}` makes one, `test_text_that_is_a_json_object_is_still_text`); *the gate lets exec be anywhere* (the label was also
+outside the allow list, so the second check was redundant until a test gave a ceiling that names the wrong directory).
+All four are killed after. Four others (no flush, the root, the output bound one byte more, a deadline a thousand times longer) again
+on Linux x86-64. The whole suite is green with the new file: 245 tests (one skipped on macOS, as before), 175 s on a
+laptop; `test_mcp.py` alone is 43 tests, 10 s on macOS and 34 s on `gram` (Linux 6.x x86-64, niced on six cores).
+One mutant needed the test file to know it was being mutated: `test_the_mutants_still_apply` checks the patterns match
+the sources, which a mutant by definition breaks, so it is skipped when `MCP_MUTANT_RUN` is set and `--check` (CI) does
+the job.
 
 `scripts/mcp_client.py` is a minimal client, used for the transcripts below.
 
 ## 9. Tried for real
 
-TRIED_PLACEHOLDER
+`scripts/mcp_client.py` (initialize, `notifications/initialized`, `tools/list`, then calls) against the server built with
+`build/` baked in and the benchmark generator's file (20,000 rows; `big.csv` is 1,000,000):
+
+```
+initialize -> {"name": "cancho-table", "version": "0.1.0"} 2025-06-18
+tools/list -> ['table']
+call {"file": "data.csv"} -> exit 0 isError False structured 187 bytes
+    {"ok":true,"command":"table","schema":"table.v2","data":{"headers":["id","status","bytes","path","note"],"column_count":5,"row_count":20000,"truncated":false},"meta":{"version":"0.3.0"}}
+call {"file": "data.csv", "select": "id,status", "limit": 3} -> exit 0 isError False structured 206 bytes
+    {...,"data":{"columns":["id","status"],"rows":[["0","200"],["1","200"],["2","301"]],"row_count":3,"truncated":true,"next":{"from":3}},...}
+call {"file": "data.csv", "where": "status=404 and bytes:int>99000", "select": "id,bytes", "limit": 2} -> exit 0
+    {...,"rows":[["6","99913"],["254","99276"]],"row_count":2,"truncated":true,"next":{"from":767}},...}
+call {"file": "data.csv", "group": "status", "agg": "count,sum:bytes", "sort": "-count"} -> exit 0
+    {...,"columns":["status","count","sum:bytes"],"rows":[["200","9992","493850992"],["301","3375","167290607"],...],"group_count":4},...}
+call {"file": "data.csv", "order-by": "-bytes:int", "select": "id,bytes", "limit": 2} -> exit 0
+    {...,"rows":[["12727","99989"],["13317","99989"]],"truncated":true,"next":{"from":2}},...}
+call {"file": "data.csv", "group": "status", "format": "csv"} -> exit 0 isError False text-only 49 bytes
+    status,count / 200,9992 / 301,3375 / 404,3338 / 500,3295
+call {"file": "../x.csv"} -> exit 2 isError True structured      (error.rule "path.dotdot", hint, repair, detail intact)
+call {"file": "data.csv", "where": "nope=1", "format": "csv"} -> exit 3 isError True text-only 0 bytes
+    [stderr] table: column.unknown: the plan names a column the header does not have
+call {"file": "data.csv", "limit": "3"} -> JSON-RPC error -32602, data.rule "mcp.wrong-type", "send a JSON number such as 1"
+call big.csv, group by path, sum:bytes, --timeout-ms 2  -> isError, rule mcp.timeout, hint "add `where`, `limit` or `top` ..."
+call big.csv, select id,note, format csv                  -> isError, rule mcp.output-too-large, hint "`limit` caps the rows ..."
+```
+
+**Claude Code** (2.1.201): `claude mcp add --scope user table -- build/mcp --root DIR` in a scratch `HOME` (so not the
+global configuration) and `claude mcp list` reports `table: ... - Connected`: its client completed `initialize` and
+`tools/list` against the server. **A tool call from Claude Code was not made:** `claude -p` in the session this was written
+in answered "Not logged in", so there was no model to choose the call. The same client-side steps are what
+`scripts/mcp_client.py` does, and what cancho-tools' docs/mcp.md §9 measured with Claude Code 2.1.289 for its server (which this one
+is a copy of, with a different tool table).
+
+## 10. Gaps found in `table skill` and `table introspect`
+
+Both exist and are complete as far as they go: `skill` is `introspect`'s tables printed as a `SKILL.md` (the same
+`describe.Tool`), the flags are the parser's own table (`flag_table()` in `tools/table/table.cho`, the one the
+parser reads), and every one of the 22 flags, the operand, the 11 limits, the 48 rules with exit and repairability, the exit codes, the
+guarantees and the authority is there. What was checked by script against the sources (not a test in the suite: a
+one-off, and what it found is below):
+
+* **`usage` is hand-written and stale.** It omits five flags the parser takes: `--order-by`, `--max-sort-rows`,
+  `--threads`, `--chunk-bytes`, `--parallel-min-bytes`; and gives `--format` as `json|text` for one form and `json|csv` for
+  the others while the flag is `choice:json/text/csv`. `skill` prints it, so a model that reads the usage line does not
+  learn that `table` can sort rows or read in parallel (it learns it two paragraphs later from the flags list).
+* **`--agg`'s help omits `mean`, and the modifiers.** The rule `agg.bad-spec` names `mean:COL` and says `:int`, `:dec(S)` and
+  `@N` are accepted on an item; the flag's help lists `count, sum:COL, min:COL, max:COL, distinct:COL` only. (`mean:bytes`
+  is refused here, `agg.bad-spec`: the help does not say what a valid `mean` is.) The strings a model must write
+  are the whole of what this server's schema can document, so this is the most expensive gap for it.
+* **Which flags go together is not in the tables.** The three forms are in `usage` as prose; `args.conflict` and
+  `args.required-flag` are raised from code with a message naming the flags (`--select` with `--group`, `--order-by` with
+  `--group`, `--limit`/`--from` without `--select`, `--where` or `--group`, `--sort`/`--top` without `--group` or
+  `--order-by`, `--format text` with rows, `--format csv` with none of them). Neither `introspect` nor `skill` lists them, so
+  no generator can emit a `oneOf`, and a model finds out by being refused. A `forms` (or `requires`/`excludes`) member in
+  `introspect`, read by the parser, would close it.
+* **`limits` has no row for `top` and `from`** (they have no ceiling) and its `default` for `--limit` (1000) is the
+  default for JSON only: the flag's own `default` is null and the help says "no limit as csv". The schema's `default` for `limit`
+  is therefore absent, correctly, and the number is only in the help.
+* **Two rules the code can say are not in the catalogue:** `io.write-failed` (standard output took fewer bytes than
+  written; in the contract's `out` module, on standard error) and `args.unexpected-value` (a flag that takes no value was
+  given one; unreachable today, `table` has no boolean flag). `introspect`'s `rules` is the tool's list, not the
+  package's, and `test_rules.py` asserts it equals what the fixtures reach, so the first is a rule with no fixture.
+* **`skill` has no operand section, no example, no hint:** FILE appears only in the usage line and in `--root`'s help;
+  there is not one example invocation; each rule has its summary but not its hint or repair kind, which is what an
+  agent branches on. `introspect` has the operand (`min`, `max`, `role`) and, with the tools' own
+  `operands.min`/`max`, is complete for a schema; `skill` is the thing with the omissions.
+* **`--format csv` and `text` write refusals to standard error** and rows written before a refusal stand
+  (docs/refusals.md): `introspect` says `output: "document"` and one schema, and does not say that the output is
+  not a document in those modes. This server needed to know (§2) and reads it from the choice list, not from `introspect`.
+* **Versions:** `introspect.version` is the tool's (`0.3.0`) and `compiler` the pin; nothing says the version of a
+  *flag table*, so an agent that cached a schema cannot tell it is stale other than by `version`.
+
+## 11. What the readers/query design needs from the server
+
+* **A table the server serves is under one root, read-only.** The server has `file_read` nowhere: a
+  reader that must resolve a name (`table://...`, a set of files, a glob) cannot be added to the server without giving
+  it `fs_read` or running another tool. Names stay the tool's: `file` is the tool's FILE under `--root`.
+* **Structured paging is already there** (`truncated`, `next: {"from": N}`), and the tool's own `max-bytes` page is
+  1 MiB: a client wanting smaller answers than the server's 2 MiB bound sets `limit` (and `max-bytes`) per call, or the
+  operator lowers `--max-output`. A reader that returns bigger pages than the server's bound needs the bound
+  raised for it, or pages sized to it: `mcp.output-too-large` is the refusal and `detail.limit` the number.
+* **The schema is generated, so a new flag is in it on the next `scripts/mcp.py`** with its help, kind and ceiling,
+  and a flag of a *new kind* is a `sys.exit` in the generator (it lists the kinds it knows) rather than a silent hole.
+  The query design's additions (`--order-by` keys, `:dec`, `:float`, anything `introspect` gains) arrive as help
+  text: they need an accurate `--agg`/`--where` help (§10) because that text is the model's grammar.
+* **Several tools or a second tool** (a reader as its own binary): the generator and the server are written over a
+  table of tools (`count()`, `name(i)`, `path(i)`), and this one fills it with one row; a second row is a second
+  `[[bin]]` and a second directory entry, but `Exec` is narrowed to one directory, so both binaries live in it.
+* **Constraints between flags** (§3) would let the server refuse a bad combination before the process starts and
+  document the forms in the schema; they need `introspect` to carry them, and the parser to read the same table.
+* **A tool that reads standard input** is refused by the generator today. cancho-tools' server handles `stdin` as a
+  property (and `--stdin`); the code is there in the copy and removed from the generated table. A reader of
+  standard input (`table -` or a pipe) would put it back.
+* **A result that is not UTF-8** is lossy in `csv`/`text` mode (§2). If the query design adds raw output modes,
+  the answer for MCP is base64 in the JSON document or a refusal, not text.
+
