@@ -652,6 +652,19 @@ class Aggregates(unittest.TestCase):
                 for k, v in extra.items():
                     self.assertEqual(d[k], v, (k, got))
 
+    def test_the_slow_way_of_adding_refuses_as_the_fast_way_does(self):
+        # a quoted key with a quote in it is added by value (agg.add), and a `distinct` beside the sum forces it too
+        for key in ('"a""b"', "a"):
+            for agg, rows, rule in (("sum:n", ["1", "9223372036854775808"], "value.integer-overflow"), ("min:n", ["x"], "value.not-integer"), ("max:n:int", ["1", ""], "value.not-integer"),
+                                    ("sum:n,distinct:n", ["1", "-9223372036854775809"], "value.integer-overflow"), ("sum:p:dec(1)", ["1.55"], "value.decimal-scale"),
+                                    ("mean:p:dec(1)", ["1e2"], "value.not-decimal"), ("distinct:p:dec(0)", ["1000000000000000000"], "value.decimal-too-wide")):
+                with self.subTest(key=key, agg=agg):
+                    col = "p" if ":dec" in agg else "n"
+                    data = "g,n,p\n" + "".join("%s,%s,%s\n" % (key, c if col == "n" else "0", c if col == "p" else "0") for c in rows)
+                    got = self.s.table("t.csv", data, "--group", "g", "--agg", agg)
+                    self.assertEqual((got.status, got.first_rule()), (8, rule), got)
+                    self.assertEqual(got.error()["detail"]["row"], len(rows), got)
+
     def test_the_grammar_of_the_items(self):
         data = "g,p,x:dec(2),a:int,n,int,x@2\na,1.5,7,3,4,5,6\n"
         def agg(spec, fmt=True):
