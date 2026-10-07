@@ -1,4 +1,4 @@
-Throwaway spikes behind `docs/numbers.md`, `docs/readers.md` and `docs/query.md` (designs; nothing here is part of the tool).
+Throwaway spikes behind `docs/numbers.md`, `docs/readers.md`, `docs/query.md` and `docs/gap-sort.md` (designs; nothing here is part of the tool).
 
 | file | what it measures or checks |
 |---|---|
@@ -10,5 +10,6 @@ Throwaway spikes behind `docs/numbers.md`, `docs/readers.md` and `docs/query.md`
 | `stdin_read.cho` | docs/readers.md section 3.4: what reading standard input costs (`getchar`, `getchar` into the chunk's room, the path `/dev/stdin` through `file_read`, an ordinary file) |
 | `bench_jsonl.py` | docs/readers.md section 6.5: the four questions of `scripts/bench.py` on the JSON-lines file through DuckDB (`read_ndjson`, `read_json_auto`), jq and Miller, answers checked first, peak resident set |
 | `query_proto.py`, `query_gate.py`, `query_examples.py` | docs/query.md: a Python prototype of the `--query` translator (the grammar made executable), the equivalence gate run against the real `table` (random tables with awkward names and random plans rendered as flags and as SQL; `--mutants` applies the prototype's 26 mutants), and every worked example and pinned error offset of the document |
+| `sort/sortpar.cho`, `sort/sort_check.py`, `sort/bench_sort.py`, `sort/i64cost.cho` | docs/gap-sort.md: a parallel stable sort of the rows of a csv file by one or two keys (runs sorted by threads, a radix sort of the key words, cuts, a k-way merge by partitions; the first N; the rows re-read from the file), phase by phase; its check against Python's stable sort (15,840 runs); the benchmark against `table`, `table --threads`, DuckDB, csvtk and `sort`; what an 8-byte integer costs in a byte slice |
 
 Build a `.cho` with the Mac compiler: `cancho build FILE.cho --std -o OUT --ignore-compiler-rev`.

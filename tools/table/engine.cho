@@ -124,6 +124,11 @@ pub fn k_err_digits() -> [] int {
     return 26;
 }
 
+// 1 once `--order-by` was sorted and written by several threads (psort.cho): the sorted rows are out, there is nothing left to write.
+pub fn k_psorted() -> [] int {
+    return 28;
+}
+
 pub fn k_size() -> [] int {
     return 32;
 }

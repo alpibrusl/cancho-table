@@ -31,9 +31,11 @@ import std.buffer;
 import std.vec;
 import agg;
 import engine;
+import psort;
 import query;
 import report;
 import scan;
+import sorter;
 import toolbox.out;
 import toolbox.path;
 import toolbox.place;
@@ -87,6 +89,15 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
     var escr = buffer.empty(w.heap, 16);
     var kept = buffer.empty(w.heap, 64);
     var groups = agg.start(w.heap, w.tree);
+    let ordering = query.count_of(w.tree, 4) > 0 && !query.reporting(w.tree);
+    if ordering {
+        // `--order-by` (psort.cho): the rows are held by a sorter that has the sequential bounds, and the answer of a range is a sorted run
+        let okeys = sorter.keys_of(w.heap, w.tree, contents(w.cols));
+        borrow okeys as &okr in {
+            groups = sorter.configure(groups, query.order_count(w.tree), 0, contents(w.par)[scan.p_max_groups()], contents(w.par)[scan.p_max_state()], contents(okr));
+        }
+        unbox_slice(w.heap, okeys);
+    }
     var next_at = 0;
     var lines_read = 0;
     var status = 0;
@@ -125,7 +136,9 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
             } else if clean == 1 {
                 borrow groups as &gr in {
                     var n = 0;
-                    if query.reporting(w.tree) {
+                    if ordering {
+                        n = psort.make_run(w.heap, gr, contents(cw), contents(w.sel), contents(w.par)[scan.p_picked()], contents(w.par)[scan.p_delim()], contents(w.par)[j_columns()], o[header_bytes()..len(o)]);
+                    } else if query.reporting(w.tree) {
                         n = report.serialize(gr, o[header_bytes()..len(o)]);
                     } else {
                         n = agg.serialize(gr, o[header_bytes()..len(o)]);
@@ -292,7 +305,12 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     let filtering = query.count_of(tree, 1) > 0;
     // room for the exact float accumulators of 64 groups (584 bytes each, a group per float sum or mean) on top of the chunk: more groups than that, and a range's answer
     // does not fit and the parent reads the range itself (the answer is the same, only slower)
-    let payload_cap = chunk + 65536 + 64 * agg.float_state(tree);
+    let ordering = query.count_of(tree, 4) > 0 && !query.reporting(tree);
+    var payload_cap = chunk + 65536 + 64 * agg.float_state(tree);
+    if ordering {
+        // a range's answer is its sorted run: the rows, formatted, and the words that order them (psort.cho); a range whose run does not fit is read again
+        payload_cap = 3 * chunk + 65536;
+    }
     let slot_bytes = header_bytes() + payload_cap;
     let wide = 1000000000000000;
     // What every thread is told: the parameters, except that it counts its range alone.
@@ -314,6 +332,19 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     }
     var slots = box_slice(heap, threads * slot_bytes + 1, byte_of(0));
     var plan = box_slice(heap, threads + 2, 0);
+    // `--order-by`: the runs taken so far, the keys, and the bounds of the sort whole (what is left of them is the open sorter's)
+    let okeys = sorter.keys_of(heap, tree, cols);
+    let nkeys = query.order_count(tree);
+    let sort_rows = pp[scan.p_max_groups()];
+    let sort_state = pp[scan.p_max_state()];
+    let sort_width = sorter.stride_of(nkeys);
+    // room for the runs: a run is about two and a half times the bytes of its rows; address space the file does not fill costs nothing (nothing writes it), and
+    // a sort that holds more than `--max-state-bytes` of rows is refused, so that is the most there can be
+    var reserve = 3 * (size - start) + 65536;
+    if reserve > 4 * sort_state + 65536 {
+        reserve = 4 * sort_state + 65536;
+    }
+    var runs = psort.start(heap, reserve);
     var rows2 = rows;
     var scratch2 = scratch;
     var escr2 = escr;
@@ -413,7 +444,38 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
                                 }
                             }
                         }
-                        if mode == 2 && fits {
+                        if mode == 2 && fits && ordering {
+                            // the range's answer is a run: it is taken if the sort's bounds hold at its last row, else it is read again
+                            var open_rows = 0;
+                            var open_size = 0;
+                            borrow groups2 as &gr in {
+                                open_rows = gr.pairs;
+                                open_size = buffer.size(gr.keyb) + buffer.size(gr.dkey);
+                            }
+                            let body = sl[at + header_bytes()..at + header_bytes() + payload_len];
+                            var okfit = false;
+                            borrow runs as &rr in {
+                                okfit = psort.fits(rr, open_rows, open_size, agg.get_i64(body, 0), agg.get_i64(body, 16), agg.get_i64(body, 24), sort_width, sort_rows, sort_state);
+                            }
+                            if !okfit {
+                                fits = false;
+                            } else {
+                                borrow okeys as &okr in {
+                                    let (r5, g5) = psort.close_open(heap, runs, groups2, tree, contents(okr), cells, sel, pp[scan.p_picked()], pp[scan.p_delim()], a[engine.k_columns()], sort_rows, sort_state);
+                                    runs = psort.take(heap, r5, body);
+                                    groups2 = g5;
+                                }
+                                borrow runs as &rr in {
+                                    let lr = psort.left_rows(rr, sort_rows);
+                                    let ls = psort.left_state(rr, sort_state, sort_width);
+                                    pp[scan.p_max_groups()] = lr;
+                                    pp[scan.p_max_state()] = ls;
+                                    borrow mut groups2 as &!gw in {
+                                        sorter.set_bounds(gw, lr, ls);
+                                    }
+                                }
+                            }
+                        } else if mode == 2 && fits {
                             var refused = 0;
                             if query.reporting(tree) {
                                 let (g2, r2) = report.merge(heap, groups2, sl[at + header_bytes()..at + header_bytes() + payload_len], before, lines_before, pp[scan.p_max_state()]);
@@ -522,6 +584,32 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
             }
         }
     }
+    if ordering {
+        if a[engine.k_abort()] == 0 && a[engine.k_stop()] == 0 {
+            // every range is read: the rest of the sorter is a last run, and the runs are merged and written
+            borrow okeys as &okr in {
+                let (r6, g6) = psort.close_open(heap, runs, groups2, tree, contents(okr), cells, sel, pp[scan.p_picked()], pp[scan.p_delim()], a[engine.k_columns()], sort_rows, sort_state);
+                groups2 = g6;
+                var total = 0;
+                borrow r6 as &rr in {
+                    total = psort.rows_of(rr);
+                }
+                let (pend, ok) = psort.finish(heap, io, r6, rows2, contents(okr), nkeys, threads);
+                rows2 = pend;
+                if !ok {
+                    a[engine.k_abort()] = 9;
+                    a[engine.k_stop()] = 1;
+                }
+                a[engine.k_emitted()] = total;
+                a[engine.k_psorted()] = 1;
+            }
+        } else {
+            psort.drop(heap, runs);
+        }
+    } else {
+        psort.drop(heap, runs);
+    }
+    unbox_slice(heap, okeys);
     unbox_slice(heap, wpar);
     unbox_slice(heap, slots);
     unbox_slice(heap, plan);

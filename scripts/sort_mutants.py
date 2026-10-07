@@ -73,7 +73,7 @@ MUTANTS = [
     ("an escaped colon is not allowed", "table.cho", "            if d == '-' && was_start || d == ':' {", "            if d == '-' && was_start {"),
     ("an unknown key is said to be in --agg", "table.cho", "                flag = \"--order-by\";", "                flag = \"--agg\";"),
     ("--max-sort-rows is not checked", "table.cho", "    if sort_rows_most < 1 || sort_rows_most > 20000000 {", "    if sort_rows_most < 0 || sort_rows_most > 200000000 {"),
-    ("threads read a sort", "table.cho", "threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0)", "threads > 1 && (mode == 2 || row_from == 0)"),
+    ("threads read any sort", "table.cho", "threads > 1 && (!ordering || query.reporting(tree) || psortable) && (mode == 2 || row_from == 0)", "threads > 1 && (mode == 2 || row_from == 0)"),
     # query.cho
     ("the flags of a key are its name's", "query.cho", "    return vec.get(q.meta, 6 + 2 * k);", "    return vec.get(q.meta, 5 + 2 * k);"),
 ]
