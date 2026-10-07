@@ -12,6 +12,7 @@ The float half of SPEC is kept for stage N3 (`:float` is not built); the tests o
 """
 
 import re
+from fractions import Fraction
 
 DEC = re.compile(r"^([+-]?)([0-9]*)(?:\.([0-9]*))?$")
 LIMIT = 10 ** 18
@@ -82,3 +83,29 @@ SPEC = [
     ("99999999999999999999.5", ("refuse", "value.decimal-too-wide"), ("ok", 1e20)),
     ("-9999999999999999.99", ("ok", -999999999999999999), ("ok", -1e16)),
 ]
+
+
+# ---- aggregates (stage N2) ----------------------------------------------------------------------------------------
+
+def mean_scaled(values, scale, out):
+    """The exact mean of scaled integers (at `scale`) as an integer of 10^-out, rounded half to even: nothing is a float."""
+    q = Fraction(sum(values), len(values)) * Fraction(10) ** (out - scale)
+    f = q.numerator // q.denominator
+    r = q - f
+    if r > Fraction(1, 2) or (r == Fraction(1, 2) and f % 2 == 1):
+        f += 1
+    return f
+
+
+def mean_text(values, scale, out):
+    """The mean as the tool writes it: at `out` fractional digits, `-` only for a value that is not zero."""
+    v = mean_scaled(values, scale, out)
+    return text(v, out)
+
+
+def sum_text(values, scale):
+    return text(sum(values), scale)
+
+
+def mean_key(values, count):
+    return Fraction(sum(values), count)
