@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
-"""Gate G6 of docs/numbers.md: no existing integer path slower than +2%.
+"""Gate G6 of docs/numbers.md: no existing integer path slower than it was, judged against what two builds of the same sources differ by.
 
-    python3 scripts/gate_regress.py --base BIN_BEFORE --new BIN_AFTER [--runs 9] [--file build/bench/data.csv] [--limit 1.02]
+    python3 scripts/gate_regress.py --base BIN_BEFORE --base2 BIN_BEFORE_BUILT_AGAIN --new BIN_AFTER [--runs 21] [--file build/bench/data.csv]
+    python3 scripts/gate_regress.py --base BIN_BEFORE --new BIN_AFTER [--limit 1.02]              (the old fixed bound, for a quiet machine)
 
-The standard cells of the 1,000,000-row benchmark file (scripts/bench.py generates it): the filter, `cut`, group-count, group-sum,
-group-sum + min/max, a filter with a text condition, at one thread and at `--threads` (default four; `--parallel-min-bytes 0`). Each cell is run by both
-binaries, interleaved (base, new, new, base, ...), `runs` times; the answers must be byte-identical before anything is timed; the
-figure is the minimum; a cell over the limit is measured again, three times as long, and the lower ratio is the figure. Exit 1 when any cell's new/base ratio is above the limit. Run it on a quiet machine: the ratios, not the
-seconds, are the point, and a ratio within noise of 1.0 on repeated runs is what a pass looks like.
+Why a second build. On the Linux box a build of unchanged sources in another directory runs up to 2.3% slower (1 thread) or 5 to 15% (more threads)
+than the first, by code layout alone, so a fixed 2% bound cannot tell a regression from the luck of a build (docs/numbers.md, G6 on Linux). The
+gate therefore needs the noise measured with the change: build the *before* sources twice, in two directories (`BIN_BEFORE`, `BIN_BEFORE_BUILT_AGAIN`),
+and a cell passes when
+
+    ratio(new / base)  <=  max(1, ratio(base2 / base)) + 0.01
+
+with each ratio the minimum of `--runs` (at least 21) interleaved runs, the three binaries taking turns to go first, two warm-up runs discarded, and the outputs of
+all three byte-identical before anything is timed. Both ratios and the medians are printed for every cell. Cells: the standard ones of the
+1,000,000-row benchmark file (scripts/bench.py generates it) at one thread and at `--threads`. Exit 0 pass, 1 a cell over its bound, 2 outputs differ.
 """
 import argparse
 import pathlib
+import statistics
 import subprocess
 import sys
 import time
@@ -38,44 +45,52 @@ def timed(argv):
     return time.perf_counter() - t, p.returncode
 
 
+def bound(noise):
+    """The ratio a cell may not exceed: what two builds of identical sources differ by (never less than 1), plus 1%."""
+    return max(1.0, noise) + 0.01
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", required=True)
+    ap.add_argument("--base2", default=None, help="the same sources as --base, built again in another directory: measures the build-to-build noise")
     ap.add_argument("--new", default=str(ROOT / "build" / "table"))
-    ap.add_argument("--runs", type=int, default=9)
+    ap.add_argument("--runs", type=int, default=21)
     ap.add_argument("--file", default=str(ROOT / "build" / "bench" / "data.csv"))
-    ap.add_argument("--limit", type=float, default=1.02)
+    ap.add_argument("--limit", type=float, default=1.02, help="the fixed bound used when there is no --base2")
     ap.add_argument("--threads", type=int, default=4, help="the second thread count (the first is 1); on a box of three physical cores use 3")
     a = ap.parse_args()
     data = pathlib.Path(a.file)
-    worst = 0.0
-    print("%-36s %7s %9s %9s %7s" % ("cell", "threads", "base s", "new s", "ratio"))
+    bins = [a.base, a.new] + ([a.base2] if a.base2 else [])
+    failed = False
+    print("%-36s %7s %9s %9s %7s %7s %7s %7s  %s" % ("cell", "threads", "base s", "new s", "new/base", "median", "base2/base", "bound", ""))
     for name, args in CELLS.items():
         for threads in (1, a.threads):
-            b, n = argv_of(a.base, data, args, threads), argv_of(a.new, data, args, threads)
-            ob = subprocess.run(b, capture_output=True)
-            on = subprocess.run(n, capture_output=True)
-            if (ob.stdout, ob.stderr, ob.returncode) != (on.stdout, on.stderr, on.returncode):
+            argvs = [argv_of(b, data, args, threads) for b in bins]
+            outs = [subprocess.run(x, capture_output=True) for x in argvs]
+            if any((o.stdout, o.stderr, o.returncode) != (outs[0].stdout, outs[0].stderr, outs[0].returncode) for o in outs):
                 print("DIFFERENT OUTPUT:", name, threads)
                 return 2
-            tb, tn = [], []
+            for x in argvs * 2:
+                timed(x)                       # warm-up, discarded
+            times = [[] for _ in bins]
+            for i in range(a.runs):
+                order = list(range(len(bins)))
+                order = order[i % len(order):] + order[:i % len(order)]
+                if i % 2:
+                    order.reverse()
+                for k in order:
+                    times[k].append(timed(argvs[k])[0])
+            r = min(times[1]) / min(times[0])
+            med = statistics.median(times[1]) / statistics.median(times[0])
+            noise = min(times[2]) / min(times[0]) if a.base2 else None
+            limit = bound(noise) if a.base2 else a.limit
+            over = r > limit
+            failed = failed or over
+            print("%-36s %7d %9.4f %9.4f %7.3f %7.3f %7s %7.3f  %s" % (name, threads, min(times[0]), min(times[1]), r, med, "%.3f" % noise if noise else "-", limit, "<-- over its bound" if over else ""))
+    print("G6: %s" % ("FAIL" if failed else "PASS"))
+    return 1 if failed else 0
 
-            def measure(runs):
-                for i in range(runs):
-                    order = (b, n) if i % 2 == 0 else (n, b)
-                    for argv in order:
-                        (tb if argv is b else tn).append(timed(argv)[0])
-            measure(a.runs)
-            r = min(tn) / min(tb)
-            if r > a.limit:
-                # a cell of 17 ms moves by 2% from one run to the next with nothing changed: measure it again, three times as long, and
-                # believe the lower ratio (a real regression stays over the limit, noise does not)
-                measure(3 * a.runs)
-                r = min(r, min(tn[a.runs:]) / min(tb[a.runs:]))
-            worst = max(worst, r)
-            print("%-36s %7d %9.4f %9.4f %6.3fx%s" % (name, threads, min(tb), min(tn), r, "  <-- over the limit" if r > a.limit else ""))
-    print("worst ratio %.3f (limit %.2f): %s" % (worst, a.limit, "PASS" if worst <= a.limit else "FAIL"))
-    return 0 if worst <= a.limit else 1
 
-
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())
