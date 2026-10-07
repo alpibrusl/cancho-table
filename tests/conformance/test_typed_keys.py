@@ -563,6 +563,22 @@ class Typed(unittest.TestCase):
         got = self.t(data, "--group", "k,x:dec(2)", "--agg", "sum:v:float")
         self.assertEqual((got.first_rule(), got.error()["detail"]["group"]), ("agg.float-overflow", "ab,1.50"), got)
 
+    def test_a_suffix_needs_a_name_before_it_and_a_scale_of_one_or_two_digits(self):
+        got = self.t(":float,n\n3,1\n3.0,2\n", "--group", ":float", "--format", "csv")
+        self.assertEqual(got.stdout, b":float,count\n3,1\n3.0,1\n", got)                 # a column called :float, as text
+        got = self.t("x\n1\n", "--group", "x:dec(123)")
+        self.assertEqual((got.status, got.first_rule()), (3, "column.unknown"), got)         # no column of that name, and not a scale
+        got = self.t(":int,n\n1,1\n", "--order-by", ":int")
+        self.assertEqual(got.status, 0, got)                                                  # a column called :int, as text
+
+    def test_the_scale_in_a_refusal_is_the_one_of_the_key_that_was_refused(self):
+        got = self.t("a,b\n1.5,2.5\n1.5,2.5555\n", "--order-by", "a:dec(1),b:dec(3)")
+        self.assertEqual((got.first_rule(), got.error()["detail"]["scale"], got.error()["detail"]["column"]), ("value.decimal-scale", 3, "b"), got)
+        got = self.t("a,b\n1.5,2.5\n1.55,2.5\n", "--order-by", "a:dec(1),b:dec(3)")
+        self.assertEqual((got.first_rule(), got.error()["detail"]["scale"], got.error()["detail"]["column"]), ("value.decimal-scale", 1, "a"), got)
+        got = self.t("a,b\n1.5,2.5\n1.55,2.5\n", "--group", "b:dec(3),a:dec(1)")
+        self.assertEqual((got.first_rule(), got.error()["detail"]["scale"], got.error()["detail"]["column"]), ("value.decimal-scale", 1, "a"), got)
+
     def test_a_scale_past_18_is_an_argument_error_and_select_takes_no_type(self):
         for flags in (["--group", "x:dec(19)"], ["--order-by", "x:dec(19)"]):
             got = self.t("x\n1\n", *flags)
