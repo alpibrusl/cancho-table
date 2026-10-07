@@ -563,6 +563,19 @@ class Parallel(par.Same):
         for ceiling in (20 * (584 + 7) - 1, 20 * (584 + 7), 20 * (584 + 7) + 500):
             self.same(data, ["--group", "t", "--agg", "sum:x:float", "--max-state-bytes", str(ceiling), "--format", "csv"], "state %d" % ceiling)
 
+    def test_the_ceiling_holds_when_no_range_alone_passes_it_but_their_groups_together_do(self):
+        """Rows ordered by group: each range sees one or two groups and is far below the ceiling; the merged groups are not."""
+        rows = [[str(i), "0.5", "g%02d" % (i // 15)] for i in range(300)]
+        data = self.table(rows)
+        for ceiling in (20 * (584 + 7) - 1, 20 * (584 + 7), 20 * (584 + 7) + 1):
+            for args in (["--group", "t", "--agg", "sum:x:float", "--max-state-bytes", str(ceiling), "--format", "csv"], ["--group", "t", "--agg", "sum:x:float,mean:x:float", "--max-state-bytes", str(2 * ceiling), "--format", "csv"]):
+                self.same(data, args, "ordered groups, ceiling %d" % ceiling)
+        status, out, err = self.outcome(data, ["--group", "t", "--agg", "sum:x:float", "--max-state-bytes", str(20 * (584 + 7) - 1), "--format", "csv"])
+        self.assertEqual(status, 8)
+        self.assertIn(b"limit.state-too-large", err)
+        status, out, err = self.outcome(data, ["--group", "t", "--agg", "sum:x:float", "--max-state-bytes", str(20 * (584 + 7)), "--format", "csv"])
+        self.assertEqual(status, 0)
+
     def test_the_first_refusal_in_file_order_wins_and_overflow_comes_after(self):
         rows, _ = self.rows(150, 34)
         for bad in ({120: "1.5x", 40: "abc"}, {40: "", 120: "nan"}, {120: "1e999", 121: "x"}, {149: "-"}, {0: " 1"}):

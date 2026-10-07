@@ -71,7 +71,6 @@ MUTANTS = [
     ("the mean divides the high 16 bits by 15", "facc.cho", "            let cur_hi = rem * 65536 + (limb >> 16);", "            let cur_hi = rem * 65536 + (limb >> 15);"),
     ("the mean divides the low 16 bits masked to 15", "facc.cho", "            let cur_lo = rem * 65536 + (limb & 0xffff);", "            let cur_lo = rem * 65536 + (limb & 0x7fff);"),
     ("the mean's remainder is not carried to the next digit", "facc.cho", "            rem = cur_hi - q_hi * n;", "            rem = 0;"),
-    ("the mean starts from the lowest limb", "facc.cho", "        var j = 72;\n        while j >= 0 {", "        var j = 71;\n        while j >= 0 {"),
     # the plan: where each accumulator is, how it is counted, rounded, merged and named
     ("an accumulator is 72 integers", "facc.cho", "pub fn width() -> [] int {\n    return 73;", "pub fn width() -> [] int {\n    return 72;"),
     ("a float sum is not counted in the row", "agg.cho", "    return 1 + 2 * query.agg_count(tree) + facc.width() * floats_in(tree);", "    return 1 + 2 * query.agg_count(tree);"),
@@ -84,7 +83,6 @@ MUTANTS = [
     ("the fast path's accumulators start on the sums' halves", "agg.cho", "    var facc_at = slot + 1 + 2 * na;", "    var facc_at = slot + 1 + na;"),
     ("the second float sum shares the first one's accumulator on the slow path", "agg.cho", "            if is_float_sum(tree, k) {\n                facc_at = facc_at + facc.width();\n            }\n            k = k + 1;\n        }\n    }\n    return (Groups", "            k = k + 1;\n        }\n    }\n    return (Groups"),
     ("the second float sum shares the first one's accumulator on the fast path", "agg.cho", "                facc.add_bits(g.acc, facc_at, bits_of_key(v));\n                facc_at = facc_at + facc.width();", "                facc.add_bits(g.acc, facc_at, bits_of_key(v));"),
-    ("a float sum is also added as an integer pair on the fast path", "agg.cho", "                facc.add_bits(g.acc, facc_at, bits_of_key(v));\n                facc_at = facc_at + facc.width();\n            } else if function == 1 {", "                facc.add_bits(g.acc, facc_at, bits_of_key(v));\n                facc_at = facc_at + facc.width();\n                vec.set(g.acc, slot + 1 + k, now + 1);\n            } else if function == 1 {"),
     ("a mean is settled as a sum", "agg.cho", "                if query.agg_at(tree, k, 3) != 0 {\n                    key = facc.mean_key(", "                if query.agg_at(tree, k, 3) == 0 {\n                    key = facc.mean_key("),
     ("a mean is divided by the first group's rows", "agg.cho", "                    key = facc.mean_key(g.acc, facc_at, vec.get(g.acc, x * g.stride));", "                    key = facc.mean_key(g.acc, facc_at, vec.get(g.acc, 0));"),
     ("a mean is divided by one more", "agg.cho", "                    key = facc.mean_key(g.acc, facc_at, vec.get(g.acc, x * g.stride));", "                    key = facc.mean_key(g.acc, facc_at, vec.get(g.acc, x * g.stride) + 1);"),
@@ -99,13 +97,13 @@ MUTANTS = [
     ("a float mean takes a scale", "agg.cho", "                    if mean != 0 {\n                        bad = i;\n                    } else {\n                        mean_final = 100;", "                    if false {\n                        bad = i;\n                    } else {\n                        mean_final = mean;"),
     ("a float mean is a sum in the plan", "agg.cho", "                    } else {\n                        mean_final = 100;\n                    }\n                } else if is_mean {", "                    } else {\n                        mean_final = 0;\n                    }\n                } else if is_mean {"),
     # merging the ranges of threads
-    ("a range's float limbs are merged without carrying the group's first", "agg.cho", "                                    facc.normalize(aw, entry * stride + facc_at);\n                                    var l = 0;", "                                    var l = 0;"),
-    ("a range's float limbs are merged without carrying after", "agg.cho", "                                    }\n                                    facc.normalize(aw, entry * stride + facc_at);\n                                }", "                                    }\n                                }"),
-    ("a range's top limb is not merged", "agg.cho", "                                    while l < 72 {\n                                        vec.set(aw, entry", "                                    while l < 71 {\n                                        vec.set(aw, entry"),
     ("a range's limbs are merged at the wrong offset", "agg.cho", "get_i64(blob, acc_at + 8 * (facc_at + l)));", "get_i64(blob, acc_at + 8 * (facc_at + l + 1)));"),
     ("a range's second float accumulator is merged into the first", "agg.cho", "                                    facc.normalize(aw, entry * stride + facc_at);\n                                }\n                                facc_at = facc_at + facc.width();", "                                    facc.normalize(aw, entry * stride + facc_at);\n                                }"),
     ("a range's float sum is not merged", "agg.cho", "                            if function == 1 && query.agg_at(tree, k, 2) == 21 {\n                                // an exact float sum", "                            if false && function == 1 && query.agg_at(tree, k, 2) == 21 {\n                                // an exact float sum"),
     ("a new group's float state is not counted in a merge", "agg.cho", "                    new_bytes = new_bytes + klen + float_state(tree);", "                    new_bytes = new_bytes + klen;"),
+    # defects that only show with a low carry threshold (a range's accumulator is carried, so its sign limb is not zero: at 2^27 additions of one group in one range, a range of 134 million rows)
+    ("a range's top limb is not merged (carry every 3 additions)", "agg.cho", "                                    while l < 72 {\n                                        vec.set(aw, entry", "                                    while l < 71 {\n                                        vec.set(aw, entry", [("facc.cho", "    if n >= 134217728 {", "    if n >= 3 {")]),
+    ("a range's float limbs are merged without carrying after (carry every 3 additions)", "agg.cho", "                                    }\n                                    facc.normalize(aw, entry * stride + facc_at);\n                                }", "                                    }\n                                }", [("facc.cho", "    if n >= 134217728 {", "    if n >= 3 {")]),
     # the plan's words, the refusal, the order
     ("the overflow is the exit code of a limit", "table.cho", "                a[engine.k_abort()] = 42;", "                a[engine.k_abort()] = 15;"),
     ("the groups are written after an overflow", "table.cho", "            if a[engine.k_abort()] == 0 {\n                borrow groups as &gr in {\n                    let (r2, s2) = finish_groups", "            if true {\n                borrow groups as &gr in {\n                    let (r2, s2) = finish_groups"),
@@ -118,11 +116,14 @@ MUTANTS = [
 
 # They survive, and must (the reasons are in docs/numbers.md, N4):
 EQUIVALENT = [
-    # (a mutant that is not in MUTANTS because it cannot be told apart by any input, with why)
-    ("the carry threshold set to 2^62 additions", "a limb is at most 2^27 * 2^33 = 2^60 before a carry; with no carry at all it would reach 2^63 only after 2^30 additions of the largest pieces, and `--max-rows` is at most 10^9 < 2^30: equivalent within the ceiling (scripts/spikes/rep_check.py runs the 2.4 billion version outside the tool)"),
-    ("a carry of every addition", "slower, never different: the carry is exact"),
-    ("the counter is not reset by a carry", "an earlier carry only: exact"),
-    ("the renormalisation of a mantissa that rounds up to 2^53", "the bits of 2^53 * 2^q are the bits of 2^52 * 2^(q+1): the exponent field absorbs it"),
+    # (a mutant that is not in MUTANTS because no input can tell it apart, and why)
+    ("the carry threshold set to 2^62 additions", "a limb is at most (additions) x 2^33 before a carry, and `--max-rows` is at most 10^9 < 2^30, so with no carry at all a limb stays below 2^63 for any file the tool reads; "
+     "the carry is exact and costs a little, never changes a digit (the builds of --lowered run the whole suite with it at 3 and at 1)"),
+    ("the mean's division starts at limb 71 instead of 72", "the magnitude of a sum is below 2^1054 x 2^1074 units, 67 limbs; limbs 67 to 72 of the shifted number are always zero"),
+    ("a float sum is also added as an integer pair", "the slot it writes is the one `settle` overwrites with the rounded sum"),
+    ("a range's limbs merged without carrying the group's accumulator first", "the group's limbs are at most 2^60 before and a range's at most 2^60: their sum is below 2^61 and is carried right after"),
+    ("a range's limbs merged without carrying afterwards", "each merge adds at most 2^60 to a limb that was carried, and the total of all rows is below 10^9 x 2^33: no limb reaches 2^63 within the row ceiling (belt and braces)"),
+    ("the renormalisation of a mantissa that rounds up to 2^53", "the bits of 2^53 x 2^q are the bits of 2^52 x 2^(q+1): the exponent field absorbs it"),
     ("the mean without the sticky bit", "a remainder that is not zero cannot sit under an exact tie (a tie differs from the quotient by at least 1/(2n) of a unit, 2^-41 at least, and 2^-64 is the bit being dropped)"),
     ("the room for 64 groups' accumulators in a worker's answer", "performance only: a range whose groups do not fit is read by the parent, the same bytes"),
 ]
