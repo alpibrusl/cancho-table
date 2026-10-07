@@ -79,6 +79,30 @@ def plan(rng):
         args += ["--sort", "-sum:c"] if any(x.startswith("sum:c") for x in aggs) else []
     return args + (["--format", "csv"] if rng.random() < 0.5 else [])
 
+def targeted():
+    """Hand-made cases for what random files seldom reach: a bound passed by a few groups, a float sum beyond a double, ties at the splitters."""
+    cases = []
+    few = "a,b\n" + "".join("k%d,%d\n" % (i % 40, i) for i in range(400))
+    for flags in (["--max-groups", "3"], ["--max-groups", "39"], ["--max-groups", "40"], ["--max-state-bytes", "30"], ["--max-state-bytes", "400"], ["--max-state-bytes", "2000"]):
+        cases.append((few, ["--group", "a", "--agg", "count,sum:b", *flags]))
+    eight = "a,b\n" + "".join("k%d,%d\n" % (i % 8, i) for i in range(160))
+    for flags in (["--max-state-bytes", "12"], ["--max-state-bytes", "30"], ["--max-state-bytes", "50"], ["--max-groups", "3"], ["--max-groups", "7"], ["--max-groups", "8"]):
+        cases.append((eight, ["--group", "a", *flags]))
+        cases.append((eight, ["--group", "a", "--agg", "sum:b", *flags]))
+    cases.append((few, ["--group", "a", "--agg", "distinct:b", "--max-distinct", "399"]))
+    cases.append((few, ["--group", "a", "--agg", "distinct:b", "--max-distinct", "400"]))
+    cases.append((few, ["--group", "a", "--agg", "distinct:b", "--max-distinct", "5"]))
+    huge = "a,b\n" + "".join("k%d,1.7e308\n" % (i % 3) for i in range(30))
+    for agg in ("sum:b:float", "mean:b:float", "sum:b:float,count"):
+        cases.append((huge, ["--group", "a", "--agg", agg]))
+        cases.append((huge, ["--agg", agg]))
+    exact = "a,b\n" + "".join("k%d,%s\n" % (i % 5, ["1e308", "-1e308", "1e-300", "3", "0.1"][i % 5]) for i in range(100))
+    cases.append((exact, ["--group", "a", "--agg", "sum:b:float,mean:b:float,min:b:float,max:b:float"]))
+    ties = "a,b\n" + "".join("%s,%d\n" % (["aaaaaa", "aaaaaab", "aaaaaa\x00", "aaaaab", "b", ""][i % 6], i) for i in range(120))
+    cases.append((ties, ["--group", "a", "--agg", "count,sum:b"]))
+    cases.append((ties, ["--group", "a,b", "--agg", "count"]))
+    return cases
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bin", required=True)
@@ -91,6 +115,22 @@ def main():
     bad = 0
     used = 0
     total = 0
+    for data0, args0 in targeted():
+        with open(os.path.join(d, "t.csv"), "wb") as f:
+            f.write(data0.encode("latin-1"))
+        for fmt in ([], ["--format", "csv"]):
+            args = [*args0, *fmt]
+            base = run([a.base, "--root", d, *args, "--threads", "1", "t.csv"])
+            for t in (1, 2, 3, 5, 16):
+                for chunk in (1, 64, 100000):
+                    got = run([a.bin, "--root", d, *args, "--threads", str(t), "--chunk-bytes", str(chunk), "--parallel-min-bytes", "0", "t.csv"])
+                    import re
+                    norm = lambda x: re.sub(rb'"--threads","[0-9]+","--chunk-bytes","[0-9]+","--parallel-min-bytes","0",', b"", x)
+                    if (got[0], norm(got[1]), got[2]) != (base[0], norm(base[1]), base[2]):
+                        print("TARGETED DIFFERS threads", t, "chunk", chunk, args)
+                        print("  want", base[0], base[1][:150], base[2][:150])
+                        print("  got ", got[0], got[1][:150], got[2][:150])
+                        bad += 1
     for case in range(a.cases):
         n = rng.choice([0, 1, 5, 40, 300, 3000])
         data = make(rng, n, rng.random() < 0.25)
