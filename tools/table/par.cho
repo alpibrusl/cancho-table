@@ -564,8 +564,8 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
                 if room > 1024 {
                     longer = first_chunk * 1024;
                 }
-                if longer > 67108864 {
-                    longer = 67108864;
+                if longer > 16777216 {
+                    longer = 16777216;
                 }
                 let left = (size - cur + threads - 1) / threads;
                 if left < longer {
