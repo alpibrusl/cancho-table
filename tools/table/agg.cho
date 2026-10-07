@@ -1061,6 +1061,13 @@ pub fn parse_aggs[&h, &s](heap: &!h Heap, tree: query.Query, given: &s [byte]) -
         let (e, kind, mean) = tail_of(item);
         tails = vec.push(heap, tails, kind);
         tails = vec.push(heap, tails, mean);
+        // `sum:\#3` names the header `#3`: the escape is gone once the list is unescaped, so say it here
+        var escaped_hash = 0;
+        let first_colon = index_of_byte(item, byte_of(':'));
+        if first_colon > 0 && first_colon + 2 < len(item) && int_of(item[first_colon + 1]) == '\\' && int_of(item[first_colon + 2]) == '#' {
+            escaped_hash = 1;
+        }
+        tails = vec.push(heap, tails, escaped_hash);
         var p = 0;
         while p < e {
             let c = int_of(item[p]);
@@ -1118,10 +1125,12 @@ pub fn parse_aggs[&h, &s](heap: &!h Heap, tree: query.Query, given: &s [byte]) -
         }
         var kind = 0;
         var mean = 0;
+        var escaped_hash = 0;
         borrow tails as &tr in {
-            if 2 * i + 1 < vec.size(tr) {
-                kind = vec.get(tr, 2 * i);
-                mean = vec.get(tr, 2 * i + 1);
+            if 3 * i + 2 < vec.size(tr) {
+                kind = vec.get(tr, 3 * i);
+                mean = vec.get(tr, 3 * i + 1);
+                escaped_hash = vec.get(tr, 3 * i + 2);
             }
         }
         borrow toks as &tr in {
@@ -1182,7 +1191,11 @@ pub fn parse_aggs[&h, &s](heap: &!h Heap, tree: query.Query, given: &s [byte]) -
                 }
                 if bad == -1 {
                     let column = item[colon + 1..len(item)];
-                    let (q2, at) = query.add_name(heap, q, column, query.position_of(column));
+                    var position = query.position_of(column);
+                    if escaped_hash == 1 {
+                        position = -1;
+                    }
+                    let (q2, at) = query.add_name(heap, q, column, position);
                     q = query.add_agg(heap, q2, function, at, kind_final, mean_final);
                 }
             }
