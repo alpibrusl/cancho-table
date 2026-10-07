@@ -39,6 +39,10 @@ LOCAL = {
     "value.decimal-scale": (8, "sometimes", "fractional digits"),
     "value.decimal-too-wide": (8, "never", "18"),
     "column.type-conflict": (2, "never", "numeric type"),
+    "value.not-float": (8, "never", "float"),
+    "value.not-finite": (8, "never", "finite"),
+    "value.float-range": (8, "never", "double"),
+    "limit.number-too-long": (8, "never", "1,100"),
 }
 LINUX_ONLY = {"io.read-failed"}
 
@@ -58,6 +62,8 @@ class Rules(unittest.TestCase):
         s.write("text.csv", "a,b\n1,x\n")
         s.write("big.csv", "a\n99999999999999999999\n")
         s.write("scale.csv", "a\n1.25\n")
+        s.write("nan.csv", "a\nnan\n")
+        s.write("long.csv", "a\n" + "1" * 1101 + "\n")
         s.write("wide18.csv", "a\n99999999999999999.99\n")
         s.write("dup.csv", "a,a\n1,2\n")
         s.write("ragged.csv", "a,b\n1,2\n3\n")
@@ -112,6 +118,10 @@ class Rules(unittest.TestCase):
             ("value.decimal-scale", root + ["--where", "a:dec(1) > 0", "scale.csv"], None),
             ("value.decimal-too-wide", root + ["--where", "a:dec(2) > 0", "wide18.csv"], None),
             ("column.type-conflict", root + ["--where", "a:dec(2) > 0 and a:int > 0", "ok.csv"], None),
+            ("value.not-float", root + ["--where", "b:float > 0", "text.csv"], None),
+            ("value.not-finite", root + ["--where", "a:float > 0", "nan.csv"], None),
+            ("value.float-range", root + ["--where", "a:float > 0", "big.csv"], None),
+            ("limit.number-too-long", root + ["--where", "a:float > 0", "long.csv"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")

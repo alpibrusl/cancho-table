@@ -41,6 +41,15 @@ def compare(op, a, b):
 def holds(cond, cell):
     """True or False, or an error rule for an :int condition."""
     kind = cond["kind"]
+    if cond.get("float"):
+        # `:float` (docs/numbers.md, stage N3a): the cell is the nearest double or a refusal; comparisons are of doubles, not of decimal text
+        got = numbers_ref.flt(cell)
+        if got[0] == "refuse":
+            return got[1]
+        lits = cond["lits"] if kind == "in" else [cond["lit"]]
+        if kind == "in":
+            return any(got[1] == numbers_ref.flt(l)[1] for l in lits)
+        return compare(cond["op"], got[1], numbers_ref.flt(cond["lit"])[1])
     if cond.get("dec") is not None:
         # `:dec(S)` (docs/numbers.md): the cell is the exact scaled integer or a refusal; the literals are read at the same scale
         scale = cond["dec"]

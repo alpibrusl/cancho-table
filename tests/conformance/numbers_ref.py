@@ -8,10 +8,13 @@ own `Decimal` and `float` accept spaces, underscores and non-ASCII digits, so ne
 Python's exact `int` arithmetic, and the order of the checks is the design's: the whole cell against the grammar, then
 the number of fractional digits against the scale, then the width.
 
-The float half of SPEC is kept for stage N3 (`:float` is not built); the tests of N1 read only the decimal half.
+The float half of SPEC is read by stage N3a: `flt(cell)`, `float_text(x)` and `float_key(x)` below.
 """
 
+import math
 import re
+import struct
+from decimal import Decimal
 from fractions import Fraction
 
 DEC = re.compile(r"^([+-]?)([0-9]*)(?:\.([0-9]*))?$")
@@ -109,3 +112,52 @@ def sum_text(values, scale):
 
 def mean_key(values, count):
     return Fraction(sum(values), count)
+
+
+# ---- floats (stage N3a) --------------------------------------------------------------------------------------------------
+
+FLT = re.compile(r"^([+-]?)([0-9]*)(?:\.([0-9]*))?(?:[eE]([+-]?)([0-9]+))?$")
+MAX_FLOAT_CELL = 1100
+
+
+def flt(cell):
+    """("ok", x) | ("refuse", rule, direction): the nearest double (Python's float() is correctly rounded), no infinity, no NaN, no negative zero.
+    The order of the checks is the design's: the length, then the grammar (a word `inf`, `infinity`, `nan` is `not-finite`), then the range."""
+    if len(cell) > MAX_FLOAT_CELL:
+        return ("refuse", "limit.number-too-long", None)
+    m = FLT.match(cell)
+    if not m or not ((m.group(2) or "") + (m.group(3) or "")):
+        if cell.lower().lstrip("+-") in ("inf", "infinity", "nan"):
+            return ("refuse", "value.not-finite", None)
+        return ("refuse", "value.not-float", None)
+    x = float(cell)
+    if math.isinf(x):
+        return ("refuse", "value.float-range", "overflow")
+    if x == 0 and re.search(r"[1-9]", (m.group(2) or "") + (m.group(3) or "")):
+        return ("refuse", "value.float-range", "underflow")
+    return ("ok", 0.0 if x == 0 else x)
+
+
+def float_key(x):
+    """The signed integer whose order is the numeric order of the double (-0 is 0): what min, max and the comparisons keep."""
+    b = struct.unpack(">q", struct.pack(">d", 0.0 if x == 0 else x))[0]
+    return b ^ 0x7FFFFFFFFFFFFFFF if b < 0 else b
+
+
+def float_text(x):
+    """The shortest decimal that reads back to the same double, positional from 1e-6 to 1e21 and always with a point (`3.0`), scientific outside
+    (`1e21`, `1.5e-7`): docs/numbers.md 4.6. Digits from Python's repr (also shortest round trip), laid out by the rule."""
+    if x == 0:
+        return "0.0"
+    sign = "-" if x < 0 else ""
+    t = Decimal(repr(abs(x))).as_tuple()
+    digits = "".join(map(str, t.digits)).rstrip("0") or "0"
+    k = len(t.digits) + t.exponent - 1             # the decimal exponent of the first digit
+    if k >= 21 or k < -6:
+        return sign + digits[0] + ("." + digits[1:] if len(digits) > 1 else "") + "e" + str(k)
+    pos = k + 1                                     # digits before the point
+    if pos <= 0:
+        return sign + "0." + "0" * (-pos) + digits
+    if pos >= len(digits):
+        return sign + digits + "0" * (pos - len(digits)) + ".0"
+    return sign + digits[:pos] + "." + digits[pos:]
