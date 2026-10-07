@@ -107,10 +107,13 @@ def main():
         if p.returncode != 0 or not ok(q, "table" if who != "duck" else "duck", p.stdout.decode()):
             print("WRONG/FAILED", q, t, who, p.stderr[:200], p.stdout[:200])
             sys.exit(1)
+    import os
+    load0 = os.getloadavg()
     best = {}
     for i in range(a.runs):
         for q, t, who, argv in (cells if i % 2 == 0 else cells[::-1]):
             best[(q, t, who)] = min(best.get((q, t, who), 9e9), timed(argv)[0])
+    print(f"machine load average before the timed runs {load0[0]:.1f} {load0[1]:.1f} {load0[2]:.1f}, after {os.getloadavg()[0]:.1f} {os.getloadavg()[1]:.1f} {os.getloadavg()[2]:.1f}; best (minimum) of {a.runs} interleaved runs, order alternating")
     print(f"{'question':8s} {'threads':>7s} {'old':>8s} {'new':>8s} {'duckdb':>8s}   new/duckdb  old/new")
     for q in ("agg", "minmax", "sum", "count"):
         for t in threads:
