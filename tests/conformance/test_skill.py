@@ -34,13 +34,13 @@ WIDE = 'host,status,bytes,price,path,"a,b"\na,404,1500,1.50,x,1\nb,200,20,2.25,y
 HELP_EXAMPLES = {
     "select": [("--select host,bytes", []), ("--select '#3,a\\,b'", [])],
     "where": [("--where 'status = 404 and bytes:int > 1000'", []), ("--where 'host in (a, b) and path contains x'", [])],
-    "group": [("--group host", []), ("--group host,status", [])],
+    "group": [("--group host", []), ("--group host,status", []), ("--group 'price:dec(2),status'", [])],
     "agg": [("--agg count,sum:bytes,max:bytes", ["--group", "host"]), ("--agg 'sum:price:dec(2),mean:bytes@1'", [])],
     "sort": [("--sort -count", ["--group", "host"]), ("--sort sum:bytes", ["--group", "host", "--agg", "sum:bytes"])],
     "top": [("--top 10", ["--group", "host"]), ("--top 3", ["--order-by", "host"])],
     "limit": [("--limit 100", ["--select", "host"]), ("--limit 20 --from 40", ["--select", "host"])],
     "from": [("--from 1000", ["--select", "host"]), ("--from 2000", ["--select", "host"])],
-    "order-by": [("--order-by -bytes:int", []), ("--order-by status,-bytes:int", [])],
+    "order-by": [("--order-by -bytes:int", []), ("--order-by status,-bytes:int", []), ("--order-by '-price:dec(2)'", [])],
 }
 
 # One value per flag, valid for sales.csv, to put a flag into an invocation.
@@ -322,6 +322,30 @@ class Claims(unittest.TestCase):
         self.assertEqual(r.data()["rows"], [["3"]])
         self.assertEqual(r.data()["columns"], ["sum:x:dec(2)"])
         self.assertIn("sum:x\\:dec(2)", help_)
+
+    def test_typed_group_and_order_keys(self):
+        flags = {f["name"]: f["help"] for f in introspect()["flags"]}
+        group, order, sort = flags["--group"], flags["--order-by"], flags["--sort"]
+        # the help says what the tool does: a typed key is the value, written at its scale, in numeric order
+        self.assertIn("to group by the value of the cell and not its text", group)
+        self.assertIn("1.5 and 1.50 are one group", group)
+        d = self.r("--group", "price:dec(2)", "--agg", "count").data()
+        self.assertEqual(d["rows"], [["0.75", "1"], ["1.50", "2"], ["2.25", "1"], ["10.00", "1"]])        # one group for 1.50 and 1.5, at its scale, numeric order
+        self.assertIn("and the groups come in numeric order, negatives first", group)
+        d = self.r("--group", "price:float", "--agg", "count", "--sort", "-count").data()
+        self.assertEqual(d["rows"][0], ["1.5", "2"])
+        self.assertIn("(numerically for a typed --group column)", sort)
+        # a cell that is not of the type refuses the query, context group or order-by, as the help says
+        self.assertIn("(value.not-decimal and the like, context group)", group)
+        self.assertIn("context order-by)", order)
+        for flag, ctx in (("--group", "group"), ("--order-by", "order-by")):
+            got = self.r(flag, "host:dec(2)")
+            self.assertEqual((got.first_rule(), got.error()["detail"]["context"]), ("value.not-decimal", ctx), got)
+        self.assertIn(":int, :dec(S) or :float after it to compare by value", order)
+        rows = lambda *a: [r[0] for r in self.r("--order-by", *a, "--select", "host").data()["rows"]]
+        self.assertEqual(rows("price:float"), ["b", "a", "a", "b", "c"])                                  # 0.75, 1.50, 1.5 (a tie, in file order), 2.25, 10.00
+        self.assertEqual(rows("-price:float"), ["c", "b", "a", "a", "b"])
+        self.assertIn("column.type-conflict", group)
 
     def test_where_grammar(self):
         self.s.write("nums.csv", "v,w\n10,a\n9,b\n,c\n")

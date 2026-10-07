@@ -72,7 +72,7 @@ import toolbox.text;
 import writer;
 
 fn flag_table() -> [] &static [byte] {
-    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, a list: header names separated by commas, or #N for the Nth column (1-based), in the order given, and a repeat repeats the column. A comma, a backslash or a leading # in a name is written with a backslash before it. Examples: --select host,bytes and --select '#3,a\\,b' (the third column, then the column called a,b);where||text|none||only the rows that satisfy this: conditions joined by and (no or, no parentheses), each COLUMN OP VALUE with OP one of = != < <= > >= contains, or COLUMN in (V1, V2). COLUMN is a header name or #N. With no suffix the cell is compared as text, bytewise, so 10 is less than 9. COLUMN:int compares exact integers, COLUMN:dec(N) exact decimals of at most N fractional digits, COLUMN:float doubles. A cell that is not one of those refuses the whole query (value.not-integer and the like), so keep such rows out first: bytes != '' and bytes:int > 5. A name or VALUE with spaces or operators is 'quoted' (a doubled quote is one quote). Examples: --where 'status = 404 and bytes:int > 1000' and --where 'host in (a, b) and path contains x';group||text|none||count the rows by these columns instead of returning them: a list named as for --select, one row per distinct combination, in byte order unless --sort says otherwise. Examples: --group host and --group host,status;agg||text|none||what to compute, a comma-separated list of items (default count). An item is count, or FUNCTION:COLUMN with FUNCTION one of sum, min, max, mean, distinct and COLUMN a header name or #N. With no suffix sum, min, max and mean read the cells as exact integers and distinct as text. A suffix on COLUMN says how to read it: :int, :dec(S) for exact decimals of at most S fractional digits (S is 0 to 18, never rounded) or :float for doubles (min, max, distinct, and the exact sum and mean: sum:x:float and mean:x:float give the exact sum, or the exact sum over the count, rounded once to the nearest double, the same for every --threads, and a sum beyond the largest double is agg.float-overflow. A float mean takes no @N, so mean:x:float@2 is agg.bad-spec). mean of integers or decimals is rounded half to even at @N fractional digits written after the column, as mean:bytes@2, and @N may be left out only for a :dec(S) column, whose scale is the default. The output column is the item without its suffixes, as sum:price. A column really called x:dec(2) is written sum:x\\:dec(2). With --group the answer has a row per group, alone one row for all the rows. Examples: --agg count,sum:bytes,max:bytes and --agg 'sum:price:dec(2),mean:bytes@1';sort||text|none||with --group or --agg, order the groups by one output column: count, an aggregate as printed (sum:bytes, mean:price) or a group column, with - before it for descending. Aggregates compare as numbers and group columns bytewise, ties go by the group columns. Without it the groups come in byte order of their columns. Examples: --sort -count and --sort sum:bytes;top||nat|none||keep only the first N rows or groups (N at least 1) after sorting: with --order-by the first N sorted rows, with --group or --agg the first N groups in --sort order, so it needs one of them. --limit and --from page inside it. Examples: --top 10 and --top 3;limit||nat|none||the most rows or groups in the answer (default 1000 as json, no limit as csv, ceiling 1000000), for --select, --where, --order-by, --group or --agg. A cut answer has truncated true and data.next.from, the --from of the next page. Examples: --limit 100 and --limit 20 --from 40;from||nat|none||the 0-based row or group to start at, as data.next.from of a truncated answer says, for --select, --where, --order-by, --group or --agg. Each call is a fresh read. Examples: --from 1000 and --from 2000;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-groups||nat|none|100000|the most groups kept, one more is limit.too-many-groups (ceiling 1000000);max-distinct||nat|none|100000|the most distinct values kept over all groups for distinct, one more is limit.too-many-distinct (ceiling 10000000);max-state-bytes||nat|none|67108864|the most bytes of group keys, distinct values or sorted rows kept (ceiling 1073741824);order-by||text|none||sort the rows by these keys, a comma-separated list: each key is a header name or #N, with - before it for descending and :int after it to compare exact integers (otherwise bytewise, so 10 sorts before 9 and an empty cell first). A later key breaks ties of an earlier one, and ties keep the order of the file. Under :int a cell that is not an integer refuses the query (value.not-integer). A name that starts with - or ends in :int is written \\-name or name\\:int. Rows are held up to --max-sort-rows, so keep it under with --where or --top. Not with --group or --agg. Examples: --order-by -bytes:int and --order-by status,-bytes:int;max-sort-rows||nat|none|1000000|the most rows held to sort, one more is limit.too-many-sort-rows (ceiling 20000000);threads||nat|none|1|how many threads read the file (1 to 64), for rows and groups only, on a file of at least --parallel-min-bytes of data: 1 is the sequential read and the answer of every other count is the same bytes;chunk-bytes||nat|none|4194304|the size of the range one thread reads at a time (with --threads), at least 1;parallel-min-bytes||nat|none|1048576|the smallest data (after the header) read by several threads, below it the read is sequential;max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, one document on standard output, text for a person (the shape only, do not parse it), csv for rows or groups as csv (it needs --select, --where, --order-by, --group or --agg). csv and text are not a json document: standard output is only the csv or the lines, a refusal is one line on standard error as table: RULE: message with the exit status, and rows already written stand, so a non-zero exit means the output is a prefix";
+    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, a list: header names separated by commas, or #N for the Nth column (1-based), in the order given, and a repeat repeats the column. A comma, a backslash or a leading # in a name is written with a backslash before it. Examples: --select host,bytes and --select '#3,a\\,b' (the third column, then the column called a,b);where||text|none||only the rows that satisfy this: conditions joined by and (no or, no parentheses), each COLUMN OP VALUE with OP one of = != < <= > >= contains, or COLUMN in (V1, V2). COLUMN is a header name or #N. With no suffix the cell is compared as text, bytewise, so 10 is less than 9. COLUMN:int compares exact integers, COLUMN:dec(N) exact decimals of at most N fractional digits, COLUMN:float doubles. A cell that is not one of those refuses the whole query (value.not-integer and the like), so keep such rows out first: bytes != '' and bytes:int > 5. A name or VALUE with spaces or operators is 'quoted' (a doubled quote is one quote). Examples: --where 'status = 404 and bytes:int > 1000' and --where 'host in (a, b) and path contains x';group||text|none||count the rows by these columns instead of returning them: a list named as for --select, one row per distinct combination, in byte order unless --sort says otherwise. A name may end in :int, :dec(S) or :float to group by the value of the cell and not its text: 1.5 and 1.50 are one group, -0 is 0, the group is written at the column's scale (1.50) or as the shortest decimal that reads back (1.5), and the groups come in numeric order, negatives first. A cell that is not of that type refuses the query (value.not-decimal and the like, context group). A column read as one type must be read as it everywhere in the plan (column.type-conflict). A name that ends in :float is written name\\:float. Examples: --group host and --group host,status and --group 'price:dec(2),status';agg||text|none||what to compute, a comma-separated list of items (default count). An item is count, or FUNCTION:COLUMN with FUNCTION one of sum, min, max, mean, distinct and COLUMN a header name or #N. With no suffix sum, min, max and mean read the cells as exact integers and distinct as text. A suffix on COLUMN says how to read it: :int, :dec(S) for exact decimals of at most S fractional digits (S is 0 to 18, never rounded) or :float for doubles (min, max, distinct, and the exact sum and mean: sum:x:float and mean:x:float give the exact sum, or the exact sum over the count, rounded once to the nearest double, the same for every --threads, and a sum beyond the largest double is agg.float-overflow. A float mean takes no @N, so mean:x:float@2 is agg.bad-spec). mean of integers or decimals is rounded half to even at @N fractional digits written after the column, as mean:bytes@2, and @N may be left out only for a :dec(S) column, whose scale is the default. The output column is the item without its suffixes, as sum:price. A column really called x:dec(2) is written sum:x\\:dec(2). With --group the answer has a row per group, alone one row for all the rows. Examples: --agg count,sum:bytes,max:bytes and --agg 'sum:price:dec(2),mean:bytes@1';sort||text|none||with --group or --agg, order the groups by one output column: count, an aggregate as printed (sum:bytes, mean:price) or a group column, with - before it for descending. Aggregates compare as numbers and group columns bytewise (numerically for a typed --group column), ties go by the group columns. Without it the groups come in byte order of their columns. Examples: --sort -count and --sort sum:bytes;top||nat|none||keep only the first N rows or groups (N at least 1) after sorting: with --order-by the first N sorted rows, with --group or --agg the first N groups in --sort order, so it needs one of them. --limit and --from page inside it. Examples: --top 10 and --top 3;limit||nat|none||the most rows or groups in the answer (default 1000 as json, no limit as csv, ceiling 1000000), for --select, --where, --order-by, --group or --agg. A cut answer has truncated true and data.next.from, the --from of the next page. Examples: --limit 100 and --limit 20 --from 40;from||nat|none||the 0-based row or group to start at, as data.next.from of a truncated answer says, for --select, --where, --order-by, --group or --agg. Each call is a fresh read. Examples: --from 1000 and --from 2000;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-groups||nat|none|100000|the most groups kept, one more is limit.too-many-groups (ceiling 1000000);max-distinct||nat|none|100000|the most distinct values kept over all groups for distinct, one more is limit.too-many-distinct (ceiling 10000000);max-state-bytes||nat|none|67108864|the most bytes of group keys, distinct values or sorted rows kept (ceiling 1073741824);order-by||text|none||sort the rows by these keys, a comma-separated list: each key is a header name or #N, with - before it for descending and :int, :dec(S) or :float after it to compare by value: exact integers, exact decimals of at most S fractional digits, doubles (otherwise bytewise, so 10 sorts before 9 and an empty cell first). A later key breaks ties of an earlier one, and ties keep the order of the file. A cell that is not of the type refuses the query (value.not-integer, value.not-decimal, value.not-float and the like, context order-by). A name that starts with - or ends in :int, :dec(S) or :float is written \\-name or name\\:int. Rows are held up to --max-sort-rows, so keep it under with --where or --top. Not with --group or --agg. Examples: --order-by -bytes:int and --order-by status,-bytes:int and --order-by '-price:dec(2)';max-sort-rows||nat|none|1000000|the most rows held to sort, one more is limit.too-many-sort-rows (ceiling 20000000);threads||nat|none|1|how many threads read the file (1 to 64), for rows and groups only, on a file of at least --parallel-min-bytes of data: 1 is the sequential read and the answer of every other count is the same bytes;chunk-bytes||nat|none|4194304|the size of the range one thread reads at a time (with --threads), at least 1;parallel-min-bytes||nat|none|1048576|the smallest data (after the header) read by several threads, below it the read is sequential;max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, one document on standard output, text for a person (the shape only, do not parse it), csv for rows or groups as csv (it needs --select, --where, --order-by, --group or --agg). csv and text are not a json document: standard output is only the csv or the lines, a refusal is one line on standard error as table: RULE: message with the exit status, and rows already written stand, so a non-zero exit means the output is a prefix";
 }
 
 fn tool() -> [] describe.Tool {
@@ -82,7 +82,7 @@ fn tool() -> [] describe.Tool {
 // The tool's own rules, beside the contract's catalogue: tag, exit code,
 // repairable, summary.
 fn extra() -> [] &static [byte] {
-    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.;limit.record-too-large|8|never|a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes. Hint: raise --max-bytes, up to the ceiling introspect names, or select fewer columns. Repair: none.;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread. Hint: raise --max-rows, up to the ceiling introspect names, or page with --limit and --from. Repair: none.;limit.too-many-sort-rows|8|never|--order-by would hold more than --max-sort-rows rows to sort. Hint: ask for the first rows only with --top N or a smaller --limit (they are kept in bounded memory), keep fewer rows with --where, or raise --max-sort-rows, up to the ceiling introspect names. Repair: none.;limit.too-many-groups|8|never|more groups than --max-groups. Hint: raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns. Repair: none.;limit.too-many-distinct|8|never|more distinct values than --max-distinct. Hint: raise --max-distinct, up to the ceiling introspect names. Repair: none.;limit.state-too-large|8|never|the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes. Hint: raise --max-state-bytes, up to the ceiling introspect names, or group by shorter values. Repair: none.;parse.csv-ragged-row|8|never|a row has a different number of fields than the header. Hint: make every row as wide as the header, quoting fields that hold the delimiter. Repair: none.;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record. Hint: double a quote that is text, or put the delimiter after the closing quote. Repair: none.;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input. Hint: close the quote, or double the quotes that are text. Repair: none.;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header. Hint: pick from detail.available. Repair: choose.;select.ambiguous-column|8|never|a name in --select that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.;column.unknown|3|never|a name or position in --where, --group or --agg that is not a column of the header. Hint: pick from detail.available. Repair: none.;column.ambiguous|8|never|a name in --where, --group or --agg that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.;where.syntax|2|never|--where is not an expression of the grammar, at the offset the detail gives. Hint: the grammar is in the help of --where: COLUMN OP VALUE joined by and. Repair: none.;agg.bad-spec|2|never|an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes. Hint: --agg count,sum:bytes,max:bytes,distinct:status, a mean of an integer column needs its scale, mean:bytes@2, a decimal column is declared sum:price:dec(2). Repair: none.;sort.unknown-key|2|never|--sort names no output column of the grouping. Hint: pick from detail.available, with a - before it to sort descending. Repair: none.;value.not-integer|8|never|a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not). Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.;value.integer-overflow|8|never|a cell of an :int column or of sum, min or max does not fit 64 bits. Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.;value.not-decimal|8|never|a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a decimal of this column. Repair: none.;value.decimal-scale|8|sometimes|a cell of a :dec(S) column has more fractional digits than S (it is never rounded). Hint: declare a larger scale, :dec(N) with N the most fractional digits the column holds. Repair: choose.;value.decimal-too-wide|8|never|a cell of a :dec(S) column has 18 or more significant digits once scaled to S. Hint: declare a smaller scale, or compare the column as text. Repair: none.;column.type-conflict|2|never|the plan reads one column as two numeric types: :int, :float, or :dec with two scales. Hint: give the column one type: the same :int, or the same :dec(N), in every place it is named. Repair: none.;value.not-float|8|never|a cell of a :float column is not a number: an empty cell, a space, a separator, a hex form, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a float of this column. Repair: none.;value.not-finite|8|never|a cell of a :float column is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float > 5). Hint: keep them out with --where first: x != 'NaN' and x:float > 5 never reads the NaN cell as a number. Repair: none.;value.float-range|8|never|a cell of a :float column is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which). Hint: keep out the rows with such a cell with --where first, or compare the column as text. Repair: none.;limit.number-too-long|8|never|a cell of a :float column is longer than 1,100 bytes, the longest cell that can be a double. Hint: a number of this length is not a double, compare the column as text. Repair: none.;agg.float-overflow|8|never|the exact sum of a :float column in a group is beyond the largest double, about 1.8e308 (detail.group names the group). Hint: sum fewer rows with --where, group by more columns, or sum in a smaller unit (the mean of the same group is a number: mean:COL:float). Repair: none.";
+    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.;limit.record-too-large|8|never|a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes. Hint: raise --max-bytes, up to the ceiling introspect names, or select fewer columns. Repair: none.;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread. Hint: raise --max-rows, up to the ceiling introspect names, or page with --limit and --from. Repair: none.;limit.too-many-sort-rows|8|never|--order-by would hold more than --max-sort-rows rows to sort. Hint: ask for the first rows only with --top N or a smaller --limit (they are kept in bounded memory), keep fewer rows with --where, or raise --max-sort-rows, up to the ceiling introspect names. Repair: none.;limit.too-many-groups|8|never|more groups than --max-groups. Hint: raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns. Repair: none.;limit.too-many-distinct|8|never|more distinct values than --max-distinct. Hint: raise --max-distinct, up to the ceiling introspect names. Repair: none.;limit.state-too-large|8|never|the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes. Hint: raise --max-state-bytes, up to the ceiling introspect names, or group by shorter values. Repair: none.;parse.csv-ragged-row|8|never|a row has a different number of fields than the header. Hint: make every row as wide as the header, quoting fields that hold the delimiter. Repair: none.;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record. Hint: double a quote that is text, or put the delimiter after the closing quote. Repair: none.;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input. Hint: close the quote, or double the quotes that are text. Repair: none.;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header. Hint: pick from detail.available. Repair: choose.;select.ambiguous-column|8|never|a name in --select that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.;column.unknown|3|never|a name or position in --where, --group or --agg that is not a column of the header. Hint: pick from detail.available. Repair: none.;column.ambiguous|8|never|a name in --where, --group or --agg that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.;where.syntax|2|never|--where is not an expression of the grammar, at the offset the detail gives. Hint: the grammar is in the help of --where: COLUMN OP VALUE joined by and. Repair: none.;agg.bad-spec|2|never|an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes. Hint: --agg count,sum:bytes,max:bytes,distinct:status, a mean of an integer column needs its scale, mean:bytes@2, a decimal column is declared sum:price:dec(2). Repair: none.;sort.unknown-key|2|never|--sort names no output column of the grouping. Hint: pick from detail.available, with a - before it to sort descending. Repair: none.;value.not-integer|8|never|a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not). Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.;value.integer-overflow|8|never|a cell of an :int column or of sum, min or max does not fit 64 bits. Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.;value.not-decimal|8|never|a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a decimal of this column. Repair: none.;value.decimal-scale|8|sometimes|a cell of a :dec(S) column has more fractional digits than S (it is never rounded). Hint: declare a larger scale, :dec(N) with N the most fractional digits the column holds. Repair: choose.;value.decimal-too-wide|8|never|a cell of a :dec(S) column has 18 or more significant digits once scaled to S. Hint: declare a smaller scale, or compare the column as text. Repair: none.;column.type-conflict|2|never|the plan reads one column as two numeric types: :int, :float, or :dec with two scales, in --where, --group, --agg or --order-by. Hint: give the column one type: the same :int, :float or :dec(N), in every place it is named, --where, --group, --agg and --order-by. Repair: none.;value.not-float|8|never|a cell of a :float column is not a number: an empty cell, a space, a separator, a hex form, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a float of this column. Repair: none.;value.not-finite|8|never|a cell of a :float column is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float > 5). Hint: keep them out with --where first: x != 'NaN' and x:float > 5 never reads the NaN cell as a number. Repair: none.;value.float-range|8|never|a cell of a :float column is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which). Hint: keep out the rows with such a cell with --where first, or compare the column as text. Repair: none.;limit.number-too-long|8|never|a cell of a :float column is longer than 1,100 bytes, the longest cell that can be a double. Hint: a number of this length is not a double, compare the column as text. Repair: none.;agg.float-overflow|8|never|the exact sum of a :float column in a group is beyond the largest double, about 1.8e308 (detail.group names the group). Hint: sum fewer rows with --where, group by more columns, or sum in a smaller unit (the mean of the same group is a number: mean:COL:float). Repair: none.";
 }
 
 fn built() -> [] describe.Built {
@@ -186,7 +186,11 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
                             if j > 0 {
                                 pending = buffer.push(heap, pending, byte_of(delim));
                             }
-                            pending = writer.csv_value(heap, pending, agg.key_field(groups, x, j), delim);
+                            if query.gkind_at(tree, j) != 0 {
+                                pending = agg.put_key(heap, pending, groups, tree, x, j);
+                            } else {
+                                pending = writer.csv_value(heap, pending, agg.key_field(groups, x, j), delim);
+                            }
                             j = j + 1;
                         }
                         var k = 0;
@@ -287,6 +291,9 @@ fn over_limit[&h, &s](heap: &!h Heap, e: fail.Errors, rule: &static [byte], mess
 fn context_of(function: int) -> [] &static [byte] {
     if function == -2 {
         return "order-by";
+    }
+    if function == -3 {
+        return "group";
     }
     if function == 1 {
         return "sum";
@@ -415,7 +422,7 @@ fn settle_groups[&h, &q, &c, &a](heap: &!h Heap, groups: agg.Groups, kept: buffe
                 if j > 0 {
                     held = buffer.push(heap, held, byte_of(','));
                 }
-                held = buffer.append(heap, held, agg.key_field(gr, x, j));
+                held = agg.put_key(heap, held, gr, tree, x, j);
                 j = j + 1;
             }
         }
@@ -562,7 +569,13 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         var scale = 0;
         if in_agg {
             code = c.abort - 4;
-            scale = query.agg_at(tree, c.err_cond, 2) - 2;
+            if c.err_fn == -3 {
+                scale = query.gkind_at(tree, c.err_cond) - 2;
+            } else if c.err_fn == -2 {
+                scale = query.order_flags(tree, c.err_cond) / 2 - 2;
+            } else {
+                scale = query.agg_at(tree, c.err_cond, 2) - 2;
+            }
         } else {
             scale = query.cond_at(tree, c.err_cond, 1) - 2;
         }
@@ -594,7 +607,7 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         } else if code == 22 {
             w = fail.repair_none(heap, w, "what the cell was meant to be is not known (an exponent is a float, which this tool does not read yet)");
         } else if code == 23 {
-            w = fail.repair_none(heap, w, "write :dec(N) in the aggregate with N the digits of the cell, or more");
+            w = fail.repair_none(heap, w, "write :dec(N) with N the digits of the cell, or more, where the column is named");
         } else {
             w = fail.repair_none(heap, w, "what the cell was meant to be is not known");
         }
@@ -613,7 +626,7 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         e = fail.add(heap, e, w);
     } else if c.abort == 25 {
         let column = c.bad_name / 1024;
-        var w = fail.open_in(heap, extra(), "column.type-conflict", "the plan reads one column as two numeric types", "give the column one type: the same :int, or the same :dec(N), in every place it is named");
+        var w = fail.open_in(heap, extra(), "column.type-conflict", "the plan reads one column as two numeric types", "give the column one type: the same :int, :float or :dec(N), in every place it is named, --where, --group, --agg and --order-by");
         w = fail.repair_none(heap, w, "which type was meant is not known");
         w = fail.detail_open(heap, w);
         w = fail.detail_text(heap, w, "column", name_of(names, hends, column));
@@ -1305,11 +1318,100 @@ fn report_select[&h, &a, &b](heap: &!h Heap, c: Counts, head: &a buffer.Buffer, 
     return buffer.push(heap, o, byte_of('}'));
 }
 
+// A comma-separated list whose items may end in a type (`:int`, `:dec(S)`, `:float`; `agg.bare_tail`): what is left of each item, the items joined by
+// commas again, and the type of each in order; and the number of the first item whose scale is not 0 to 18, or -1. With `unescape` an escaped colon
+// (`\:`) is written as a colon, as `--agg` does (`--group` lists), and without it every backslash stays (the list is parsed again by `--order-by`).
+fn split_types[&h, &g](heap: &!h Heap, given: &g [byte], unescape: bool) -> [heap] (buffer.Buffer, vec.Vec[int], int) {
+    var cleaned = buffer.empty(heap, len(given) + 1);
+    var kinds = vec.empty(heap, 8, 0);
+    var bad = -1;
+    let n = len(given);
+    var start = 0;
+    var index = 0;
+    var more = true;
+    while more {
+        var j = start;
+        while j < n && int_of(given[j]) != ',' {
+            if int_of(given[j]) == '\\' && j + 1 < n {
+                j = j + 2;
+            } else {
+                j = j + 1;
+            }
+        }
+        if j > n {
+            j = n;
+        }
+        let item = given[start..j];
+        let (e, kind0) = agg.bare_tail(item);
+        var kind = kind0;
+        if kind == 99 {
+            if bad < 0 {
+                bad = index;
+            }
+            kind = 0;
+        }
+        kinds = vec.push(heap, kinds, kind);
+        var p = 0;
+        while p < e {
+            let c = int_of(item[p]);
+            if c == '\\' && p + 1 < len(item) {
+                let d = int_of(item[p + 1]);
+                if unescape && d == ':' {
+                    cleaned = buffer.push(heap, cleaned, byte_of(d));
+                } else {
+                    cleaned = buffer.push(heap, cleaned, byte_of(c));
+                    cleaned = buffer.push(heap, cleaned, byte_of(d));
+                }
+                p = p + 2;
+            } else {
+                cleaned = buffer.push(heap, cleaned, byte_of(c));
+                p = p + 1;
+            }
+        }
+        if j < n {
+            cleaned = buffer.push(heap, cleaned, byte_of(','));
+            start = j + 1;
+        } else {
+            more = false;
+        }
+        index = index + 1;
+    }
+    return (cleaned, kinds, bad);
+}
+
 // A list of names read with `plan.parse`, in the plan: slot 0 for --select,
 // slot 2 for --group. Refusals are added to `errs`.
 fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given: &g [byte], slot: int, flag: &static [byte]) -> [heap] (query.Query, fail.Errors) {
     var e = errs;
-    let (toks, ends, kinds, listed) = plan.parse(heap, given);
+    // `--group` takes a type after each name (`x:dec(2)`, `x:float`, `x:int`): split off first, what is left is a list of names as `--select`'s is
+    var typed = vec.empty(heap, 4, 0);
+    var cleaned = buffer.empty(heap, len(given) + 1);
+    var bad_item = -1;
+    if slot == 2 {
+        let (c2, t2, b2) = split_types(heap, given, true);
+        buffer.drop(heap, cleaned);
+        vec.drop(heap, typed);
+        cleaned = c2;
+        typed = t2;
+        bad_item = b2;
+    } else {
+        cleaned = buffer.append(heap, cleaned, given);
+    }
+    var toks = buffer.empty(heap, 1);
+    var ends = vec.empty(heap, 1, 0);
+    var kinds = vec.empty(heap, 1, 0);
+    var listed = true;
+    buffer.drop(heap, toks);
+    vec.drop(heap, ends);
+    vec.drop(heap, kinds);
+    borrow cleaned as &cr in {
+        let (t2, e2, k2, l2) = plan.parse(heap, buffer.bytes(cr));
+        toks = t2;
+        ends = e2;
+        kinds = k2;
+        listed = l2;
+    }
+    buffer.drop(heap, cleaned);
     var named = 0;
     borrow ends as &ter in {
         named = vec.size(ter);
@@ -1318,6 +1420,9 @@ fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given
         e = flag_problem(heap, e, "args.bad-value", "a list of names is names separated by commas, and a backslash escapes only a comma, a backslash or a #", "--select 'a,b\\,c'", flag);
     } else if named > plan.most_names() {
         e = flag_problem(heap, e, "args.bad-value", "a list names more columns than the ceiling", "4096 is the most one flag names", flag);
+    }
+    if bad_item >= 0 && listed {
+        e = flag_problem(heap, e, "args.bad-value", "a :dec(N) takes N from 0 to 18", "--group 'price:dec(2)'", flag);
     }
     var q = tree;
     if listed {
@@ -1329,7 +1434,21 @@ fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given
             }
         }
         q = query.bump(q, slot, named);
+        if slot == 2 {
+            var i = 0;
+            while i < named {
+                var t = 0;
+                borrow typed as &yr in {
+                    if i < vec.size(yr) {
+                        t = vec.get(yr, i);
+                    }
+                }
+                q = query.add_gkind(heap, q, t);
+                i = i + 1;
+            }
+        }
     }
+    vec.drop(heap, typed);
     buffer.drop(heap, toks);
     vec.drop(heap, ends);
     vec.drop(heap, kinds);
@@ -1341,51 +1460,81 @@ fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given
 // that are part of a name. What is left is a list of names as `--select`'s is, and goes through the same parser.
 fn add_order_keys[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given: &g [byte]) -> [heap] (query.Query, fail.Errors) {
     var e = errs;
+    // the types first (`-bytes:int`, `price:dec(2)`, `x:float`): what is left of each key is `[-]NAME`, its type goes to its flags (2 x the type)
+    let (stripped, key_types, bad_scale) = split_types(heap, given, false);
     var cleaned = buffer.empty(heap, len(given) + 1);
     var flags = vec.empty(heap, 4, 0);
-    let n = len(given);
-    var i = 0;
-    var at_start = true;
-    var minus_done = false;
-    var flag = 0;
-    while i <= n {
-        var c = -1;
-        if i < n {
-            c = int_of(given[i]);
-        }
-        let was_start = at_start;
-        at_start = false;
-        if c == ',' || c < 0 {
-            flags = vec.push(heap, flags, flag);
-            flag = 0;
-            at_start = true;
-            minus_done = false;
-            if c == ',' {
-                cleaned = buffer.push(heap, cleaned, byte_of(','));
+    var n = 0;
+    borrow stripped as &sr0 in {
+        n = buffer.size(sr0);
+    }
+    borrow stripped as &str in {
+        let sb = buffer.bytes(str);
+        var i = 0;
+        var at_start = true;
+        var minus_done = false;
+        var flag = 0;
+        while i <= n {
+            var c = -1;
+            if i < n {
+                c = int_of(sb[i]);
             }
-            i = i + 1;
-        } else if was_start && c == '-' && !minus_done {
-            flag = 1;
-            minus_done = true;
-            at_start = true;
-            i = i + 1;
-        } else if c == '\\' && i + 1 < n {
-            let d = int_of(given[i + 1]);
-            if d == '-' && was_start || d == ':' {
-                cleaned = buffer.push(heap, cleaned, byte_of(d));
+            let was_start = at_start;
+            at_start = false;
+            if c == ',' || c < 0 {
+                flags = vec.push(heap, flags, flag);
+                flag = 0;
+                at_start = true;
+                minus_done = false;
+                if c == ',' {
+                    cleaned = buffer.push(heap, cleaned, byte_of(','));
+                }
+                i = i + 1;
+            } else if was_start && c == '-' && !minus_done {
+                flag = 1;
+                minus_done = true;
+                at_start = true;
+                i = i + 1;
+            } else if c == '\\' && i + 1 < n {
+                let d = int_of(sb[i + 1]);
+                if d == '-' && was_start || d == ':' {
+                    cleaned = buffer.push(heap, cleaned, byte_of(d));
+                } else {
+                    cleaned = buffer.push(heap, cleaned, byte_of(c));
+                    cleaned = buffer.push(heap, cleaned, byte_of(d));
+                }
+                i = i + 2;
             } else {
                 cleaned = buffer.push(heap, cleaned, byte_of(c));
-                cleaned = buffer.push(heap, cleaned, byte_of(d));
+                i = i + 1;
             }
-            i = i + 2;
-        } else if c == ':' && i + 3 < n + 0 && int_of(given[i + 1]) == 'i' && int_of(given[i + 2]) == 'n' && int_of(given[i + 3]) == 't' && (i + 4 == n || int_of(given[i + 4]) == ',') {
-            flag = flag + 2;
-            i = i + 4;
-        } else {
-            cleaned = buffer.push(heap, cleaned, byte_of(c));
-            i = i + 1;
         }
     }
+    buffer.drop(heap, stripped);
+    // each key's type goes into its flags (the flags are 1 for descending plus 2 x the type)
+    var typed_flags = vec.empty(heap, 4, 0);
+    var t = 0;
+    var nf = 0;
+    borrow flags as &fr in {
+        nf = vec.size(fr);
+    }
+    while t < nf {
+        var kt = 0;
+        var fv = 0;
+        borrow flags as &fr in {
+            fv = vec.get(fr, t);
+        }
+        borrow key_types as &kr in {
+            if t < vec.size(kr) {
+                kt = vec.get(kr, t);
+            }
+        }
+        typed_flags = vec.push(heap, typed_flags, fv + 2 * kt);
+        t = t + 1;
+    }
+    vec.drop(heap, flags);
+    vec.drop(heap, key_types);
+    flags = typed_flags;
     var toks = buffer.empty(heap, 1);
     var ends = vec.empty(heap, 1, 0);
     var kinds = vec.empty(heap, 1, 0);
@@ -1405,8 +1554,11 @@ fn add_order_keys[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, 
         named = vec.size(ter);
     }
     var q = tree;
+    if bad_scale >= 0 {
+        e = flag_problem(heap, e, "args.bad-value", "a :dec(N) takes N from 0 to 18", "--order-by 'price:dec(2)'", "--order-by");
+    }
     if !listed {
-        e = flag_problem(heap, e, "args.bad-value", "a list of keys is names separated by commas, each with - before it for descending and :int after it for integers, and a backslash escapes only a comma, a backslash, a #, a leading - or a :", "--order-by '-bytes:int,status'", "--order-by");
+        e = flag_problem(heap, e, "args.bad-value", "a list of keys is names separated by commas, each with - before it for descending and :int, :dec(N) or :float after it to order by value, and a backslash escapes only a comma, a backslash, a #, a leading - or a :", "--order-by '-bytes:int,price:dec(2),status'", "--order-by");
     } else if named > plan.most_names() {
         e = flag_problem(heap, e, "args.bad-value", "a list names more columns than the ceiling", "4096 is the most one flag names", "--order-by");
     } else {

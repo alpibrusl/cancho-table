@@ -44,7 +44,7 @@ MUTANTS = [
     ("a cell too wide is said to be too fine", "expr.cho", "        if bad == 2 {\n            return 6;", "        if bad == 2 {\n            return 5;"),
     # the type conflict
     ("two scales of one column are not a conflict", "query.cho", "                } else if other != first {", "                } else if (other == 1) != (first == 1) {"),
-    ("an --order-by key does not count as an :int reading", "query.cho", "        if order_flags(q, k) / 2 % 2 == 1 && cols[order_name(q, k)] == column {", "        if false && order_flags(q, k) / 2 % 2 == 1 && cols[order_name(q, k)] == column {"),
+    ("an --order-by key does not count as an :int reading", "query.cho", "        if order_flags(q, k) / 2 != 0 && cols[order_name(q, k)] == column {", "        if false && order_flags(q, k) / 2 != 0 && cols[order_name(q, k)] == column {"),
     ("a type conflict is not reported", "frame.cho", "    } else if conflict >= 0 {", "    } else if false && conflict >= 0 {"),
     # what a refusal says
     ("a decimal refusal takes the code of a limit", "engine.cho", "        code = 18 + verdict;", "        code = 17 + verdict;"),
@@ -88,7 +88,7 @@ MUTANTS = [
     ("an implicit :int does not count as a reading of the column", "query.cho", "        if agg_at(q, k, 0) != 0 && agg_at(q, k, 2) != 0 && cols[agg_at(q, k, 1)] == column {", "        if agg_at(q, k, 0) != 0 && agg_at(q, k, 2) >= 2 && cols[agg_at(q, k, 1)] == column {"),
     ("a decimal refusal of an aggregate takes the code of another", "engine.cho", "        return 20 + status;", "        return 19 + status;"),
     ("the refusal an in-place aggregate answered is decoded in eights", "engine.cho", "    let status = (answer - 16) % 16;", "    let status = (answer - 16) % 8;"),
-    ("the digits are counted for the wrong refusal", "engine.cho", "    if status == 7 {\n        a[k_err_digits()]", "    if status == 6 {\n        a[k_err_digits()]"),
+    ("the digits are counted for the wrong refusal", "engine.cho", "    if status == 7 {\n        a[k_err_digits()] = digits_after_point(record, cells[3 * column], cells[3 * column + 1]);\n    }\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return column;", "    if status == 6 {\n        a[k_err_digits()] = digits_after_point(record, cells[3 * column], cells[3 * column + 1]);\n    }\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return column;"),
     ("a mean refusal says sum", "engine.cho", "        function = 5;", "        function = 1;"),
     ("the scale of an aggregate refusal is the type code", "table.cho", "            scale = query.agg_at(tree, c.err_cond, 2) - 2;", "            scale = query.agg_at(tree, c.err_cond, 2) - 1;"),
 ]

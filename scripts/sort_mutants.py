@@ -20,7 +20,7 @@ MUTANTS = [
     ("a row worse than the last wanted is kept and a better one dropped", "sorter.cho", "    if decided == 1 {\n        return 0;\n    }\n    return 1;", "    if decided == 2 {\n        return 0;\n    }\n    return 1;"),
     ("a descending key is compared ascending when dropping", "sorter.cho", "        if decided == 0 {\n            if keys[3 * j + 1] == 1 {\n                c = 0 - c;\n            }", "        if decided == 0 {\n            if false {\n                c = 0 - c;\n            }"),
     ("an integer key after the deciding one is not read when dropping", "sorter.cho", "            if bad != 0 {\\n                return 0;\\n            }".replace("\\n", "\n"), "            if bad != 0 && decided == 0 {\n                return 0;\n            }"),
-    ("an integer that is a text sorts as a number, in reject", "sorter.cho", "            let (v, bad) = query.parse_int(record[first..end]);\n            if bad != 0 {\n                return 0;", "            let (v, bad) = query.parse_int(record[first..end]);\n            if false {\n                return 0;"),
+    ("an integer that is a text sorts as a number, in reject", "sorter.cho", "            let (v, bad) = key_value(record[first..end], keys[3 * j + 2]);\n            if bad != 0 {\n                return 0;", "            let (v, bad) = key_value(record[first..end], keys[3 * j + 2]);\n            if false {\n                return 0;"),
     # sorter.add
     ("--max-sort-rows allows one more", "sorter.cho", "    if count >= max_rows {", "    if count > max_rows {"),
     ("the state bound is not kept", "sorter.cho", "    } else if size + len(record) + 8 * width * (count + 1) > max_state {", "    } else if size + len(record) + 8 * width * (count + 1) > max_state + 100000000 {"),
@@ -32,9 +32,9 @@ MUTANTS = [
     # the order
     ("a descending key is compared ascending", "sorter.cho", "            if keys[3 * j + 1] == 1 {\n                return c > 0;\n            }", "            if keys[3 * j + 1] == 1 {\n                return c < 0;\n            }"),
     ("a descending first key is ascending by its prefix", "sorter.cho", "        if keys[1] == 1 {\n            return pre[x] > pre[y];\n        }", "        if false {\n            return pre[x] > pre[y];\n        }"),
-    ("the prefix of an integer first key is its text", "sorter.cho", "            if keys[2] == 1 {\n                pre[i] = vec.get(s.acc, i * stride + 2);", "            if false {\n                pre[i] = vec.get(s.acc, i * stride + 2);"),
+    ("the prefix of an integer first key is its text", "sorter.cho", "            if keys[2] != 0 {\n                pre[i] = vec.get(s.acc, i * stride + 2);", "            if false {\n                pre[i] = vec.get(s.acc, i * stride + 2);"),
     ("the merge takes the later of two equal runs first", "sorter.cho", "(q >= hi || !before(s, keys, pre, pre2, order[q], order[p]))", "(q >= hi || before(s, keys, pre, pre2, order[q], order[p]))"),
-    ("the second key of two is not looked at", "sorter.cho", "    var j = 0;\n    while j < s.stride {\n        var c = 0;\n        if keys[3 * j + 2] == 1 {\n            let vx", "    var j = 0;\n    while j < 1 {\n        var c = 0;\n        if keys[3 * j + 2] == 1 {\n            let vx"),
+    ("the second key of two is not looked at", "sorter.cho", "    var j = 0;\n    while j < s.stride {\n        var c = 0;\n        if keys[3 * j + 2] != 0 {\n            let vx", "    var j = 0;\n    while j < 1 {\n        var c = 0;\n        if keys[3 * j + 2] != 0 {\n            let vx"),
     ("the second prefix word is compared ascending for a descending key", "sorter.cho", "    if pre2[x] != pre2[y] {\n        if keys[1] == 1 {\n            return pre2[x] > pre2[y];\n        }", "    if pre2[x] != pre2[y] {\n        if false {\n            return pre2[x] > pre2[y];\n        }"),
     ("the second prefix word is in the wrong order", "sorter.cho", "                pre2[i] = prefix_of(kb, 7);", "                pre2[i] = 0 - prefix_of(kb, 7);"),
     # sorter.hook: a row held in place, in the room the buffers have
@@ -67,8 +67,8 @@ MUTANTS = [
     ("--order-by and --group do not conflict", "table.cho", "    if grouped && has_order {", "    if false && grouped && has_order {"),
     ("--max-rows stops a sort quietly in json", "table.cho", "    } else if (as_csv || query.count_of(tree, 4) > 0) && c.capped {", "    } else if as_csv && c.capped {"),
     ("a descending integer key is read as ascending", "table.cho", "                                                    contents(ow)[3 * j + 1] = query.order_flags(tree, j) % 2;", "                                                    contents(ow)[3 * j + 1] = query.order_flags(tree, j) / 2;"),
-    ("a descending key is not descending", "table.cho", "        } else if was_start && c == '-' && !minus_done {\n            flag = 1;", "        } else if was_start && c == '-' && !minus_done {\n            flag = 0;"),
-    (":int is descending", "table.cho", "            flag = flag + 2;", "            flag = flag + 1;"),
+    ("a descending key is not descending", "table.cho", "            } else if was_start && c == '-' && !minus_done {\n                flag = 1;", "            } else if was_start && c == '-' && !minus_done {\n                flag = 0;"),
+    (":int is descending", "table.cho", "        typed_flags = vec.push(heap, typed_flags, fv + 2 * kt);", "        typed_flags = vec.push(heap, typed_flags, fv + kt);"),
     ("an escaped minus is not allowed", "table.cho", "            if d == '-' && was_start || d == ':' {", "            if d == ':' {"),
     ("an escaped colon is not allowed", "table.cho", "            if d == '-' && was_start || d == ':' {", "            if d == '-' && was_start {"),
     ("an unknown key is said to be in --agg", "table.cho", "                flag = \"--order-by\";", "                flag = \"--agg\";"),
