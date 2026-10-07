@@ -566,8 +566,90 @@ is exact at any width and no longer refused past 64 bits (README line "Sums are 
 `agg.sum-overflow` row of the page's rule table, which is generated: `scripts/site.py` regenerates it, and `docs/refusals.md` was regenerated in this branch), the
 decimal filter numbers above.
 
-**Next: N2** (`sum`, `min`, `max`, `mean[@N]`, `distinct`, count of `:dec(S)`; the printer of a scaled value and of a wide sum at the column's scale; the second consumer of
-`agg.put_sum`), then N3a (`:float` parse), N3b, N4, N5, N6, as the table says.
+### What was built: N2, the aggregates of a decimal column (measured)
+
+`sum`, `min`, `max`, `mean[@N]`, `distinct` and `count` over `:dec(S)` columns, written at the column's scale; branch `numbers-n2`, tests first (commit `N2 gates`:
+1,217 failures against `main`), then the code.
+
+**The grammar.** An item of `--agg` may end in `:int` or `:dec(S)` and, for `mean`, in `@N`: `sum:price:dec(2)`, `min:price:dec(2)`, `mean:price:dec(2)@4`, `mean:n@2`, `distinct:price:dec(2)`.
+An untyped `sum`, `min`, `max` or `mean` reads `:int`, as before; an untyped `distinct` reads text, as before. A mean of a decimal column defaults to the column's own scale; an integer
+column has none, so `mean:n` is `agg.bad-spec` (the repair is to say `@2`). **A suffix is a suffix only when a column name is left before it**: `sum:int` still sums a column called `int`, and `sum:x:int`
+is the integer sum of `x`. **A column really called `x:dec(2)`, `x:int` or `x@2` is written with a backslash before the colon or the at sign**: `sum:x\:dec(2)`, `sum:x\:int`, `mean:x\@2@3` (`\:` and
+`\@` were `args.bad-value` before; the other escapes of the list are unchanged). Without the backslash `sum:x:dec(2)` is the column `x` read as a decimal, and `column.unknown` if there is none.
+`@N` is 0 to 18; a scale past 18 and `count:dec(2)`, `sum:x:dec(2)@2` and the like are `agg.bad-spec`. In the plan an aggregate is four numbers (function, name, type, mean); a mean is a sum that is
+written divided by the group's count, so the engine adds it as one.
+
+**How the exact sum is held and printed at scale S.** The same pair as N0p: the low 32 bits of the scaled cell (below 10^18) in the value slot and `v >> 32` in the second one, exact to 2^93, merged by threads
+as a plain add, settled once (`agg.settle`) before the sort and the write. `dec.put_sum` takes the pair, builds the magnitude as three limbs of 32 bits, divides by 10^9 until nothing is left to get the digits,
+pads to `S + 1` digits and puts the point `S` from the right: exactly `S` fractional digits, no exponent, `-` only for a value that is not zero (`-0.05`, never `-0.00`); a minimum or maximum is written the same way
+from its `int`. As JSON it is a string.
+
+**The mean** (`dec.put_mean`): the magnitude of the exact sum is doubled, multiplied by 10^(N - S) (when N is the larger) in steps of at most 10^9, divided by the count (below 2^30) in limbs, and, when N is the smaller,
+divided by 10^(S - N) afterwards; T = floor(2 * |mean|), and a flag says whether any division left a remainder. T halved is the integer part; the low bit of T says the fraction is half or more, and then it rounds
+up when something was left over (more than half) and to the even integer when nothing was (exactly half): **half to even from the exact quotient, no float, the same for any thread count and any N**. The sign is put
+back, and no `-` before a zero. `--sort mean:COL` orders by the exact quotient, by cross multiplication of the sums and counts in limbs, without dividing (a mean sorted by its rounded text would be
+a different, coarser order); ties are broken by the group key as always.
+
+**Refusals.** The cell of an aggregate is refused as `--where`'s is: `value.not-decimal`, `value.decimal-scale` (detail `digits` and `scale`), `value.decimal-too-wide`, with `context` the function (`sum`, `min`, `max`,
+`mean`, `distinct`), the row, line, column and cell, the first in file order for every thread count. The repair of a scale refusal in `--agg` is none (it says to write `:dec(N)` with N at least the digits shown): the
+`--where` repair rewrites one condition by its offset, and an item of `--agg` has no offset to rewrite by. `column.type-conflict` now spans `--where`, `--agg` and `--order-by`: a column read as `:dec(2)` and as
+`:int` (an untyped `sum:x` is `:int`), or as `:dec(2)` and `:dec(3)`, anywhere in the plan.
+
+| gate | what ran | result |
+|---|---|---|
+| G1/G2 | every aggregate against Python's `Fraction` and `Decimal`: the mean at 26 hand-picked tie, sign and edge cases (also against `decimal.quantize(ROUND_HALF_EVEN)`), sums, minima and maxima past 64 bits at scales 0, 2 and 18 at the edges of the width (`999999999999999999` times 1,000, both signs, cancelling), `1.5` against `1.50` as one distinct value, sorts by sum, minimum and mean; **1,600 generated tables and plans** (up to three conditions, typed and untyped keys, five aggregates of every kind, sorts, csv and json, ragged rows, refusals) through a Python reference | 0 differences; 900+ answers and 80+ refusals in the sample |
+| G3 | 300 fuzzed cells and specs (the grammar's alphabet, scales to 18, random `@N`) | no trap, a valid document every time |
+| G4 | decimal aggregates (count, sum, min, max, mean at three scales, distinct, sort, top), sums that need the carry, and the first refusal in file order, N in {2, 3, 4, 8, 16, 64} x chunks {1, 7, 64, 1000} | the sequential bytes in every one |
+| G5 | `scripts/numbers_mutants.py` has 67 mutants now (37 new for N2, among them each rounding rule of the mean, the sign of a negative mean and of a mean that rounds to zero, the point one digit off, the zero padding, the carry of a negative sum, the comparison of means, `@N` and the grammar of the tail, the cached cell, and what a refusal says); one was **equivalent** (a sum written `-` when it is zero: a negative high half is at most -1, so there is no zero to write; the code lost the flag) and a second was replaced by a real one | all killed; the old `filter` and `cellcost` mutants whose sites moved were re-pointed (47 and 43 mutants), the ones on the changed code re-run and killed; `--check` passes for all seven scripts and is in CI |
+| G6 | `scripts/gate_regress.py`, 7 cells x {1, 4} threads, outputs byte-identical first, md5 of all 134 plans of `scripts/corpus.py` identical | Mac: worst 1.018; `group count,sum,min,max` **0.90** (below). Linux: **not a clean pass**, see below |
+| G7 | `scripts/bench_numbers_agg.py`: the same grouping on `cents:int` (as many digits as the price) and on `price:dec(2)`, by `status`, 1,000,000 rows | Mac dec/int: sum 1.036 (1 thread) and 1.083 (16), mean 1.063 and 1.114, min and max 1.011 and 1.008, all five 1.010 and 1.086. Linux: 0.99 to 1.07 at one thread, 1.07 at six, worst 1.087. Limit 1.15: **pass** |
+| G10 | the same against DuckDB, csvtk, Miller, below | |
+| G12 | `test_memory.py`: typed aggregates at 2 MB and 37 MB of file | flat |
+
+The whole suite is 170 tests, 120 s.
+
+**A speed-up that came with it.** A row asks each aggregate to read its cell; `sum, min, max, mean` of one column read it four times. The in-place way now reads the cell once for the aggregates that follow on the
+same column (a column has one numeric type in a plan, so the type need not be compared). `count,sum,min,max` of the integer file is **0.90x of `main`** on the Mac (0.0687 to 0.0620 s) and 0.84 to 0.89x on Linux, and
+it is what keeps the decimal ratio under the limit: without it the five-aggregate cell was 1.185 to 1.227 of the integer one on Linux (a decimal cell is slower to read than an integer cell by about 8 ns, and it was read four times).
+
+**G6 on Linux, said plainly.** The box has a soak running and 3 physical cores; a 17 to 50 ms cell moves by 2% between two runs of the same binary. Four runs of the final code against `main` (15 interleaved, a cell over the
+limit measured again): worst ratios 1.047, 1.045, 1.031 and 1.021, always a single-aggregate sum or a 4-thread cell, never the same one twice, with `count,sum,min,max` at 0.84 to 0.91 in every run and cells that
+do not touch the aggregates at all (`text filter`, `filter`) at 1.00 to 1.02 in the same runs. One variant without the cached cell was measured to find out whether it was the cache: it was not (the single sum cell was
+still +1.5% to +1.9% at one thread, and so was the text filter). The single-sum cell is probably 1 to 2% slower on Linux; I could not separate that from code layout with the tools at hand, and the gate as written (any
+cell above 1.02) does not pass on that machine in every run. On the Mac every run passes (worst 1.018).
+
+**Against the others** (G10; the grouping by `status` of 1,000,000 rows; seconds; the factor is the contender's time over `table`'s decimal time at the same thread count; every answer was compared with Python's exact decimals first, `table` and
+DuckDB's DECIMAL digit for digit, the double contenders with the largest error printed):
+
+| | `table` int | `table` dec | DuckDB DECIMAL(18,2) | DuckDB DOUBLE | csvtk `-j 1` | Miller |
+|---|---:|---:|---:|---:|---:|---:|
+| Mac, sum, 1 thread | 0.0824 | 0.0853 | 0.217 (2.55x) | 0.217 (2.54x) | 0.468 (5.5x) | not installed |
+| Mac, sum, 16 threads | 0.0128 | 0.0139 | 0.083 (5.95x) | 0.083 (5.94x) | | |
+| Mac, mean, 1 thread | 0.0801 | 0.0852 | 0.215 (2.52x) | 0.214 (2.52x) | | |
+| Mac, min and max, 1 thread | 0.0861 | 0.0871 | 0.211 (2.42x) | 0.216 (2.48x) | | |
+| Mac, count, sum, min, max, mean, 1 thread | 0.0917 | 0.0926 | 0.218 (2.36x) | 0.220 (2.37x) | 0.483 (5.2x) | |
+| Mac, the same, 16 threads | 0.0140 | 0.0152 | 0.082 (5.39x) | 0.082 (5.42x) | | |
+| Linux, sum, 1 thread | 0.1261 | 0.1250 | not installed | not installed | 0.909 (7.3x) | 0.434 (3.5x) |
+| Linux, the five, 1 thread | 0.1434 | 0.1392 | | | 0.933 (6.7x) | 0.701 (5.0x) |
+| Linux, the five, 6 threads | 0.0531 | 0.0577 | | | | |
+
+What the answers said, which is the point of the exact types: DuckDB's DECIMAL sums, minima and maxima equal Python's; its DOUBLE sum was off by **0.000375** at one thread and by **0.00009** at sixteen (a different wrong
+answer for a different thread count, as the design found); csvtk's was off by 0.0004 and Miller's by 0.000375. `table`'s answer is the same exact decimal at every thread count. DuckDB's `AVG` of a decimal is a
+double (compared here to 1e-4); `table`'s mean is the exact quotient rounded half to even at the scale asked. (The two floats' errors are small in absolute terms on a file of 0.01-steps; they grow with the sum.)
+
+**Deviations from the stage table.** (1) The repair of `value.decimal-scale` for an aggregate is none, not a `choose` (above). (2) `mean` over an integer column (`:int`, untyped) is in N2 too, with `@N` required:
+the design put `mean:COL[@N]` in 3.6 for both, and the grammar is one. (3) `distinct` accepts `:int` as well (by value: `+5` and `5` are one), which the stage table did not list. (4) `\:` and `\@` are new escapes of the
+`--agg` list. (5) The int cell the decimal one is compared with in G7 is now `cents`, not `bytes`: `bytes` has 5 digits, the price 8 characters, and half of the first ratios were the longer cell; `scripts/bench_numbers.py`
+(N1) uses it too (its numbers above were with `bytes`: N1's ratios were 1.0 to 1.1 and still pass). (6) G6 on Linux, above. (7) Group keys of a decimal and `--order-by x:dec(2)` are still N5.
+
+**What the README and the page should now say** (not edited here): the aggregates line (`count`, `sum`, `min`, `max`, `mean`, `distinct`; typed `price:dec(2)`; `mean@N`; exact, any width, half to even), the
+`:dec(S)` bullet extended to aggregates, one table of the aggregate numbers above, and `python3 scripts/site.py` for the one generated region that moved: the rules table (the `agg.bad-spec` sentence now names
+`mean` and the suffixes).
+
+**Next: N3a** (`:float` parse: the scanner, Clinger's fast path, the exact slow path through `std.json`, compare, `in`, literals, min, max, count; the rules `value.not-float`, `value.not-finite`,
+`value.float-range`, `limit.number-too-long`; the printer), then N3b (Eisel-Lemire; the Linux ratio of a 17-digit column), N4 (the exact float sum and mean: the accumulator of section 4.4 and its merge), N5 (typed group
+keys and sort keys, `--order-by x:dec(2)`) and N6 (the type report), as the table says. N3 needs a number reader that does not go through the JSON tape (section 11), and N4 will reuse `agg.settle` and the limb
+helpers of `dec.ls`.
 
 ## 11. Open questions, assumptions, what the language lacks
 
