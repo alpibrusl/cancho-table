@@ -330,6 +330,7 @@
     "tool",
     "type_conflict",
     "type_name",
+    "typed_groups",
     "typed_mention",
     "under",
     "uneven_neighbours",
@@ -341,7 +342,7 @@
     "width",
     "width_of"
   ],
-  "folded_operators": 95,
+  "folded_operators": 96,
   "folded_calls": 0,
-  "functions": 525
+  "functions": 526
 }

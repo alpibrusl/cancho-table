@@ -41,7 +41,9 @@ MUTANTS = [
     ("a :dec scale is its digits plus one", "agg.cho", "            return (k - 5, 2 + v);\n        }\n    }\n    return (e, 0);", "            return (k - 5, 3 + v);\n        }\n    }\n    return (e, 0);"),
     ("a :dec of three digits is a scale", "agg.cho", "        if digits >= 1 && digits <= 2 && k >= 6 &&", "        if digits >= 1 && digits <= 3 && k >= 6 &&"),
     # the read of a key cell (engine.cho, query.cho)
-    ("a typed group takes the fast path", "engine.cho", "    var j = 0;\n    while j < query.count_of(tree, 2) {\n        if query.gkind_at(tree, j) != 0 {\n            return false;\n        }\n        j = j + 1;\n    }\n    var k = 0;", "    var j = 0;\n    while j < 0 {\n        if query.gkind_at(tree, j) != 0 {\n            return false;\n        }\n        j = j + 1;\n    }\n    var k = 0;"),
+    ("a typed group takes the fast path", "agg.cho", "    if contents(g.memo)[rest_at + 2] != 0 {\n        return (0 - 1, 0);", "    if false && contents(g.memo)[rest_at + 2] != 0 {\n        return (0 - 1, 0);"),
+    ("the typed flag of a plan is never set", "agg.cho", "contents(mw)[memo_size() + 4] = query.typed_groups(tree);", "contents(mw)[memo_size() + 4] = 0;"),
+    ("a text group column counts as typed", "query.cho", "    if kind != 0 {\n        borrow mut g as &!gw in {", "    if kind == 0 {\n        borrow mut g as &!gw in {"),
     ("a group refusal is read as an aggregate's", "engine.cho", "    if k >= 1000 {\n        column = cols[query.count_of(tree, 0)", "    if k >= 100000 {\n        column = cols[query.count_of(tree, 0)"),
     ("a group refusal has the context of an aggregate", "engine.cho", "    var function = -3;", "    var function = 2;"),
     ("a group refusal names the wrong column", "engine.cho", "        column = cols[query.count_of(tree, 0) + query.count_of(tree, 1) + k - 1000];", "        column = cols[query.count_of(tree, 0) + query.count_of(tree, 1)];"),

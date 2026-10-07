@@ -483,13 +483,6 @@ pub fn group_refused[&h, &q, &c, &d, &e, &a](heap: &!h Heap, kept: buffer.Buffer
 // Whether `add_fast` can ever take a row of this plan: not when an aggregate is `distinct`, which keeps a set of
 // pairs and is added the old way (so the rows of such a plan do not go through the fast call at all).
 pub fn fast_ok[&q](tree: &q query.Query) -> [] bool {
-    var j = 0;
-    while j < query.count_of(tree, 2) {
-        if query.gkind_at(tree, j) != 0 {
-            return false;
-        }
-        j = j + 1;
-    }
     var k = 0;
     while k < query.agg_count(tree) {
         if query.agg_at(tree, k, 0) == 4 {

@@ -106,7 +106,12 @@ fn float_add(acc: vec.Vec[int], at: int, key: int) -> [] vec.Vec[int] {
 
 pub fn start[&h, &q](heap: &!h Heap, tree: &q query.Query) -> [heap] Groups {
     let stride = stride_of(tree);
-    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: box_slice(heap, memo_size() + 4, 0) };
+    var memo = box_slice(heap, memo_size() + 5, 0);
+    // `memo[memo_size() + 4]`: 1 when a group column is typed: its key is the value, which `add_fast` does not build (it copies the cell's bytes), so every row takes `add`
+    borrow mut memo as &!mw in {
+        contents(mw)[memo_size() + 4] = query.typed_groups(tree);
+    }
+    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: memo };
 }
 
 pub fn drop[&h](heap: &!h Heap, g: Groups) -> [heap] int {
@@ -387,6 +392,9 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
     // builds the key and looks for it before `add` puts it: after 32 in a row the next 2048 rows take `add`'s
     // way at once. `memo[size + 2]` is how many are left, `memo[size + 3]` the run so far.
     let rest_at = memo_size() + 2;
+    if contents(g.memo)[rest_at + 2] != 0 {
+        return (0 - 1, 0);
+    }
     let waiting = contents(g.memo)[rest_at];
     if waiting > 0 {
         contents(g.memo)[rest_at] = waiting - 1;
