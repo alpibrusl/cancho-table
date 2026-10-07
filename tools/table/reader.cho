@@ -4,7 +4,7 @@ module reader;
 
 // The RFC 4180 reader's pieces: what is true of one line of a record, the
 // names of a header, and the fields of a whole record. Nothing here reads a
-// file or writes anything; `table.ls` drives it a line at a time.
+// file or writes anything; `table.cho` drives it a line at a time.
 //
 // Three functions, three questions about the same grammar, kept in step by
 // the differential test against Python's csv module:

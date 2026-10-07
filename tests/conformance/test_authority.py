@@ -45,7 +45,7 @@ class Authority(unittest.TestCase):
         self.assertEqual({x.split("(")[0] for x in ceiling}, NEEDS, "the ceiling is wider than the tool needs")
 
     def test_the_compiler_pin_is_the_toml_one(self):
-        pin = tomllib.loads((ROOT / "lex-sys.toml").read_text())["package"]["lex-sys"]
+        pin = tomllib.loads((ROOT / "cancho.toml").read_text())["package"]["cancho"]
         self.assertEqual(introspect()["compiler"], pin)
 
     @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("strace"), "needs Linux and strace")

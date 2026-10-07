@@ -1,4 +1,4 @@
-"""SPIKE: ns per cell of the readers of numparse.ls, by the difference between 21 rounds and 1, minimum of 3.
+"""SPIKE: ns per cell of the readers of numparse.cho, by the difference between 21 rounds and 1, minimum of 3.
 Needs S (a directory holding the built `numparse` and the cell files c_int.txt, c_price.txt, c_f17.txt, c_exp.txt: one cell per line, 1,000,000 lines)."""
 import subprocess,time,os,sys
 S=os.environ['S']

@@ -80,7 +80,7 @@ A sort has state; every bound is a rule with a repair that suggests the way out.
   comparison looks at two 7-byte words of the first text key (or the integer itself, for a first `:int` key) before the
   full keys. This is the group sort's merge sort (`agg.sort_into`) adapted to the row index; the contract's
   `toolbox.sort` has no comparison that can see two keys of one record, so it is not used (its limits do not allow it).
-* A new module, `sorter.ls`, holds the sort. **Its state is an `agg.Groups`**, the value the grouping holds, used for another
+* A new module, `sorter.cho`, holds the sort. **Its state is an `agg.Groups`**, the value the grouping holds, used for another
   purpose (`keyb` the records, `dkey` the unquoted keys, `acc` the index, `stride` the number of keys, `pairs` the rows
   held, `memo` the plan), and the read hands the rows to the grouping's call (`engine.group_plain`, `group_fast`, and
   `process_groups` for the cases that need the heap): a row is dropped or appended in place when the buffers have room
@@ -184,7 +184,7 @@ refusal, and its row, column, value and context must be the ones the oracle name
 refusal or an answer and never a trap; the bounded top-N cut back about 200 times over 600 rows with ties, descending,
 text and integer keys; the page chain; the byte budget; the bounds and their refusals; the names with a minus, a colon and a
 comma; quoted keys with doubled quotes against unquoted keys with a quote. `test_memory.py` gains the flat top-N and the
-full sort within and at its bound. `scripts/sort_mutants.py` has 44 mutants of the sorter, the plan and the way the rows are
+full sort within and at its bound. `scripts/sort_mutants.py` has 52 mutants of the sorter, the plan and the way the rows are
 written, with the equivalent ones said in the script. Its first run had four survivors, which were real gaps:
 a quoted key's doubled quotes (the test data had only quoted keys, so raw bytes sorted the same; a key `x"#`
 written without quotes sorts the other way round), and two equivalents (the rows' numbers, which stability makes unnecessary

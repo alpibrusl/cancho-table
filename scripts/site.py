@@ -324,7 +324,7 @@ def main():
     args = ap.parse_args()
     binary = Path(args.bin).resolve()
     if not binary.exists():
-        sys.exit("site.py: %s does not exist: run `lex-sys build` first" % binary)
+        sys.exit("site.py: %s does not exist: run `cancho build` first" % binary)
     bad = 0
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "orders.csv").write_text(FIXTURE)

@@ -8,7 +8,7 @@ module scan;
 // The range is read with `file_pread` (the language has no `seek`, and a cursor would
 // be shared by nothing anyway: every reader has a `File` of its own), by a copy of the
 // contract's `lines.fill_file` that asks for the bytes at an offset. The loop that
-// follows is the data-record half of the sequential read in table.ls, statement for
+// follows is the data-record half of the sequential read in table.cho, statement for
 // statement: the same lines, the same records, the same `engine` functions for what is
 // done with one. It has no header (that was read before), no BOM, no shape, no output
 // stream (it returns when a block of csv is pending, and the caller writes it), and

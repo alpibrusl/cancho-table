@@ -124,4 +124,4 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `column.type-conflict` | 2 | never | the plan reads one column as two numeric types: :int, or :dec with two scales |
 <!-- /gen:rules -->
 
-The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other lexsys-tools; the rest are `table`'s own.
+The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other cancho-tools; the rest are `table`'s own.

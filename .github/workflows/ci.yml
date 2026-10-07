@@ -13,42 +13,42 @@ jobs:
         with:
           path: table
 
-      # The compiler is whichever commit lex-sys.toml says these sources were
+      # The compiler is whichever commit cancho.toml says these sources were
       # written for: one place, which the compiler itself checks.
-      - name: Read the pins from lex-sys.toml
+      - name: Read the pins from cancho.toml
         id: pin
         run: |
-          echo "rev=$(sed -n 's/^lex-sys *= *"\([0-9a-f]*\)".*/\1/p' table/lex-sys.toml)" >> "$GITHUB_OUTPUT"
-          echo "contract=$(sed -n 's/^rev *= *"\([0-9a-f]*\)".*/\1/p' table/lex-sys.toml | sort -u)" >> "$GITHUB_OUTPUT"
+          echo "rev=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' table/cancho.toml)" >> "$GITHUB_OUTPUT"
+          echo "contract=$(sed -n 's/^rev *= *"\([0-9a-f]*\)".*/\1/p' table/cancho.toml | sort -u)" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
         with:
-          repository: alpibrusl/lex-sys
+          repository: alpibrusl/cancho
           ref: ${{ steps.pin.outputs.rev }}
-          path: lex-sys
+          path: cancho
 
       - name: Cache the compiler
         id: compiler
         uses: actions/cache@v4
         with:
-          path: lex-sys/target/release/lex-sys
-          key: lex-sys-${{ steps.pin.outputs.rev }}
+          path: cancho/target/release/cancho
+          key: cancho-${{ steps.pin.outputs.rev }}
 
-      - name: Build lex-sys
+      - name: Build cancho
         if: steps.compiler.outputs.cache-hit != 'true'
-        working-directory: lex-sys
-        run: cargo build --release -p lex-sys
+        working-directory: cancho
+        run: cargo build --release -p cancho
 
       - name: Put the compiler on PATH
-        run: echo "$GITHUB_WORKSPACE/lex-sys/target/release" >> "$GITHUB_PATH"
+        run: echo "$GITHUB_WORKSPACE/cancho/target/release" >> "$GITHUB_PATH"
 
       # The sources the contract package was published from, at the pinned
       # revision: only to check that the package says what they say.
       - uses: actions/checkout@v4
         with:
-          repository: alpibrusl/lexsys-tools
+          repository: alpibrusl/cancho-tools
           ref: ${{ steps.pin.outputs.contract }}
-          path: lexsys-tools
+          path: cancho-tools
 
       - name: What the gates validate with (jsonschema) and trace with (strace)
         run: |
@@ -58,12 +58,12 @@ jobs:
 
       - name: Formatting
         working-directory: table
-        run: lex-sys fmt --check tools generated
+        run: cancho fmt --check tools generated
 
       # Installs the pinned contract modules into build/deps, then builds.
       - name: Build
         working-directory: table
-        run: lex-sys build
+        run: cancho build
 
       - name: Schemas are generated, not edited
         working-directory: table
@@ -73,9 +73,9 @@ jobs:
         working-directory: table
         run: python3 scripts/manifest.py --check
 
-      - name: The authority from the installed package is the one from lexsys-tools' sources
+      - name: The authority from the installed package is the one from cancho-tools' sources
         working-directory: table
-        run: python3 scripts/manifest.py --check --against ../lexsys-tools/contract
+        run: python3 scripts/manifest.py --check --against ../cancho-tools/contract
 
       # Every mutant's text must still occur exactly once in the source it mutates (no build, no tests): a mutant
       # that cannot apply fails here, loudly, instead of silently testing nothing.

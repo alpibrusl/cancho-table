@@ -3,9 +3,9 @@ fixture's first error is its rule with the right exit code, the declared rule
 list is exactly what the fixtures reach, and every `retry` repair works when
 applied.
 
-The shared rules are lexsys-tools' catalogue (`toolbox.rules`, in the installed
+The shared rules are cancho-tools' catalogue (`toolbox.rules`, in the installed
 package). Four of this tool's rules are its own, listed in `extra_rules` in
-tools/table/table.ls; their exit codes and summaries are asserted here.
+tools/table/table.cho; their exit codes and summaries are asserted here.
 """
 
 import os

@@ -6,8 +6,8 @@ module engine;
 // of ints, `k_*` say where), the accounting of a record (counted, ragged, before
 // `from`), the test of `--where`, and what is done with a row that passes it: written
 // (`emit_buf`, which never writes to standard output; `emit_row`, which does, when
-// a block of csv is pending) or added to its group. The sequential read in table.ls
-// and the scan of a byte range in scan.ls (what a worker thread runs, and what the
+// a block of csv is pending) or added to its group. The sequential read in table.cho
+// and the scan of a byte range in scan.cho (what a worker thread runs, and what the
 // parent runs again when a worker's answer cannot be trusted) call the same ones.
 
 import std.buffer;
@@ -350,7 +350,7 @@ pub fn process_rows[&h, &i, &q, &c, &d, &e, &s, &a](heap: &!h Heap, io: &!i Io, 
 // The same for a grouping (mode 2): tested, then added to its group.
 pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_groups: int, max_distinct: int, max_state: int, keyed: bool, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
     if query.count_of(tree, 4) > 0 {
-        // `--order-by`: the rows are held, not grouped; the bounds are the sort's (see sorter.ls)
+        // `--order-by`: the rows are held, not grouped; the bounds are the sort's (see sorter.cho)
         return order_row(heap, groups, escr, kept, tree, cols, record, cells, opened, max_groups, max_state, a);
     }
     let (verdict, e2, k2) = screen(heap, tree, cols, record, cells, escr, kept, opened, a);
@@ -450,7 +450,7 @@ pub fn fast_ok[&q](tree: &q query.Query) -> [] bool {
 }
 
 // A counted row that is not ragged, for `--order-by`: tested by `--where`, then held by the sorter (the groups, see
-// sorter.ls), or, when only the first rows are wanted and the last of them is known, dropped at once if it is not before
+// sorter.cho), or, when only the first rows are wanted and the last of them is known, dropped at once if it is not before
 // that one. `max_rows` and `max_state` are the bounds. Sets `abort` for a bound passed (20 rows, 21 bytes) or a key that is
 // not an integer (as `--where` does, with `err_fn` -2); once `2 * cap + 1` rows are held they are cut back to `cap`.
 fn order_row[&h, &q, &c, &d, &e, &a](heap: &!h Heap, held: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_rows: int, max_state: int, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {

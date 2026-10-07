@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SPIKE check for superacc.ls: exact sum / split-merge sum / mean of generated and adversarial double
+"""SPIKE check for superacc.cho: exact sum / split-merge sum / mean of generated and adversarial double
 lists against Python integer arithmetic (the exact sum as an integer multiple of 2^-1074, rounded once by int
 true division, which is correctly rounded) and math.fsum.
 

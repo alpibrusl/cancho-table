@@ -1,6 +1,8 @@
 # History: what was measured, and what was changed because of it
 
-The method is lexsys-tools' `docs/history.md`: measure with the incumbent on the
+> The language was renamed from lex-sys to cancho (source extension `.ls` to `.cho`), and the repositories lexsys-table and lexsys-tools to cancho-table and cancho-tools. Names are current throughout this file; the record below was written under the old ones, and a pull request or commit it cites is the same one under the new repository name (GitHub redirects the old URLs). <!-- cancho-rename-note -->
+
+The method is cancho-tools' `docs/history.md`: measure with the incumbent on the
 same file in the same loop, change one thing, measure again, keep what helped. The
 rule set for this stage was: if `table` is more than about 2x worse than `csvtk -j 1`
 on `--select`, investigate and iterate. It was not.
@@ -207,8 +209,8 @@ part of the comparisons; the second `sample` has `compare_keys` still 152 of abo
 `docs/backlog.md` (a radix pass, a parallel merge, `csv_value`). Not tuned to the benchmark: the generated keys are
 what a text key of this shape looks like (a prefix then digits), and the loss is reported as it stands.
 
-Contract package adopted in the same branch: `fail.choose_*`, `fail.detail_*` (lexsys-tools#29), 48 lines fewer
-(4,844 to 4,796); `toolbox.sort` was not adopted for `agg.ls` (see the backlog's friction list).
+Contract package adopted in the same branch: `fail.choose_*`, `fail.detail_*` (cancho-tools#29), 48 lines fewer
+(4,844 to 4,796); `toolbox.sort` was not adopted for `agg.cho` (see the backlog's friction list).
 
 # Cell cost (branch `cell-cost`)
 
@@ -295,21 +297,21 @@ length byte); `distinct` over text; the second aggregate refusing (which one is 
 longer than `--max-line-bytes` that is more than a chunk (and one that ends 100 bytes into the next chunk, the case where
 a line held over looks like a whole one). Each plan runs sequentially and with 3, 4, 16 and 64 threads and ranges of
 7 to 4096 bytes, and the answers must be equal and equal to Python's.
-`scripts/cellcost_mutants.py` (new) has 45 mutants of the new paths, **all killed** (on the Linux box; the Mac run of an earlier
+`scripts/cellcost_mutants.py` (new) has 43 mutants of the new paths, **all killed** (on the Linux box; the Mac run of an earlier
 version of the list too), and three more that are equivalent and are said so in the script: an unquoted field is never able to hold a delimiter or an LF, so testing for them changes nothing; and the
 key `add_fast` builds is only looked for, so a wrong length byte in it makes a miss and the row takes the slow way, with
 the same answer. The first run of the mutants had seven survivors, two of them those equivalent ones and five real (the tests checked a refusal's status and not its
 rule, did not hold a group in the cache before a collision, did not have a quoted key and an unquoted key of the same
 text, and did not have a line over the cap that left less than the cap in the next chunk); the tests were sharpened and
 all seven are killed. The older `select_mutants.py` and `filter_mutants.py` no longer apply to the code (21 of their
-sites moved to `engine.ls` and `scan.ls` when the parallel read was written, and `agg.ls` now has two copies of two
+sites moved to `engine.cho` and `scan.cho` when the parallel read was written, and `agg.cho` now has two copies of two
 of them); that was already so on `main`; it is in the backlog.
 
 # The mutation scripts (branch `mutants-repair`)
 
 The scripts that mutate the source one defect at a time (`select_mutants.py`, `filter_mutants.py`, `parallel_mutants.py`,
 `cellcost_mutants.py`) are a gate that cannot be seen failing: a mutant whose text no longer occurs in the source tests
-nothing, and when the engine was split out of `table.ls` in the parallel round, 22 of the 66 mutants of the select and filter scripts
+nothing, and when the engine was split out of `table.cho` in the parallel round, 22 of the 66 mutants of the select and filter scripts
 stopped applying (and two more now matched twice). The old runner noticed only when it *reached* one, after the unmutated build, and stopped there: nobody ran them again.
 
 **The runner is one shared module now** (`scripts/mutlib.py`; each script is a list of mutants and the tests that judge them):
@@ -324,8 +326,8 @@ stopped applying (and two more now matched twice). The old runner noticed only w
 
 **The repair.** 24 sites no longer matched: 22 not at all (15 in the select script, 7 in the filter script) and 2 that now
 occur twice, because the in-place add of the cell-cost round copied `add`'s min and first-value lines. Each was re-pointed
-at the current source (the formatter had turned `else { if }` into `else if`, and the sites had moved to `engine.ls`,
-`scan.ls`, `writer.ls`, `reader.ls`); where one function became several (the refusals of a grouping are written in three
+at the current source (the formatter had turned `else { if }` into `else if`, and the sites had moved to `engine.cho`,
+`scan.cho`, `writer.cho`, `reader.cho`); where one function became several (the refusals of a grouping are written in three
 places now), each place has its own mutant. A mutant's text is matched as a substring, so a site that was meant for one function can
 quietly land in another: that is how "the budget is not kept" had been mutating the *grouping's* page budget, not the
 select's, and survived.
@@ -338,7 +340,7 @@ real test gaps, not equivalents:
   300 groups through a 400-byte budget, with the `next` of each page, and the first row longer than the budget refused;
 * a sum that overflows was refused only on the in-place path, since the cell-cost round, and the old way (`add`, taken for a
   quoted key with a quote in it, or with `distinct` beside the sum) had no test of its own: two tests now;
-* `a page holds one row more` (an early stop, in `table.ls` and `scan.ls`) is **equivalent**: the row that would reach
+* `a page holds one row more` (an early stop, in `table.cho` and `scan.cho`) is **equivalent**: the row that would reach
   `engine.process_rows_buf` is stopped by its own `emitted >= limit`, with the same `more` and `next`; the early test only saves
   splitting the record. It is said so in the script.
 
@@ -362,7 +364,7 @@ grouping's call, and select and filter are at 0.97x to 1.02x of `main`. Details 
 0.807 s to 0.455 s (-44%); two more ideas (insertion-sorted runs, the prefix carried through the merge) gained 1% to 4% and
 were reverted. The benchmark, the losses (3.4x to 3.9x behind DuckDB's default, 1.13x behind it at one thread with ties, 1.45x
 behind the shell's `sort -s -n` on Linux with ties) and what is left are in `docs/sort.md`.
-Tests: 1,600 random plans against Python's stable sort, 500 damaged inputs, bounded memory, pages, bounds; 44 mutants.
+Tests: 1,600 random plans against Python's stable sort, 500 damaged inputs, bounded memory, pages, bounds; 52 mutants.
 
 ## The sum becomes a pair (docs/numbers.md, stage N0p)
 

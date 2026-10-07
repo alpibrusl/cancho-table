@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SPIKE check: the dec and float cell readers of numparse.ls against numbers_ref.py (the design's reference, which
+"""SPIKE check: the dec and float cell readers of numparse.cho against numbers_ref.py (the design's reference, which
 rests on Python's exact int/Decimal arithmetic and its correctly rounded float()) over the edge cells and
 generated cells, including grammar fuzz.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Benchmark: `table` against `csvtk -j 1` (and `mlr`, if installed) on the file
-of lexsys-tools' docs/next-tools.md section 5, in three scenarios: the shape
+of cancho-tools' docs/next-tools.md section 5, in three scenarios: the shape
 (a row count), `cut -f status,bytes` as csv, and the first 1000 rows of two
 columns: 1,000,000 rows, about 31 MB,
 columns id,status,bytes,path,note with the last one quoted.
