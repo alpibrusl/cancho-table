@@ -61,11 +61,11 @@ FIXTURE = """id,customer,status,bytes
 """
 
 # A second small file, for the decimal examples
-PRICES = """item,price
-pen,1.50
-book,12.50
-lamp,12.5
-cup,3.2
+PRICES = """item,category,price
+pen,office,1.50
+book,office,12.50
+lamp,home,12.5
+cup,home,3.2
 """
 
 # What is shown is what is typed; the argv run is shlex.split of it.
@@ -78,6 +78,8 @@ DEMOS = {
     "page2": "table --select id,customer --limit 2 --from 2 orders.csv",
     "csv": """table --where "status = 200" --format csv orders.csv""",
     "dec": """table --where "price:dec(2) >= 12.50" --format csv prices.csv""",
+    "dec_agg": """table --group category --agg "sum:price:dec(2),mean:price:dec(2)@3" --format csv prices.csv""",
+    "dec_minmax": """table --agg "min:price:dec(2),max:price:dec(2),distinct:price:dec(2)" --format csv prices.csv""",
     "dec_bad": """table --where "price:dec(1) >= 12.5" prices.csv""",
     "sort": """table --where "bytes != ''" --order-by -bytes:int,status --limit 3 --select id,customer,bytes --format csv orders.csv""",
     "cores": "table --threads 4 --group status --agg count --format csv orders.csv",
@@ -89,7 +91,7 @@ DEMOS = {
 SUMMARY = {"dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"]}
 # task name -> the demos shown for it
 TASKS = {
-    "select": ["select"], "filter": ["where"], "decimal": ["dec", "dec_bad"], "sort": ["sort"], "group": ["group"], "page": ["page1", "page2"],
+    "select": ["select"], "filter": ["where"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "sort": ["sort"], "group": ["group"], "page": ["page1", "page2"],
     "csv": ["csv"], "cores": ["cores"], "refuse": ["notint"],
 }
 QS = ["shape", "select", "group"]
