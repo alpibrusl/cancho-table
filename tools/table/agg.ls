@@ -138,7 +138,7 @@ fn typed_cell[&h, &d](heap: &!h Heap, scratch: buffer.Buffer, record: &d [byte],
 // (the same bytes order as the numbers do).
 fn put_value_key[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
     var o = out;
-    let biased = v ^ (0 - 9223372036854775807 - 1);
+    let biased = v ^ 0 - 9223372036854775807 - 1;
     var i = 7;
     while i >= 0 {
         o = buffer.push(heap, o, byte_of(biased >> 8 * i & 255));
@@ -256,22 +256,22 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
                     }
                     var known = false;
                     if status == 0 {
-                    borrow dk as &dr in {
-                        borrow s as &sr in {
-                            known = map.find(sr, buffer.bytes(dr)) >= 0;
-                        }
-                        if !known {
-                            if distinct_pairs >= max_distinct {
-                                status = 2;
-                            } else if bytes_held + buffer.size(dr) > max_state {
-                                status = 3;
-                            } else {
-                                bytes_held = bytes_held + buffer.size(dr);
-                                distinct_pairs = distinct_pairs + 1;
-                                s = map.put(heap, s, buffer.bytes(dr), 0);
+                        borrow dk as &dr in {
+                            borrow s as &sr in {
+                                known = map.find(sr, buffer.bytes(dr)) >= 0;
+                            }
+                            if !known {
+                                if distinct_pairs >= max_distinct {
+                                    status = 2;
+                                } else if bytes_held + buffer.size(dr) > max_state {
+                                    status = 3;
+                                } else {
+                                    bytes_held = bytes_held + buffer.size(dr);
+                                    distinct_pairs = distinct_pairs + 1;
+                                    s = map.put(heap, s, buffer.bytes(dr), 0);
+                                }
                             }
                         }
-                    }
                     }
                     if status == 0 && !known {
                         a = set_at(a, at + 1 + k, now + 1);
