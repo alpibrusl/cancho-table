@@ -19,11 +19,7 @@ MUTANTS = [
     ("an empty cell is an int", "report.cho", "    if len(data) == 0 {\n        return (0, 0, 0);\n    }\n    let (v, bad) = query.parse_int(data);", "    if len(data) == 0 {\n        return (1, 0, 0);\n    }\n    let (v, bad) = query.parse_int(data);"),
     ("an int that does not fit 64 bits is an int", "report.cho", "    let (v, bad) = query.parse_int(data);\n    if bad == 0 {", "    let (v, bad) = query.parse_int(data);\n    if bad != 1 {"),
     ("an int is a dec", "report.cho", "        return (1, 0, digits_before_point(data));\n    }\n    // the decimal grammar", "        return (2, 0, digits_before_point(data));\n    }\n    // the decimal grammar"),
-    ("a decimal needs no point", "report.cho", "    if clean && point && digits > 0 && frac <= 18 {", "    if clean && digits > 0 && frac <= 18 {"),
-    ("a decimal needs no digit", "report.cho", "    if clean && point && digits > 0 && frac <= 18 {", "    if clean && point && frac <= 18 {"),
     ("a decimal may have 19 fractional digits", "report.cho", "    if clean && point && digits > 0 && frac <= 18 {", "    if clean && point && digits > 0 && frac <= 19 {"),
-    ("a decimal too wide for 64 bits is a dec", "report.cho", "        if bad2 == 0 {\n            return (2, frac, digits_before_point(data));", "        if bad2 != 2 {\n            return (2, frac, digits_before_point(data));"),
-    ("a second point is clean", "report.cho", "        } else if c == '.' && !point {\n            point = true;", "        } else if c == '.' {\n            point = true;"),
     ("a decimal's scale is not counted", "report.cho", "            if point {\n                frac = frac + 1;\n            }", "            if false {\n                frac = frac + 1;\n            }"),
     ("a sign is not skipped before the decimal's digits", "report.cho", "    if int_of(data[0]) == '-' || int_of(data[0]) == '+' {\n        at = 1;\n    }\n    var digits = 0;", "    if int_of(data[0]) == '-' {\n        at = 1;\n    }\n    var digits = 0;"),
     ("a float is a dec", "report.cho", "    if status == 0 {\n        return (3, 0, 0);", "    if status == 0 {\n        return (2, 0, 0);"),
@@ -38,7 +34,6 @@ MUTANTS = [
     ("the first empty is the last", "report.cho", "        if get(g, base + 10) == 0 {\n            put(g, base + 10, row);", "        if true {\n            put(g, base + 10, row);"),
     ("the empty cell's line is its row", "report.cho", "            put(g, base + 11, line);\n        }\n        return 0;", "            put(g, base + 11, row);\n        }\n        return 0;"),
     ("a class is counted in the next counter", "report.cho", "    put(g, base + 1 + class, get(g, base + 1 + class) + 1);", "    put(g, base + 2 + class, get(g, base + 2 + class) + 1);"),
-    ("a float's digits are counted for the suggestion", "report.cho", "    if class <= 2 {\n        if idig > get(g, base + 8) {", "    if class <= 3 {\n        if idig > get(g, base + 8) {"),
     ("an int's digits are not counted", "report.cho", "    if class <= 2 {\n        if idig > get(g, base + 8) {", "    if class == 2 {\n        if idig > get(g, base + 8) {"),
     ("a dec's scale is the last", "report.cho", "    if class == 2 && scale > get(g, base + 7) {", "    if class == 2 {"),
     ("an int is the first not-int", "report.cho", "    if class != 1 && get(g, base + 12) == 0 {", "    if class != 7 && get(g, base + 12) == 0 {"),
@@ -47,7 +42,6 @@ MUTANTS = [
     ("a dec is a not-float", "report.cho", "    if class >= 4 && get(g, base + 16) == 0 {", "    if class >= 2 && get(g, base + 16) == 0 {"),
     ("the first other is the last", "report.cho", "    if class == 5 && get(g, base + 18) == 0 {", "    if class == 5 {"),
     ("the length of the other cell is not kept", "report.cho", "        put(g, base + 20, len(data));\n", "        put(g, base + 20, 0);\n"),
-    ("the other cell is kept to 65 bytes", "report.cho", "        while i < len(data) && i < 64 {\n            let slot", "        while i < len(data) && i < 65 {\n            let slot"),
     ("the other cell is packed 8 to an integer", "report.cho", "            let slot = base + 21 + i / 7;\n            put(g, slot, get(g, slot) + (int_of(data[i]) << 8 * (i % 7)));", "            let slot = base + 21 + i / 8;\n            put(g, slot, get(g, slot) + (int_of(data[i]) << 8 * (i % 7)));"),
     # the suggestion and the answer
     ("a column of nothing is an int", "report.cho", "    if cells == empty || bad > 0 {\n        return buffer.append(heap, out, \"none\");", "    if bad > 0 {\n        return buffer.append(heap, out, \"none\");"),
@@ -73,7 +67,6 @@ MUTANTS = [
     ("the merge does not offset the lines", "report.cho", "+ lines_before);\n                    if f == 18 {", ");\n                    if f == 18 {"),
     ("the merge forgets the other cell", "report.cho", "                    if f == 18 {\n                        c = 20;", "                    if f == 99 {\n                        c = 20;"),
     ("the merge counts only six counters", "report.cho", "            var c = 0;\n            while c < 7 {", "            var c = 0;\n            while c < 6 {"),
-    ("the merge of nothing refuses", "report.cho", "    if ncols == 0 {\n        return (held, 0);\n    }", "    if ncols == 0 {\n        return (held, 1);\n    }"),
     # the plan and the engine
     ("the report is not told from a sort", "query.cho", "    return vec.get(q.gkinds, 1) != 0;", "    return false;"),
     ("a report row is held as a sort row", "engine.cho", "    if query.reporting(tree) {\n        // `--report types`", "    if false {\n        // `--report types`"),
@@ -97,8 +90,17 @@ MUTANTS = [
     ("the word check does not fold capitals", "flt.cho", "        if c >= 'A' && c <= 'Z' {\n            c = c + 32;\n        }\n        if c != int_of(word[i]) {", "        if c != int_of(word[i]) {"),
 ]
 
-# Equivalent: a mutant here would survive, and is not in MUTANTS (the reason is the stage's, docs/numbers.md N6): none yet.
-EQUIVALENT = []
+# Equivalent: mutants that survive, and must, with the reason (each was found by the first run; none of them can change a byte of the answer).
+EQUIVALENT = [
+    ("a decimal needs no point", "without a point the cell is digits (an int, taken first), or a number of 19 digits or more, which `parse_dec` refuses as too wide (10^18): the same float"),
+    ("a decimal needs no digit", "a cell with a point and no digit has `parse_dec` status 1: the same other"),
+    ("a decimal too wide for 64 bits is a dec", "`parse_dec` at the cell's own scale answers 0 or 2 only (the grammar was checked, the scale is the cell's): `!= 2` is `== 0`"),
+    ("a second point is clean", "`parse_dec` refuses the second point (status 1): the same float or other"),
+    ("a float's digits are counted for the suggestion", "`classify` answers 0 digits for a float, so the maximum does not move"),
+    ("the other cell is kept to 65 bytes", "the 65th byte is stored and never read: 64 are written out, and `truncated` is told from the length"),
+    ("the merge of nothing refuses", "the parent reads that range itself (a worker with no row has nothing to add): the same bytes, only slower"),
+    ("the report is read by one thread (on a machine without strace)", "the bytes are the same either way; `test_report.Threads` counts the threads started under strace on Linux, which kills it there"),
+]
 
 if __name__ == "__main__":
     sys.exit(mutlib.main(MUTANTS, TESTS))

@@ -12,11 +12,14 @@ import csv
 import io
 import random
 import re
+import shutil
+import subprocess
+import sys
 import unittest
 
 import numbers_ref as ref
 import test_parallel as par
-from harness import Scratch, TRAPS, validate
+from harness import Scratch, TRAPS, binary, validate
 
 INT = re.compile(rb"^[+-]?[0-9]+$")
 DEC = re.compile(rb"^[+-]?([0-9]*)\.([0-9]*)$")
@@ -287,6 +290,7 @@ class Report(Base):
         self.assertEqual(ok.status, 0, ok)
         no = self.t(data, "--report", "types", "--max-state-bytes", str(20 * 248 - 1))
         self.assertEqual((no.status, no.first_rule()), (8, "limit.state-too-large"), no)
+        self.assertIn("type report keeps 248 bytes for each column", no.error()["message"], no)
         no = self.t(data, "--report", "types", "--select", "c1,c2", "--max-state-bytes", str(2 * 248 - 1))
         self.assertEqual(no.first_rule(), "limit.state-too-large", no)
         ok = self.t(data, "--report", "types", "--select", "c1,c2", "--max-state-bytes", str(2 * 248))
@@ -389,6 +393,20 @@ class Plans(Base):
                 have = rows_of(got)[1:] if case % 2 else [[as_bytes_text(c) for c in r] for r in got.data()["rows"]]
                 self.assertEqual(have, want, (flags, data))
         self.assertGreater(answers, 1200)
+
+
+class Threads(Base):
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("strace"), "needs Linux and strace")
+    def test_the_report_with_threads_really_reads_in_ranges(self):
+        """Without this a report read by one thread would pass every parallel test, whatever its merge did: strace counts the threads started."""
+        data, _ = csv_bytes([b"x", b"n"], [[b"%d.5" % i, b"1"] for i in range(3000)])
+        self.s.write("t.csv", data)
+        log = str(self.s.dir / "strace.log")
+        for flags, want_threads in (([], False), (["--threads", "4", "--chunk-bytes", "4096", "--parallel-min-bytes", "0"], True)):
+            subprocess.run(["strace", "-f", "-e", "trace=clone,clone3", "-o", log, binary(), "--root", str(self.s.dir), "--report", "types", "--format", "csv", *flags, "t.csv"], capture_output=True, check=True)
+            text = open(log).read()
+            started = len([l for l in text.splitlines() if "CLONE_THREAD" in l and "= " in l and "= -1" not in l])
+            self.assertEqual(started > 0, want_threads, (flags, started))
 
 
 class Fuzz(Base):
