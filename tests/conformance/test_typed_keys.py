@@ -381,6 +381,51 @@ def rows_of(got):
     return list(csv.reader(io.StringIO(got.stdout.decode("latin-1"), newline="")))
 
 
+class Fuzz(unittest.TestCase):
+    """G3: tables whose key cells are strings of the grammar's alphabet (digits, signs, point, e, spaces, separators, quotes, `inf`, `nan`, multibyte): no trap, and the
+    reference's verdict (the answer, or the refusal with its row, column and context) for a typed group or a typed sort."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.s = Scratch()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.s.cleanup()
+
+    def test_fuzzed_key_cells_never_trap_and_agree_with_the_reference(self):
+        rng = random.Random(20261203)
+        alpha = "0123456789012345678901234567890+-. eE_,x\t'\"\\iInNfFaA"
+        for case in range(500):
+            names, rows = make_table(rng)
+            for row in rows:
+                for col in (1, 2, 3):
+                    if col < len(row) and rng.random() < 0.25:
+                        row[col] = "".join(rng.choice(alpha) for _ in range(rng.randint(0, 9)))
+            out = io.StringIO(newline="")
+            w = csv.writer(out, lineterminator="\n")
+            w.writerow(names)
+            for r in rows:
+                w.writerow(r)
+            data = out.getvalue().encode("latin-1")
+            recs = [r for r in csv.reader(io.StringIO(data.decode("latin-1"), newline="")) if r][1:]
+            grouped = case % 2 == 0
+            plan = make_group_plan(rng) if grouped else make_order_plan(rng)
+            want = (group_reference if grouped else order_reference)(names, recs, plan)
+            if want[0] == "refuse" and want[2].get("skip"):
+                continue
+            got = self.s.table("t.csv", data, *(group_args if grouped else order_args)(plan), "--limit", "1000000")
+            self.assertNotIn(got.status, TRAPS, (plan, data, got))
+            if want[0] == "refuse":
+                self.assertEqual((got.status, got.first_rule()), (8, want[1]), (plan, data, got))
+                d = got.error()["detail"]
+                self.assertEqual((d["row"], d["column"], d["context"]), (want[2]["row"], want[2]["column"], want[2]["context"]), (plan, data, got))
+            elif got.status == 0:
+                self.assertTrue(rows_eq(got.data()["rows"], want[2]), (got.data()["rows"], want[2], plan, data))
+            else:
+                self.assertTrue(any(len(r) != len(names) for r in rows), (plan, data, got))      # only a ragged row refuses a good plan
+
+
 class Typed(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
