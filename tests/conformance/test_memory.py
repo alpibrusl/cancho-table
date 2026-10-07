@@ -83,6 +83,8 @@ class Memory(unittest.TestCase):
                       ["--group", "status", "--agg", "count,min:bytes:float,max:bytes:float,distinct:status:float"],
                       ["--group", "status", "--agg", "count,sum:bytes:float,mean:bytes:float"],   # docs/numbers.md N4: the exact accumulator is 584 bytes a group, not a function of the rows
                       ["--group", "status", "--agg", "count,sum:bytes:dec(2),min:bytes:dec(2),max:bytes:dec(2),mean:bytes:dec(2)@4,distinct:status:dec(0)"],   # docs/numbers.md N2
+                      ["--report", "types", "--format", "csv"],   # docs/numbers.md N6: 248 bytes a column, not a function of the rows
+                      ["--report", "types", "--select", "bytes,path", "--where", "status = 200", "--format", "csv"],
                       ["--group", "status:float", "--agg", "count,sum:bytes"],   # docs/numbers.md N5: a typed key is 12 bytes a group, not a function of the rows
                       ["--group", "status:dec(2)", "--agg", "count,max:bytes"],
                       ["--order-by", "-bytes:dec(0),status:float", "--select", "id", "--top", "10", "--format", "csv"],
@@ -122,6 +124,7 @@ class Memory(unittest.TestCase):
             for flags in (["--where", "status=200 and bytes:int>50", "--select", "id,path", "--format", "csv"],
                           ["--group", "status", "--agg", "count,sum:bytes,distinct:status"],
                           ["--group", "status", "--agg", "count,sum:bytes:float,mean:bytes:float"],
+                          ["--report", "types", "--format", "csv"],
                           ["--select", "note", "--limit", "1000", "--max-bytes", "4000000"]):
                 common = flags + ["--threads", threads, "--chunk-bytes", range_bytes, "--parallel-min-bytes", 0]
                 rc1, small = peak_rss("--root", self.s.dir, *common, "small.csv")

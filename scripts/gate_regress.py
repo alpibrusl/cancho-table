@@ -65,6 +65,18 @@ def timed(argv):
     return time.perf_counter() - t, p.returncode
 
 
+def parse_perf(text):
+    """The instructions `perf stat -x, -e instructions:u` counted, from its standard error. On a hybrid CPU (P and E cores) the event is two, one per core type
+    (`cpu_core/instructions:u/` and `cpu_atom/instructions:u/`), and the one of the core type the process did not run on says `<not counted>`: the counted ones are
+    added. Answers 0 when none was counted (the counter cannot be read here: `perf_event_paranoid`, a process that ran on neither, no perf): the gate then refuses to judge."""
+    total = 0
+    for line in text.splitlines():
+        m = re.match(r"^(\d+),[^,]*,([^,]*instructions[^,]*)", line)
+        if m:
+            total += int(m.group(1))
+    return total
+
+
 def counted(argv):
     """Instructions retired by one run (the user-space instructions the process executed): deterministic to a few parts in a thousand, so it does not depend on the
     machine's load or on where the code landed. macOS: `/usr/bin/time -l`; Linux: `perf stat` (needs perf_event_paranoid <= 2 or the privilege, which is the
@@ -74,7 +86,7 @@ def counted(argv):
         m = re.search(r"(\d+)\s+instructions retired", p.stderr)
     else:
         p = subprocess.run(["perf", "stat", "-x,", "-e", "instructions:u", "--", *argv], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-        m = re.search(r"^(\d+),,instructions", p.stderr, re.M)
+        return parse_perf(p.stderr), p.returncode
     return (int(m.group(1)) if m else 0), p.returncode
 
 

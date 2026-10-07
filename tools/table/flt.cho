@@ -72,25 +72,26 @@ fn is_word[&d](data: &d [byte]) -> [] bool {
         at = 1;
     }
     let n = len(data) - at;
-    if n != 3 && n != 8 {
-        return false;
+    if n == 3 {
+        return word_is(data, at, "inf") || word_is(data, at, "nan");
     }
-    var word = 0;
+    return n == 8 && word_is(data, at, "infinity");
+}
+
+// Whether the bytes of `data` from `at` are `word` (lower case), in any case. Byte by byte: a number built from the bytes overflows when the first one is 128 or more.
+fn word_is[&d](data: &d [byte], at: int, word: &static [byte]) -> [] bool {
     var i = 0;
-    var ok = true;
-    while i < n {
+    while i < len(word) {
         var c = int_of(data[at + i]);
         if c >= 'A' && c <= 'Z' {
             c = c + 32;
         }
-        word = word * 256 + c;
+        if c != int_of(word[i]) {
+            return false;
+        }
         i = i + 1;
     }
-    if n == 3 {
-        return word == 0x696e66 || word == 0x6e616e;
-    }
-    // "infinity"
-    return word == 0x696e66696e697479;
+    return true;
 }
 
 // The cell as the exact reader of `std.json` reads it: the digits of the mantissa without leading zeros, `e`, and the decimal exponent that goes with them.

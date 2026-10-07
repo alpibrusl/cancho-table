@@ -57,6 +57,7 @@ import par;
 import plan;
 import query;
 import reader;
+import report;
 import scan;
 import sorter;
 import toolbox.built;
@@ -72,11 +73,11 @@ import toolbox.text;
 import writer;
 
 fn flag_table() -> [] &static [byte] {
-    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, a list: header names separated by commas, or #N for the Nth column (1-based), in the order given, and a repeat repeats the column. A comma, a backslash or a leading # in a name is written with a backslash before it. Examples: --select host,bytes and --select '#3,a\\,b' (the third column, then the column called a,b);where||text|none||only the rows that satisfy this: conditions joined by and (no or, no parentheses), each COLUMN OP VALUE with OP one of = != < <= > >= contains, or COLUMN in (V1, V2). COLUMN is a header name or #N. With no suffix the cell is compared as text, bytewise, so 10 is less than 9. COLUMN:int compares exact integers, COLUMN:dec(N) exact decimals of at most N fractional digits, COLUMN:float doubles. A cell that is not one of those refuses the whole query (value.not-integer and the like), so keep such rows out first: bytes != '' and bytes:int > 5. A name or VALUE with spaces or operators is 'quoted' (a doubled quote is one quote). Examples: --where 'status = 404 and bytes:int > 1000' and --where 'host in (a, b) and path contains x';group||text|none||count the rows by these columns instead of returning them: a list named as for --select, one row per distinct combination, in byte order unless --sort says otherwise. A name may end in :int, :dec(S) or :float to group by the value of the cell and not its text: 1.5 and 1.50 are one group, -0 is 0, the group is written at the column's scale (1.50) or as the shortest decimal that reads back (1.5), and the groups come in numeric order, negatives first. A cell that is not of that type refuses the query (value.not-decimal and the like, context group). A column read as one type must be read as it everywhere in the plan (column.type-conflict). A name that ends in :float is written name\\:float. Examples: --group host and --group host,status and --group 'price:dec(2),status';agg||text|none||what to compute, a comma-separated list of items (default count). An item is count, or FUNCTION:COLUMN with FUNCTION one of sum, min, max, mean, distinct and COLUMN a header name or #N. With no suffix sum, min, max and mean read the cells as exact integers and distinct as text. A suffix on COLUMN says how to read it: :int, :dec(S) for exact decimals of at most S fractional digits (S is 0 to 18, never rounded) or :float for doubles (min, max, distinct, and the exact sum and mean: sum:x:float and mean:x:float give the exact sum, or the exact sum over the count, rounded once to the nearest double, the same for every --threads, and a sum beyond the largest double is agg.float-overflow. A float mean takes no @N, so mean:x:float@2 is agg.bad-spec). mean of integers or decimals is rounded half to even at @N fractional digits written after the column, as mean:bytes@2, and @N may be left out only for a :dec(S) column, whose scale is the default. The output column is the item without its suffixes, as sum:price. A column really called x:dec(2) is written sum:x\\:dec(2). With --group the answer has a row per group, alone one row for all the rows. Examples: --agg count,sum:bytes,max:bytes and --agg 'sum:price:dec(2),mean:bytes@1';sort||text|none||with --group or --agg, order the groups by one output column: count, an aggregate as printed (sum:bytes, mean:price) or a group column, with - before it for descending. Aggregates compare as numbers and group columns bytewise (numerically for a typed --group column), ties go by the group columns. Without it the groups come in byte order of their columns. Examples: --sort -count and --sort sum:bytes;top||nat|none||keep only the first N rows or groups (N at least 1) after sorting: with --order-by the first N sorted rows, with --group or --agg the first N groups in --sort order, so it needs one of them. --limit and --from page inside it. Examples: --top 10 and --top 3;limit||nat|none||the most rows or groups in the answer (default 1000 as json, no limit as csv, ceiling 1000000), for --select, --where, --order-by, --group or --agg. A cut answer has truncated true and data.next.from, the --from of the next page. Examples: --limit 100 and --limit 20 --from 40;from||nat|none||the 0-based row or group to start at, as data.next.from of a truncated answer says, for --select, --where, --order-by, --group or --agg. Each call is a fresh read. Examples: --from 1000 and --from 2000;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-groups||nat|none|100000|the most groups kept, one more is limit.too-many-groups (ceiling 1000000);max-distinct||nat|none|100000|the most distinct values kept over all groups for distinct, one more is limit.too-many-distinct (ceiling 10000000);max-state-bytes||nat|none|67108864|the most bytes of group keys, distinct values or sorted rows kept (ceiling 1073741824);order-by||text|none||sort the rows by these keys, a comma-separated list: each key is a header name or #N, with - before it for descending and :int, :dec(S) or :float after it to compare by value: exact integers, exact decimals of at most S fractional digits, doubles (otherwise bytewise, so 10 sorts before 9 and an empty cell first). A later key breaks ties of an earlier one, and ties keep the order of the file. A cell that is not of the type refuses the query (value.not-integer, value.not-decimal, value.not-float and the like, context order-by). A name that starts with - or ends in :int, :dec(S) or :float is written \\-name or name\\:int. Rows are held up to --max-sort-rows, so keep it under with --where or --top. Not with --group or --agg. Examples: --order-by -bytes:int and --order-by status,-bytes:int and --order-by '-price:dec(2)';max-sort-rows||nat|none|1000000|the most rows held to sort, one more is limit.too-many-sort-rows (ceiling 20000000);threads||nat|none|1|how many threads read the file (1 to 64), for rows and groups only, on a file of at least --parallel-min-bytes of data: 1 is the sequential read and the answer of every other count is the same bytes;chunk-bytes||nat|none|4194304|the size of the range one thread reads at a time (with --threads), at least 1;parallel-min-bytes||nat|none|1048576|the smallest data (after the header) read by several threads, below it the read is sequential;max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, one document on standard output, text for a person (the shape only, do not parse it), csv for rows or groups as csv (it needs --select, --where, --order-by, --group or --agg). csv and text are not a json document: standard output is only the csv or the lines, a refusal is one line on standard error as table: RULE: message with the exit status, and rows already written stand, so a non-zero exit means the output is a prefix";
+    return "root||path|root||resolve FILE relative to this directory and refuse paths outside it;delimiter|d|text|none|,|the field separator: a comma, the word tab (or a tab character), or a semicolon;select||text|none||the columns to return, a list: header names separated by commas, or #N for the Nth column (1-based), in the order given, and a repeat repeats the column. A comma, a backslash or a leading # in a name is written with a backslash before it. Examples: --select host,bytes and --select '#3,a\\,b' (the third column, then the column called a,b);where||text|none||only the rows that satisfy this: conditions joined by and (no or, no parentheses), each COLUMN OP VALUE with OP one of = != < <= > >= contains, or COLUMN in (V1, V2). COLUMN is a header name or #N. With no suffix the cell is compared as text, bytewise, so 10 is less than 9. COLUMN:int compares exact integers, COLUMN:dec(N) exact decimals of at most N fractional digits, COLUMN:float doubles. A cell that is not one of those refuses the whole query (value.not-integer and the like), so keep such rows out first: bytes != '' and bytes:int > 5. A name or VALUE with spaces or operators is 'quoted' (a doubled quote is one quote). Examples: --where 'status = 404 and bytes:int > 1000' and --where 'host in (a, b) and path contains x';group||text|none||count the rows by these columns instead of returning them: a list named as for --select, one row per distinct combination, in byte order unless --sort says otherwise. A name may end in :int, :dec(S) or :float to group by the value of the cell and not its text: 1.5 and 1.50 are one group, -0 is 0, the group is written at the column's scale (1.50) or as the shortest decimal that reads back (1.5), and the groups come in numeric order, negatives first. A cell that is not of that type refuses the query (value.not-decimal and the like, context group). A column read as one type must be read as it everywhere in the plan (column.type-conflict). A name that ends in :float is written name\\:float. Examples: --group host and --group host,status and --group 'price:dec(2),status';agg||text|none||what to compute, a comma-separated list of items (default count). An item is count, or FUNCTION:COLUMN with FUNCTION one of sum, min, max, mean, distinct and COLUMN a header name or #N. With no suffix sum, min, max and mean read the cells as exact integers and distinct as text. A suffix on COLUMN says how to read it: :int, :dec(S) for exact decimals of at most S fractional digits (S is 0 to 18, never rounded) or :float for doubles (min, max, distinct, and the exact sum and mean: sum:x:float and mean:x:float give the exact sum, or the exact sum over the count, rounded once to the nearest double, the same for every --threads, and a sum beyond the largest double is agg.float-overflow. A float mean takes no @N, so mean:x:float@2 is agg.bad-spec). mean of integers or decimals is rounded half to even at @N fractional digits written after the column, as mean:bytes@2, and @N may be left out only for a :dec(S) column, whose scale is the default. The output column is the item without its suffixes, as sum:price. A column really called x:dec(2) is written sum:x\\:dec(2). With --group the answer has a row per group, alone one row for all the rows. Examples: --agg count,sum:bytes,max:bytes and --agg 'sum:price:dec(2),mean:bytes@1';sort||text|none||with --group or --agg, order the groups by one output column: count, an aggregate as printed (sum:bytes, mean:price) or a group column, with - before it for descending. Aggregates compare as numbers and group columns bytewise (numerically for a typed --group column), ties go by the group columns. Without it the groups come in byte order of their columns. Examples: --sort -count and --sort sum:bytes;top||nat|none||keep only the first N rows or groups (N at least 1) after sorting: with --order-by the first N sorted rows, with --group or --agg the first N groups in --sort order, so it needs one of them. --limit and --from page inside it. Examples: --top 10 and --top 3;limit||nat|none||the most rows or groups in the answer (default 1000 as json, no limit as csv, ceiling 1000000), for --select, --where, --order-by, --group or --agg. A cut answer has truncated true and data.next.from, the --from of the next page. Examples: --limit 100 and --limit 20 --from 40;from||nat|none||the 0-based row or group to start at, as data.next.from of a truncated answer says, for --select, --where, --order-by, --group or --agg. Each call is a fresh read. Examples: --from 1000 and --from 2000;max-bytes||nat|none|1048576|the most json rows returned hold, past it the answer is truncated with a next (ceiling 67108864);max-groups||nat|none|100000|the most groups kept, one more is limit.too-many-groups (ceiling 1000000);max-distinct||nat|none|100000|the most distinct values kept over all groups for distinct, one more is limit.too-many-distinct (ceiling 10000000);max-state-bytes||nat|none|67108864|the most bytes of group keys, distinct values or sorted rows kept (ceiling 1073741824);order-by||text|none||sort the rows by these keys, a comma-separated list: each key is a header name or #N, with - before it for descending and :int, :dec(S) or :float after it to compare by value: exact integers, exact decimals of at most S fractional digits, doubles (otherwise bytewise, so 10 sorts before 9 and an empty cell first). A later key breaks ties of an earlier one, and ties keep the order of the file. A cell that is not of the type refuses the query (value.not-integer, value.not-decimal, value.not-float and the like, context order-by). A name that starts with - or ends in :int, :dec(S) or :float is written \\-name or name\\:int. Rows are held up to --max-sort-rows, so keep it under with --where or --top. Not with --group or --agg. Examples: --order-by -bytes:int and --order-by status,-bytes:int and --order-by '-price:dec(2)';report||text|none||read the whole table once and describe each column's cells instead of returning them: the only value is types. One row per column (--select picks the columns, --where keeps the rows): name, cells, empty, int, dec, float, not_finite, other, dec_max_scale, int_digits_max, widest, suggest, then the row and line of the first empty cell, of the first cell :int would refuse, :dec would refuse and :float would refuse, of the first other cell, that cell's first 64 bytes and whether it was longer. A cell is empty, an int (:int reads it), a dec (a point, no exponent, up to 18 digits: :dec(S) reads it with S the digits after the point), a float (an exponent, or more digits: :float reads it), not_finite (nan, inf) or other. suggest is the smallest declaration every non-empty cell satisfies, written as the suffix: :int, :dec(S) with S the most fractional digits seen, :float, or none (a cell that is not a number, nan or inf, or only empty cells). It is a suggestion and nothing applies it: no flag reads a column as a type unless you say so, and a float column of 0.1-shaped cells is :dec(1), the exact reading. --limit and --from page the columns, --max-bytes bounds a json page, and the counters take 248 bytes a column, counted in --max-state-bytes. Not with --group, --agg, --order-by, --sort or --top. Examples: --report types and --report types --select price,bytes --where 'status = 404';max-sort-rows||nat|none|1000000|the most rows held to sort, one more is limit.too-many-sort-rows (ceiling 20000000);threads||nat|none|1|how many threads read the file (1 to 64), for rows and groups only, on a file of at least --parallel-min-bytes of data: 1 is the sequential read and the answer of every other count is the same bytes;chunk-bytes||nat|none|4194304|the size of the range one thread reads at a time (with --threads), at least 1;parallel-min-bytes||nat|none|1048576|the smallest data (after the header) read by several threads, below it the read is sequential;max-rows||nat|none|10000000|the most data rows read, past it the answer says truncated (ceiling 1000000000);max-line-bytes||nat|none|1048576|the longest line read and the most a kept record may hold, a longer one is limit.line-too-long (ceiling 16777216);format||choice:json/text/csv|none|json|json for a program, one document on standard output, text for a person (the shape only, do not parse it), csv for rows or groups as csv (it needs --select, --where, --order-by, --group or --agg). csv and text are not a json document: standard output is only the csv or the lines, a refusal is one line on standard error as table: RULE: message with the exit status, and rows already written stand, so a non-zero exit means the output is a prefix";
 }
 
 fn tool() -> [] describe.Tool {
-    return describe.Tool { name: "table", version: "0.3.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some columns (--select), the rows that satisfy a condition (--where, bytewise or exact integers, decimals or doubles), rows in order (--order-by), or counts, sums, means, minima, maxima and distinct counts of groups (--group, --agg, --sort, --top), as json pages or csv. Every refusal is a rule, with its hint. Three forms, chosen by the flags: the shape (FILE alone: the column names and the row count), rows (--select, --where or --order-by, then --top, --limit and --from to cut and page) and groups (--group or --agg, then --where, --sort, --top, --limit and --from). A mix is refused. args.conflict: --select or --order-by with --group or --agg, and --format text with rows or groups. args.required-flag: --limit, --from or --format csv with the shape, --top with neither --order-by, --group nor --agg, and --sort without --group or --agg. A page that was cut says data.next.from: pass it as --from. FILE is one path, relative to --root when given, and its first row is the header.", usage: "shape:  table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE\nrows:   table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--select NAMES] [--where EXPR] [--order-by KEYS] [--top N] [--limit N] [--from N] [--max-bytes N] [--max-sort-rows N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] FILE\ngroups: table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --group NAMES [--agg ITEMS] [--where EXPR] [--sort KEY] [--top N] [--limit N] [--from N] [--max-bytes N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] FILE\n        (--agg alone, without --group, is one group of all the rows)\n\nFILE: exactly one, a CSV file (--delimiter tab for TSV) whose first row is the header. With --root it is relative to that directory (absolute paths, .. and symbolic links are refused).\nNAMES, KEYS and ITEMS are comma-separated lists, and in a name a comma or backslash is written with a backslash before it. A column is its header name or #N, the Nth (1-based).\nRows and groups come as data.columns, data.rows (every cell a string, numbers too), data.row_count, data.truncated, data.next ({\"from\": N} or null) and, for groups, data.group_count.\n\nExamples, on the file sales.csv (a refusal is shown as its rule, exit status, hint and repair kind):\nhost,status,bytes,price\na,200,512,1.50\nb,404,0,2.25\na,200,1024,1.5\nc,500,2048,10.00\nb,200,64,0.75\n\n$ table sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"headers\":[\"host\",\"status\",\"bytes\",\"price\"],\"column_count\":4,\"row_count\":5,\"truncated\":false},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --select host,bytes --where 'status = 200' --order-by -bytes:int --limit 2 sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"host\",\"bytes\"],\"rows\":[[\"a\",\"1024\"],[\"a\",\"512\"]],\"row_count\":2,\"truncated\":true,\"next\":{\"from\":2}},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --group host --agg count,sum:bytes --sort -sum:bytes --top 2 sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"host\",\"count\",\"sum:bytes\"],\"rows\":[[\"c\",\"1\",\"2048\"],[\"a\",\"2\",\"1536\"]],\"row_count\":2,\"truncated\":false,\"next\":null,\"group_count\":3},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --agg 'sum:price:dec(2),mean:bytes@1' sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"sum:price\",\"mean:bytes\"],\"rows\":[[\"16.00\",\"729.6\"]],\"row_count\":1,\"truncated\":false,\"next\":null,\"group_count\":1},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --select host --group host sales.csv\nrefused: exit 2, rule args.conflict, hint \"drop --select\", repair none", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|1|1|the one CSV file to read, a path relative to --root when given (absolute paths, .. and symbolic links are refused), whose first row is the header that --select, --where, --group, --agg and --order-by name columns by", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;io.write-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;limit.too-many-sort-rows;limit.too-many-groups;limit.too-many-distinct;limit.state-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column;column.unknown;column.ambiguous;where.syntax;agg.bad-spec;sort.unknown-key;value.not-integer;value.integer-overflow;value.not-decimal;value.decimal-scale;value.decimal-too-wide;column.type-conflict;value.not-float;value.not-finite;value.float-range;limit.number-too-long;agg.float-overflow", extra_rules: extra(), limits: "threads|1|64;chunk-bytes|4194304|1073741824;parallel-min-bytes|1048576|1073741824;limit|1000|1000000;max-bytes|1048576|67108864;max-groups|100000|1000000;max-distinct|100000|10000000;max-state-bytes|67108864|1073741824;max-sort-rows|1000000|20000000;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
+    return describe.Tool { name: "table", version: "0.3.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some columns (--select), the rows that satisfy a condition (--where, bytewise or exact integers, decimals or doubles), rows in order (--order-by), or counts, sums, means, minima, maxima and distinct counts of groups (--group, --agg, --sort, --top), as json pages or csv. Every refusal is a rule, with its hint. Four forms, chosen by the flags: the shape (FILE alone: the column names and the row count), rows (--select, --where or --order-by, then --top, --limit and --from to cut and page), groups (--group or --agg, then --where, --sort, --top, --limit and --from) and the type report (--report types, then --select, --where, --limit and --from: one row per column, saying what its cells are and which declaration would read it). A mix is refused. args.conflict: --select or --order-by with --group or --agg, --report with --group, --agg, --order-by, --sort or --top, and --format text with rows, groups or the report. args.required-flag: --limit, --from or --format csv with the shape, --top with neither --order-by, --group nor --agg, and --sort without --group or --agg. The report reads every row once and changes nothing: its suggestions (:int, :dec(S), :float or none) are applied by no flag. A page that was cut says data.next.from: pass it as --from. FILE is one path, relative to --root when given, and its first row is the header.", usage: "shape:  table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] FILE\nrows:   table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--select NAMES] [--where EXPR] [--order-by KEYS] [--top N] [--limit N] [--from N] [--max-bytes N] [--max-sort-rows N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] FILE\ngroups: table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --group NAMES [--agg ITEMS] [--where EXPR] [--sort KEY] [--top N] [--limit N] [--from N] [--max-bytes N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] FILE\n        (--agg alone, without --group, is one group of all the rows)\nreport: table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --report types [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] FILE\n\nFILE: exactly one, a CSV file (--delimiter tab for TSV) whose first row is the header. With --root it is relative to that directory (absolute paths, .. and symbolic links are refused).\nNAMES, KEYS and ITEMS are comma-separated lists, and in a name a comma or backslash is written with a backslash before it. A column is its header name or #N, the Nth (1-based).\nRows and groups come as data.columns, data.rows (every cell a string, numbers too), data.row_count, data.truncated, data.next ({\"from\": N} or null) and, for groups, data.group_count.\n\nExamples, on the file sales.csv (a refusal is shown as its rule, exit status, hint and repair kind):\nhost,status,bytes,price\na,200,512,1.50\nb,404,0,2.25\na,200,1024,1.5\nc,500,2048,10.00\nb,200,64,0.75\n\n$ table sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"headers\":[\"host\",\"status\",\"bytes\",\"price\"],\"column_count\":4,\"row_count\":5,\"truncated\":false},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --select host,bytes --where 'status = 200' --order-by -bytes:int --limit 2 sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"host\",\"bytes\"],\"rows\":[[\"a\",\"1024\"],[\"a\",\"512\"]],\"row_count\":2,\"truncated\":true,\"next\":{\"from\":2}},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --group host --agg count,sum:bytes --sort -sum:bytes --top 2 sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"host\",\"count\",\"sum:bytes\"],\"rows\":[[\"c\",\"1\",\"2048\"],[\"a\",\"2\",\"1536\"]],\"row_count\":2,\"truncated\":false,\"next\":null,\"group_count\":3},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --agg 'sum:price:dec(2),mean:bytes@1' sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"sum:price\",\"mean:bytes\"],\"rows\":[[\"16.00\",\"729.6\"]],\"row_count\":1,\"truncated\":false,\"next\":null,\"group_count\":1},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --select host --group host sales.csv\nrefused: exit 2, rule args.conflict, hint \"drop --select\", repair none", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|1|1|the one CSV file to read, a path relative to --root when given (absolute paths, .. and symbolic links are refused), whose first row is the header that --select, --where, --group, --agg and --order-by name columns by", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.missing-operand;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;io.write-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;limit.too-many-sort-rows;limit.too-many-groups;limit.too-many-distinct;limit.state-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column;column.unknown;column.ambiguous;where.syntax;agg.bad-spec;sort.unknown-key;value.not-integer;value.integer-overflow;value.not-decimal;value.decimal-scale;value.decimal-too-wide;column.type-conflict;value.not-float;value.not-finite;value.float-range;limit.number-too-long;agg.float-overflow", extra_rules: extra(), limits: "threads|1|64;chunk-bytes|4194304|1073741824;parallel-min-bytes|1048576|1073741824;limit|1000|1000000;max-bytes|1048576|67108864;max-groups|100000|1000000;max-distinct|100000|10000000;max-state-bytes|67108864|1073741824;max-sort-rows|1000000|20000000;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "no", guarantees: "deterministic;idempotent;bounded_memory" };
 }
 
 // The tool's own rules, beside the contract's catalogue: tag, exit code,
@@ -256,6 +257,111 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
     unbox_slice(heap, spare);
     unbox_slice(heap, prefixes);
     return (pending, row);
+}
+
+// `--report types` answers with its own columns, whatever the frame made of the selection: the frame's json header, or the report's (functions of their own: this
+// code inside the read function made the compiler spend more on every row of every one-thread read).
+fn report_head[&h](heap: &!h Heap, reporting: bool, head: buffer.Buffer) -> [heap] buffer.Buffer {
+    if reporting {
+        buffer.drop(heap, head);
+        return report.head_json(heap);
+    }
+    return head;
+}
+
+fn report_lead[&h](heap: &!h Heap, reporting: bool, lead: buffer.Buffer, delim: int) -> [heap] buffer.Buffer {
+    if reporting {
+        buffer.drop(heap, lead);
+        return report.head_csv(heap, delim);
+    }
+    return lead;
+}
+
+// The report's rows (report.cho), one for each column asked for, the page `--from` and `--limit` ask for, as csv written out or as json rows kept.
+fn finish_report[&h, &i, &q, &n, &e, &c, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, held: agg.Groups, tree: &q query.Query, names: &n buffer.Buffer, hends: &e vec.Vec[int], cols: &c [int], max_state: int, as_csv: bool, delim: int, from: int, limit: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, agg.Groups) {
+    let ncols = report.columns_of(tree, a[engine.k_columns()]);
+    var groups = held;
+    var seen = 0;
+    borrow groups as &zr in {
+        seen = vec.size(zr.acc);
+    }
+    if seen == 0 {
+        // no row was read: the columns are listed with zeros
+        if 8 * report.width() * ncols > max_state {
+            a[engine.k_abort()] = 43;
+            a[engine.k_stop()] = 1;
+            return (rows, scratch, groups);
+        }
+        groups = agg.extend(heap, groups, report.width() * ncols);
+    }
+    a[engine.k_groups()] = ncols;
+    var pending = rows;
+    var row = scratch;
+    let ns = query.count_of(tree, 0);
+    var pos = from;
+    var going = true;
+    borrow groups as &gr in {
+        while pos < ncols && going {
+            var column = pos;
+            if ns > 0 {
+                column = cols[pos];
+            }
+            if a[engine.k_emitted()] >= limit {
+                a[engine.k_more()] = 1;
+                a[engine.k_next()] = pos;
+                going = false;
+            } else if as_csv {
+                pending = report.put_row(heap, pending, gr, pos, name_of(names, hends, column), true, delim);
+                pending = buffer.push(heap, pending, byte_of(10));
+                a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
+                var held = 0;
+                borrow pending as &pr in {
+                    held = buffer.size(pr);
+                }
+                if held >= 65536 {
+                    let (after, ok) = engine.flush(io, pending);
+                    pending = after;
+                    if !ok {
+                        a[engine.k_abort()] = 9;
+                        going = false;
+                    }
+                }
+                pos = pos + 1;
+            } else {
+                borrow mut row as &!rw in {
+                    buffer.clear(rw);
+                }
+                row = report.put_row(heap, row, gr, pos, name_of(names, hends, column), false, delim);
+                var have = 0;
+                var need = 0;
+                borrow pending as &pr in {
+                    have = buffer.size(pr);
+                }
+                borrow row as &rr in {
+                    need = buffer.size(rr);
+                }
+                if have + need + 1 > budget {
+                    going = false;
+                    if a[engine.k_emitted()] == 0 {
+                        a[engine.k_abort()] = 8;
+                    } else {
+                        a[engine.k_more()] = 1;
+                        a[engine.k_next()] = pos;
+                    }
+                } else {
+                    if a[engine.k_emitted()] > 0 {
+                        pending = buffer.push(heap, pending, byte_of(','));
+                    }
+                    borrow row as &rr in {
+                        pending = buffer.append(heap, pending, buffer.bytes(rr));
+                    }
+                    a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
+                    pos = pos + 1;
+                }
+            }
+        }
+    }
+    return (pending, row, groups);
 }
 
 // The header's own spelling of column `col`.
@@ -461,7 +567,7 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         var at_arg = names_at;
         if c.bad_name >= ns {
             flag = "--where";
-            if c.bad_name >= query.name_count(tree) - query.count_of(tree, 4) && query.count_of(tree, 4) > 0 {
+            if c.bad_name >= query.name_count(tree) - query.count_of(tree, 4) && query.count_of(tree, 4) > 0 && !query.reporting(tree) {
                 flag = "--order-by";
             } else if c.bad_name >= ns + nw + ng {
                 flag = "--agg";
@@ -492,6 +598,8 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         e = over_limit(heap, e, "limit.too-many-groups", "more groups than --max-groups; counting stopped there", "raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns", shown, cli.nat(args, parsed, table, "max-groups"));
     } else if c.abort == 14 {
         e = over_limit(heap, e, "limit.too-many-distinct", "more distinct values than --max-distinct; counting stopped there", "raise --max-distinct, up to the ceiling introspect names", shown, cli.nat(args, parsed, table, "max-distinct"));
+    } else if c.abort == 43 {
+        e = over_limit(heap, e, "limit.state-too-large", "the type report keeps 248 bytes for each column, and the columns asked for hold more than --max-state-bytes bytes", "raise --max-state-bytes, up to the ceiling introspect names, or name the columns with --select", shown, cli.nat(args, parsed, table, "max-state-bytes"));
     } else if c.abort == 15 {
         e = over_limit(heap, e, "limit.state-too-large", "the group keys and distinct values kept hold more than --max-state-bytes bytes", "raise --max-state-bytes, up to the ceiling introspect names, or group by shorter values", shown, cli.nat(args, parsed, table, "max-state-bytes"));
     } else if c.abort == 11 || c.abort == 12 || c.abort == 16 || c.abort == 17 {
@@ -995,14 +1103,14 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                     cols = fcols;
                                     sel = fsel;
                                     cells = fcells;
-                                    head = fhead;
+                                    head = report_head(heap, query.reporting(tree), fhead);
                                     labels = flabels;
                                     lends = flends;
                                     picked = fpicked;
                                     a[engine.k_sort_field()] = fsort_field;
                                     a[engine.k_sort_slot()] = fsort_slot;
                                     a[engine.k_sort_desc()] = fdesc;
-                                    if ordering && fabort == 0 {
+                                    if ordering && !query.reporting(tree) && fabort == 0 {
                                         let nk = query.order_count(tree);
                                         var okeys = box_slice(heap, 3 * nk + 1, 0);
                                         borrow mut okeys as &!ow in {
@@ -1027,7 +1135,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                         going = false;
                                     }
                                     if as_csv && fabort == 0 {
-                                        rows = start_output(heap, rows, flead);
+                                        rows = start_output(heap, rows, report_lead(heap, query.reporting(tree), flead, delim));
                                     } else {
                                         buffer.drop(heap, flead);
                                     }
@@ -1035,7 +1143,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                 // The rest of the file, by several threads, when that is asked for and
                                 // worth it (par.cho): it leaves the tally, the output and the groups as
                                 // this loop would have.
-                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && !ordering && (mode == 2 || row_from == 0) {
+                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0) {
                                     var size = 0;
                                     match file_size(file) {
                                         Done::Ok(n) => {
@@ -1057,6 +1165,9 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             let u = contents(pw);
                                             u[scan.p_delim()] = delim;
                                             u[scan.p_mode()] = mode;
+                                            if query.reporting(tree) {
+                                                u[scan.p_mode()] = 2;
+                                            }
                                             if as_csv {
                                                 u[scan.p_csv()] = 1;
                                                 u[scan.p_yield()] = 65536;
@@ -1190,7 +1301,18 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                 }
             }
         }
-        if ordering && a[engine.k_abort()] == 0 {
+        if query.reporting(tree) && a[engine.k_abort()] == 0 {
+            borrow names as &nr in {
+                borrow hends as &er3 in {
+                    borrow cols as &kr in {
+                        let (r2, s2, g2) = finish_report(heap, io, finished, spare, groups, tree, nr, er3, contents(kr), max_state, as_csv, delim, from, limit, budget, a);
+                        finished = r2;
+                        spare = s2;
+                        groups = g2;
+                    }
+                }
+            }
+        } else if ordering && a[engine.k_abort()] == 0 {
             borrow groups as &hr in {
                 borrow mut cells as &!cw in {
                     borrow sel as &sr in {
@@ -1602,11 +1724,12 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     let has_group = cli.has(parsed, table, "group");
     let has_agg = cli.has(parsed, table, "agg");
     let has_order = cli.has(parsed, table, "order-by");
+    let has_report = cli.has(parsed, table, "report");
     let grouped = has_group || has_agg;
     var mode = 0;
     if grouped {
         mode = 2;
-    } else if has_select || has_where || has_order {
+    } else if has_select || has_where || has_order || has_report {
         mode = 1;
     }
     let delim = delimiter_of(cli.text(args, parsed, table, "delimiter"));
@@ -1687,7 +1810,15 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     if grouped && has_order {
         e = flag_problem(heap, e, "args.conflict", "--order-by sorts rows, and with --group or --agg the rows are counted into groups: order those with --sort and --top", "drop --order-by", "--order-by --group --agg");
     }
-    if !grouped && (cli.has(parsed, table, "sort") || cli.has(parsed, table, "top") && !has_order) {
+    if has_report {
+        if !bytes.equal(cli.text(args, parsed, table, "report"), "types") {
+            e = flag_problem(heap, e, "args.bad-value", "--report is types: the only report there is", "--report types", "--report");
+        }
+        if grouped || has_order || cli.has(parsed, table, "sort") || cli.has(parsed, table, "top") {
+            e = flag_problem(heap, e, "args.conflict", "--report types describes the columns of the whole table: it is not a grouping, a sort or a cut of rows", "drop --group, --agg, --order-by, --sort or --top", "--report --group --agg --order-by --sort --top");
+        }
+    }
+    if !has_report && !grouped && (cli.has(parsed, table, "sort") || cli.has(parsed, table, "top") && !has_order) {
         e = flag_problem(heap, e, "args.required-flag", "--sort orders groups and --top cuts groups or sorted rows, so they need --group, --agg or --order-by", "--group NAMES", "--sort --top --group");
     }
     // The plan.
@@ -1735,7 +1866,10 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
             tree = query.add_agg(heap, tree, 0, -1, 0, 0);
         }
     }
-    if has_order && !grouped {
+    if has_report {
+        tree = query.set_reporting(heap, tree);
+    }
+    if has_order && !grouped && !has_report {
         let (t2, e2) = add_order_keys(heap, tree, e, cli.text(args, parsed, table, "order-by"));
         tree = t2;
         e = e2;

@@ -16,6 +16,7 @@ import std.vec;
 import agg;
 import expr;
 import query;
+import report;
 import sorter;
 import toolbox.out;
 import writer;
@@ -499,6 +500,15 @@ pub fn fast_ok[&q](tree: &q query.Query) -> [] bool {
 // not an integer (as `--where` does, with `err_fn` -2); once `2 * cap + 1` rows are held they are cut back to `cap`.
 fn order_row[&h, &q, &c, &d, &e, &a](heap: &!h Heap, held: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, max_rows: int, max_state: int, a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
     // (`--where` was asked of the row by `group_fast` before the rows came here.)
+    if query.reporting(tree) {
+        // `--report types`: the row is classified into the counters (report.cho); the counters are the groups' place
+        let (g2, s2, st) = report.row(heap, held, escr, tree, cols, record, cells, report.columns_of(tree, a[k_columns()]), a[k_records()], opened, max_state);
+        if st != 0 {
+            a[k_stop()] = 1;
+            a[k_abort()] = 43;
+        }
+        return (g2, s2, kept);
+    }
     let e2 = escr;
     let k2 = kept;
     var rejected = 0;

@@ -32,6 +32,7 @@ import std.vec;
 import agg;
 import engine;
 import query;
+import report;
 import scan;
 import toolbox.out;
 import toolbox.path;
@@ -123,7 +124,12 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
                 }
             } else if clean == 1 {
                 borrow groups as &gr in {
-                    let n = agg.serialize(gr, o[header_bytes()..len(o)]);
+                    var n = 0;
+                    if query.reporting(w.tree) {
+                        n = report.serialize(gr, o[header_bytes()..len(o)]);
+                    } else {
+                        n = agg.serialize(gr, o[header_bytes()..len(o)]);
+                    }
                     if n < 0 {
                         clean = 0;
                     } else {
@@ -408,8 +414,16 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
                             }
                         }
                         if mode == 2 && fits {
-                            let (g2, refused) = agg.merge(heap, groups2, sl[at + header_bytes()..at + header_bytes() + payload_len], tree, pp[scan.p_max_groups()], pp[scan.p_max_distinct()], pp[scan.p_max_state()]);
-                            groups2 = g2;
+                            var refused = 0;
+                            if query.reporting(tree) {
+                                let (g2, r2) = report.merge(heap, groups2, sl[at + header_bytes()..at + header_bytes() + payload_len], before, lines_before, pp[scan.p_max_state()]);
+                                groups2 = g2;
+                                refused = r2;
+                            } else {
+                                let (g2, r2) = agg.merge(heap, groups2, sl[at + header_bytes()..at + header_bytes() + payload_len], tree, pp[scan.p_max_groups()], pp[scan.p_max_distinct()], pp[scan.p_max_state()]);
+                                groups2 = g2;
+                                refused = r2;
+                            }
                             if refused != 0 {
                                 fits = false;
                             }

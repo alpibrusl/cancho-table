@@ -104,6 +104,18 @@ fn float_add(acc: vec.Vec[int], at: int, key: int) -> [] vec.Vec[int] {
     return a;
 }
 
+// `n` more integers (zeros) in the row store: the report's counters, made when the first row comes (report.cho).
+pub fn extend[&h](heap: &!h Heap, g: Groups, n: int) -> [heap] Groups {
+    let Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
+    var a = acc;
+    var z = 0;
+    while z < n {
+        a = vec.push(heap, a, 0);
+        z = z + 1;
+    }
+    return Groups { index: index, acc: a, seen: seen, keyb: keyb, dkey: dkey, held: held, pairs: pairs, stride: stride, memo: memo };
+}
+
 pub fn start[&h, &q](heap: &!h Heap, tree: &q query.Query) -> [heap] Groups {
     let stride = stride_of(tree);
     var memo = box_slice(heap, memo_size() + 4, 0);
