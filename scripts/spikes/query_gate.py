@@ -23,7 +23,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-AWKWARD = ["-dash", "a b", "x,y", "#3", "and", "select", "count", "it's", 'q"d', "a:int", "b@2", "héllo", "k.v", "from", "group", "limit", "Mixed Case", "1st", "x\\y", "in", "contains", "order", "sum:x"]
+AWKWARD = ["like", "null", "-dash", "a b", "x,y", "#3", "and", "select", "count", "it's", 'q"d', "a:int", "b@2", "héllo", "k.v", "from", "group", "limit", "Mixed Case", "1st", "x\\y", "in", "contains", "order", "sum:x"]
 PLAIN = ["id", "status", "bytes", "name", "price", "city", "n1", "n2", "t"]
 
 
@@ -247,7 +247,7 @@ def ident(c):
     if c[0] == "pos":
         return "#%d" % c[1]
     n = c[1]
-    if qp.IDENT.fullmatch(n) and n.lower() not in qp.RESERVED:
+    if qp.IDENT.fullmatch(n) and n.lower() not in qp.RESERVED and n.lower() not in qp.FUTURE:
         return n
     return '"' + n.replace('"', '""') + '"'
 
@@ -327,7 +327,22 @@ def query_form(rnd, plan, source):
 
 def run(table, argv, path, fmt):
     p = subprocess.run([table] + argv + ["--format", fmt, path], capture_output=True, cwd=os.path.dirname(path))
-    return p.returncode, p.stdout, p.stderr
+    return normalise(p.returncode, p.stdout, p.stderr)
+
+
+def normalise(code, out, err):
+    """A literal that does not fit its column's type is `where.syntax` in the flag form, with the offset and the text of the expression it was
+    written in; a query is refused for it with `query.syntax` at the offset in the query. The two are the same refusal written for two front
+    ends, so they compare by class only. Everything else, refusals included, compares byte for byte."""
+    try:
+        e = json.loads(out)["error"]
+        if e["rule"] == "where.syntax":
+            return code, b"SYNTAX", b""
+    except Exception:
+        pass
+    if err.startswith(b"table: where.syntax:"):
+        return code, out, b"SYNTAX"
+    return code, out, err
 
 
 def gate(table, cases, seed, translate=None, verbose=False):

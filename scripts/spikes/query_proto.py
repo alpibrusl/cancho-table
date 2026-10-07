@@ -18,10 +18,14 @@ MAX_QUERY = 4096
 CLAUSE_WORDS = ["select", "from", "where", "group", "order", "limit", "offset", "by"]
 OPERATOR_WORDS = ["and", "in", "contains", "asc", "desc", "as", "cast"]
 RESERVED = set(CLAUSE_WORDS + OPERATOR_WORDS)     # a bare identifier may not be one of these: write it "like this"
+# Words of the grammar's future (joins, having, patterns, null, case, set operations): refused as bare identifiers NOW, so that a later
+# version can use them without breaking a query that is valid today.
+FUTURE = {"join", "inner", "left", "right", "full", "cross", "on", "using", "having", "union", "intersect", "except", "like", "ilike", "between",
+          "is", "not", "or", "case", "when", "then", "else", "end", "null", "true", "false", "distinct", "over", "with", "all", "any", "exists"}
 AGG_FUNCS = ["count", "sum", "min", "max", "mean"]  # reserved only before "("; `count(distinct x)` has the word distinct inside
 TYPES = ["int", "dec", "float"]                     # only after `as` or `::`
 SOURCE_WORDS = ["stdin"]                            # `from stdin`; a file is `from 'name'`
-KEYWORDS = sorted(RESERVED | set(AGG_FUNCS) | {"distinct"} | set(TYPES) | set(SOURCE_WORDS))
+KEYWORDS = sorted(RESERVED | FUTURE | set(AGG_FUNCS) | set(TYPES) | set(SOURCE_WORDS))
 
 
 class QueryError(Exception):
@@ -138,7 +142,7 @@ class P:
     def column(self, what="a column"):
         t = self.peek()
         if t[0] == "ID":
-            if t[1].lower() in RESERVED:
+            if t[1].lower() in RESERVED or t[1].lower() in FUTURE:
                 raise QueryError("syntax", t[2], expected=what + ' (a name that is a keyword is written "like this")')
             self.k += 1
             return ("name", t[1])
