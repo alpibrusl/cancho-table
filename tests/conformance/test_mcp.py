@@ -357,7 +357,8 @@ class Schema(unittest.TestCase):
             self.assertEqual(props[name]["description"], next(f["help"] for f in flags if f["name"] == "--" + name))
             self.assertGreater(len(props[name]["description"]), 40)
         self.assertIn("COLUMN OP VALUE", props["where"]["description"])
-        self.assertIn("count, sum:COL", props["agg"]["description"])
+        for word in ("sum", "mean", ":dec(S)", ":float", "@N"):
+            self.assertIn(word, props["agg"]["description"])
         self.assertEqual(tool["annotations"], {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
         self.assertNotIn("outputSchema", tool)
 
@@ -387,7 +388,7 @@ class Schema(unittest.TestCase):
             edits = [
                 ("top||nat|none||", "top||bool|none||"),                                                   # nat -> bool
                 (";limit||nat|none||", ";limit||choice:few/many|none||"),                                  # nat -> choice
-                ("the 0-based row to start at", "the 0-based row to start at (EDITED HELP)"),               # help follows
+                ("the 0-based row or group to start at", "the 0-based row or group to start at (EDITED HELP)"),               # help follows
                 (";format||", ";zzz||bool|none||a flag added by the test;format||"),                       # a new bool flag
             ]
             for old, new in edits:

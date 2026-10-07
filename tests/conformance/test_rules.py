@@ -9,6 +9,7 @@ tools/table/table.cho; their exit codes and summaries are asserted here.
 """
 
 import os
+import re
 import unittest
 
 from harness import Scratch, introspect, package_catalogue, run, run_argv, binary
@@ -44,7 +45,29 @@ LOCAL = {
     "value.float-range": (8, "never", "double"),
     "limit.number-too-long": (8, "never", "1,100"),
 }
-LINUX_ONLY = {"io.read-failed"}
+LINUX_ONLY = {"io.read-failed", "io.write-failed"}
+
+
+def to_full():
+    """Standard output is /dev/full: every write fails (Linux)."""
+    os.dup2(os.open("/dev/full", os.O_WRONLY), 1)
+
+
+def summary_says(rule, summary, error):
+    """What a rule's summary says it hints and repairs with is what the refusal says: the hint
+    verbatim (a `;` is a `,`, the catalogue has no other separator) and the repair kind
+    (null is `none`). Problems, as a list of strings."""
+    m = re.search(r"\. Hint: (.*)\. Repair: (none|retry|choose)\.$", summary)
+    if not m:
+        return ["%s: the summary has no `Hint: ... Repair: ...` ending: %r" % (rule, summary)]
+    out = []
+    hint = (error["hint"] or "").replace(";", ",")
+    kind = error["repair"]["kind"] if error["repair"] else "none"
+    if m.group(1) != hint:
+        out.append("%s: the summary hints %r, the refusal %r" % (rule, m.group(1), hint))
+    if m.group(2) != kind:
+        out.append("%s: the summary repairs with %s, the refusal with %s" % (rule, m.group(2), kind))
+    return out
 
 
 def as_nobody():
@@ -130,6 +153,8 @@ class Rules(unittest.TestCase):
             out.append(("io.permission-denied", root + ["denied.csv"], as_nobody))
         if os.path.exists("/proc/self/mem"):
             out.append(("io.read-failed", ["/proc/self/mem"], None))
+        if os.path.exists("/dev/full"):
+            out.append(("io.write-failed", root + ["ok.csv"], to_full))
         return out
 
     def test_every_rule_has_a_fixture_and_every_fixture_its_rule(self):
@@ -137,6 +162,7 @@ class Rules(unittest.TestCase):
         cat = package_catalogue()
         failures = []
         reached = set()
+        summaries = {r["rule"]: r["summary"] for r in introspect()["rules"]}
         try:
             for rule, argv, preexec in self.fixtures(s):
                 import subprocess
@@ -154,6 +180,8 @@ class Rules(unittest.TestCase):
                 if p.returncode != want:
                     failures.append("%s: exit %d, expected %d" % (rule, p.returncode, want))
                 reached.add(rule)
+                if rule in LOCAL and "hint" in errs[0]:
+                    failures += summary_says(rule, summaries[rule], errs[0])
                 repair = errs[0]["repair"]
                 if rule in cat and cat[rule][1] == "never" and repair and repair["kind"] == "retry":
                     failures.append("%s: a retry repair on a never-repairable rule" % rule)
@@ -186,6 +214,21 @@ class Rules(unittest.TestCase):
             self.assertEqual((r["exit"], r["repairable"]), (exit_code, repairable), tag)
             self.assertIn(word, r["summary"], tag)
         self.assertIn(8, {c["code"] for c in introspect()["exit_codes"]})
+
+    def test_the_summaries_of_the_rules_that_answer_on_standard_error_in_csv(self):
+        """limit.too-many-rows and limit.too-many-sort-rows are reached above as csv, which has no hint to
+        compare; in json they have one."""
+        s = Scratch()
+        try:
+            s.write("many.csv", "a\n1\n2\n3\n")
+            summaries = {r["rule"]: r["summary"] for r in introspect()["rules"]}
+            for rule, argv in (("limit.too-many-rows", ["--order-by", "a", "--max-rows", "1"]),
+                               ("limit.too-many-sort-rows", ["--order-by", "a", "--max-sort-rows", "2"])):
+                r = run("--root", s.dir, *argv, "many.csv")
+                self.assertEqual(r.first_rule(), rule)
+                self.assertEqual(summary_says(rule, summaries[rule], r.error()), [])
+        finally:
+            s.cleanup()
 
     def test_the_skill_lists_the_local_rules_with_their_exit(self):
         import subprocess
