@@ -3,7 +3,7 @@ is unambiguous and implementable, and to be the executable oracle of the example
 nothing here is imported by the tool.
 
     python3 query_proto.py 'select a, count(*) from "x.csv" group by a'      prints the flag form as JSON
-    python3 query_proto.py --examples                                        checks every worked example of docs/query.md
+    (query_examples.py checks every worked example of docs/query.md; query_gate.py is the equivalence gate)
 
 A query is TRANSLATED to the argv of flags that the tool already has (`--select`, `--where`, `--group`, `--agg`, `--sort`, `--order-by`,
 `--limit`, `--from`, and the operand), never to a second plan: the existing parsers then fill the one `Query`, so the two forms cannot
@@ -491,10 +491,8 @@ def translate(q):
     return argv, ast["source"]
 
 
-EXAMPLES = []   # filled by examples.py's data in docs/query.md; kept in sync by query_examples() below
-
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] != "--examples":
+    if len(sys.argv) > 1:
         try:
             argv, src = translate(sys.argv[1])
             print(json.dumps({"argv": argv, "source": src}))

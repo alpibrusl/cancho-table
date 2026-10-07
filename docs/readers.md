@@ -285,17 +285,20 @@ The task is the same in every mode: of each record take `status` and `bytes`; co
 
 ### 6.2 With threads (the 200,000-line prefix; per-record wall time, ns; lower is better)
 
+Two sweeps on the Mac, the second at load 5 to 11 (other work on the machine); the second is the table, the first run's `json` and `jsona` are in the text.
+
 | threads | Mac `csv` | Mac `flat` | Mac `jsonx` | **Mac `json` (std.json as it is)** | **Mac `jsona`** | Linux `csv` | Linux `json` | Linux `jsonx` |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 27.2 | 59.5 | 63.2 | **908** | 1,062 | 71 | 279 | 258 |
-| 2 | 14.1 | 31.1 | 31.2 | 868 | 1,945 | 36 | 150 | 130 |
-| 4 | 7.8 | 15.6 | 16.6 | **1,260** | 2,338 | 32 | 117 | 95 |
+| 1 | 28.9 | 64.0 | 105.9 | **646** | 1,210 | 71 | 279 | 258 |
+| 2 | 15.3 | 35.4 | 53.6 | 1,201 | 2,545 | 36 | 150 | 130 |
+| 4 | 8.0 | 19.9 | 25.0 | **1,435** | 2,655 | 32 | 117 | 95 |
 | 6 | | | | | | 22 | 124 | 83 |
-| 8 | 4.3 | 7.5 | 8.2 | **1,326** | 2,660 | | | |
-| 16 | 3.2 | 6.0 | 6.2 | **1,549** | 3,057 | | | |
+| 8 | 4.4 | 7.1 | 14.0 | **1,553** | 3,384 | | | |
+| 16 | 2.6 | 7.2 | 9.4 | **1,657** | 2,703 | | | |
 
-On the Mac **`std.json` as it is gets slower with threads (1.7x slower at 16 than at 1; the region-per-line version 2.9x slower)**. **`jsonx` and `flat` scale like CSV** (10.2x and 9.9x at 16 threads; CSV 8.5x), because neither touches the allocator per record.
-On Linux all of them scale as far as that box does (three physical cores; its known ceiling is 2.4x at 6 threads, `docs/parallel.md` section 5).
+On the Mac **`std.json` as it is gets slower with threads: 2.6x slower per record at 16 threads than at 1 in this sweep (1.7x in the first sweep, whose one-thread time was 908 ns under a load of 7: 868, 1,260, 1,326 and 1,549 at 2, 4, 8 and 16); the region-per-line version is 2.2x slower at 16 (2.9x in the first sweep)**.
+**`jsonx` and `flat` scale like CSV** (11x and 8.9x at 16 threads; CSV 11x; the first sweep gave 10.2x, 9.9x and 8.5x), because neither touches the allocator per record.
+On Linux all of them scale as far as that box does (three physical cores; its known ceiling is 2.4x at 6 threads, `docs/parallel.md` section 5): `json` 2.2x at 6, `jsonx` 3.1x, CSV 3.2x.
 
 ### 6.3 Is a scanner of my own worth it?
 
@@ -351,7 +354,7 @@ in `reader.cho`, `scan.cho`, `par.cho`, `engine.cho`'s hot functions and the rea
 | **U1** (upstream, cancho, not this repo) | `std.json.parse_with` (caller-owned state) | spike's `jsonx` on the benchmark file: <= 130 ns a record on the Mac, and >= 8x at 16 threads | not met |
 | **U2** (upstream) | `std.io.read_into` (bulk read of standard input) | `stdin_read`: >= 1 GB/s | not met: R1 ships on `getchar` |
 | **R1** | standard input for CSV: `-` / no operand, `io_read` in the authority row and `tools.toml`, `introspect` operand `min: 0` and the `stdin` field, skill text | **S1** every test of `test_select`, `test_filter`, `test_sort`, `test_numbers`, `test_float`, `test_plan` (the 1,800 generated tables) re-run through stdin: the same bytes as the file, refusals equal but for `detail.path: "-"`; **S2** `--threads 1..64` with stdin: the same bytes as `--threads 1`; **S3** `strace`: no socket, no write on disk; **S4** `scripts/manifest.py --check` with `io_read`; **S5** stdin time <= 1.1x the `getchar` floor of `stdin_read` on the same bytes (0.44 s Mac, 0.12 s Linux for the 31.7 MB file); **S6** peak memory flat from 2 MB to 37 MB of stdin; **S7** one 40,000-line record and an unterminated quote at the end through stdin: `parse.csv-unterminated-quote`; **S8** G6 (the CSV file paths untouched: the diff is in `body` only) | any |
-| **R2** | JSON lines read: `reader_jsonl.cho` (the line loop, the path lookup, the cell mapping), a range scan for JSON lines, the rules and flags of section 5, `--discover`, the `looks_like` detail | **J1 differential vs Python's `json`**: 1,800 generated JSON-lines files (every kind of value, escapes, non-ASCII, big numbers, nested, duplicates, blank lines, CRLF, BOM, ragged key sets) and generated plans, the engine's reference implementation (`refimpl.py`) fed the *Python-decoded* cells: same rows, same groups, same refusals (rule, line, row, path); **J2 the same plan gives the same bytes as the CSV of the same data**, for every plan the existing generator makes (the rows rendered as JSON lines with `--fields` = the header); **J3 `--threads` 1..16 and `--chunk-bytes` 1, 7, 64, 1000** give the sequential bytes, refusals first in file order; **J4 speed on the 1,000,000-row file, filter question: <= 3.0x the CSV time on the same rows on the same machine (projected 1.8 to 2.7x Mac, 2.5x Linux), and <= 1.2x DuckDB 1 thread `read_ndjson` on the Mac**; **J5 threads: `--threads 4` is >= 0.6x the speed-up of CSV at 4 on the same file, and `--threads 16` is never slower than `--threads 1`** (this fails today on the Mac with `std.json` as it is: 1.7x slower; it needs U1); **J6 memory flat** 2 MB to 37 MB, tape 96 KiB; **J7 300 fuzzed lines per plan: no trap**; **J8 mutants** (below) all killed or proved equivalent; **J9 G6** | any. If J4 fails on Linux with U1 in: R2b |
+| **R2** | JSON lines read: `reader_jsonl.cho` (the line loop, the path lookup, the cell mapping), a range scan for JSON lines, the rules and flags of section 5, `--discover`, the `looks_like` detail | **J1 differential vs Python's `json`**: 1,800 generated JSON-lines files (every kind of value, escapes, non-ASCII, big numbers, nested, duplicates, blank lines, CRLF, BOM, ragged key sets) and generated plans, the engine's reference implementation (`refimpl.py`) fed the *Python-decoded* cells: same rows, same groups, same refusals (rule, line, row, path); **J2 the same plan gives the same bytes as the CSV of the same data**, for every plan the existing generator makes (the rows rendered as JSON lines with `--fields` = the header); **J3 `--threads` 1..16 and `--chunk-bytes` 1, 7, 64, 1000** give the sequential bytes, refusals first in file order; **J4 speed on the 1,000,000-row file, filter question: <= 3.0x the CSV time on the same rows on the same machine (projected 1.8 to 2.7x Mac, 2.5x Linux), and <= 1.2x DuckDB 1 thread `read_ndjson` on the Mac**; **J5 threads: `--threads 4` is >= 0.6x the speed-up of CSV at 4 on the same file, and `--threads 16` is never slower than `--threads 1`** (this fails today on the Mac with `std.json` as it is: 1.7x to 2.6x slower; it needs U1); **J6 memory flat** 2 MB to 37 MB, tape 96 KiB; **J7 300 fuzzed lines per plan: no trap**; **J8 mutants** (below) all killed or proved equivalent; **J9 G6** | any. If J4 fails on Linux with U1 in: R2b |
 | **R2b** (conditional) | the flat scanner | `jsonl_check.py` with 1,000,000 generated lines: 0 disagreements with `std.json` and Python; J4 re-measured | |
 | **R3** | `--format jsonl` | **O1** the plan generator renders every plan as `jsonl` and the cells equal the CSV output's cells (parsed by Python's `json` and `csv`); **O2** the round trips of section 7; **O3** a cell with a newline, a NUL, a quote, a backslash, non-UTF-8 survives `csv -> jsonl -> csv`; **O4** `output.duplicate-column`; **O5** a refusal after rows: the rows stand, stderr has the verdict, the exit is non-zero (as CSV); **O6** `--select` as jsonl <= 1.3x `--format csv` in time | any |
 | **R3b** | `--format md`, if asked | its own gate list then | |
