@@ -156,4 +156,5 @@ def main():
     return 0 if worst <= LIMIT else 1
 
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())
