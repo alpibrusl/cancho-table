@@ -786,7 +786,7 @@ every limit (they come while reading, this one when the groups are complete), an
 | G10 | the others, below | below |
 | G11/G12 | the rule `agg.float-overflow` with fixture, exit code and summary; `test_memory`: 584 bytes a group, flat in the rows | pass |
 
-The whole suite (239 tests) passes on the Mac and on gram, with the pinned compiler a4572ea (no newer one was needed).
+The whole suite (241 tests) passes on gram with the pinned compiler a4572ea (no newer one was needed) and on the Mac; the md5 of all 134 plans of `scripts/corpus.py` (sequential, threaded, tiny ranges) is identical between `main` and this build; the clean-clone CI steps pass on gram except `site.py --check` (the rules count and table: for the page agent).
 
 **Against the others** (G10; 1,000,000 rows, grouped by `status`; seconds, the minimum of 7; the Mac was loaded by other work, load 8 to 11, the numbers are what they are; **every answer was compared with Python first: the exact sum rounded once and the mean rounded once, and the groups each contender got exactly right are counted**):
 
