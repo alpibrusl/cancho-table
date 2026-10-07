@@ -227,7 +227,7 @@ revision it was copied from.
 
 `tests/conformance/test_mcp.py` (42 tests, 10 s with the server built):
 
-* **Differential.** A corpus of 70 plans over the benchmark generator's file, quoted and multi-line fields,
+* **Differential.** A corpus of 71 plans over the benchmark generator's file, quoted and multi-line fields,
   a TSV, a `;` file, numbers (`:int`, `:dec(2)`, `:float`), an empty file, a header-only file, a file with a space
   and one with `"`, `;` and `$(id)` in its name, and 24 refusals (ragged, bad quote, unterminated quote, duplicate
   header, unknown column, bad `--where`, bad `--agg`, too many groups, flag conflicts, a directory, a missing
