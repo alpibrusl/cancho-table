@@ -262,6 +262,15 @@ class Floats(unittest.TestCase):
         for args in (["--where", "x:float > 1", "--agg", "min:x:float,distinct:x"], ["--where", "x:float > 1 and g = a", "--agg", "count"]):
             self.assertEqual(self.s.table("t.csv", data, *args).status, 0, args)
 
+    def test_a_header_called_x_float_is_written_with_a_backslash_in_where_too(self):
+        data = "id,x:float,x\n1,7,1.5\n2,abc,2.5\n"
+        got = self.s.table("t.csv", data, "--where", "x\\:float = 7", "--select", "id")
+        self.assertEqual(got.data()["rows"], [["1"]], got)
+        got = self.s.table("t.csv", data, "--where", "'x:float' = 7", "--select", "id")
+        self.assertEqual(got.data()["rows"], [["1"]], got)
+        got = self.s.table("t.csv", data, "--where", "x:float > 2", "--select", "id")
+        self.assertEqual(got.data()["rows"], [["2"]], got)       # the column x, read as a float
+
     def test_a_column_called_x_float_is_written_with_a_backslash(self):
         data = "g,x:float,x\na,7,1.5\n"
         got = self.s.table("t.csv", data, "--group", "g", "--agg", "sum:x\\:float,min:x:float", "--format", "csv")

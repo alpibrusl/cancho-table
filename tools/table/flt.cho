@@ -34,11 +34,9 @@ static pow10_float: [float] {
     return t;
 }
 
-// The `int` that stands for the double `x` (finite): its bits with the low 63 flipped when negative; zero is 0 whichever zero it was.
+// The `int` that stands for the double `x` (finite, and not zero: a zero cell is answered as key 0 before this is called, which is how -0 is 0): its
+// bits with the low 63 flipped when negative.
 pub fn key_of(x: float) -> [] int {
-    if x == 0.0 {
-        return 0;
-    }
     let bits = bits_of(x);
     if bits < 0 {
         return bits ^ 0x7fffffffffffffff;

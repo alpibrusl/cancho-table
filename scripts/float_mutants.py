@@ -17,7 +17,8 @@ TESTS = ["test_float", "test_rules", "test_numbers"]
 MUTANTS = [
     # the key and its inverse (flt.cho)
     ("the key of a negative double is not flipped", "flt.cho", "    if bits < 0 {\n        return bits ^ 0x7fffffffffffffff;\n    }\n    return bits;", "    if bits < 0 {\n        return bits;\n    }\n    return bits;"),
-    ("negative zero is a value of its own", "flt.cho", "    if x == 0.0 {\n        return 0;\n    }", "    if false && x == 0.0 {\n        return 0;\n    }"),
+    # (Not here: `key_of` answering 0 for a zero. It is only called with a non-zero double: a cell of only zeros is answered as key 0 before it, which is how -0 is 0.)
+    ("a cell of only zeros goes the long way", "flt.cho", "    if !nonzero {\n        return (0, 0);\n    }", "    if !nonzero {\n        return (0, 12);\n    }"),
     ("a subnormal is built from the wrong power of two", "flt.cho", "        x = math.ldexp(float_of(f), 0 - 1074);", "        x = math.ldexp(float_of(f), 0 - 1073);"),
     ("a normal double is built without its hidden bit", "flt.cho", "float_of(f | 0x10000000000000), e - 1075);", "float_of(f), e - 1075);"),
     ("a normal double is built with the wrong bias", "flt.cho", "float_of(f | 0x10000000000000), e - 1075);", "float_of(f | 0x10000000000000), e - 1074);"),
