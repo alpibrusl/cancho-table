@@ -26,7 +26,7 @@
 | its columns | **declared**: `--fields a,b.c,d.0` (a flat projection by dotted path); `--discover` is a bounded *report* of what the first lines hold, never a silent plan | "no guessing" is the tool's rule; a header is not free in JSON |
 | what a cell is | string -> its decoded text; number -> its exact token text; `true`/`false` -> that word; `null` and a missing key -> `--absent refuse` (default) or `empty`; object/array -> refused; a duplicate key on a declared path -> refused | every case a rule or a defined mapping, no silent stringify |
 | the cost of JSON | `std.json` per line is **about 650 ns on the Mac (24x a CSV record)**, 283 ns on Linux (3.9x). **All of the Mac's cost is one `region` per `parse` call: the same parser with the two ints of state passed in costs 63 to 106 ns (2.3 to 3.6x CSV) and scales with threads like CSV.** Ask upstream for `parse_with`; do not write a second scanner first | measured, section 6 |
-| a scanner of my own | **not in R2.** A flat-object scanner with `std.json` fallback was built as a spike: 59 to 69 ns on the Mac (no better than the fixed `std.json`), 170 ns on Linux (1.5x better than `std.json`'s 255); it agrees with `std.json` and with Python on 25,070 lines. Kept as plan B if the Linux gate fails | section 6.3 |
+| a scanner of my own | **not in R2.** A flat-object scanner with `std.json` fallback was built as a spike: 59 to 69 ns on the Mac (between equal to and 1.6x faster than the fixed `std.json`), 170 ns on Linux (1.5x faster than `std.json`'s 255); it agrees with `std.json` and with Python on 25,070 lines. Kept as plan B if the Linux gate fails | section 6.3 |
 | parallel | JSON lines splits at newlines with **no speculation** (a raw LF cannot be inside a JSON text); stdin cannot be split | section 2 |
 | other outputs | **JSON lines out (`--format jsonl`)**: yes, in R3. **Markdown table (`--format md`)**: not before someone asks (optional R3b). TSV is `--delimiter tab`, already there | section 7 |
 
@@ -174,6 +174,7 @@ surrogate escape; nesting at most 128 deep, `std.json`'s own limit).
 | **a byte order mark** | dropped at the start of the input, as CSV does (RFC 8259 lets a parser ignore it) | |
 | **a pretty-printed document, or an array of objects** | not JSON lines: line 1 is `{` or `[`, so `parse.jsonl-syntax` at its end; the hint says `jq -c '.[]'` or `jsonq`. `detail.looks_like: "json-document"` when line 1 is `[`, a lone `{`, or `[{` | the `jsonq` boundary of `docs/backlog.md` item 2 |
 | **a line longer than `--max-line-bytes`** | `limit.line-too-long`, as a CSV line | the bound exists; reused |
+| **a very long key, deep nesting, a huge array** | no separate key bound: a key is a slice of its line, so the line's bound is its bound (a declared path is at most 8 segments of a flag value). Nesting is `std.json`'s 128 (`parse.jsonl-syntax`, code `depth`); a line with more JSON nodes than `--max-json-nodes` is `limit.json-too-many-nodes` | each is a bound that already exists or one number |
 | **invalid UTF-8 outside a string, a NUL, any other control byte** | `parse.jsonl-syntax` with `std.json`'s code and position | |
 | **a line that parses but is not an object** | `parse.jsonl-not-object` (exit 8, `detail.kind`) | |
 | **duplicate keys** | a key that occurs twice **on a declared path** is `parse.jsonl-duplicate-key`; keys the plan never looks up may repeat freely | parsers disagree (`std.json` keeps the first, Python and `jq` the last): a silent choice is where two programs differ about what a line says |
@@ -269,7 +270,7 @@ The task is the same in every mode: of each record take `status` and `bytes`; co
 | per record, ns | Mac (16 cores, load 2.5 to 7) | Linux x86-64 (gram, cores 0-5, load about 6) |
 |---|---:|---:|
 | `lines`: find the line ends (the floor) | 8 to 10 | 13 |
-| `csv`: `reader.fields` + the task | **27 to 29** | **72** |
+| `csv`: `reader.fields` + the task | **27 to 31** | **72** |
 | `json`: `std.json`, tape reused | **636 to 651** (22 to 24x csv) | **283** (3.9x) |
 | `jsona`: `std.json`, tape in a region per line | 1,101 | 317 |
 | **`jsonx`: `std.json` with caller-owned state (no region)** | **63 to 106** (2.3 to 3.6x csv; two sessions an hour apart, 63 three times and 103 to 106 four times, same binaries) | **255** (3.5x) |
