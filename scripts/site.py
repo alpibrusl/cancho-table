@@ -78,6 +78,10 @@ e,-3.4
 f,NaN
 """
 
+# Two more small files, for the exact float sums
+DRIFT = "g,x\n" + "a,1e16\na,1\na,1\na,-1e16\n" + "h,0.1\n" * 10
+BIG = "g,x\na,1e308\na,1e308\n"
+
 # What is shown is what is typed; the argv run is shlex.split of it.
 DEMOS = {
     "shape": "table orders.csv",
@@ -92,6 +96,8 @@ DEMOS = {
     "dec_minmax": """table --agg "min:price:dec(2),max:price:dec(2),distinct:price:dec(2)" --format csv prices.csv""",
     "float": """table --where "temp != 'NaN' and temp:float >= 21.5" --format csv readings.csv""",
     "floatagg": """table --where "temp != 'NaN'" --agg "min:temp:float,max:temp:float,distinct:temp:float" --format csv readings.csv""",
+    "float_sum": """table --group g --agg "sum:x:float,mean:x:float" --format csv drift.csv""",
+    "float_over": "table --group g --agg sum:x:float big.csv",
     "float_bad": """table --where "temp:float >= 21.5" readings.csv""",
     "dec_bad": """table --where "price:dec(1) >= 12.5" prices.csv""",
     "sort": """table --where "bytes != ''" --order-by -bytes:int,status --limit 3 --select id,customer,bytes --format csv orders.csv""",
@@ -101,10 +107,10 @@ DEMOS = {
     "retry_bad": "table --max-line-bytes 10 orders.csv",
 }
 # demos shown as the members of the JSON line that matter, since the line is long
-SUMMARY = {"float_bad": ["rule", "hint", "repair", "detail"], "dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"]}
+SUMMARY = {"float_over": ["rule", "hint", "repair", "detail"], "float_bad": ["rule", "hint", "repair", "detail"], "dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"]}
 # task name -> the demos shown for it
 TASKS = {
-    "select": ["select"], "filter": ["where"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "sort": ["sort"], "group": ["group"], "page": ["page1", "page2"],
+    "select": ["select"], "filter": ["where"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "floatsum": ["float_sum", "float_over"], "sort": ["sort"], "group": ["group"], "page": ["page1", "page2"],
     "csv": ["csv"], "cores": ["cores"], "refuse": ["notint"],
 }
 QS = ["shape", "select", "group"]
@@ -345,6 +351,8 @@ def main():
         (Path(tmp) / "orders.csv").write_text(FIXTURE)
         (Path(tmp) / "prices.csv").write_text(PRICES)
         (Path(tmp) / "readings.csv").write_text(READINGS)
+        (Path(tmp) / "drift.csv").write_text(DRIFT)
+        (Path(tmp) / "big.csv").write_text(BIG)
         ctx = {"run": lambda words: run_words(words, binary, tmp), "introspect": introspect(binary, tmp)}
         for rel, regions in REGIONS.items():
             path = ROOT / rel

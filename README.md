@@ -28,7 +28,7 @@ $ table --where 'status = 200' --select customer,bytes orders.csv
 
 Most data tools optimise for flexibility. `table` optimises for predictability.
 
-* **Explicit types.** A column is text unless you write `:int` (an exact 64-bit integer), `:dec(S)` (an exact decimal with S fractional digits) or `:float` (the nearest double, in `--where` and for `min`, `max`, `distinct`, `count`); a cell that is not one is refused. [docs/filter.md](docs/filter.md)
+* **Explicit types.** A column is text unless you write `:int` (an exact 64-bit integer), `:dec(S)` (an exact decimal with S fractional digits) or `:float` (the nearest double, in `--where` and in every aggregate); a cell that is not one is refused. [docs/filter.md](docs/filter.md)
 * **Explicit operations.** One plan from flags, no expressions or functions. [docs/filter.md](docs/filter.md)
 * **Bounded resource use.** Rows, line and record size, groups, distinct values and group state each have a limit with its own rule. Peak memory is about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). `table introspect` lists the limits; [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html)
 * **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, and nothing written to disk. CI fails if the binary differs from the committed [`manifests/table.authority.json`](manifests/table.authority.json). [docs/architecture.md](docs/architecture.md)
@@ -135,7 +135,7 @@ $ table --where "price:dec(1) >= 12.5" prices.csv
 
 ### Filter and find the extremes of floats
 
-`temp:float` reads the column as the nearest double (ties to even), and compares doubles, not text: `21.5`, `21.50` and `2.15e1` are one value. `min` and `max` print as the shortest decimal that reads back to the same double; rows are copied as they are. `NaN`, `inf`, an out-of-range number and a cell that is not a number are refused, never skipped, with the row, line and column; for `NaN` the hint is the idiom that keeps those rows out (`temp != 'NaN' and temp:float >= 21.5`), and there is no repair, because what the cell was meant to be is not known. `min`, `max`, `distinct` and `count` work on floats; sum and mean do not yet. A column really named `x:float` is written `x\:float`.
+`temp:float` reads the column as the nearest double (ties to even), and compares doubles, not text: `21.5`, `21.50` and `2.15e1` are one value. `min` and `max` print as the shortest decimal that reads back to the same double; rows are copied as they are. `NaN`, `inf`, an out-of-range number and a cell that is not a number are refused, never skipped, with the row, line and column; for `NaN` the hint is the idiom that keeps those rows out (`temp != 'NaN' and temp:float >= 21.5`), and there is no repair, because what the cell was meant to be is not known. `min`, `max`, `distinct`, `count`, `sum` and `mean` work on floats. A column really named `x:float` is written `x\:float`.
 
 <!-- gen:t-float -->
 ```console
@@ -152,6 +152,22 @@ $ table --where "temp:float >= 21.5" readings.csv
 # exit status 8; the rule, hint, repair, detail of the JSON line it prints
 ```
 <!-- /gen:t-float -->
+
+### Sum and average floats, exactly
+
+`sum:x:float` and `mean:x:float` are exact: every cell is added without rounding and the total is rounded once to the nearest double (ties to even), so the answer does not depend on the order of the rows or on the number of cores. Adding the same numbers left to right in double precision gives `0.0` for group `a` and `0.9999999999999999` for group `h`. A `mean` takes no `@N` (it is a double; `mean:x:float@2` is refused). A sum beyond the largest double, about 1.8e308, is `agg.float-overflow`, which names the group; the mean of that group still exists. On a million rows DuckDB's DOUBLE sum gave a different answer at 1, 4 and 16 threads, none equal to the exact one: see the [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html#floats).
+
+<!-- gen:t-floatsum -->
+```console
+$ table --group g --agg "sum:x:float,mean:x:float" --format csv drift.csv
+g,sum:x,mean:x
+a,2.0,0.5
+h,1.0,0.1
+$ table --group g --agg sum:x:float big.csv
+{"rule": "agg.float-overflow", "hint": "sum fewer rows with --where, group by more columns, or sum in a smaller unit (the mean of the same group is a number: mean:COL:float)", "repair": {"kind": "none", "reason": "which rows to leave out is not known"}, "detail": {"path": "big.csv", "context": "sum", "column": "x", "group": "a", "group_truncated": false}}
+# exit status 8; the rule, hint, repair, detail of the JSON line it prints
+```
+<!-- /gen:t-floatsum -->
 
 ### Sum and average decimals
 
@@ -256,7 +272,7 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## What it cannot do yet
 
-* **Floats are partly built.** `:float` works in `--where` and for `min`, `max`, `distinct` and `count`. Not yet: `sum` and `mean` of a float (coming next: exact, and the same on any number of cores), grouping by a float column by value, and `--order-by` on a float.
+* **Floats are mostly built.** `:float` works in `--where` and in every aggregate, with exact sums and means. Not yet: grouping by a float column by value, `--order-by` on a float, and a faster reader for columns of 15- to 17-digit numbers (`min`, `max`, `sum` and `mean` read them slowly: planned).
 * **Decimals are mostly built.** `:dec(S)` filters and aggregates (`sum`, `min`, `max`, `mean`, `distinct`, `count`). Not yet: grouping by a decimal column by value and `--order-by price:dec(2)` ([docs/numbers.md](docs/numbers.md)).
 * **One core for a sort.** `--threads` is accepted with `--order-by`, and gives the same bytes, but the sort runs on one core. There is no sort that spills to disk.
 * **No joins**, and **one input file** at a time, named on the command line (no standard input).
