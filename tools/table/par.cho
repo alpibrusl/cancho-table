@@ -719,11 +719,12 @@ fn blob_hi[&s](table: &s [byte], at: int, k: int) -> [] int {
 
 // One level of the merge round: make job `k` (its input is the state's blob `k` and blob `k` of every range used), start its thread, make the rest, join it, and move
 // its answer up into `slots2` at `meta[np + 1 + k]`. `meta` holds the input bytes of each job, then where each job's slot starts.
-fn fan2[&p, &t, &r, &l, &u, &v, &x, &m](parent: &!p Heap, tree: &t query.Query, par2: &r [int], slots: &l [byte], used: &x [int], state: &v [byte], meta: &m [int], slots2: &!u [byte], k: int, np: int, n: int, slot_bytes: int) -> [heap, conc] int {
+fn fan2[&p, &t, &r, &l, &u, &v, &x, &m, &z](parent: &!p Heap, tree: &t query.Query, par2: &r [int], slots: &l [byte], used: &x [int], acc: &v [byte], tabs: &z [int], meta: &m [int], slots2: &!u [byte], k: int, np: int, n: int, slot_bytes: int) -> [heap, conc] int {
     if k >= np {
         return 0;
     }
-    var nb = 1;
+    let nt = tabs[0];
+    var nb = nt;
     var j = 0;
     while j < n {
         if used[j] == 1 {
@@ -742,12 +743,17 @@ fn fan2[&p, &t, &r, &l, &u, &v, &x, &m](parent: &!p Heap, tree: &t query.Query, 
             var at = 0;
             var q = 0;
             od[0] = 0;
-            let lo = blob_lo(state, 0, k);
-            let hi = blob_hi(state, 0, k);
-            copy_into(dst[at..at + hi - lo], state[lo..hi]);
-            at = at + hi - lo;
-            q = 1;
-            od[1] = at;
+            var ti = 0;
+            while ti < nt {
+                let toff = tabs[1 + ti];
+                let lo = blob_lo(acc, toff, k);
+                let hi = blob_hi(acc, toff, k);
+                copy_into(dst[at..at + hi - lo], acc[lo..hi]);
+                at = at + hi - lo;
+                q = q + 1;
+                od[q] = at;
+                ti = ti + 1;
+            }
             j = 0;
             while j < n {
                 if used[j] == 1 {
@@ -773,7 +779,7 @@ fn fan2[&p, &t, &r, &l, &u, &v, &x, &m](parent: &!p Heap, tree: &t query.Query, 
     borrow mut job as &!kj in {
         let body = work2;
         let thread = spawn(kj, body);
-        rest = fan2(parent, tree, par2, slots, used, state, meta, slots2, k + 1, np, n, slot_bytes);
+        rest = fan2(parent, tree, par2, slots, used, acc, tabs, meta, slots2, k + 1, np, n, slot_bytes);
         join(thread);
     }
     let Job2 { heap, tree, par, offs, inp, out } = job;
@@ -915,8 +921,10 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
     }
     agg.drop(heap, sg);
     unbox_slice(heap, sp);
-    // The state: the groups so far (the parent's, from the first rows) as `np` blobs.
-    var state = box_slice(heap, 1, byte_of(0));
+    // What is kept for the round to come: tables back to back (a table is the `np` blobs of a range's groups, from its offsets), `tabs` the count and where each starts.
+    // The first is the groups so far (the parent's, from the first rows).
+    var acc = buffer.empty(heap, 16);
+    var tabs = box_slice(heap, 72, 0);
     if declined == 0 {
         var need0 = 0;
         var ng0 = 0;
@@ -924,23 +932,33 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
             need0 = agg.parts_size(gr, np);
             ng0 = agg.groups(gr);
         }
-        unbox_slice(heap, state);
-        state = box_slice(heap, need0 + 1, byte_of(0));
+        var state = box_slice(heap, need0 + 1, byte_of(0));
         var work0 = box_slice(heap, 2 * ng0 + 6 * np + 8, 0);
+        var n0 = 0 - 1;
         borrow groups as &gr in {
             borrow mut state as &!stw in {
                 borrow split as &spr in {
                     borrow soff as &sor in {
                         borrow mut work0 as &!w0 in {
-                            if agg.serialize_parts(gr, contents(stw), contents(spr), contents(sor), nsplit, np, fields, contents(w0)) < 0 {
-                                declined = 1;
-                            }
+                            n0 = agg.serialize_parts(gr, contents(stw), contents(spr), contents(sor), nsplit, np, fields, contents(w0));
                         }
                     }
                 }
             }
         }
+        if n0 < 0 {
+            declined = 1;
+        } else {
+            borrow state as &str in {
+                acc = buffer.append(heap, acc, contents(str)[0..n0]);
+            }
+            borrow mut tabs as &!tbw in {
+                contents(tbw)[0] = 1;
+                contents(tbw)[1] = 0;
+            }
+        }
         unbox_slice(heap, work0);
+        unbox_slice(heap, state);
     }
     var wpar = box_slice(heap, j_size(), 0);
     borrow mut wpar as &!wp in {
@@ -1118,6 +1136,56 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
         }
         if declined == 0 {
             let last = cur >= size;
+            // This wave's tables are kept for the round to come when it is not the last wave and what is kept is small; otherwise they are the round's.
+            var wave_bytes = 0;
+            var nused = 0;
+            borrow slots as &sr in {
+                borrow used as &ur in {
+                    var j = 0;
+                    while j < n {
+                        if contents(ur)[j] == 1 {
+                            wave_bytes = wave_bytes + agg.get_i64(contents(sr), j * slot_bytes + header_bytes() + 8 * np);
+                            nused = nused + 1;
+                        }
+                        j = j + 1;
+                    }
+                }
+            }
+            var acc_bytes = 0;
+            borrow acc as &ar in {
+                acc_bytes = buffer.size(ar);
+            }
+            var nt = 0;
+            borrow tabs as &tbr in {
+                nt = contents(tbr)[0];
+            }
+            let keep = !last && acc_bytes + wave_bytes <= 33554432 && nt + nused <= 64;
+            if keep {
+                var j = 0;
+                while j < n {
+                    var usedj = 0;
+                    borrow used as &ur in {
+                        usedj = contents(ur)[j];
+                    }
+                    if usedj == 1 {
+                        var off = 0;
+                        borrow acc as &ar in {
+                            off = buffer.size(ar);
+                        }
+                        borrow slots as &sr in {
+                            let base = j * slot_bytes + header_bytes();
+                            acc = buffer.append(heap, acc, contents(sr)[base..base + agg.get_i64(contents(sr), base + 8 * np)]);
+                        }
+                        borrow mut tabs as &!tbw in {
+                            contents(tbw)[1 + nt] = off;
+                            nt = nt + 1;
+                            contents(tbw)[0] = nt;
+                        }
+                    }
+                    j = j + 1;
+                }
+            }
+            if !keep {
             // The round: the input of each merge thread and where its answer goes.
             var total_out = 0;
             borrow mut meta as &!mw in {
@@ -1125,8 +1193,15 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                 var k = 0;
                 while k < np {
                     var inl = 0;
-                    borrow state as &str in {
-                        inl = agg.get_i64(contents(str), 8 * (k + 1)) - agg.get_i64(contents(str), 8 * k);
+                    borrow acc as &ar in {
+                        borrow tabs as &tbr in {
+                            var ti = 0;
+                            while ti < contents(tbr)[0] {
+                                let toff = contents(tbr)[1 + ti];
+                                inl = inl + agg.get_i64(buffer.bytes(ar), toff + 8 * (k + 1)) - agg.get_i64(buffer.bytes(ar), toff + 8 * k);
+                                ti = ti + 1;
+                            }
+                        }
                     }
                     borrow slots as &sr in {
                         borrow used as &ur in {
@@ -1170,9 +1245,11 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                 borrow par2 as &p2r in {
                     borrow slots as &sr in {
                         borrow used as &ur in {
-                            borrow state as &str in {
-                                borrow meta as &mr in {
-                                    fan2(heap, tree, contents(p2r), contents(sr), contents(ur), contents(str), contents(mr), contents(s2w), 0, np, n, slot_bytes);
+                            borrow acc as &ar in {
+                                borrow tabs as &tbr in {
+                                    borrow meta as &mr in {
+                                        fan2(heap, tree, contents(p2r), contents(sr), contents(ur), buffer.bytes(ar), contents(tbr), contents(mr), contents(s2w), 0, np, n, slot_bytes);
+                                    }
                                 }
                             }
                         }
@@ -1254,12 +1331,12 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                 total_groups = ng_all;
                 finished = true;
             } else if declined == 0 {
-                // The new state: the merged groups of each, as one blob each.
-                var new_state = box_slice(heap, 8 * (np + 1) + payload_all + 1, byte_of(0));
-                borrow mut new_state as &!nsw in {
+                // The new state: the merged groups of each, as one blob each, in one table.
+                var nacc = buffer.empty(heap, 8 * (np + 1) + payload_all + 16);
+                borrow mut nacc as &!nsw in {
                     borrow slots2 as &s2r in {
                         borrow meta as &mr in {
-                            let ns = contents(nsw);
+                            let ns = buffer.room(nsw);
                             var at = 8 * (np + 1);
                             var k = 0;
                             while k < np {
@@ -1271,13 +1348,19 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                                 k = k + 1;
                             }
                             agg.put_i64(ns, 8 * np, at);
+                            buffer.filled(nsw, at);
                         }
                     }
                 }
-                unbox_slice(heap, state);
-                state = new_state;
+                buffer.drop(heap, acc);
+                acc = nacc;
+                borrow mut tabs as &!tbw in {
+                    contents(tbw)[0] = 1;
+                    contents(tbw)[1] = 0;
+                }
             }
             unbox_slice(heap, slots2);
+            }
         }
     }
     pp[scan.p_max_groups()] = bound_groups;
@@ -1289,7 +1372,8 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
     unbox_slice(heap, plan);
     unbox_slice(heap, used);
     unbox_slice(heap, meta);
-    unbox_slice(heap, state);
+    buffer.drop(heap, acc);
+    unbox_slice(heap, tabs);
     unbox_slice(heap, split);
     unbox_slice(heap, soff);
     if declined == 0 && finished {
