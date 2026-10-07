@@ -42,6 +42,20 @@ M = [
 ]
 
 
+# The mutants that survive, and why each is accepted (checked by reading the code and, where a number is given, by running it):
+NOTES = {
+    "tie: lo <= 1 -> lo <= 0": "equivalent on every input tried: lo_search.py found lo == 1 in none of 2.8 million draws of (q in -4..23, w) at the point where the rule is consulted, and all 31,979 exact halfways among them have lo == 0. "
+                              "Argument (see lo_search.py): for an exact halfway the product's dropped part cannot carry into bit 64, so lo is exactly 0. No test can kill it, because no input differs.",
+    "second product at 8 bits": "equivalent: the condition is made weaker-or-equal to the real one (every product with 9 low ones has 8), so the second multiplication runs more often and never less; the result is the same, only slower.",
+    "subnormal cutoff 64 -> 63": "equivalent: mant has at most 55 bits, so mant >> 63 is 0 and the rounding of 0 is 0, the same as the early return.",
+    "Clinger takes 19-digit patterns": "equivalent in effect: a 19-digit m >= 2^63 is negative, float_of(m) is negative, bits_of(x) is negative, and the cell falls to the exact tier (slower, same answer).",
+    "overflow at 2047 -> 2048": "equivalent: a result with power2 == 2047 has bits >= 0x7ff0000000000000, which parse_float turns into status 11 exactly as for the early return.",
+    "exact: field 2047 -> 2048": "equivalent for the same reason (the clamp after the rounding, and parse_float's test).",
+    "exact: t one smaller": "equivalent: the quotient still has at least 58 bits and rounding needs 55 (53 + round + sticky from the remainder flag).",
+    "window of 18 digits": "equivalent: a 19-digit cell then has a dropped digit and goes through the m / m + 1 test or the exact tier: correct, slower.",
+}
+
+
 def build(src, out):
     flt0 = out / "flt0.cho"
     flt0.write_text(subprocess.run(["git", "-C", str(ROOT), "show", "origin/main:tools/table/flt.cho"], capture_output=True, check=True).stdout.decode().replace("module flt;", "module flt0;", 1))
@@ -78,6 +92,8 @@ def main():
                     bad.append(f)
             killed += bool(bad)
             print(f"{'killed  ' if bad else 'SURVIVED'} {name}   ({', '.join(bad)})", flush=True)
+            if not bad:
+                print("         " + NOTES.get(name, "NO NOTE: unexplained survivor"), flush=True)
     print(f"{killed} of {total} killed")
 
 
