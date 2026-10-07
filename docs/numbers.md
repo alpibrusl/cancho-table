@@ -882,7 +882,7 @@ and `--max-rows` are as everywhere. **Paging**: `--limit` and `--from` page the 
 | G10 | `scripts/bench_numbers_report.py`, below | below |
 | G11/G12 | the skill text (the `--report` help with its examples run, the fourth usage line `report:`, the summary's four forms and its conflicts) in `test_skill` (the predicted conflicts for every pair of flags now include `--report`) and 9 new `skill_mutants`; `test_memory`: the report at 2 MB and 37 MB of file | pass; flat |
 
-The whole suite ({SUITE} tests) passes on gram with the pinned compiler a4572ea and the clean-clone CI steps do too, except `site.py --check` (the page: below).
+The whole suite (355 tests) passes on gram with the pinned compiler a4572ea and the clean-clone CI steps do too, except `site.py --check` (the page: below).
 
 **G6: the counters on both machines.** `gate_regress.py --counter` counts instructions retired (macOS `/usr/bin/time -l`; Linux `perf stat -e instructions:u`, now readable on gram: `perf_event_paranoid` was lowered to 2 by the maintainer for this work). **gram's CPU is hybrid** (`cpu_core` on CPUs 0 to 7, `cpu_atom` on 8 to 15): the event is two, and a run on a P-core reports `<not counted>` for the other: the gate adds the counted
 ones and says it cannot judge (exit 3) when none was (`parse_perf`, with tests for both orders, a run that moved, a CPU of one type, and a refusal), and the jobs are pinned to P-core CPUs. **Mac: 26 cells at 1.001 to 1.009, PASS (bound 1.01). gram: 26 cells at 0.996 to 1.002, PASS.** The Mac's margin is thin, and it is a finding. The report touches the read function of `table.cho` in a few places (the
