@@ -101,6 +101,19 @@ class Gate(unittest.TestCase):
         self.assertIn("M instr", buf.getvalue())
         self.assertIn("over 1.01", buf.getvalue())
 
+    def test_perf_output_on_a_hybrid_cpu_adds_the_counted_core_type_and_not_the_other(self):
+        both = "1234567,,cpu_core/instructions:u/,1000,100.00,,\n<not counted>,,cpu_atom/instructions:u/,0,0.00,,\n"
+        self.assertEqual(gate_regress.parse_perf(both), 1234567)
+        flipped = "<not counted>,,cpu_core/instructions:u/,0,0.00,,\n7654321,,cpu_atom/instructions:u/,1000,100.00,,\n"
+        self.assertEqual(gate_regress.parse_perf(flipped), 7654321)
+        split = "100,,cpu_core/instructions:u/,1,1,,\n23,,cpu_atom/instructions:u/,1,1,,\n"
+        self.assertEqual(gate_regress.parse_perf(split), 123)                        # a run that moved between core types: both counted
+        self.assertEqual(gate_regress.parse_perf("1234567,,instructions:u,1000,100.00,,\n"), 1234567)    # a CPU with one core type
+        # nothing counted, and a refusal to read, are zero: the gate says it cannot judge (exit 3) and never passes
+        self.assertEqual(gate_regress.parse_perf("<not counted>,,cpu_core/instructions:u/,0,0.00,,\n<not counted>,,cpu_atom/instructions:u/,0,0.00,,\n"), 0)
+        self.assertEqual(gate_regress.parse_perf("Error:\nAccess to performance monitoring and observability operations is limited.\n"), 0)
+        self.assertEqual(gate_regress.parse_perf(""), 0)
+
     def test_a_counter_that_cannot_be_read_is_not_a_pass(self):
         d = tempfile.mkdtemp()
         data = pathlib.Path(d) / "data.csv"
