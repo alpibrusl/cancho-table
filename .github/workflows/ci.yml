@@ -77,12 +77,20 @@ jobs:
         working-directory: table
         run: python3 scripts/manifest.py --check --against ../cancho-tools/contract
 
+      # The MCP server (docs/mcp.md): its tool definition and its authority row are generated (from `table
+      # introspect` and from the compiler), embedded in generated/mcp/tools.cho and manifests/mcp.authority.json,
+      # and the row is held within server/ceiling.toml, as the tool's is within tools.toml. The server is built
+      # with the directory of this checkout's build/ baked in, as the tests do.
+      - name: The MCP server's definition and authority are generated, and within their ceiling
+        working-directory: table
+        run: python3 scripts/mcp.py --check
+
       # Every mutant's text must still occur exactly once in the source it mutates (no build, no tests): a mutant
       # that cannot apply fails here, loudly, instead of silently testing nothing.
       - name: The mutants still apply
         working-directory: table
         run: |
-          for m in select filter parallel cellcost sort numbers float; do python3 scripts/${m}_mutants.py --check; done
+          for m in select filter parallel cellcost sort numbers float mcp; do python3 scripts/${m}_mutants.py --check; done
 
       - name: Conformance gates (differential against Python's csv, rules, limits, memory, authority)
         working-directory: table
