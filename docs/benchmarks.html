@@ -6,8 +6,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>table benchmarks: time to answer against csvtk, Miller and DuckDB</title>
 <meta name="description" content="How long table, csvtk, Miller and DuckDB take to answer the same questions on a 1,000,000-row CSV, on a Mac and a Linux machine, with the harder cases and how to rerun them.">
+<meta property="og:image" content="https://alpibrusl.github.io/cancho-table/assets/cancho-table-logo-256.png">
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b7a75'/%3E%3Cpath d='M7 11h18M7 17h18M7 23h18M13 8v18' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" type="image/png" href="assets/cancho-table-icon-64.png">
 <style>
 :root {
   --bg: #fbfcfc; --fg: #14181a; --muted: #55606a; --line: #dfe5e7; --surface: #ffffff; --soft: #eff4f4;
@@ -119,12 +120,14 @@ h3.task { margin: 0 0 .15rem; font-size: 1.1rem; }
 .tasks pre.code { margin-top: .6rem; }
 ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .35rem 0; }
 .fn { color: var(--muted); font-size: .85rem; margin-top: .8rem; }
+.brand { display: inline-flex; align-items: center; gap: .5rem; }
+.brand .mark { border-radius: 6px; background: #fff; }
 </style>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="top"><div class="wrap">
-  <a class="brand" href="index.html">table</a>
+  <a class="brand" href="index.html"><img class="mark" src="assets/cancho-table-icon-64.png" alt="" width="28" height="28">table</a>
   <nav aria-label="Sections">
     <a href="#mac" class="opt">Mac</a><a href="#linux" class="opt">Linux</a><a href="#decimals" class="opt">Decimals</a><a href="#sort" class="opt">Sorting</a><a href="#harder" class="opt">Harder cases</a><a href="#reproduce">Rerun them</a>
     <a href="index.html">Overview</a>

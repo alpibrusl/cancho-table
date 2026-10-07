@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/cancho-table-logo-256.png" alt="cancho-table" width="200"></p>
+
 # table
 
 [![ci](https://github.com/alpibrusl/cancho-table/actions/workflows/ci.yml/badge.svg)](https://github.com/alpibrusl/cancho-table/actions/workflows/ci.yml)

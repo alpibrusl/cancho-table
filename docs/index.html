@@ -11,8 +11,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>table: a deterministic data primitive for AI agents</title>
 <meta name="description" content="Query CSV and TSV data with explicit semantics, bounded resources, structured refusals and machine-verifiable capabilities. A command line for people and AI agents, written in cancho. Early.">
+<meta property="og:image" content="https://alpibrusl.github.io/cancho-table/assets/cancho-table-logo-256.png">
 <meta name="color-scheme" content="light dark">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b7a75'/%3E%3Cpath d='M7 11h18M7 17h18M7 23h18M13 8v18' fill='none' stroke='white' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" type="image/png" href="assets/cancho-table-icon-64.png">
 <style>
 :root {
   --bg: #fbfcfc; --fg: #14181a; --muted: #55606a; --line: #dfe5e7; --surface: #ffffff; --soft: #eff4f4;
@@ -132,12 +133,14 @@ ul.why li { background: var(--surface); border: 1px solid var(--line); border-ra
 ul.why b { display: block; }
 ul.why span { color: var(--muted); font-size: .95rem; }
 .big { font-size: 1.25rem; font-weight: 650; letter-spacing: -.01em; margin: 1.2rem 0 0; }
+.brand { display: inline-flex; align-items: center; gap: .5rem; }
+.brand .mark { border-radius: 6px; background: #fff; }
 </style>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="top"><div class="wrap">
-  <a class="brand" href="#top">table</a>
+  <a class="brand" href="#top"><img class="mark" src="assets/cancho-table-icon-64.png" alt="" width="28" height="28">table</a>
   <nav aria-label="Sections">
     <a href="#flow" class="opt">A flow</a><a href="#why" class="opt">Why table</a><a href="#can" class="opt">What you can do</a><a href="#agent" class="opt">For agents</a><a href="#start">Quick start</a>
     <a href="https://github.com/alpibrusl/cancho-table">GitHub</a>
