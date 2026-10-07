@@ -122,6 +122,8 @@ integer column has none, so `mean:n@2` must say). The refusals are `--where`'s (
 `value.decimal-scale`, `value.decimal-too-wide`) with `context` naming the function, `scale` and `digits`.
 A suffix is a suffix only when a column name is left before it (`sum:int` sums a column called `int`);
 a column really called `x:dec(2)`, `x:int` or `x@2` is written `sum:x\:dec(2)`, `sum:x\:int`, `mean:x\@2@3`.
+**`:float`** (stage N3a) reads the cell as the nearest double (`x:float >= 1.5`, `min:x:float`, `max:x:float`, `distinct:x:float`; `sum` and `mean` of a float are not built): no `inf`, no `nan`, no negative zero, a comparison of doubles and not of text, a double written as the shortest
+decimal that reads back to it; `value.not-float`, `value.not-finite`, `value.float-range` and `limit.number-too-long` are the refusals, `docs/numbers.md` section 4.
 `describe` is not built.
 
 **Output** is `table.v2` rows like a selection: `columns` (the group columns, then

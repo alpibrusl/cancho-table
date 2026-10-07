@@ -652,10 +652,78 @@ the design put `mean:COL[@N]` in 3.6 for both, and the grammar is one. (3) `dist
 `:dec(S)` bullet extended to aggregates, one table of the aggregate numbers above, and `python3 scripts/site.py` for the one generated region that moved: the rules table (the `agg.bad-spec` sentence now names
 `mean` and the suffixes).
 
-**Next: N3a** (`:float` parse: the scanner, Clinger's fast path, the exact slow path through `std.json`, compare, `in`, literals, min, max, count; the rules `value.not-float`, `value.not-finite`,
-`value.float-range`, `limit.number-too-long`; the printer), then N3b (Eisel-Lemire; the Linux ratio of a 17-digit column), N4 (the exact float sum and mean: the accumulator of section 4.4 and its merge), N5 (typed group
-keys and sort keys, `--order-by x:dec(2)`) and N6 (the type report), as the table says. N3 needs a number reader that does not go through the JSON tape (section 11), and N4 will reuse `agg.settle` and the limb
-helpers of `dec.cho`.
+### What was built: N3a, `:float` in `--where` and min, max, count, distinct of a float column (measured)
+
+Branch `numbers-n3a`; tests first (commit `N3a gates`: 1,113 failures and 106 errors against `main`), then the code. The sources are `.cho`, the compiler is the pinned `cancho` a4572ea (no newer one was needed).
+
+**What it reads and writes** (`tools/table/flt.cho`). `x:float` is `[+-]? digits? [. digits?] ([eE] [+-]? digits)?` with at least one mantissa digit, ASCII only, at most 1,100 bytes; the value is the nearest double (ties to even),
+and **no `inf`, no `nan`, no negative zero** (`-0`, `0e999` are `0`); a cell that overflows or that has a non-zero digit and would read as zero is refused. A comparison is of the doubles, never of the decimal text: `x:float = 0.1` matches `0.1`, `0.10`,
+`1e-1`, `1E-1`, `+.1` and `0.10000000000000001` (the same double), not `0.10000000000000002`. A double is kept as an `int` whose signed order is the numeric order (its 64 bits with the low 63 flipped when the sign bit is set), so
+every comparison, `min`, `max` and the distinct set are integer operations and the engine and the thread merge did not change. It is written as the shortest decimal that reads back to the same double, positional from 1e-6 up to 1e21 and
+always with a point (`0.1`, `100.0`, `12345.67`, `1e21`, `1.5e-7`; zero is `0.0`). In a plan: `--where x:float >= 1.5` (and `in`, literals read the same way: a literal that is `nan`, `inf`, out of range or not a number is a
+`where.syntax` error at its offset), `min:x:float`, `max:x:float`, `distinct:x:float` (by value: `1.5`, `1.50` and `15e-1` are one), `count`; `--sort` by a float minimum or maximum is numeric. `sum:x:float` and `mean:x:float` are `agg.bad-spec` until N4.
+`column.type-conflict` counts `:float` too (`:float` beside `:int` or `:dec` for one column). A header really called `x:float` is written `x\:float` (as `x\:dec(2)`). Rules, all exit 8, with `context`, row, line, column and cell, the first in file order
+for every thread count: `value.not-float`, `value.not-finite` (the repair is the idiom `x != 'NaN' and x:float > 5`), `value.float-range` (`detail.direction` is `overflow` or `underflow`), `limit.number-too-long`.
+
+**The three ways to a double.** (1) Clinger's fast path, inline: at most 15 digits and a power of ten within 10^-22..10^22 are two doubles, so one multiplication or division rounds once. (2) `std.json`'s exact reader for everything else, fed the cell rewritten
+in the grammar of JSON (digits without leading zeros, `e`, the exponent): correct, and about a microsecond a cell. (3) **An exact reader of its own for anything below the smallest normal double**, added because the differential tests found that
+**`std.json.to_float` rounds about one in five of the cells that sit exactly on the midpoint between two subnormals, a hair above it or a hair below it, to the wrong double** (321 of 1,476 such cells; none of the 6,000 hard cells above 2^-1022 and none
+of the 6,000 random ones; reported upstream below). The own reader does the integer round(value x 2^1074) from the digits in 32-bit limbs (`dec.mul_small` and `dec.div_small`, the helpers of the mean), half to even by the same floor-and-remainder
+rule as the mean; it runs only when the answer from `std.json` is below 2.3e-308, so the common cost is unchanged.
+
+| gate | what ran | result |
+|---|---|---|
+| G1 | the 44 edge cells of `SPEC` (floats), the cell of 1,100 and of 1,101 bytes, every operator against 25 cells x 17 literals as Python floats, equality of doubles not of text, no negative zero, the cells that are not numbers (`nan`, `-inf`, `+Infinity`, `1e999`, `1e-999`, `0x1p3`, `infx`, `nano`...) | 0 differences |
+| G1 | **640 hard cells** (the exact decimal midpoint between two doubles, a hair above and a hair below it, at every exponent from 2^-1074 to 2^1023) and 6,000 cells of every shape (17-digit random doubles, two decimals, exponent forms, integers past 2^53, long mantissas with an exponent, huge and tiny): read as Python reads them and written as Python writes them | 0 differences in the value; the text is the design's layout, and **where two shortest strings are equally close (`...86.125` is `...86.12` in Python and `...86.13` in `std.fmt.float_into`) either is accepted**: both read back to the double, and the rule of 4.6 is "shortest that reads back" |
+| bulk | `scripts/float_bulk.py`: **10,000,000 cells** (all those shapes, midpoints, subnormals) against Python on the count, the minimum, the maximum and the number of rows at or below 12 thresholds taken from the data and their neighbours one ulp away; and 2,000,000 on the number of distinct doubles | **0 differences** |
+| G2 | **1,600 generated tables and plans** (float conditions with `in`, text conditions, select, groups of min, max, count, distinct, sorts, csv and json, ragged rows, refusals with their direction) through `refimpl`, which reads `:float` through `numbers_ref` | 0 differences; 900+ answers, 80+ refusals |
+| G3 | 500 fuzzed files (the grammar's alphabet plus `i n f a`, words, huge exponents) and non-UTF-8 cells | no trap; the reference's verdict, row and rule on each |
+| G4 | float filters, min/max/distinct, sorts, refusals in two ranges (the first in file order), ragged rows and quoted newlines, N in {2, 3, 4, 8, 16, 64} x chunks {1, 7, 64, 1000} | the sequential bytes in every one |
+| G5 | `scripts/float_mutants.py`, **38 mutants** (the key and its inverse, the hidden bit and the bias, `nan`/case folding, the fast-path limits, the dropped digits, overflow and underflow, the subnormal reader's rounding and its power of two, the layout thresholds, the point, the suffix and its escape, the abort codes, the direction, sum refused) | all killed; one was **equivalent** (`key_of` answering 0 for a zero: it is only called for a non-zero double, a zero cell is answered as key 0 before it) and the branch was removed; two survived the first round and got a test each (the escaped suffix in `--where`, the long way for `0e999`); `--check` is in CI and `test_mutants_apply` |
+| G6 | the redefined gate (`gate_regress.py --base --base2 --new`, below) | **not passed by the letter, no regression found**: see below |
+| G8 | `scripts/bench_numbers_float.py`, `price:float` (two decimals: the fast path) against `cents:int` (as many digits), count and rows, 1,000,000 rows | Mac 0.94 to 1.05; Linux 0.98 to 1.06 (limit 1.25): **pass** |
+| G9 | `ratio:float` (a double in shortest form, 15 to 17 digits: the exact reader) | **N3a has no pass line, and the number is this**: the filter only reads the cells of the rows that pass its first condition and is at 1.2x of DuckDB's time at one thread on the Mac (0.243 against 0.198 s); **min and max read every cell: 1.09 s against DuckDB's 0.208 (5.2x)**. This is the gap N3b exists for |
+| G11/G12 | the four rules with fixtures, exit code and summary in `test_rules`; `test_memory`: float filters and aggregates at 2 MB and 37 MB | pass; flat |
+
+The corpus md5 of the 134 existing plans is identical, and the whole suite passes (Mac and Linux).
+
+**Against the others** (G10; 1,000,000 rows, 56 MB, the filter `status=404 and value >= 500` unless said; seconds; the factor is the contender over `table`'s `:float` time at the same thread count; every answer was checked against Python's floats first: the count,
+the ids and the values of the rows, the minimum and maximum equal as doubles):
+
+| | `table` price:float | DuckDB DOUBLE | csvtk `-j 1` | Miller |
+|---|---:|---:|---:|---:|
+| Mac, count, 1 thread / 16 | 0.0674 / 0.0112 | 0.195 (2.9x) / 0.075 (6.7x) | | not installed |
+| Mac, rows, 1 / 16 | 0.0630 / 0.0116 | 0.221 (3.5x) / 0.079 (6.8x) | 2.70 (43x) | |
+| Mac, min and max by status, 1 / 16 | 0.0804 / 0.0124 | 0.202 (2.5x) / 0.076 (6.2x) | | |
+| Linux, rows, 1 thread | 0.1327 | not installed | 6.89 (52x) | 0.391 (2.95x) |
+| Mac, ratio:float rows, 1 thread | 0.222 | 0.216 (0.97x) | 2.75 (12x) | |
+| Mac, ratio:float min and max, 1 / 16 | 1.089 / **2.154** | 0.208 (0.19x) / 0.079 | | |
+| Linux, ratio:float rows, 1 thread | 0.285 | | 6.17 (22x) | 0.368 (1.29x) |
+| Linux, ratio:float min and max, 1 / 6 | 1.069 / 0.505 | | | |
+
+**Negative scaling of the exact reader on macOS.** The 17-digit minimum and maximum is **slower with threads on the Mac** (user time grows, system time grows much faster: 1 thread 0.17 s, 16 threads 25 s of `sys`): `std.json`'s reader allocates a few regions a cell, and the Mac's `malloc` does not
+scale. On Linux it does (1.07 s at one thread, 0.505 at six, and `strace -c` shows no syscall storm). The fix is a reader that does not allocate (N3b); until then a float column of 15 to 17 digits should not be read with `--threads` on macOS.
+
+**G6 in practice.** The redefined gate (the new binary against `main` built twice from identical sources in two directories, 21 and 41 interleaved runs, outputs identical) did not pass by the letter anywhere, and **found nothing real**. Mac: two runs, two and then
+one cell over its bound by 0.1 to 0.3% (a different cell each time; the medians 0.99 to 1.01). Linux on a quiet box, cores 0 to 5: three one-thread cells over by 0.2 to 1.0% that do not touch the new code (`cut`, group-count, text filter), the identical-source pair at 1.00;
+cores 0, 2, 4: a handful more, the worst ratio 1.039 (its bound 1.023). **A second build of the same new sources (a different directory) gave one-thread ratios of 1.003 to 1.017 where the first gave 1.00 to 1.04**: the layout lottery of the new builds is as large as the signal, so one
+base pair underestimates the noise. The gate needs the noise from at least two pairs (`max` over them) or a median criterion before it can fail only for a real regression; I propose that for the stages after this one (the script still takes one `--base2`).
+
+**What was found upstream** (cancho `std`, not edited): (1) `std.json.to_float` rounds some subnormal decimals wrong (above); (2) `std.fmt.float_into` is not unique in exact ties between two shortest strings; (3) the exact reader allocates per cell
+(the macOS scaling above) and goes through a tape; (4) still missing: `float_of_bits` (the key is turned back into a double through `ldexp`, two loops over the exponent, for the min and max of each group at the end only).
+
+**Deviations from the stage table.** (1) The own subnormal reader (3 above) is not in the design; it is the one place the design's "the slow path through `std.json`" was not enough. (2) `distinct:x:float` comes for free with the key and is in; the table
+listed min, max and count. (3) A tie between two shortest decimals is not specified (above). (4) G9 has no pass line in N3a by the design, and it is what it is (above). (5) The redefined G6 is not passed by the letter (above), and the gate's own noise estimate is what the
+numbers criticise. (6) `column.type-conflict` and the abort codes were extended, not redesigned (29 to 33 for `--where`, 37 to 41 for an aggregate). (7) `float_bulk.py` is a new script, not in the design.
+
+**What the README and the page should now say** (not edited here): `:float` bullet and the aggregates line (min, max, distinct of floats; sum and mean in N4); the four new rules (the generated `rules` table of `docs/index.html` and the count in the README: `site.py --check` is
+red on those until they are regenerated); the float filter benchmark above, with the 17-digit column's honest ratios and the macOS thread note.
+
+**Next: N4, the exact float sum and mean** (section 4.4). What it needs from what N3a built: (1) the accumulator is 72 limbs of 32 bits plus a counter (73 `int`s, 584 bytes) per group per float sum or mean, so the group state stops being a fixed `1 + 2 x aggregates`
+integers: the stride has to be computed per aggregate (`agg.cho`: `start`, `add`, `add_fast`, `serialize`, `merge`, `settle`, the sort), counted in `--max-state-bytes`; (2) the cell comes from `flt.parse_float` as a key, and the accumulator wants the sign, the biased exponent and the
+mantissa: the key turns back into the bits by the same xor (`bits = key < 0 ? key ^ 0x7fff... : key`), no double is needed; (3) the carry every 2^27 additions, the merge (carry both, add limbwise, carry) and the single rounding at the end (`dec.cho` has the limb helpers and the half-even rule; the end builds a double from 53 bits and an exponent, then `flt.key_of` and `flt.put_float` write it);
+(4) the mean divides the limbs by the count (`dec.div_small`, count below 2^30) with 64 fractional bits, and sorting by a float sum or mean compares the rounded doubles (a key per group made at settle) or the exact values; (5) `agg.float-overflow` for an exact sum past the largest double,
+named by group; (6) the tests: cancellation columns that make plain addition order-dependent, `math.fsum` as the oracle, every thread count, and the mutant that adds as plain `f64` (it must die at N >= 2); (7) `--sort`, `--top` and the typed group keys are N5.
 
 ## 11. Open questions, assumptions, what the language lacks
 

@@ -143,7 +143,7 @@ otherwise said to be inferred.
    count/empty/distinct/min/max. `mean` is specified in `docs/numbers.md` (3.6: `mean:COL[@N]`, exact, no float).
 5. **Decimals and floats**, designed in `docs/numbers.md` (not built): `:dec(S)` declared per column, read as exact scaled integers, a cell
    with more digits than the scale refused, never rounded; and `:float`, correctly rounded, with `sum` and `mean` from an exact accumulator so
-   that `--threads` cannot change a digit. Stages N1 to N6 and the gates that must be fixed first are in that document; **N0p (the pair sum for `:int`), N1 (`:dec(S)` in `--where`) and N2 (typed `sum`, `min`, `max`, `mean[@N]`, `distinct` of a decimal) are built** (what they measured is at the end of its stage table).
+   that `--threads` cannot change a digit. Stages N1 to N6 and the gates that must be fixed first are in that document; **N0p (the pair sum for `:int`), N1 (`:dec(S)` in `--where`) N2 (typed `sum`, `min`, `max`, `mean[@N]`, `distinct` of a decimal) and N3a (`:float` in `--where`, min, max, count, distinct of a float column) are built** (what they measured is at the end of its stage table).
 6. **A second sort key**, and `or` in `--where` (the grammar is the thing to keep unambiguous).
 7. **Type inference** as a *report* (`describe`), never as a silent coercion (designed: `--report types`, `docs/numbers.md` 5.2).
 8. **stdin** as an input.
