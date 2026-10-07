@@ -54,7 +54,7 @@ MUTANTS = [
     ("a group column is a type conflict with itself", "query.cho", "                return (gkind_at(q, k), name);", "                return (gkind_at(q, k) + 1, name);"),
     ("an order key's type is one more in the conflict", "query.cho", "                return (order_flags(q, k) / 2, order_name(q, k));", "                return (order_flags(q, k) / 2 + 1, order_name(q, k));"),
     ("an order key that is not an integer counts as one", "query.cho", "        if order_flags(q, k) / 2 != 0 && cols[order_name(q, k)] == column {", "        if order_flags(q, k) / 2 == 0 && cols[order_name(q, k)] == column {"),
-    ("a group column's type is the last one given", "query.cho", "    return vec.get(q.gkinds, j + 1);", "    return vec.get(q.gkinds, vec.size(q.gkinds) - 1);"),
+    ("a group column's type is the last one given", "query.cho", "    return vec.get(q.gkinds, j + 2);", "    return vec.get(q.gkinds, vec.size(q.gkinds) - 1);"),
     # the row sorter (sorter.cho)
     ("a typed order key is read as an integer", "sorter.cho", "    if kind == 1 {\n        return query.parse_int(data);\n    }\n    return query.parse_typed(data, kind);", "    return query.parse_int(data);"),
     ("an integer order key is read as typed", "sorter.cho", "    if kind == 1 {\n        return query.parse_int(data);\n    }\n    return query.parse_typed(data, kind);", "    return query.parse_typed(data, kind);"),

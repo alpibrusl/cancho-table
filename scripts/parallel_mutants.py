@@ -48,7 +48,7 @@ MUTANTS = [
     ("a negative integer is read as a large one", "agg.cho", "    if top >= 128 {\n        top = top - 256;\n    }", ""),
     ("a new group is kept under an empty key", "agg.cho", "                        m = map.put(heap, m, key, 0);", "                        m = map.put(heap, m, key[0..0], 0);"),
     # handing over
-    ("a selection that starts later is read by threads", "table.cho", "threads > 1 && !ordering && (mode == 2 || row_from == 0)", "threads > 1 && !ordering"),
+    ("a selection that starts later is read by threads", "table.cho", "threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0)", "threads > 1 && (!ordering || query.reporting(tree))"),
 ]
 
 # Not here, and why: mutants that change nothing a test can see.
