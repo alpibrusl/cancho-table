@@ -15,7 +15,6 @@ import std.json;
 import std.vec;
 import plan;
 import query;
-import report;
 import toolbox.text;
 import writer;
 
@@ -156,13 +155,6 @@ pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n b
             }
         }
         head = buffer.push(heap, head, byte_of(']'));
-        if query.reporting(tree) {
-            // `--report types` answers with its own columns, whatever the selection made of the header
-            buffer.drop(heap, head);
-            buffer.drop(heap, lead);
-            head = report.head_json(heap);
-            lead = report.head_csv(heap, delim);
-        }
     } else {
         let ng = query.count_of(tree, 2);
         let base = query.count_of(tree, 0) + query.count_of(tree, 1);
