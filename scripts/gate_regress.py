@@ -48,6 +48,8 @@ CELLS = {
     "dec filter price:dec(2)>=500": ["--where", "status = 404 and price:dec(2) >= 500", "--select", "id", "--format", "csv"],
     "dec group-sum cents": ["--group", "status", "--agg", "sum:cents:dec(2),min:price:dec(2),max:price:dec(2)", "--format", "csv"],
     "float filter price:float>=500": ["--where", "status = 404 and price:float >= 500", "--select", "id", "--format", "csv"],
+    "order-by -bytes:int top 100": ["--order-by", "-bytes:int", "--select", "id,bytes", "--top", "100", "--format", "csv"],
+    "order-by status,path rows": ["--order-by", "status,path", "--select", "id", "--top", "1000", "--format", "csv"],
     "float min/max by status": ["--group", "status", "--agg", "min:ratio:float,max:ratio:float", "--format", "csv"],
 }
 
