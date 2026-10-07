@@ -79,6 +79,8 @@ class Memory(unittest.TestCase):
                       ["--where", "bytes:int>50", "--limit", "1000"],
                       ["--where", "status=200 and bytes:dec(2)>50.5", "--select", "id", "--format", "csv"],   # docs/numbers.md N1
                       ["--where", "bytes:dec(0) in (7, 8, 99999)", "--limit", "1000"],
+                      ["--where", "status=200 and bytes:float>50.5", "--select", "id", "--format", "csv"],   # docs/numbers.md N3a
+                      ["--group", "status", "--agg", "count,min:bytes:float,max:bytes:float,distinct:status:float"],
                       ["--group", "status", "--agg", "count,sum:bytes:dec(2),min:bytes:dec(2),max:bytes:dec(2),mean:bytes:dec(2)@4,distinct:status:dec(0)"],   # docs/numbers.md N2
                       ["--group", "status", "--agg", "count,sum:bytes,min:bytes,max:bytes"],
                       ["--group", "status", "--agg", "count,distinct:status", "--sort", "-count"]):

@@ -26,7 +26,7 @@ $ table --where 'status = 200' --select customer,bytes orders.csv
 
 Most data tools optimise for flexibility. `table` optimises for predictability.
 
-* **Explicit types.** A column is text unless you write `:int` (an exact 64-bit integer) or `:dec(S)` (an exact decimal with S fractional digits, in `--where` and `--agg`); a cell that is not one is refused. [docs/filter.md](docs/filter.md)
+* **Explicit types.** A column is text unless you write `:int` (an exact 64-bit integer), `:dec(S)` (an exact decimal with S fractional digits) or `:float` (the nearest double, in `--where` and for `min`, `max`, `distinct`, `count`); a cell that is not one is refused. [docs/filter.md](docs/filter.md)
 * **Explicit operations.** One plan from flags, no expressions or functions. [docs/filter.md](docs/filter.md)
 * **Bounded resource use.** Rows, line and record size, groups, distinct values and group state each have a limit with its own rule. Peak memory is about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). `table introspect` lists the limits; [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html)
 * **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, and nothing written to disk. CI fails if the binary differs from the committed [`manifests/table.authority.json`](manifests/table.authority.json). [docs/architecture.md](docs/architecture.md)
@@ -131,6 +131,26 @@ $ table --where "price:dec(1) >= 12.5" prices.csv
 ```
 <!-- /gen:t-decimal -->
 
+### Filter and find the extremes of floats
+
+`temp:float` reads the column as the nearest double (ties to even), and compares doubles, not text: `21.5`, `21.50` and `2.15e1` are one value. `min` and `max` print as the shortest decimal that reads back to the same double; rows are copied as they are. `NaN`, `inf`, an out-of-range number and a cell that is not a number are refused, never skipped, with the row, line and column; for `NaN` the hint is the idiom that keeps those rows out (`temp != 'NaN' and temp:float >= 21.5`), and there is no repair, because what the cell was meant to be is not known. `min`, `max`, `distinct` and `count` work on floats; sum and mean do not yet. A column really named `x:float` is written `x\:float`.
+
+<!-- gen:t-float -->
+```console
+$ table --where "temp != 'NaN' and temp:float >= 21.5" --format csv readings.csv
+sensor,temp
+a,21.5
+c,21.50
+d,2.15e1
+$ table --where "temp != 'NaN'" --agg "min:temp:float,max:temp:float,distinct:temp:float" --format csv readings.csv
+min:temp,max:temp,distinct:temp
+-3.4,21.5,3
+$ table --where "temp:float >= 21.5" readings.csv
+{"rule": "value.not-finite", "hint": "keep them out with --where first: x != 'NaN' and x:float > 5 never reads the NaN cell as a number", "repair": {"kind": "none", "reason": "what the cell was meant to be is not known"}, "detail": {"path": "readings.csv", "context": "where", "column": "temp", "row": 6, "line": 7, "value": "NaN", "value_truncated": false}}
+# exit status 8; the rule, hint, repair, detail of the JSON line it prints
+```
+<!-- /gen:t-float -->
+
 ### Sum and average decimals
 
 `sum:price:dec(2)` is exact and printed at the column's scale. `mean:price:dec(2)@3` is the exact quotient rounded half to even at three digits (`@N` is required for a whole-number column), the same on any number of cores. `distinct` counts by value, so `12.5` and `12.50` are one. Sums are exact at any width. A column whose name really ends in `:int`, `:dec(2)` or `@2` is written with a backslash: `sum:x\:dec(2)`.
@@ -234,7 +254,8 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## What it cannot do yet
 
-* **Decimals are mostly built.** `:dec(S)` filters and aggregates (`sum`, `min`, `max`, `mean`, `distinct`, `count`). Not yet: grouping by a decimal column by value, `--order-by price:dec(2)`, and floats; they are decided and in progress ([docs/numbers.md](docs/numbers.md)).
+* **Floats are partly built.** `:float` works in `--where` and for `min`, `max`, `distinct` and `count`. Not yet: `sum` and `mean` of a float (coming next: exact, and the same on any number of cores), grouping by a float column by value, and `--order-by` on a float.
+* **Decimals are mostly built.** `:dec(S)` filters and aggregates (`sum`, `min`, `max`, `mean`, `distinct`, `count`). Not yet: grouping by a decimal column by value and `--order-by price:dec(2)` ([docs/numbers.md](docs/numbers.md)).
 * **One core for a sort.** `--threads` is accepted with `--order-by`, and gives the same bytes, but the sort runs on one core. There is no sort that spills to disk.
 * **No joins**, and **one input file** at a time, named on the command line (no standard input).
 * **No JSON lines**, no Parquet. Only CSV and TSV (comma, tab or semicolon).

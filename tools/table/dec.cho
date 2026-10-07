@@ -123,7 +123,7 @@ pub fn put_sum[&h](heap: &!h Heap, out: buffer.Buffer, high: int, low: int, scal
     return o;
 }
 
-fn mul_small[&a](limbs: &!a [int], n: int, m: int) -> [] int {
+pub fn mul_small[&a](limbs: &!a [int], n: int, m: int) -> [] int {
     var carry = 0;
     var i = 0;
     while i < n {
@@ -136,7 +136,7 @@ fn mul_small[&a](limbs: &!a [int], n: int, m: int) -> [] int {
 }
 
 // limbs / m, in place; answers the remainder. `m` is below 2^30, so the remainder times 2^32 plus a limb fits an `int`.
-fn div_small[&a](limbs: &!a [int], n: int, m: int) -> [] int {
+pub fn div_small[&a](limbs: &!a [int], n: int, m: int) -> [] int {
     var rem = 0;
     var i = n - 1;
     while i >= 0 {
