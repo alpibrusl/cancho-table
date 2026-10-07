@@ -1,6 +1,8 @@
 """The shared half of the mutation scripts (select_mutants, filter_mutants, parallel_mutants, cellcost_mutants).
 
-A mutant is (name, file, the text replaced, its replacement) against a source file of tools/table. Two things this
+A mutant is (name, file, the text replaced, its replacement) against a source file of tools/table; an optional fifth element is a list of
+further (file, text, replacement) edits applied with it (a defect that only shows under a build that is not the default, as the carry
+threshold lowered for the exact float sum: scripts/float_sum_mutants.py). Two things this
 module is for, after the scripts had gone stale without anyone being told:
 
 * `--check` (no compiler, no build, no tests: it is cheap enough for CI) verifies that every mutant's text occurs
@@ -33,7 +35,12 @@ def check(mutants, src=None):
     texts = {}
     problems = []
     names = set()
-    for name, file, old, new in mutants:
+    for name, file, old, new, *more in mutants:
+        for mfile, mold, mnew in (more[0] if more else []):
+            mpath = src / mfile
+            mtext = mpath.read_text() if mpath.exists() else None
+            if mtext is None or mtext.count(mold) != 1:
+                problems.append("mutant %s: its extra edit in %s does not match exactly once" % (name, mfile))
         if name in names:
             problems.append("mutant %s: named twice" % name)
         names.add(name)
@@ -82,7 +89,7 @@ def main(mutants, tests, argv=None):
         return 1
     compiler = os.environ.get("CANCHO", "cancho")
     extra = os.environ.get("CANCHO_ARGS", "").split()
-    files = {n: (SRC / n).read_text() for n in {m[1] for m in mutants}}
+    files = {n: (SRC / n).read_text() for n in {m[1] for m in mutants} | {e[0] for m in mutants for e in (m[4] if len(m) > 4 else [])}}
 
     def restore(*_):
         for n, text in files.items():
@@ -94,9 +101,11 @@ def main(mutants, tests, argv=None):
     if verdict != "SURVIVED":
         return 1
     survivors = []
-    for name, file, old, new in chosen:
+    for name, file, old, new, *more in chosen:
         try:
             (SRC / file).write_text(files[file].replace(old, new, 1))
+            for mfile, mold, mnew in (more[0] if more else []):
+                (SRC / mfile).write_text((SRC / mfile).read_text().replace(mold, mnew, 1))
             verdict, why = build_and_test(tests, compiler, extra)
         finally:
             restore()

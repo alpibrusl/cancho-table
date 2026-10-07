@@ -54,9 +54,8 @@ MUTANTS = [
     ("an aggregate's float refusal takes another code", "engine.cho", "        return 28 + status;", "        return 27 + status;"),
     ("the direction of a range refusal is swapped", "table.cho", "            w = fail.detail_str(heap, w, \"direction\", \"overflow\");", "            w = fail.detail_str(heap, w, \"direction\", \"underflow\");"),
     ("a float refusal of --where is read as the status of the next", "table.cho", "        var status = c.abort - 20;", "        var status = c.abort - 21;"),
-    ("the sum of a float column is taken", "agg.cho", "                } else if kind == 21 && function == 1 {", "                } else if false && kind == 21 && function == 1 {"),
     ("an aggregate's float suffix is an integer one", "agg.cho", "        kind = 21;\n        e = e - 6;", "        kind = 1;\n        e = e - 6;"),
-    ("a float minimum is written as an integer", "agg.cho", "query.agg_at(tree, k, 2) == 21 {\n        return flt.put_float", "query.agg_at(tree, k, 2) == 22 {\n        return flt.put_float"),
+    ("a float minimum is written as an integer", "agg.cho", "(function == 2 || function == 3) && query.agg_at(tree, k, 2) == 21 {", "(function == 2 || function == 3) && query.agg_at(tree, k, 2) == 22 {"),
     ("a float cell of an aggregate is read as an integer", "query.cho", "    if kind == 21 {\n        // :float (flt.cho)", "    if kind == 22 {\n        // :float (flt.cho)"),
 ]
 

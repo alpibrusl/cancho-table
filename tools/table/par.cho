@@ -85,7 +85,7 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
     var scratch = buffer.empty(w.heap, 256);
     var escr = buffer.empty(w.heap, 16);
     var kept = buffer.empty(w.heap, 64);
-    var groups = agg.start(w.heap, na);
+    var groups = agg.start(w.heap, w.tree);
     var next_at = 0;
     var lines_read = 0;
     var status = 0;
@@ -284,7 +284,9 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     let limit = pp[scan.p_limit()];
     let budget = pp[scan.p_budget()];
     let filtering = query.count_of(tree, 1) > 0;
-    let payload_cap = chunk + 65536;
+    // room for the exact float accumulators of 64 groups (584 bytes each, a group per float sum or mean) on top of the chunk: more groups than that, and a range's answer
+    // does not fit and the parent reads the range itself (the answer is the same, only slower)
+    let payload_cap = chunk + 65536 + 64 * agg.float_state(tree);
     let slot_bytes = header_bytes() + payload_cap;
     let wide = 1000000000000000;
     // What every thread is told: the parameters, except that it counts its range alone.

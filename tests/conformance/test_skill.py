@@ -9,7 +9,7 @@ A model that has only that text must be able to use the tool, so every claim in 
 * the examples in the skill (the file, the commands, what they print) are run, and what they print is compared byte
   for byte (a refusal: its rule, exit status, hint and repair kind);
 * the examples in a flag's help are run and accepted, and the claims the help makes about grammar that a mistake
-  would turn false (a mean needs its scale, `:float` has no sum, `10` is less than `9`, an empty cell under `:int`
+  would turn false (a mean needs its scale, `:float` has an exact sum, `10` is less than `9`, an empty cell under `:int`
   is a refusal) are each checked against the binary.
 
 Nothing here is generated from the code: a change to the code that makes a sentence false fails here, and a change
@@ -308,12 +308,12 @@ class Claims(unittest.TestCase):
         self.assertEqual(self.r("--agg", "mean:price:dec(2)").first_rule(), None)
         # the suffixes are not in the output column
         self.assertEqual(self.r("--agg", "sum:price:dec(2)").data()["columns"], ["sum:price"])
-        # :float has min, max and distinct, not sum or mean (until N4 builds them: then the help changes with it)
-        self.assertIn("(min, max and distinct only)", help_)
-        for item in ("min:price:float", "max:price:float", "distinct:price:float"):
+        # :float has min, max, distinct and, from N4, the exact sum and mean (a mean has no scale)
+        self.assertIn("and the exact sum and mean", help_)
+        self.assertIn("mean:x:float@2 is agg.bad-spec", help_)
+        for item in ("min:price:float", "max:price:float", "distinct:price:float", "sum:price:float", "mean:price:float"):
             self.assertEqual(self.r("--agg", item).first_rule(), None, item)
-        for item in ("sum:price:float", "mean:price:float@2"):
-            self.assertEqual(self.r("--agg", item).first_rule(), "agg.bad-spec", item)
+        self.assertEqual(self.r("--agg", "mean:price:float@2").first_rule(), "agg.bad-spec")
         # :dec(S) is 0 to 18
         self.assertEqual(self.r("--agg", "sum:price:dec(19)").first_rule(), "agg.bad-spec")
         # the escape of a column really called `x:dec(2)`

@@ -173,3 +173,25 @@ def same_text(tool, x):
     if x == 0 or len(tool) != len(want) or float(tool) != x:
         return False
     return sum(a != b for a, b in zip(tool, want)) <= 1          # the same layout, and one digit apart: the tie
+
+
+def fsum_ref(values):
+    """The exact sum of doubles rounded ONCE to the nearest double (ties to even): ("ok", x) or ("overflow",). Python's Fraction -> float is a true division of
+    integers, which is correctly rounded. There is no negative zero (a sum that is zero, or a mean that rounds to zero, is 0.0)."""
+    total = sum((Fraction(v) for v in values), Fraction(0))
+    try:
+        x = float(total)
+    except OverflowError:
+        return ("overflow",)
+    return ("ok", 0.0 if x == 0 else x)
+
+
+def fmean_ref(values):
+    """The exact sum over the count, rounded once (not fl(fl(sum) / n))."""
+    n = len(values)
+    total = sum((Fraction(v) for v in values), Fraction(0)) / n
+    try:
+        x = float(total)
+    except OverflowError:
+        return ("overflow",)
+    return ("ok", 0.0 if x == 0 else x)

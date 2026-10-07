@@ -36,6 +36,7 @@ import std.bytes;
 import std.map;
 import std.vec;
 import dec;
+import facc;
 import flt;
 import plan;
 import query;
@@ -59,8 +60,53 @@ pub fn memo_size() -> [] int {
     return 1024;
 }
 
-pub fn start[&h](heap: &!h Heap, aggregates: int) -> [heap] Groups {
-    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: 1 + 2 * aggregates, memo: box_slice(heap, memo_size() + 4, 0) };
+// The integers of a group's row for a plan: its row count, two for each aggregate (the sum's low and high halves, or the one value of the others and a
+// zero), then 73 for each float `sum` or `mean` (the exact accumulator, facc.cho), in the order of the aggregates.
+pub fn stride_of[&q](tree: &q query.Query) -> [] int {
+    return 1 + 2 * query.agg_count(tree) + facc.width() * floats_in(tree);
+}
+
+// How many aggregates are the sum or the mean of a `:float` column.
+pub fn floats_in[&q](tree: &q query.Query) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < query.agg_count(tree) {
+        if is_float_sum(tree, k) {
+            n = n + 1;
+        }
+        k = k + 1;
+    }
+    return n;
+}
+
+fn is_float_sum[&q](tree: &q query.Query, k: int) -> [] bool {
+    return query.agg_at(tree, k, 0) == 1 && query.agg_at(tree, k, 2) == 21;
+}
+
+// The bytes a group's float accumulators hold, counted in `--max-state-bytes` with its key.
+pub fn float_state[&q](tree: &q query.Query) -> [] int {
+    return 8 * facc.width() * floats_in(tree);
+}
+
+// The bits of the double a `:float` key stands for (flt.cho: the low 63 flipped when the sign is set).
+fn bits_of_key(key: int) -> [] int {
+    if key < 0 {
+        return key ^ 0x7fffffffffffffff;
+    }
+    return key;
+}
+
+fn float_add(acc: vec.Vec[int], at: int, key: int) -> [] vec.Vec[int] {
+    var a = acc;
+    borrow mut a as &!w in {
+        facc.add_bits(w, at, bits_of_key(key));
+    }
+    return a;
+}
+
+pub fn start[&h, &q](heap: &!h Heap, tree: &q query.Query) -> [heap] Groups {
+    let stride = stride_of(tree);
+    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: box_slice(heap, memo_size() + 4, 0) };
 }
 
 pub fn drop[&h](heap: &!h Heap, g: Groups) -> [heap] int {
@@ -200,10 +246,10 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
         if entry < 0 {
             if size >= max_groups {
                 status = 1;
-            } else if bytes_held + buffer.size(kr) > max_state {
+            } else if bytes_held + buffer.size(kr) + float_state(tree) > max_state {
                 status = 3;
             } else {
-                bytes_held = bytes_held + buffer.size(kr);
+                bytes_held = bytes_held + buffer.size(kr) + float_state(tree);
                 m = map.put(heap, m, buffer.bytes(kr), 0);
                 entry = size;
                 var z = 0;
@@ -222,6 +268,7 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
         }
         a = set_at(a, at, before + 1);
         let na = query.agg_count(tree);
+        var facc_at = at + 1 + 2 * na;
         var k = 0;
         while k < na && status == 0 {
             let function = query.agg_at(tree, k, 0);
@@ -282,13 +329,15 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
                     scr = s3;
                     if bad != 0 {
                         status = bad;
+                    } else if function == 1 && query.agg_at(tree, k, 2) == 21 {
+                        a = float_add(a, facc_at, v);
                     } else if function == 1 {
                         var high = 0;
                         borrow a as &ar in {
-                            high = vec.get(ar, at + 1 + (stride - 1) / 2 + k);
+                            high = vec.get(ar, at + 1 + na + k);
                         }
                         a = set_at(a, at + 1 + k, now + (v & 0xffffffff));
-                        a = set_at(a, at + 1 + (stride - 1) / 2 + k, high + (v >> 32));
+                        a = set_at(a, at + 1 + na + k, high + (v >> 32));
                     } else if before == 0 {
                         a = set_at(a, at + 1 + k, v);
                     } else if function == 2 && v < now {
@@ -300,6 +349,9 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
                 if status != 0 {
                     which = k;
                 }
+            }
+            if is_float_sum(tree, k) {
+                facc_at = facc_at + facc.width();
             }
             k = k + 1;
         }
@@ -448,6 +500,7 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
     let before = vec.get(g.acc, slot);
     vec.set(g.acc, slot, before + 1);
     k = 0;
+    var facc_at = slot + 1 + 2 * na;
     // The cell an aggregate reads is read once for the ones that follow it on the same column (`sum, min, max, mean` of one column: a column
     // has one numeric type in a plan, `column.type-conflict`, so the type need not be compared).
     var seen_column = 0 - 1;
@@ -476,8 +529,11 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
             if bad != 0 {
                 return (bad, k);
             }
-            if function == 1 {
-                let high_at = slot + 1 + (stride - 1) / 2 + k;
+            if function == 1 && query.agg_at(tree, k, 2) == 21 {
+                facc.add_bits(g.acc, facc_at, bits_of_key(v));
+                facc_at = facc_at + facc.width();
+            } else if function == 1 {
+                let high_at = slot + 1 + na + k;
                 vec.set(g.acc, slot + 1 + k, now + (v & 0xffffffff));
                 vec.set(g.acc, high_at, vec.get(g.acc, high_at) + (v >> 32));
             } else if before == 0 {
@@ -518,11 +574,11 @@ fn compare_keys[&a, &b](x: &a [byte], y: &b [byte], fields: int) -> [] int {
 // Whether group `x` is before group `y`: by group column `field` (or, when
 // that is -1, by the integer at `slot` of the group's row) ascending or
 // descending, then by key; neither given orders by key alone.
-fn before[&m, &v, &r](index: &m map.Map[int], acc: &v vec.Vec[int], pre: &r [int], stride: int, fields: int, field: int, slot: int, descending: bool, x: int, y: int) -> [] bool {
+fn before[&m, &v, &r](index: &m map.Map[int], acc: &v vec.Vec[int], pre: &r [int], stride: int, na: int, fields: int, field: int, slot: int, descending: bool, x: int, y: int) -> [] bool {
     if slot >= 1000000 {
         // A mean (the slot is the sum's, plus 1,000,000): by the exact quotient, sum over count, without dividing (`dec.compare_means`).
         let s = slot - 1000000;
-        let off = (stride - 1) / 2;
+        let off = na;
         let c = dec.compare_means(vec.get(acc, x * stride + s + off), vec.get(acc, x * stride + s), vec.get(acc, x * stride), vec.get(acc, y * stride + s + off), vec.get(acc, y * stride + s), vec.get(acc, y * stride));
         if c != 0 {
             if descending {
@@ -537,8 +593,8 @@ fn before[&m, &v, &r](index: &m map.Map[int], acc: &v vec.Vec[int], pre: &r [int
     }
     if slot >= 1 {
         // A sum is (high, low), settled; the second integer of any other aggregate is 0.
-        let hx = vec.get(acc, x * stride + slot + (stride - 1) / 2);
-        let hy = vec.get(acc, y * stride + slot + (stride - 1) / 2);
+        let hx = vec.get(acc, x * stride + slot + na);
+        let hy = vec.get(acc, y * stride + slot + na);
         if hx != hy {
             if descending {
                 return hx > hy;
@@ -613,7 +669,7 @@ fn compare_field[&a, &b](x: &a [byte], y: &b [byte], n: int) -> [] int {
 // Fill `order[0..n]` with the groups' numbers in output order (n is the number
 // of groups): by group column `field` or integer `slot` (see `before`), else
 // by key; a bottom-up merge sort through `spare`, stable and O(n log n).
-pub fn sort_into[&g, &o, &s, &p](g: &g Groups, order: &!o [int], spare: &!s [int], pre: &!p [int], fields: int, field: int, slot: int, descending: bool) -> [] int {
+pub fn sort_into[&g, &o, &s, &p](g: &g Groups, order: &!o [int], spare: &!s [int], pre: &!p [int], na: int, fields: int, field: int, slot: int, descending: bool) -> [] int {
     let n = map.size(g.index);
     var i = 0;
     while i < n {
@@ -637,7 +693,7 @@ pub fn sort_into[&g, &o, &s, &p](g: &g Groups, order: &!o [int], spare: &!s [int
             var q = mid;
             var k = lo;
             while k < hi {
-                if p < mid && (q >= hi || !before(g.index, g.acc, pre, g.stride, fields, field, slot, descending, order[q], order[p])) {
+                if p < mid && (q >= hi || !before(g.index, g.acc, pre, g.stride, na, fields, field, slot, descending, order[q], order[p])) {
                     spare[k] = order[p];
                     p = p + 1;
                 } else {
@@ -671,16 +727,38 @@ fn append_int[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.B
 
 // Carry the low half of every sum into the high half, so that `low` is in [0, 2^32): done once, when
 // the groups are complete and before they are sorted or written. A sum is then `high * 2^32 + low`.
+// A float sum or mean is rounded here, once, from its exact accumulator, and the result (a `:float` key, which sorts like the number) is kept in the aggregate's
+// own slot, where a minimum would keep its value. Answers 0, or, when an exact sum is beyond the largest double, which group and aggregate
+// as `(group * 4096 + aggregate) + 1`: of the groups that overflow the one with the smallest key (so that it is the same whatever order the rows were read in).
 pub fn settle[&g, &q](g: &!g Groups, tree: &q query.Query) -> [] int {
     let n = map.size(g.index);
     let na = query.agg_count(tree);
+    var worst = 0 - 1;
+    var worst_k = 0;
     var x = 0;
     while x < n {
+        var facc_at = x * g.stride + 1 + 2 * na;
         var k = 0;
         while k < na {
-            if query.agg_at(tree, k, 0) == 1 {
+            if is_float_sum(tree, k) {
+                var key = 0;
+                var over = 0;
+                if query.agg_at(tree, k, 3) != 0 {
+                    key = facc.mean_key(g.acc, facc_at, vec.get(g.acc, x * g.stride));
+                } else {
+                    let (k2, o2) = facc.finalize_key(g.acc, facc_at);
+                    key = k2;
+                    over = o2;
+                }
+                vec.set(g.acc, x * g.stride + 1 + k, key);
+                facc_at = facc_at + facc.width();
+                if over != 0 && (worst < 0 || compare_keys(map.key_at(g.index, x), map.key_at(g.index, worst), query.count_of(tree, 2)) < 0) {
+                    worst = x;
+                    worst_k = k;
+                }
+            } else if query.agg_at(tree, k, 0) == 1 {
                 let low_at = x * g.stride + 1 + k;
-                let high_at = low_at + (g.stride - 1) / 2;
+                let high_at = low_at + na;
                 let low = vec.get(g.acc, low_at);
                 vec.set(g.acc, high_at, vec.get(g.acc, high_at) + (low >> 32));
                 vec.set(g.acc, low_at, low & 0xffffffff);
@@ -688,6 +766,9 @@ pub fn settle[&g, &q](g: &!g Groups, tree: &q query.Query) -> [] int {
             k = k + 1;
         }
         x = x + 1;
+    }
+    if worst >= 0 {
+        return worst * 4096 + worst_k + 1;
     }
     return 0;
 }
@@ -701,8 +782,11 @@ pub fn put_value[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, t
     if query.agg_at(tree, k, 2) >= 2 {
         scale = query.agg_at(tree, k, 2) - 2;
     }
+    if function == 1 && query.agg_at(tree, k, 2) == 21 {
+        return flt.put_float(heap, out, vec.get(g.acc, x * g.stride + 1 + k));
+    }
     if function == 1 {
-        let high = vec.get(g.acc, x * g.stride + 1 + k + (g.stride - 1) / 2);
+        let high = vec.get(g.acc, x * g.stride + 1 + k + query.agg_count(tree));
         let low = vec.get(g.acc, x * g.stride + 1 + k);
         let mean = query.agg_at(tree, k, 3);
         if mean == 0 {
@@ -966,9 +1050,13 @@ pub fn parse_aggs[&h, &s](heap: &!h Heap, tree: query.Query, given: &s [byte]) -
                 var mean_final = 0;
                 if function == 0 {
                     bad = i;
-                } else if kind == 21 && function == 1 {
-                    // the exact sum and mean of doubles are stage N4 (docs/numbers.md 4.4): not built
-                    bad = i;
+                } else if is_mean && kind == 21 {
+                    // the mean of doubles is the exact sum over the count, rounded once: it has no scale (`@N` is refused)
+                    if mean != 0 {
+                        bad = i;
+                    } else {
+                        mean_final = 100;
+                    }
                 } else if is_mean {
                     // the scale is the column's when it is a decimal, and must be said otherwise
                     if kind < 2 && mean == 0 {
@@ -1143,7 +1231,7 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
                 mp[i] = found;
                 if found < 0 {
                     new_groups = new_groups + 1;
-                    new_bytes = new_bytes + klen;
+                    new_bytes = new_bytes + klen + float_state(tree);
                 }
                 at = acc_at + 8 * stride;
                 i = i + 1;
@@ -1211,6 +1299,7 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
                         }
                         a = set_at(a, entry * stride, before + get_i64(blob, acc_at));
                         var k = 0;
+                        var facc_at = 1 + 2 * na;
                         while k < na {
                             let function = query.agg_at(tree, k, 0);
                             var mine = 0;
@@ -1218,7 +1307,19 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
                                 mine = vec.get(ar, entry * stride + 1 + k);
                             }
                             let theirs = get_i64(blob, acc_at + 8 * (1 + k));
-                            if function == 1 {
+                            if function == 1 && query.agg_at(tree, k, 2) == 21 {
+                                // an exact float sum: carried here, the range's limbs added (each at most 2^60: the sum of both fits an int), carried again
+                                borrow mut a as &!aw in {
+                                    facc.normalize(aw, entry * stride + facc_at);
+                                    var l = 0;
+                                    while l < 72 {
+                                        vec.set(aw, entry * stride + facc_at + l, vec.get(aw, entry * stride + facc_at + l) + get_i64(blob, acc_at + 8 * (facc_at + l)));
+                                        l = l + 1;
+                                    }
+                                    facc.normalize(aw, entry * stride + facc_at);
+                                }
+                                facc_at = facc_at + facc.width();
+                            } else if function == 1 {
                                 // a sum is a pair, and a pair adds: the order of the ranges is of no consequence
                                 var mine_high = 0;
                                 borrow a as &ar in {

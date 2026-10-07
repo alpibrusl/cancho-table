@@ -666,11 +666,11 @@ class Aggregates(unittest.TestCase):
         self.assertEqual(self.csv_rows(agg("mean:x\\@2@3"))[1], ["a", "6.000"])             # one called x@2, mean at scale 3
         got = agg("sum:x:dec(2)", False)                                                   # the same text unescaped is the suffix: column x does not exist
         self.assertEqual(got.first_rule(), "column.unknown")
-        for spec in ("count:dec(2)", "count@2", "sum:p:dec(19)", "sum:p:dec(2)@2", "mean:p:dec(2)@19", "mean:p@99", "distinct:p@1", "sum:p:float", "sum:", "mean:p:dec()", "sum:p:dec(2"):
+        for spec in ("count:dec(2)", "count@2", "sum:p:dec(19)", "sum:p:dec(2)@2", "mean:p:dec(2)@19", "mean:p@99", "distinct:p@1", "sum:", "mean:p:dec()", "sum:p:dec(2"):
             with self.subTest(spec):
                 got = agg(spec, False)
                 self.assertIn(got.first_rule(), ("agg.bad-spec", "column.unknown"), (spec, got))
-                if spec not in ("sum:p:float", "sum:p:dec(2"):
+                if spec not in ("sum:p:dec(2",):
                     self.assertEqual(got.first_rule(), "agg.bad-spec", (spec, got))
 
     def test_one_column_read_two_ways_across_where_agg_and_order_by_is_refused(self):

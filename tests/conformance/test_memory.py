@@ -81,6 +81,7 @@ class Memory(unittest.TestCase):
                       ["--where", "bytes:dec(0) in (7, 8, 99999)", "--limit", "1000"],
                       ["--where", "status=200 and bytes:float>50.5", "--select", "id", "--format", "csv"],   # docs/numbers.md N3a
                       ["--group", "status", "--agg", "count,min:bytes:float,max:bytes:float,distinct:status:float"],
+                      ["--group", "status", "--agg", "count,sum:bytes:float,mean:bytes:float"],   # docs/numbers.md N4: the exact accumulator is 584 bytes a group, not a function of the rows
                       ["--group", "status", "--agg", "count,sum:bytes:dec(2),min:bytes:dec(2),max:bytes:dec(2),mean:bytes:dec(2)@4,distinct:status:dec(0)"],   # docs/numbers.md N2
                       ["--group", "status", "--agg", "count,sum:bytes,min:bytes,max:bytes"],
                       ["--group", "status", "--agg", "count,distinct:status", "--sort", "-count"]):
@@ -91,6 +92,23 @@ class Memory(unittest.TestCase):
             self.assertLess(large - small, 1 << 20, flags)
             self.assertLess(large, 8 << 20, flags)
 
+    def test_a_float_sum_holds_584_bytes_a_group_and_nothing_more(self):
+        """docs/numbers.md G12: the exact float accumulator is 73 integers a group, so the memory is a function of the GROUPS, not of the rows: 20,000 more groups
+        of a `sum` and a `mean` cost (2 x 584 + a key's few bytes) each, at most a small multiple for the growth of the vector holding them."""
+        for name, groups in (("g_small.csv", 4_000), ("g_large.csv", 24_000)):
+            with open(self.s.dir / name, "w", newline="") as f:
+                f.write("id,x\n")
+                for i in range(groups):
+                    f.write("%d,%d.25\n" % (i, i))
+        flags = ["--group", "id", "--agg", "sum:x:float,mean:x:float", "--format", "csv", "--max-groups", "100000", "--max-state-bytes", "1000000000"]
+        rc1, small = peak_rss("--root", self.s.dir, *flags, "g_small.csv")
+        rc2, large = peak_rss("--root", self.s.dir, *flags, "g_large.csv")
+        self.assertEqual((rc1, rc2), (0, 0))
+        per_group = (large - small) / 20_000
+        print("\npeak RSS float sum+mean: %d KB for 4,000 groups, %d KB for 24,000: %.0f bytes a group (the state is 1,168)" % (small // 1024, large // 1024, per_group), file=sys.stderr)
+        self.assertGreater(per_group, 1168 * 0.9)                    # it is held
+        self.assertLess(per_group, 1168 * 3.5)                       # and not held again and again
+
     def test_threads_are_bounded_by_the_ranges_not_the_file(self):
         # O(threads x range): the same ranges on a file 18 times as large use the same memory,
         # and the memory is a few times (threads x range), never the file.
@@ -100,6 +118,7 @@ class Memory(unittest.TestCase):
         for threads in (2, 4, 8):
             for flags in (["--where", "status=200 and bytes:int>50", "--select", "id,path", "--format", "csv"],
                           ["--group", "status", "--agg", "count,sum:bytes,distinct:status"],
+                          ["--group", "status", "--agg", "count,sum:bytes:float,mean:bytes:float"],
                           ["--select", "note", "--limit", "1000", "--max-bytes", "4000000"]):
                 common = flags + ["--threads", threads, "--chunk-bytes", range_bytes, "--parallel-min-bytes", 0]
                 rc1, small = peak_rss("--root", self.s.dir, *common, "small.csv")

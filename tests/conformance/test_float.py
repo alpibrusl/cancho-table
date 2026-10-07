@@ -234,10 +234,12 @@ class Floats(unittest.TestCase):
                 self.assertEqual((got.status, got.first_rule()), (8, rule), (key, agg, got))
                 self.assertEqual(got.error()["detail"]["row"], 2)
 
-    def test_sum_and_mean_of_floats_are_not_built_and_say_so(self):
-        for spec in ("sum:x:float", "mean:x:float", "mean:x:float@2"):
+    def test_the_mean_of_a_float_has_no_scale(self):
+        for spec in ("mean:x:float@2", "sum:x:float@2"):
             got = self.s.table("t.csv", "g,x\na,1.5\n", "--group", "g", "--agg", spec)
             self.assertEqual((got.status, got.first_rule()), (2, "agg.bad-spec"), (spec, got))
+        got = self.s.table("t.csv", "g,x\na,1.5\na,2\n", "--group", "g", "--agg", "sum:x:float,mean:x:float", "--format", "csv")
+        self.assertEqual(got.stdout, b"g,sum:x,mean:x\na,3.5,1.75\n", got)
 
     def test_the_grammar_of_the_suffix_and_the_literal(self):
         for expr, offset, word in (("x:float > nan", 10, "finite"), ("x:float > inf", 10, "finite"), ("x:float > 1e999", 10, "range"), ("x:float > abc", 10, "number"), ("x:float > ''", 10, "number"), ("x:float > 1e", 10, "number"),
@@ -343,7 +345,7 @@ def make_float_table(rng):
     return names, kinds, rows
 
 
-def make_float_plan(rng, names, kinds):
+def make_float_plan(rng, names, kinds, funcs=("count", "min", "max", "distinct", "min", "max")):
     plan = {"where": []}
     for _ in range(rng.choice([0, 0, 1, 2, 3])):
         n = rng.choice(["f0", "f1", "f0", "k0"])
@@ -365,7 +367,7 @@ def make_float_plan(rng, names, kinds):
     plan["group"] = rng.sample(["k0", "k1"], rng.randint(0, 2))
     aggs = []
     for _ in range(rng.randint(1, 4)):
-        f = rng.choice(["count", "min", "max", "distinct", "min", "max"])
+        f = rng.choice(funcs)
         if f == "count":
             aggs.append(("count", None, None))
         else:
@@ -430,6 +432,7 @@ def float_reference(names, rows, plan):
         return ("rows", plan["select"], out_rows)
     labels = list(plan["group"]) + [("count" if f == "count" else "%s:%s" % (f, c)) for f, c, t in plan["aggs"]]
     out = []
+    overflow = []
     for key, st in groups.items():
         row, keys = list(key), []
         for k, (f, c, t) in enumerate(plan["aggs"]):
@@ -438,10 +441,21 @@ def float_reference(names, rows, plan):
                 row.append(str(st["count"])); keys.append(st["count"])
             elif f == "distinct":
                 row.append(str(len(set(v)))); keys.append(len(set(v)))
+            elif f in ("sum", "mean"):
+                r = (ref.fsum_ref if f == "sum" else ref.fmean_ref)(v)
+                if r[0] == "overflow":
+                    overflow.append((key, k, c))
+                    row.append(None); keys.append(None)
+                else:
+                    row.append(ref.float_text(r[1])); keys.append(r[1])
             else:
                 x = min(v) if f == "min" else max(v)
                 row.append(ref.float_text(x)); keys.append(x)
         out.append((key, row, keys))
+    if overflow:
+        # no row is to blame: the group is named, the smallest key of the groups that overflow, and its first aggregate that does
+        key, k, c = min(overflow, key=lambda o: (o[0], o[1]))
+        return ("refuse", "agg.float-overflow", {"group": ",".join(key), "column": c, "context": "sum"})
     out.sort(key=lambda r: r[0])
     if plan.get("sort"):
         desc = plan["sort"].startswith("-")
@@ -475,13 +489,13 @@ class FloatPlans(unittest.TestCase):
     def tearDownClass(cls):
         cls.s.cleanup()
 
-    def test_random_float_plans(self):
-        rng = random.Random(20261012)
+    def check_plans(self, seed, funcs, cases, table, answers_min, refusals_min):
+        rng = random.Random(seed)
         answers = refusals = 0
-        for case in range(1600):
-            names, kinds, rows = make_float_table(rng)
+        for case in range(cases):
+            names, kinds, rows = table(rng)
             data = tp.csv_bytes(names, rows, rng)
-            plan = make_float_plan(rng, names, kinds)
+            plan = make_float_plan(rng, names, kinds, funcs)
             args = float_flags(plan)
             recs = [r for r in csv.reader(io.StringIO(data.decode("latin-1"), newline="")) if r][1:]
             want = float_reference(names, recs, plan)
@@ -496,6 +510,9 @@ class FloatPlans(unittest.TestCase):
                     if fmt == "json":
                         self.assertEqual(got.first_rule(), want[1], (args, data, got))
                         d = got.error()["detail"]
+                        if want[1] == "agg.float-overflow":
+                            self.assertEqual((d["group"], d["column"], d["context"]), (want[2]["group"], want[2]["column"], want[2]["context"]), (args, data, got))
+                            continue
                         self.assertEqual((d["row"], d["column"], d["context"]), (want[2]["row"], want[2]["column"], want[2]["context"]), (args, data, got))
                         if want[1] == "value.float-range":
                             self.assertIn(d["direction"], ("overflow", "underflow"))
@@ -515,8 +532,11 @@ class FloatPlans(unittest.TestCase):
                         continue
                     self.assertEqual(d["columns"], labels, (args, data, got))
                     self.assertTrue(rows_eq(d["rows"], wrows), (d["rows"], wrows, args, data))
-        self.assertGreater(answers, 900)
-        self.assertGreater(refusals, 80)
+        self.assertGreater(answers, answers_min)
+        self.assertGreater(refusals, refusals_min)
+
+    def test_random_float_plans(self):
+        self.check_plans(20261012, ("count", "min", "max", "distinct", "min", "max"), 1600, make_float_table, 900, 80)
 
 
 class Parallel(par.Same):

@@ -42,7 +42,7 @@ MUTANTS = [
     # the help of the flags
     ("an example in the help is refused", "table.cho", "--sort -count and --sort sum:bytes", "--sort -total and --sort sum:bytes"),
     ("an example of --where is not a condition", "table.cho", "--where 'status = 404 and bytes:int > 1000'", "--where 'status = 404 or bytes:int > 1000'"),
-    ("the help says a float has a sum", "table.cho", "(min, max and distinct only)", "(min, max, sum and distinct)"),
+    ("the help says a float has no sum", "table.cho", "(min, max, distinct, and the exact sum and mean:", "(min, max and distinct only:"),
     ("the help says text compares the other way", "table.cho", "so 10 is less than 9", "so 9 is less than 10"),
     ("the help says csv is a document", "table.cho", "csv and text are not a json document", "csv and text are a json document"),
     ("the help says a refusal in csv is on standard output", "table.cho", "a refusal is one line on standard error", "a refusal is one line on standard output"),
