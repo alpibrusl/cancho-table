@@ -65,6 +65,7 @@ def main():
     ap.add_argument("--file", default=str(ROOT / "build" / "bench" / "data.csv"))
     ap.add_argument("--limit", type=float, default=1.02, help="the fixed bound used when there is no --base2")
     ap.add_argument("--threads", type=int, default=4, help="the second thread count (the first is 1); on a box of three physical cores use 3")
+    ap.add_argument("--cell", default=None, help="only the cells whose name contains this text (to look again at one cell with more --runs)")
     a = ap.parse_args()
     data = pathlib.Path(a.file)
     extra = [x for x in (a.base2, a.base3) if x]
@@ -74,6 +75,8 @@ def main():
     failed = False
     print("%-36s %7s %9s %9s %7s %7s %7s %7s  %s" % ("cell", "threads", "base s", "new s", "new/base", "median", "noise", "bound", ""))
     for name, args in CELLS.items():
+        if a.cell and a.cell not in name:
+            continue
         for threads in (1, a.threads):
             argvs = [argv_of(b, data, args, threads) for b in bins]
             outs = [subprocess.run(x, capture_output=True) for x in argvs]
