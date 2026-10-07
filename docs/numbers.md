@@ -833,7 +833,7 @@ named without a type in one place is text there and may mix. A header that reall
 
 **G6, and the second regression the counter found.** The first build of N5 executed 1.7% more instructions in every one-thread read (+26M for 1M rows), `cut` included, as the first build of N4 had: a loop I had put in `engine.fast_ok`, which the compiler inlines into the large function of the read loop, made it spend more on every row. A flag
 in the groups' memo, set by `agg.start` from the plan and read through a counter that `add_fast` already tests (it starts at 2^60 for a plan with a typed group, so every row of such a plan takes `agg.add`), costs no other plan an instruction: the final build is at 1.001 to 1.003 in the group cells. **The clock form**, three builds of each side, 21 interleaved runs, 26 cells: 1 cell over its bound
-(group-count at one thread, 1.040 with a 4.8% spread across builds; the counter says 1.003 for the same cell); the control (three more builds of `main`: on the Mac they are the same binary) passes it, 0 of 26 over. On gram, where the counters cannot be read (`perf_event_paranoid` is 4, and was not changed): the clock form {GRAM_CLOCK}.
+(group-count at one thread, 1.040 with a 4.8% spread across builds; the counter says 1.003 for the same cell); the control (three more builds of `main`: on the Mac they are the same binary) passes it, 0 of 26 over. On gram, where the counters cannot be read (`perf_event_paranoid` is 4, and was not changed): the clock form (three builds of each side, 21 runs, cores 0 to 4, load checked, the soak's cores left alone) was over its bound in 1 of 26 cells (`cut` at four threads, 1.026, a 3.7% spread across builds), and its control (three more builds of `main`, which on gram differ from one another) in 1 of 26 (sum of everything at four threads, 1.064): the same, and the clock cannot tell them apart.
 
 **Against the others** (G10; 1,000,000 rows, `id,status,level,price,ratio`; seconds, the minimum of 5; the Mac was loaded by other work; every answer was compared with Python first: the groups by value, the order of the keys, and for `table` the ids exactly against a stable sort):
 
@@ -842,7 +842,9 @@ in the groups' memo, set by `agg.start` from the plan and read through a counter
 | Mac, group by `level` (a number written in two spellings, 20,001 values), `:float` | 0.181 / 0.0485 | 0.167 / 0.0747 (0.92x / 1.54x of `table`) | 1.02: **22,002 groups, true 20,001** (groups by text: `12.5` and `12.50` are two) | |
 | Mac, the first 1,000 ids by `price` descending, `:dec(2)` | 0.0673 / 0.0673 | 0.169 / 0.0737 (2.5x / 1.1x) | 2.14 (31.8x, sorts everything) | |
 | Mac, all ids by `ratio` (17 digits) ascending, `:float` | 1.55 / 1.56 | 0.257 / 0.091 (`table` 6x and 17x slower) | 2.91 (1.9x slower than `table`) | |
-{GRAM_ROWS}
+| gram, group by `level`, `:float` (1 / 6 threads) | 0.283 / 0.145 | not installed | 2.60 (9.2x): 22,002 groups | 0.447 (1.6x): 22,002 groups |
+| gram, first 1,000 by `price` descending, `:dec(2)` | 0.113 / 0.118 | | 4.28 (37.8x) | 3.78 (33.4x) |
+| gram, all ids by `ratio` ascending, `:float` | 1.59 / 1.62 | | 5.73 (3.6x) | 3.98 (2.5x) |
 
 The group by a float column costs what DuckDB's does at one thread (0.92x) and parallelises better; the top-N is 2.5x faster at one thread (a bounded heap of 1,000 against a sort) and equal at 16; csvtk and Miller **cannot group by value** (their group count is wrong whenever a number has two spellings: not a speed matter); the full sort of 17-digit doubles is slow for the reason of N3a (the
 exact reader, a region a cell) and not of the sort, and `--order-by` reads sequentially, so threads do not help it.
