@@ -389,6 +389,40 @@ fn rewrite_scale[&h, &g](heap: &!h Heap, given: &g [byte], offset: int, scale: i
     return buffer.append(heap, out, given[end..len(given)]);
 }
 
+// The groups complete: carry the sums and round the exact float sums and means once (`agg.settle`). When an exact float sum is beyond the largest double no row is to
+// blame: the abort is 42, the group (the smallest key of those that overflow) goes in `kept` as its key fields joined by a comma, the column and the aggregate in `a`.
+// (A function of its own: this code inside the read loop's function made the compiler spend 27 more instructions on every row of every one-thread read.)
+fn settle_groups[&h, &q, &c, &a](heap: &!h Heap, groups: agg.Groups, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], a: &!a [int]) -> [heap] (agg.Groups, buffer.Buffer) {
+    var g = groups;
+    var held = kept;
+    var over = 0;
+    borrow mut g as &!gm in {
+        over = agg.settle(gm, tree);
+    }
+    if over > 0 {
+        let k = (over - 1) % 4096;
+        let x = (over - 1) / 4096;
+        a[engine.k_err_col()] = cols[query.agg_at(tree, k, 1)];
+        a[engine.k_abort()] = 42;
+        a[engine.k_err_fn()] = 1;
+        a[engine.k_err_cond()] = k;
+        borrow mut held as &!kw in {
+            buffer.clear(kw);
+        }
+        borrow g as &gr in {
+            var j = 0;
+            while j < query.count_of(tree, 2) {
+                if j > 0 {
+                    held = buffer.push(heap, held, byte_of(','));
+                }
+                held = buffer.append(heap, held, agg.key_field(gr, x, j));
+                j = j + 1;
+            }
+        }
+    }
+    return (g, held);
+}
+
 // What went wrong in a read, as an error with a rule, or nothing.
 fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, names: &n buffer.Buffer, hends: &d vec.Vec[int], labels: &l buffer.Buffer, lends: &m vec.Vec[int], kept: &k buffer.Buffer, c: Counts, shown: &s [byte], names_at: int, errno: int, as_csv: bool, budget: int, errs: fail.Errors) -> [heap, args] fail.Errors {
     let table = flag_table();
@@ -739,7 +773,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     var scratch = buffer.empty(heap, 1);
     var escr = buffer.empty(heap, 16);
     var kept = buffer.empty(heap, 64);
-    var groups = agg.start(heap, agg.stride_of(tree));
+    var groups = agg.start(heap, tree);
     var rec = buffer.empty(heap, 256);
     var cols = box_slice(heap, 1, 0);
     var cells = box_slice(heap, 3, 0);
@@ -1130,33 +1164,10 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
         var finished = rows;
         var spare = scratch;
         if mode == 2 && a[engine.k_abort()] == 0 {
-            var over = 0;
-            borrow mut groups as &!gm in {
-                over = agg.settle(gm, tree);
-            }
-            if over > 0 {
-                // the exact sum of a float column in a group is beyond the largest double: no row is to blame, the group is named
-                let k = (over - 1) % 4096;
-                let x = (over - 1) / 4096;
-                borrow cols as &kr in {
-                    a[engine.k_err_col()] = contents(kr)[query.agg_at(tree, k, 1)];
-                }
-                a[engine.k_abort()] = 42;
-                a[engine.k_err_fn()] = 1;
-                a[engine.k_err_cond()] = k;
-                borrow mut kept as &!kw in {
-                    buffer.clear(kw);
-                }
-                borrow groups as &gr in {
-                    var j = 0;
-                    while j < query.count_of(tree, 2) {
-                        if j > 0 {
-                            kept = buffer.push(heap, kept, byte_of(','));
-                        }
-                        kept = buffer.append(heap, kept, agg.key_field(gr, x, j));
-                        j = j + 1;
-                    }
-                }
+            borrow cols as &kr in {
+                let (g2, k2) = settle_groups(heap, groups, kept, tree, contents(kr), a);
+                groups = g2;
+                kept = k2;
             }
             if a[engine.k_abort()] == 0 {
                 borrow groups as &gr in {

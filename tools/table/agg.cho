@@ -104,7 +104,8 @@ fn float_add(acc: vec.Vec[int], at: int, key: int) -> [] vec.Vec[int] {
     return a;
 }
 
-pub fn start[&h](heap: &!h Heap, stride: int) -> [heap] Groups {
+pub fn start[&h, &q](heap: &!h Heap, tree: &q query.Query) -> [heap] Groups {
+    let stride = stride_of(tree);
     return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: box_slice(heap, memo_size() + 4, 0) };
 }
 

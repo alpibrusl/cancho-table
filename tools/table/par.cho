@@ -85,7 +85,7 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
     var scratch = buffer.empty(w.heap, 256);
     var escr = buffer.empty(w.heap, 16);
     var kept = buffer.empty(w.heap, 64);
-    var groups = agg.start(w.heap, agg.stride_of(w.tree));
+    var groups = agg.start(w.heap, w.tree);
     var next_at = 0;
     var lines_read = 0;
     var status = 0;
