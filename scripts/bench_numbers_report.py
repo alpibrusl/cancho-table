@@ -64,7 +64,7 @@ def main():
     ap.add_argument("--threads", type=int, default=16)
     ap.add_argument("--rows", type=int, default=1_000_000)
     a = ap.parse_args()
-    clean = pathlib.Path(a.file)
+    clean = pathlib.Path(a.file).resolve()
     if not clean.exists():
         bn.generate(clean, a.rows)
     bad = clean.parent / "dirty.csv"
@@ -104,7 +104,7 @@ def main():
                 verdicts[lab] = " ".join("%s=%s" % (r[0], r[1]) for r in rows[: len(want)])
             else:
                 rows = list(csv.reader(out.splitlines()))
-                verdicts[lab] = " ".join("%s=%s" % (h, v) for h, v in zip(rows[0][1:], rows[1][1:])) if len(rows) > 1 else out[:90]
+                verdicts[lab] = " ".join("%s=%s" % (r[0], r[1]) for r in rows[1:])
             good.append((lab, key, argv))
         times = {l: [] for l, _, _ in good}
         for i in range(a.runs):
