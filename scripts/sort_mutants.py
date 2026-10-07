@@ -66,14 +66,14 @@ MUTANTS = [
     ("--order-by does not make a selection", "table.cho", "    } else if has_select || has_where || has_order || has_report {", "    } else if has_select || has_where || has_report {"),
     ("--order-by and --group do not conflict", "table.cho", "    if grouped && has_order {", "    if false && grouped && has_order {"),
     ("--max-rows stops a sort quietly in json", "table.cho", "    } else if (as_csv || query.count_of(tree, 4) > 0) && c.capped {", "    } else if as_csv && c.capped {"),
-    ("a descending integer key is read as ascending", "table.cho", "                                                    contents(ow)[3 * j + 1] = query.order_flags(tree, j) % 2;", "                                                    contents(ow)[3 * j + 1] = query.order_flags(tree, j) / 2;"),
+    ("a descending integer key is read as ascending", "readloop.cho", "                                                    contents(ow)[3 * j + 1] = query.order_flags(tree, j) % 2;", "                                                    contents(ow)[3 * j + 1] = query.order_flags(tree, j) / 2;"),
     ("a descending key is not descending", "table.cho", "            } else if was_start && c == '-' && !minus_done {\n                flag = 1;", "            } else if was_start && c == '-' && !minus_done {\n                flag = 0;"),
     (":int is descending", "table.cho", "        typed_flags = vec.push(heap, typed_flags, fv + 2 * kt);", "        typed_flags = vec.push(heap, typed_flags, fv + kt);"),
     ("an escaped minus is not allowed", "table.cho", "            if d == '-' && was_start || d == ':' {", "            if d == ':' {"),
     ("an escaped colon is not allowed", "table.cho", "            if d == '-' && was_start || d == ':' {", "            if d == '-' && was_start {"),
     ("an unknown key is said to be in --agg", "table.cho", "                flag = \"--order-by\";", "                flag = \"--agg\";"),
     ("--max-sort-rows is not checked", "table.cho", "    if sort_rows_most < 1 || sort_rows_most > 20000000 {", "    if sort_rows_most < 0 || sort_rows_most > 200000000 {"),
-    ("threads read a sort", "table.cho", "threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0)", "threads > 1 && (mode == 2 || row_from == 0)"),
+    ("threads read a sort", "readloop.cho", "threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0)", "threads > 1 && (mode == 2 || row_from == 0)"),
     # query.cho
     ("the flags of a key are its name's", "query.cho", "    return vec.get(q.meta, 6 + 2 * k);", "    return vec.get(q.meta, 5 + 2 * k);"),
 ]

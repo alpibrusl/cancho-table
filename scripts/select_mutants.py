@@ -42,17 +42,17 @@ MUTANTS = [
     ("a doubled quote is read as two in json", "writer.cho", "            p = p + found + 2;", "            p = p + found + 1;"),
     # table: paging, bounds, refusals
     ("a page starts one row late", "engine.cho", "    return index >= from;", "    return index > from;"),
-    ("next is one past", "table.cho", "                        a[engine.k_next()] = a[engine.k_records()];", "                        a[engine.k_next()] = a[engine.k_records()] + 1;"),
+    ("next is one past", "readloop.cho", "                        a[engine.k_next()] = a[engine.k_records()];", "                        a[engine.k_next()] = a[engine.k_records()] + 1;"),
     ("the budget is not kept", "engine.cho", "    if have + need + 1 > budget {\n        a[k_stop()] = 1;", "    if have + need + 1 > budget + 1000000 {\n        a[k_stop()] = 1;"),
     ("the next of a budget stop is one past", "engine.cho", "            a[k_next()] = a[k_records()] - 1;\n        }\n        return (pending, row);", "            a[k_next()] = a[k_records()];\n        }\n        return (pending, row);"),
     ("a row of one empty field is a blank line", "engine.cho", "        if picked == 1 && held == begun {", "        if false && picked == 1 && held == begun {"),
-    ("--max-rows allows one more", "table.cho", "header && !quoted && a[engine.k_records()] >= most {", "header && !quoted && a[engine.k_records()] > most {"),
-    ("a record is not bounded", "table.cho", "                            if held + 1 > cap {", "                            if held + 1 > cap + 100000000 {"),
+    ("--max-rows allows one more", "readloop.cho", "header && !quoted && a[engine.k_records()] >= most {", "header && !quoted && a[engine.k_records()] > most {"),
+    ("a record is not bounded", "readloop.cho", "                            if held + 1 > cap {", "                            if held + 1 > cap + 100000000 {"),
     ("csv hides that --max-rows stopped it", "table.cho", "    } else if (as_csv || query.count_of(tree, 4) > 0) && c.capped {", "    } else if false && (as_csv || query.count_of(tree, 4) > 0) && c.capped {"),
-    ("a record of several lines is one field short", "table.cho", "                                    var found = n + 1;", "                                    var found = n;"),
-    ("a record of several lines is not kept for select", "table.cho", "                        } else if inside {\n                            quoted = true;\n                            opened = number;\n                            borrow mut rec as &!rw in {\n                                buffer.clear(rw);\n                            }\n                            if mode != 0 {", "                        } else if inside {\n                            quoted = true;\n                            opened = number;\n                            borrow mut rec as &!rw in {\n                                buffer.clear(rw);\n                            }\n                            if false {"),
+    ("a record of several lines is one field short", "readloop.cho", "                                    var found = n + 1;", "                                    var found = n;"),
+    ("a record of several lines is not kept for select", "readloop.cho", "                        } else if inside {\n                            quoted = true;\n                            opened = number;\n                            borrow mut rec as &!rw in {\n                                buffer.clear(rw);\n                            }\n                            if mode != 0 {", "                        } else if inside {\n                            quoted = true;\n                            opened = number;\n                            borrow mut rec as &!rw in {\n                                buffer.clear(rw);\n                            }\n                            if false {"),
     ("the number of names is not capped", "table.cho", "    } else if named > plan.most_names() {\n        e = flag_problem(heap, e, \"args.bad-value\", \"a list names more columns than the ceiling\", \"4096 is the most one flag names\", flag);", "    } else if named > 99999999 {\n        e = flag_problem(heap, e, \"args.bad-value\", \"a list names more columns than the ceiling\", \"4096 is the most one flag names\", flag);"),
-    ("the header is kept as a name list of the wrong width", "table.cho", "                                    picked = fpicked;", "                                    picked = fpicked - 1;"),
+    ("the header is kept as a name list of the wrong width", "readloop.cho", "                                    picked = fpicked;", "                                    picked = fpicked - 1;"),
 ]
 
 

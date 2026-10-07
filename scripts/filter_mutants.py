@@ -63,7 +63,7 @@ MUTANTS = [
     ("the refusals of a grouping are numbered one low", "engine.cho", "    return 12 + status;\n}", "    return 11 + status;\n}"),
     ("a full page holds one row more with --where", "engine.cho", "    if a[k_emitted()] >= limit {\n        // The page is full and this row matches: there is more.", "    if a[k_emitted()] > limit {\n        // The page is full and this row matches: there is more."),
     ("the next of a filtered page is one past", "engine.cho", "        a[k_next()] = a[k_records()] - 1;\n        a[k_stop()] = 1;\n        return (rows, scratch, e2, k2);", "        a[k_next()] = a[k_records()];\n        a[k_stop()] = 1;\n        return (rows, scratch, e2, k2);"),
-    ("a page is declared full at a row that does not match", "table.cho", "mode == 1 && !filtering && a[engine.k_records()] >= from", "mode == 1 && a[engine.k_records()] >= from"),
+    ("a page is declared full at a row that does not match", "readloop.cho", "mode == 1 && !filtering && a[engine.k_records()] >= from", "mode == 1 && a[engine.k_records()] >= from"),
     ("--top is ignored", "table.cho", "            if top > 0 && top < n {", "            if top > n {"),
     ("the byte budget of a json page of groups is not kept", "table.cho", "                        if have + need + 1 > budget {\n                            going = false;", "                        if have + need + 1 > budget + 1000000 {\n                            going = false;"),
     ("the number of groups is not reported", "table.cho", "    a[engine.k_groups()] = n;", "    a[engine.k_groups()] = 0;"),
