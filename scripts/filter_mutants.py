@@ -26,9 +26,8 @@ MUTANTS = [
     ("settling a sum forgets the carry", "agg.ls", "vec.set(g.acc, high_at, vec.get(g.acc, high_at) + (low >> 32));", "vec.set(g.acc, high_at, vec.get(g.acc, high_at));"),
     ("settling a sum leaves the low half whole", "agg.ls", "vec.set(g.acc, low_at, low & 0xffffffff);", "vec.set(g.acc, low_at, low);"),
     ("sorting by a sum looks at the low half only", "agg.ls", "        if hx != hy {\n            if descending {", "        if false && hx != hy {\n            if descending {"),
-    ("the magnitude of a negative wide sum is one too large", "agg.ls", "            h = 0 - high - 1;\n            l = 4294967296 - low;", "            h = 0 - high;\n            l = 4294967296 - low;"),
-    ("a group of nine digits is not padded with zeros", "agg.ls", "while pad > v && pad > 1 {", "while pad > v && pad > 100000000 {"),
-    ("a sum of 2^63 and more takes the narrow way", "agg.ls", "if high >= 0 - 2147483648 && high < 2147483648 {", "if high >= 0 - 2147483648 && high < 4294967296 {"),
+    ("the magnitude of a negative wide sum is one too large", "dec.ls", "            // the magnitude: 0 - (high * 2^32 + low)\n            if low == 0 {\n                h = 0 - high;\n            } else {\n                h = 0 - high - 1;\n                l = 4294967296 - low;", "            // the magnitude: 0 - (high * 2^32 + low)\n            if low == 0 {\n                h = 0 - high;\n            } else {\n                h = 0 - high;\n                l = 4294967296 - low;"),
+    ("a group of nine digits is not padded with zeros", "dec.ls", "        while g < 9 {", "        while g < 8 {"),
     # exact integers
     ("2^63 is accepted as a positive integer", "query.ls", "    if acc == int_min() {\n        return (0, 2);", "    if false && acc == int_min() {\n        return (0, 2);"),
     ("a minus sign is a plus", "query.ls", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '-';", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '+';"),
@@ -61,8 +60,7 @@ MUTANTS = [
     ("- does not mean descending", "frame.ls", "if int_of(sort[0]) == '-' {", "if int_of(sort[0]) == '+' {"),
     ("count is sorted by the wrong slot", "frame.ls", "            } else if query.agg_at(tree, found - ng, 0) == 0 {\n                sort_slot = 0;", "            } else if query.agg_at(tree, found - ng, 0) == 0 {\n                sort_slot = 1;"),
     # the read
-    ("the refusals of a grouping are numbered one low", "engine.ls", "    a[k_abort()] = 12 + status;\n    if status < 4 {", "    a[k_abort()] = 11 + status;\n    if status < 4 {"),
-    ("the refusals of a grouping are numbered one low, in place", "engine.ls", "    // The same refusal as `process_groups`.\n    a[k_stop()] = 1;\n    a[k_abort()] = 12 + status;", "    // The same refusal as `process_groups`.\n    a[k_stop()] = 1;\n    a[k_abort()] = 11 + status;"),
+    ("the refusals of a grouping are numbered one low", "engine.ls", "    return 12 + status;\n}", "    return 11 + status;\n}"),
     ("a full page holds one row more with --where", "engine.ls", "    if a[k_emitted()] >= limit {\n        // The page is full and this row matches: there is more.", "    if a[k_emitted()] > limit {\n        // The page is full and this row matches: there is more."),
     ("the next of a filtered page is one past", "engine.ls", "        a[k_next()] = a[k_records()] - 1;\n        a[k_stop()] = 1;\n        return (rows, scratch, e2, k2);", "        a[k_next()] = a[k_records()];\n        a[k_stop()] = 1;\n        return (rows, scratch, e2, k2);"),
     ("a page is declared full at a row that does not match", "table.ls", "mode == 1 && !filtering && a[engine.k_records()] >= from", "mode == 1 && a[engine.k_records()] >= from"),
@@ -71,12 +69,10 @@ MUTANTS = [
     ("the number of groups is not reported", "table.ls", "    a[engine.k_groups()] = n;", "    a[engine.k_groups()] = 0;"),
     ("--select and --group do not conflict", "table.ls", "    if grouped && has_select {", "    if false && grouped && has_select {"),
     ("the row of a refused cell is one low", "engine.ls", "    a[k_err_fn()] = -1;\n    a[k_err_row()] = a[k_records()];", "    a[k_err_fn()] = -1;\n    a[k_err_row()] = a[k_records()] - 1;"),
-    ("the row of a refused aggregate cell is one low", "engine.ls", "    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return (g3, e3, keep_value", "    a[k_err_row()] = a[k_records()] - 1;\n    a[k_err_line()] = opened;\n    return (g3, e3, keep_value"),
-    ("the row of a refused aggregate cell is one low, in place", "engine.ls", "    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return (0, e2, keep_value", "    a[k_err_row()] = a[k_records()] - 1;\n    a[k_err_line()] = opened;\n    return (0, e2, keep_value"),
-    ("the row of a refused aggregate cell is one low, when recorded after the fast way", "engine.ls", "    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return keep_value", "    a[k_err_row()] = a[k_records()] - 1;\n    a[k_err_line()] = opened;\n    return keep_value"),
+    ("the row of a refused aggregate cell is one low", "engine.ls", "    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return column;", "    a[k_err_row()] = a[k_records()] - 1;\n    a[k_err_line()] = opened;\n    return column;"),
     ("a refused value is kept whole", "engine.ls", "    if last - first > 64 {", "    if last - first > 6400 {"),
     ("every unknown name is in --select", "table.ls", "            } else if c.bad_name >= ns + nw + ng {", "            } else if c.bad_name >= ns + nw + ng + 5 {"),
-    ("a grouping with no --agg counts nothing", "table.ls", "            tree = query.add_agg(heap, tree, 0, -1);", "            tree = query.add_agg(heap, tree, 1, 0);"),
+    ("a grouping with no --agg counts nothing", "table.ls", "            tree = query.add_agg(heap, tree, 0, -1, 0, 0);", "            tree = query.add_agg(heap, tree, 1, 0, 1, 0);"),
 ]
 
 

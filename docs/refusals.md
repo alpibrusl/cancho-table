@@ -114,7 +114,7 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `column.unknown` | 3 | never | a name or position in --where, --group or --agg that is not a column of the header |
 | `column.ambiguous` | 8 | never | a name in --where, --group or --agg that is the name of more than one column |
 | `where.syntax` | 2 | never | --where is not an expression of the grammar, at the offset the detail gives |
-| `agg.bad-spec` | 2 | never | an item of --agg that is not count, sum:COL, min:COL, max:COL or distinct:COL |
+| `agg.bad-spec` | 2 | never | an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes |
 | `sort.unknown-key` | 2 | never | --sort names no output column of the grouping |
 | `value.not-integer` | 8 | never | a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not) |
 | `value.integer-overflow` | 8 | never | a cell of an :int column or of sum, min or max does not fit 64 bits |

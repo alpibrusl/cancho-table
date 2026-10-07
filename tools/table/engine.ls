@@ -270,6 +270,50 @@ pub fn keep_value[&h, &d](heap: &!h Heap, kept: buffer.Buffer, record: &d [byte]
     return buffer.append(heap, v, record[first..stop]);
 }
 
+// How many fractional digits the cell at `first..last` of `record` has (the bytes after its point).
+fn digits_after_point[&d](record: &d [byte], first: int, last: int) -> [] int {
+    var at = last;
+    var n = 0;
+    while at > first && int_of(record[at - 1]) != '.' {
+        at = at - 1;
+        n = n + 1;
+    }
+    if at == first {
+        return 0;
+    }
+    return n;
+}
+
+// The abort code of a refusal of an aggregate's cell by its status (`agg.add`): 4 and 5 (not an integer, too large) are 16 and 17, and a
+// decimal's 6, 7 and 8 (not a decimal, too fine for the scale, too wide) are 26, 27 and 28.
+fn abort_of(status: int) -> [] int {
+    if status >= 6 {
+        return 20 + status;
+    }
+    return 12 + status;
+}
+
+// Record that aggregate `k` refused a cell: which column, which function (a mean says 5), the aggregate (for its scale), the row and line, and for a
+// decimal with too many fractional digits how many it has. Answers the column.
+fn note_agg_refusal[&q, &c, &d, &e, &a](tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], k: int, status: int, opened: int, a: &!a [int]) -> [] int {
+    let column = cols[query.agg_at(tree, k, 1)];
+    a[k_stop()] = 1;
+    a[k_abort()] = abort_of(status);
+    a[k_err_col()] = column;
+    var function = query.agg_at(tree, k, 0);
+    if function == 1 && query.agg_at(tree, k, 3) != 0 {
+        function = 5;
+    }
+    a[k_err_fn()] = function;
+    a[k_err_cond()] = k;
+    if status == 7 {
+        a[k_err_digits()] = digits_after_point(record, cells[3 * column], cells[3 * column + 1]);
+    }
+    a[k_err_row()] = a[k_records()];
+    a[k_err_line()] = opened;
+    return column;
+}
+
 // Whether `--where` wants the record: 1 yes (also when there is no condition),
 // 0 no, -1 a condition met a cell it cannot compare, which is recorded in `a`
 // (the read stops). `escr` is a scratch for a quoted cell, `kept` the first
@@ -361,16 +405,12 @@ pub fn process_groups[&h, &q, &c, &d, &e, &a](heap: &!h Heap, groups: agg.Groups
     if status == 0 {
         return (g3, e3, k2);
     }
-    a[k_stop()] = 1;
-    a[k_abort()] = 12 + status;
     if status < 4 {
+        a[k_stop()] = 1;
+        a[k_abort()] = abort_of(status);
         return (g3, e3, k2);
     }
-    let column = cols[query.agg_at(tree, k, 1)];
-    a[k_err_col()] = column;
-    a[k_err_fn()] = query.agg_at(tree, k, 0);
-    a[k_err_row()] = a[k_records()];
-    a[k_err_line()] = opened;
+    let column = note_agg_refusal(tree, cols, record, cells, k, status, opened, a);
     return (g3, e3, keep_value(heap, k2, record, cells[3 * column], cells[3 * column + 1]));
 }
 
@@ -395,19 +435,13 @@ pub fn group_fast[&h, &g, &q, &c, &d, &e, &a](heap: &!h Heap, groups: &!g agg.Gr
         return (1 - 2 * status - 2, e2, k2);
     }
     // The same refusal as `process_groups`.
-    a[k_stop()] = 1;
-    a[k_abort()] = 12 + status;
-    let column = cols[query.agg_at(tree, k, 1)];
-    a[k_err_col()] = column;
-    a[k_err_fn()] = query.agg_at(tree, k, 0);
-    a[k_err_row()] = a[k_records()];
-    a[k_err_line()] = opened;
+    let column = note_agg_refusal(tree, cols, record, cells, k, status, opened, a);
     return (0, e2, keep_value(heap, k2, record, cells[3 * column], cells[3 * column + 1]));
 }
 
 // `group_fast` for a grouping with no `--where`: nothing to screen, so no buffers go in or out. Answers 0
-// when the row is added, 1 when `process_groups` has to deal with it (3 when the key is built: a new group), and 16 + 8 * k + status when aggregate
-// `k` refused the row with `status` (4 to 6), for `group_refused` to record.
+// when the row is added, 1 when `process_groups` has to deal with it (3 when the key is built: a new group), and 16 + 16 * k + status when aggregate
+// `k` refused the row with `status` (4 to 8), for `group_refused` to record.
 pub fn group_plain[&g, &q, &c, &d, &e](groups: &!g agg.Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int]) -> [] int {
     if query.count_of(tree, 4) > 0 {
         return sorter.hook(groups, record, cells);
@@ -419,20 +453,14 @@ pub fn group_plain[&g, &q, &c, &d, &e](groups: &!g agg.Groups, tree: &q query.Qu
     if status < 0 {
         return 1 - 2 * status - 2;
     }
-    return 16 + 8 * k + status;
+    return 16 + 16 * k + status;
 }
 
 // The refusal `group_plain` answered, recorded as `process_groups` records it.
 pub fn group_refused[&h, &q, &c, &d, &e, &a](heap: &!h Heap, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], opened: int, answer: int, a: &!a [int]) -> [heap] buffer.Buffer {
-    let status = (answer - 16) % 8;
-    let k = (answer - 16) / 8;
-    a[k_stop()] = 1;
-    a[k_abort()] = 12 + status;
-    let column = cols[query.agg_at(tree, k, 1)];
-    a[k_err_col()] = column;
-    a[k_err_fn()] = query.agg_at(tree, k, 0);
-    a[k_err_row()] = a[k_records()];
-    a[k_err_line()] = opened;
+    let status = (answer - 16) % 16;
+    let k = (answer - 16) / 16;
+    let column = note_agg_refusal(tree, cols, record, cells, k, status, opened, a);
     return keep_value(heap, kept, record, cells[3 * column], cells[3 * column + 1]);
 }
 

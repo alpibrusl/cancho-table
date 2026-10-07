@@ -52,8 +52,8 @@ MUTANTS = [
     ("a group that is not there is counted anyway", "agg.ls", "        entry = map.find(g.index, buffer.bytes(g.keyb));\n        if entry < 0 {", "        entry = map.find(g.index, buffer.bytes(g.keyb));\n        if false && entry < 0 {"),
     ("the key is written one byte short", "agg.ls", "            copy_into(room[at + 4..at + 4 + n], record[first..first + n]);", "            copy_into(room[at + 4..at + 3 + n], record[first..first + n - 1]);"),
     ("a row counts twice in place", "agg.ls", "    vec.set(g.acc, slot, before + 1);", "    vec.set(g.acc, slot, before + 2);"),
-    ("an in-place integer past 64 bits is a text", "agg.ls", "            if bad == 2 {\n                return (5, k);", "            if bad == 2 {\n                return (4, k);"),
-    ("an in-place text is a number", "agg.ls", "            if bad == 1 {\n                return (4, k);", "            if false && bad == 1 {\n                return (4, k);"),
+    ("an in-place integer past 64 bits is a text", "query.ls", "    return (0, 3 + bad);\n}", "    return (0, 4);\n}"),
+    ("an in-place text is a number", "agg.ls", "            if bad != 0 {\n                return (bad, k);", "            if false && bad != 0 {\n                return (bad, k);"),
     ("an in-place minimum is a maximum", "agg.ls", "            } else if function == 2 && v < now {\n                vec.set(g.acc, slot + 1 + k, v);", "            } else if function == 2 && v > now {\n                vec.set(g.acc, slot + 1 + k, v);"),
     ("the first value of an in-place group is not its minimum", "agg.ls", "            } else if before == 0 {\n                vec.set(g.acc, slot + 1 + k, v);", "            } else if before == 1 {\n                vec.set(g.acc, slot + 1 + k, v);"),
     ("the second aggregate is the first in place", "agg.ls", "            let column = cols[query.agg_at(tree, k, 1)];\n            let now = vec.get(g.acc, slot + 1 + k);", "            let column = cols[query.agg_at(tree, 0, 1)];\n            let now = vec.get(g.acc, slot + 1 + k);"),
@@ -61,9 +61,9 @@ MUTANTS = [
     ("the rows that wait for the fast way are dropped", "agg.ls", "        contents(g.memo)[rest_at] = waiting - 1;\n        return (0 - 1, 0);", "        contents(g.memo)[rest_at] = waiting - 1;\n        return (0, 0);"),
     ("a new group is taken for one that is there", "agg.ls", "            return (0 - 2, 0);\n        }\n        if contents", "            return (0, 0);\n        }\n        if contents"),
     # engine
-    ("a refusal in place is numbered one low", "engine.ls", "    a[k_abort()] = 12 + status;\n    let column = cols[query.agg_at(tree, k, 1)];\n    a[k_err_col()] = column;\n    a[k_err_fn()] = query.agg_at(tree, k, 0);\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return keep_value", "    a[k_abort()] = 11 + status;\n    let column = cols[query.agg_at(tree, k, 1)];\n    a[k_err_col()] = column;\n    a[k_err_fn()] = query.agg_at(tree, k, 0);\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return keep_value"),
-    ("the aggregate that refused is lost in the answer", "engine.ls", "    return 16 + 8 * k + status;", "    return 16 + status;"),
-    ("a refusal is decoded with the wrong radix", "engine.ls", "    let status = (answer - 16) % 8;", "    let status = (answer - 16) % 7;"),
+    ("a refusal in place is numbered one low", "engine.ls", "    return 12 + status;\n}", "    return 11 + status;\n}"),
+    ("the aggregate that refused is lost in the answer", "engine.ls", "    return 16 + 16 * k + status;", "    return 16 + status;"),
+    ("a refusal is decoded with the wrong radix", "engine.ls", "    let status = (answer - 16) % 16;", "    let status = (answer - 16) % 15;"),
     # scan.next_fast
     ("a line is taken before looking for its end", "scan.ls", "    if found < 0 || found > r.cap {\n        return 9;\n    }", "    if found > r.cap {\n        return 9;\n    }"),
     ("the rest of a line held over is a line", "scan.ls", "    if r.over > 0 || buffer.size(r.held) > 0 {\n        return 9;\n    }", "    if r.over > 0 {\n        return 9;\n    }"),

@@ -169,7 +169,11 @@ pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n b
                     if function == 0 {
                         labels = buffer.append(heap, labels, "count");
                     } else {
-                        labels = buffer.append(heap, labels, function_name(function));
+                        if function == 1 && query.agg_at(tree, m - ng, 3) != 0 {
+                            labels = buffer.append(heap, labels, "mean");
+                        } else {
+                            labels = buffer.append(heap, labels, function_name(function));
+                        }
                         labels = buffer.push(heap, labels, byte_of(':'));
                         labels = buffer.append(heap, labels, header_name(names, ends, contents(cr)[query.agg_at(tree, m - ng, 1)]));
                     }
@@ -226,6 +230,10 @@ pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n b
                 sort_slot = 0;
             } else {
                 sort_slot = 1 + found - ng;
+                if query.agg_at(tree, found - ng, 3) != 0 {
+                    // a mean sorts by its exact value (agg.before): the sum's slot, plus 1,000,000
+                    sort_slot = sort_slot + 1000000;
+                }
             }
         }
     }

@@ -20,8 +20,10 @@ module query;
 //     first literal and how many (into `lits`), offset (in the expression).
 // `lits` has 4 per literal: where its bytes begin and end in `ltext`, its
 // integer value when the condition is :int, or its scaled value when it is :dec(S), 0.
-// `aggs` has 2 per aggregate: function (0 count, 1 sum, 2 min, 3 max,
-// 4 distinct) and name (or -1 for count).
+// `aggs` has 4 per aggregate: function (0 count, 1 sum, 2 min, 3 max,
+// 4 distinct), name (or -1 for count), type (0 text, 1 :int, 2 + S for :dec(S): how its cells are read; an untyped sum, min or max
+// is 1, an untyped distinct 0) and mean (0 it is not one; else 1 + N, N the scale of the mean, 99 the column's own). A mean is a sum
+// that is written divided by the group's count (docs/numbers.md 3.6), so the engine adds it as a sum.
 // `meta` is: names for select, conditions, names for group, aggregates, order keys; then, for each order key,
 // its name (an index into `names`, which come after the aggregates') and its flags (1 descending, 2 integer).
 
@@ -270,6 +272,29 @@ pub fn parse_dec[&d](data: &d [byte], scale: int) -> [] (int, int) {
     return (v, 0);
 }
 
+// `data` as a cell of the numeric type `kind` (1 :int, 2 + S :dec(S)), for an aggregate: (value, status), 0 it is, 4 not an integer,
+// 5 an integer past 64 bits, 6 not a decimal, 7 a decimal with more fractional digits than the scale, 8 one that is too wide.
+pub fn parse_typed[&d](data: &d [byte], kind: int) -> [] (int, int) {
+    if kind >= 2 {
+        let (v, bad) = parse_dec(data, kind - 2);
+        if bad == 0 {
+            return (v, 0);
+        }
+        if bad == 1 {
+            return (0, 6);
+        }
+        if bad == 3 {
+            return (0, 7);
+        }
+        return (0, 8);
+    }
+    let (v, bad) = parse_int(data);
+    if bad == 0 {
+        return (v, 0);
+    }
+    return (0, 3 + bad);
+}
+
 // The numeric type a name is read as in the plan, or 0 when it is only ever text: the `:int` or `:dec(S)` of a condition on it (1,
 // or 2 + S), `:int` for the sum, min or max of it, `:int` for an `--order-by` key flagged integer. Answers the type of the first
 // mention that has one, after `from`; and the index of that mention's name in `names`, or -1 when there is none.
@@ -288,10 +313,9 @@ pub fn typed_mention[&q, &c](q: &q Query, cols: &c [int], column: int, from: int
     }
     k = 0;
     while k < agg_count(q) {
-        let f = agg_at(q, k, 0);
-        if (f == 1 || f == 2 || f == 3) && cols[agg_at(q, k, 1)] == column {
+        if agg_at(q, k, 0) != 0 && agg_at(q, k, 2) != 0 && cols[agg_at(q, k, 1)] == column {
             if seen >= from {
-                return (1, agg_at(q, k, 1));
+                return (agg_at(q, k, 2), agg_at(q, k, 1));
             }
             seen = seen + 1;
         }
@@ -368,11 +392,13 @@ pub fn add_cond[&h](heap: &!h Heap, q: Query, kind: int, as_int: int, op: int, n
     return Query { names: names, nends: nends, nkinds: nkinds, conds: c, lits: lits, ltext: ltext, aggs: aggs, meta: meta };
 }
 
-// One more aggregate: function code and name index (-1 for count).
-pub fn add_agg[&h](heap: &!h Heap, q: Query, function: int, name: int) -> [heap] Query {
+// One more aggregate: function code, name index (-1 for count), type and mean (see the top).
+pub fn add_agg[&h](heap: &!h Heap, q: Query, function: int, name: int, kind: int, mean: int) -> [heap] Query {
     let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta } = q;
     var a = vec.push(heap, aggs, function);
     a = vec.push(heap, a, name);
+    a = vec.push(heap, a, kind);
+    a = vec.push(heap, a, mean);
     return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: a, meta: meta };
 }
 
@@ -389,11 +415,11 @@ pub fn lit_bytes[&q](q: &q Query, l: int) -> [] &q [byte] {
 }
 
 pub fn agg_count[&q](q: &q Query) -> [] int {
-    return vec.size(q.aggs) / 2;
+    return vec.size(q.aggs) / 4;
 }
 
 pub fn agg_at[&q](q: &q Query, k: int, field: int) -> [] int {
-    return vec.get(q.aggs, 2 * k + field);
+    return vec.get(q.aggs, 4 * k + field);
 }
 
 // The bytes of a quoted field with its doubled quotes undone, appended to `out`.
