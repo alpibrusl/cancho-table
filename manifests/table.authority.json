@@ -155,6 +155,7 @@
     "groups",
     "guarantee_keys",
     "guarantees_has",
+    "guess",
     "has",
     "has",
     "has_dotdot",
@@ -194,6 +195,7 @@
     "item",
     "j_columns",
     "j_size",
+    "j_spec",
     "j_start",
     "j_until",
     "k_abort",
@@ -208,6 +210,7 @@
     "k_err_fn",
     "k_err_line",
     "k_err_row",
+    "k_first_at",
     "k_first_found",
     "k_first_line",
     "k_first_row",
@@ -288,6 +291,7 @@
     "parse_int",
     "parse_nat",
     "parse_typed",
+    "plausible",
     "position_of",
     "pow10",
     "pow2",
@@ -352,5 +356,5 @@
   ],
   "folded_operators": 96,
   "folded_calls": 0,
-  "functions": 553
+  "functions": 557
 }

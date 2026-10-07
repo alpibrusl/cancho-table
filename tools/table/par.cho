@@ -556,7 +556,7 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
                 if peak < 4096 {
                     peak = 4096;
                 }
-                var room = (payload_cap / 2) / peak;
+                var room = payload_cap / 2 / peak;
                 if room < 1 {
                     room = 1;
                 }
