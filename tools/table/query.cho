@@ -52,7 +52,7 @@ pub fn empty[&h](heap: &!h Heap) -> [heap] Query {
     meta = vec.push(heap, meta, 0);
     meta = vec.push(heap, meta, 0);
     meta = vec.push(heap, meta, 0);
-    return Query { names: buffer.empty(heap, 64), nends: vec.empty(heap, 8, 0), nkinds: vec.empty(heap, 8, 0), conds: vec.empty(heap, 8, 0), lits: vec.empty(heap, 8, 0), ltext: buffer.empty(heap, 64), aggs: vec.empty(heap, 4, 0), meta: meta, gkinds: vec.push(heap, vec.empty(heap, 4, 0), 0) };
+    return Query { names: buffer.empty(heap, 64), nends: vec.empty(heap, 8, 0), nkinds: vec.empty(heap, 8, 0), conds: vec.empty(heap, 8, 0), lits: vec.empty(heap, 8, 0), ltext: buffer.empty(heap, 64), aggs: vec.empty(heap, 4, 0), meta: meta, gkinds: vec.push(heap, vec.push(heap, vec.empty(heap, 4, 0), 0), 0) };
 }
 
 pub fn drop[&h](heap: &!h Heap, q: Query) -> [heap] int {
@@ -117,10 +117,25 @@ pub fn add_gkind[&h](heap: &!h Heap, q: Query, kind: int) -> [heap] Query {
 
 // The type of group column `j` (0 when the plan gave none).
 pub fn gkind_at[&q](q: &q Query, j: int) -> [] int {
-    if j + 1 >= vec.size(q.gkinds) {
+    if j + 2 >= vec.size(q.gkinds) {
         return 0;
     }
-    return vec.get(q.gkinds, j + 1);
+    return vec.get(q.gkinds, j + 2);
+}
+
+// The plan is `--report types` (the second element of `gkinds`): the rows are classified, not selected, grouped or sorted. The plan also holds one `--order-by`
+// key with no name (`add_order`), so that the read takes the way the sort's rows take, and a report is told by this.
+pub fn reporting[&q](q: &q Query) -> [] bool {
+    return vec.get(q.gkinds, 1) != 0;
+}
+
+pub fn set_reporting[&h](heap: &!h Heap, q: Query) -> [heap] Query {
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds } = q;
+    var g = gkinds;
+    borrow mut g as &!gw in {
+        vec.set(gw, 1, 1);
+    }
+    return add_order(heap, Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: g }, 0, 0);
 }
 
 // How many `--group` columns are typed (the first element of `gkinds`).

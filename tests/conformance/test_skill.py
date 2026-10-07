@@ -40,6 +40,7 @@ HELP_EXAMPLES = {
     "top": [("--top 10", ["--group", "host"]), ("--top 3", ["--order-by", "host"])],
     "limit": [("--limit 100", ["--select", "host"]), ("--limit 20 --from 40", ["--select", "host"])],
     "from": [("--from 1000", ["--select", "host"]), ("--from 2000", ["--select", "host"])],
+    "report": [("--report types", []), ("--report types --select price,bytes --where 'status = 404'", [])],
     "order-by": [("--order-by -bytes:int", []), ("--order-by status,-bytes:int", []), ("--order-by '-price:dec(2)'", [])],
 }
 
@@ -49,7 +50,7 @@ SAMPLE = {
     "--where": "host = a", "--order-by": "host", "--group": "host", "--agg": "count", "--sort": "count",
     "--top": "1", "--limit": "1", "--from": "0", "--max-bytes": "100000", "--max-sort-rows": "100",
     "--max-groups": "100", "--max-distinct": "100", "--max-state-bytes": "100000", "--threads": "1",
-    "--chunk-bytes": "100000", "--parallel-min-bytes": "100000", "--format": "json",
+    "--report": "types", "--chunk-bytes": "100000", "--parallel-min-bytes": "100000", "--format": "json",
 }
 REFUSALS = {"args.conflict", "args.required-flag"}
 # What each form's line in the usage lists: the flags the code takes for the form and does something with
@@ -60,8 +61,9 @@ FORM_FLAGS = {
     "shape": COMMON,
     "rows": COMMON | PAGED | {"--select", "--where", "--order-by", "--max-sort-rows"},
     "groups": COMMON | PAGED | {"--group", "--agg", "--where", "--sort", "--max-groups", "--max-distinct"},
+    "report": (COMMON | PAGED | {"--report", "--select", "--where"}) - {"--top"},
 }
-FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"]}
+FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"]}
 
 
 def usage_lines():
@@ -69,7 +71,7 @@ def usage_lines():
     text = introspect()["usage"]
     forms = {}
     for line in text.splitlines():
-        m = re.match(r"(shape|rows|groups): ", line)
+        m = re.match(r"(shape|rows|groups|report): ", line)
         if m:
             forms[m.group(1)] = set(re.findall(r"--[a-z][a-z-]*", line))
     return forms, set(re.findall(r"--[a-z][a-z-]*", text))
@@ -102,7 +104,7 @@ class Usage(unittest.TestCase):
     def test_usage_names_every_flag_and_only_flags(self):
         forms, named = usage_lines()
         table = {f["name"] for f in introspect()["flags"]}
-        self.assertEqual(set(forms), {"shape", "rows", "groups"})
+        self.assertEqual(set(forms), {"shape", "rows", "groups", "report"})
         self.assertEqual(named, table, "usage and the flag table disagree: missing %s, extra %s" % (sorted(table - named), sorted(named - table)))
 
     def test_each_line_lists_what_its_form_takes(self):
@@ -157,13 +159,18 @@ class Usage(unittest.TestCase):
 class Forms(unittest.TestCase):
     """The summary states the conflicts and the required flags; the code raises exactly those."""
 
-    CONFLICT = "args.conflict: --select or --order-by with --group or --agg, and --format text with rows or groups."
+    CONFLICT = "args.conflict: --select or --order-by with --group or --agg, --report with --group, --agg, --order-by, --sort or --top, and --format text with rows, groups or the report."
     REQUIRED = ("args.required-flag: --limit, --from or --format csv with the shape, --top with neither --order-by, "
                 "--group nor --agg, and --sort without --group or --agg.")
 
     @staticmethod
     def predicted(items):
         has = set(i.split("=")[0] for i in items)
+        if "report" in has:
+            # the report is a form of its own: it takes --select, --where and the page, and conflicts with what makes another form
+            if has & {"group", "agg", "order-by", "sort", "top"} or "format=text" in items:
+                return {"args.conflict"}
+            return set()
         groups = bool(has & {"group", "agg"})
         rows = not groups and bool(has & {"select", "where", "order-by"})
         shape = not groups and not rows
@@ -183,7 +190,7 @@ class Forms(unittest.TestCase):
         s = Scratch()
         try:
             s.write("sales.csv", SALES)
-            names = ["select", "where", "order-by", "group", "agg", "sort", "top", "limit", "from", "format=csv", "format=text"]
+            names = ["select", "where", "order-by", "group", "agg", "sort", "top", "limit", "from", "format=csv", "format=text", "report"]
             wrong = []
             for k in (1, 2):
                 for combo in itertools.combinations(names, k):
@@ -197,12 +204,12 @@ class Forms(unittest.TestCase):
 
     def test_each_form_runs_and_the_summary_names_it(self):
         summary = introspect()["summary"]
-        for phrase in ("the shape (FILE alone", "rows (--select, --where or --order-by", "groups (--group or --agg"):
+        for phrase in ("the shape (FILE alone", "rows (--select, --where or --order-by", "groups (--group or --agg", "the type report (--report types"):
             self.assertIn(phrase, summary)
         s = Scratch()
         try:
             s.write("sales.csv", SALES)
-            for argv in ([], ["--select", "host"], ["--where", "host = a"], ["--order-by", "host"], ["--group", "host"], ["--agg", "count"]):
+            for argv in ([], ["--select", "host"], ["--where", "host = a"], ["--order-by", "host"], ["--group", "host"], ["--agg", "count"], ["--report", "types"]):
                 r = run("--root", s.dir, *argv, "sales.csv")
                 self.assertEqual(r.status, 0, argv)
             # one group of all the rows, said under the groups line
@@ -346,6 +353,31 @@ class Claims(unittest.TestCase):
         self.assertEqual(rows("price:float"), ["b", "a", "a", "b", "c"])                                  # 0.75, 1.50, 1.5 (a tie, in file order), 2.25, 10.00
         self.assertEqual(rows("-price:float"), ["c", "b", "a", "a", "b"])
         self.assertIn("column.type-conflict", group)
+
+    def test_the_type_report_claims(self):
+        help_ = {f["name"]: f["help"] for f in introspect()["flags"]}["--report"]
+        rows = {r[0]: dict(zip(self.r("--report", "types").data()["columns"], r)) for r in self.r("--report", "types").data()["rows"]}
+        # suggest is the smallest declaration every non-empty cell satisfies, written as a suffix
+        self.assertIn("suggest is the smallest declaration every non-empty cell satisfies", help_)
+        self.assertEqual((rows["host"]["suggest"], rows["status"]["suggest"], rows["bytes"]["suggest"], rows["price"]["suggest"]), ("none", ":int", ":int", ":dec(2)"))
+        self.assertIn("(a cell that is not a number, nan or inf, or only empty cells)", help_)
+        # a float column of 0.1-shaped cells is :dec(1), the exact reading
+        self.assertIn("a float column of 0.1-shaped cells is :dec(1)", help_)
+        self.s.write("tenths.csv", "x\n0.1\n0.2\n0.3\n")
+        d = self.r("--report", "types", file="tenths.csv").data()
+        self.assertEqual(d["rows"][0][d["columns"].index("suggest")], ":dec(1)")
+        # nothing applies it: the plan reads the column as text until a suffix says otherwise
+        self.assertEqual(self.r("--group", "price").data()["group_count"], 5)                      # 1.50 and 1.5 are two texts
+        # the columns, the paging and the state, as the help says
+        self.assertIn("--limit and --from page the columns", help_)
+        d = self.r("--report", "types", "--limit", "2").data()
+        self.assertEqual((d["row_count"], d["truncated"], d["next"]), (2, True, {"from": 2}))
+        self.assertIn("the counters take 248 bytes a column", help_)
+        self.assertEqual(self.r("--report", "types", "--max-state-bytes", str(4 * 248 - 1)).first_rule(), "limit.state-too-large")
+        self.assertEqual(self.r("--report", "types", "--max-state-bytes", str(4 * 248)).status, 0)
+        self.assertIn("Not with --group, --agg, --order-by, --sort or --top", help_)
+        for flag, value in (("--group", "host"), ("--agg", "count"), ("--order-by", "host"), ("--sort", "host"), ("--top", "1")):
+            self.assertEqual(self.r("--report", "types", flag, value).first_rule(), "args.conflict", flag)
 
     def test_where_grammar(self):
         self.s.write("nums.csv", "v,w\n10,a\n9,b\n,c\n")

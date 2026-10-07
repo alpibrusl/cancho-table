@@ -76,8 +76,10 @@
     "bytes",
     "catalogue",
     "chunk_size",
+    "classify",
     "code_meaning",
     "code_name",
+    "columns_of",
     "compare",
     "compare",
     "compare_field",
@@ -100,6 +102,7 @@
     "delimiter_of",
     "digit_of",
     "digits_after_point",
+    "digits_before_point",
     "distance",
     "done",
     "emits",
@@ -144,6 +147,7 @@
     "floats_in",
     "full",
     "function_name",
+    "get",
     "get$int",
     "get$int",
     "get_i64",
@@ -251,6 +255,7 @@
     "name_count",
     "name_of",
     "name_of",
+    "names",
     "nearest",
     "need",
     "none",
@@ -291,6 +296,7 @@
     "record_of",
     "reject",
     "repairable_in",
+    "reporting",
     "role_of",
     "round_key",
     "row_ceiling",
@@ -340,9 +346,11 @@
     "value_of",
     "value_of_key",
     "width",
-    "width_of"
+    "width",
+    "width_of",
+    "word_is"
   ],
-  "folded_operators": 95,
+  "folded_operators": 96,
   "folded_calls": 0,
-  "functions": 526
+  "functions": 551
 }

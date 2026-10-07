@@ -1,0 +1,454 @@
+edition 5;
+
+module report;
+
+// `--report types` (docs/numbers.md, 5.2): what each column holds, counted, and the declaration that would read it: a suggestion, never a coercion.
+//
+// Every cell of the columns asked for (all of them, or `--select`'s) is classified once, in this order: **empty** (no bytes, or a quoted pair of quotes);
+// **int** (the `:int` grammar and 64 bits); **dec** (`[+-]? digits? [. digits?]` with a point, at most 17 or 18 digits once scaled: what `:dec(S)` reads at
+// the cell's own scale `S`, the digits after the point); **float** (an exponent, or more digits than a decimal holds, finite and in range: what `:float` reads);
+// **not_finite** (`nan`, `inf`); **other** (anything else: a space, a separator, a letter, bytes that are not text). The report is one row per column
+// of counters, kept in the groups' place (`agg.Groups.acc`, 31 integers a column), so that the read is the grouping's read and the threads' merge
+// is an addition (counts), a maximum (scale, digits, width) and the earliest (the first row, line and cell of a class, which the ranges offset by the records and
+// lines before them, as every other refusal's row is).
+//
+// The counters of a column, in order: cells, empty, int, dec, float, not_finite, other, dec_max_scale (the most fractional digits of a dec cell),
+// int_digits_max (the most digits before the point, leading zeros dropped, of an int or dec cell), widest (bytes), then (row, line) of the first
+// empty cell, of the first cell that `:int` would refuse (a non-empty cell that is not an int), that `:dec(S)` would (not an int or a dec), that
+// `:float` would (not_finite or other), of the first other cell, then that cell's length and its first 64 bytes, 7 to an integer.
+//
+// **The suggestion** is the smallest declaration every non-empty cell satisfies: `:int` when they all are ints, `:dec(S)` with `S` the most fractional digits
+// when they are ints and decimals and the widest of them still fits 18 digits at `S`, else `:float` when they are numbers (an exponent, a width, a decimal that
+// does not fit), else `none` (a cell that is no number, a not-finite one, or no non-empty cell at all). A column of cells that are all `0.1`-shaped is `:dec(1)`, not
+// `:float`: the report prefers the exact reading. Nothing here changes what any other flag does.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import agg;
+import flt;
+import query;
+import toolbox.text;
+import writer;
+
+// Counters in a column's row.
+pub fn width() -> [] int {
+    return 31;
+}
+
+fn digits_before_point[&d](data: &d [byte]) -> [] int {
+    var at = 0;
+    if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {
+        at = 1;
+    }
+    while at < len(data) && int_of(data[at]) == '0' {
+        at = at + 1;
+    }
+    var n = 0;
+    while at < len(data) && int_of(data[at]) >= '0' && int_of(data[at]) <= '9' {
+        n = n + 1;
+        at = at + 1;
+    }
+    return n;
+}
+
+// The class of a cell (0 empty, 1 int, 2 dec, 3 float, 4 not finite, 5 other), its scale (a dec) and the digits before its point (an int or a dec).
+fn classify[&d](data: &d [byte]) -> [] (int, int, int) {
+    if len(data) == 0 {
+        return (0, 0, 0);
+    }
+    let (v, bad) = query.parse_int(data);
+    if bad == 0 {
+        return (1, 0, digits_before_point(data));
+    }
+    // the decimal grammar, to find the scale the cell has
+    var at = 0;
+    if int_of(data[0]) == '-' || int_of(data[0]) == '+' {
+        at = 1;
+    }
+    var digits = 0;
+    var frac = 0;
+    var point = false;
+    var clean = true;
+    while at < len(data) && clean {
+        let c = int_of(data[at]);
+        if c >= '0' && c <= '9' {
+            digits = digits + 1;
+            if point {
+                frac = frac + 1;
+            }
+        } else if c == '.' && !point {
+            point = true;
+        } else {
+            clean = false;
+        }
+        at = at + 1;
+    }
+    if clean && point && digits > 0 && frac <= 18 {
+        let (w, bad2) = query.parse_dec(data, frac);
+        if bad2 == 0 {
+            return (2, frac, digits_before_point(data));
+        }
+    }
+    let (key, status) = flt.parse_float(data);
+    if status == 0 {
+        return (3, 0, 0);
+    }
+    if status == 10 {
+        return (4, 0, 0);
+    }
+    return (5, 0, 0);
+}
+
+fn get[&g](g: &g agg.Groups, at: int) -> [] int {
+    return vec.get(g.acc, at);
+}
+
+fn put[&g](g: &!g agg.Groups, at: int, v: int) -> [] int {
+    vec.set(g.acc, at, v);
+    return 0;
+}
+
+// Count one cell into the counters at `base`. `row` and `line` place it.
+fn account[&g, &d](g: &!g agg.Groups, base: int, data: &d [byte], row: int, line: int) -> [] int {
+    let (class, scale, idig) = classify(data);
+    put(g, base, get(g, base) + 1);
+    if len(data) > get(g, base + 9) {
+        put(g, base + 9, len(data));
+    }
+    if class == 0 {
+        put(g, base + 1, get(g, base + 1) + 1);
+        if get(g, base + 10) == 0 {
+            put(g, base + 10, row);
+            put(g, base + 11, line);
+        }
+        return 0;
+    }
+    put(g, base + 1 + class, get(g, base + 1 + class) + 1);
+    if class <= 2 {
+        if idig > get(g, base + 8) {
+            put(g, base + 8, idig);
+        }
+    }
+    if class == 2 && scale > get(g, base + 7) {
+        put(g, base + 7, scale);
+    }
+    if class != 1 && get(g, base + 12) == 0 {
+        put(g, base + 12, row);
+        put(g, base + 13, line);
+    }
+    if class != 1 && class != 2 && get(g, base + 14) == 0 {
+        put(g, base + 14, row);
+        put(g, base + 15, line);
+    }
+    if class >= 4 && get(g, base + 16) == 0 {
+        put(g, base + 16, row);
+        put(g, base + 17, line);
+    }
+    if class == 5 && get(g, base + 18) == 0 {
+        put(g, base + 18, row);
+        put(g, base + 19, line);
+        put(g, base + 20, len(data));
+        var i = 0;
+        while i < len(data) && i < 64 {
+            let slot = base + 21 + i / 7;
+            put(g, slot, get(g, slot) + (int_of(data[i]) << 8 * (i % 7)));
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+// The columns asked for: `--select`'s names, or every column.
+pub fn columns_of[&q](tree: &q query.Query, all: int) -> [] int {
+    let ns = query.count_of(tree, 0);
+    if ns > 0 {
+        return ns;
+    }
+    return all;
+}
+
+// One more row into the counters of `held`, which are made at the first row (and refused if they would hold more than `max_state` bytes).
+// Answers the groups, the scratch, and 0, or 1 when the counters would pass the bound.
+pub fn row[&h, &q, &c, &d, &e](heap: &!h Heap, held: agg.Groups, scratch: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], ncols: int, rows: int, line: int, max_state: int) -> [heap] (agg.Groups, buffer.Buffer, int) {
+    var g = held;
+    var scr = scratch;
+    var size = 0;
+    borrow g as &gr in {
+        size = vec.size(gr.acc);
+    }
+    if size == 0 {
+        if 8 * width() * ncols > max_state {
+            return (g, scr, 1);
+        }
+        g = agg.extend(heap, g, width() * ncols);
+    }
+    let ns = query.count_of(tree, 0);
+    var m = 0;
+    while m < ncols {
+        var column = m;
+        if ns > 0 {
+            column = cols[m];
+        }
+        let first = cells[3 * column];
+        let last = cells[3 * column + 1];
+        if cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {
+            borrow mut scr as &!sw in {
+                buffer.clear(sw);
+            }
+            scr = query.unquote(heap, scr, record[first..last]);
+            borrow scr as &sr in {
+                borrow mut g as &!gw in {
+                    account(gw, m * width(), buffer.bytes(sr), rows, line);
+                }
+            }
+        } else {
+            borrow mut g as &!gw in {
+                account(gw, m * width(), record[first..last], rows, line);
+            }
+        }
+        m = m + 1;
+    }
+    return (g, scr, 0);
+}
+
+// ---- the threads' merge ---------------------------------------------------------------------------------------------------------
+
+// The counters as bytes: the number of columns, then the counters, i64 each. Answers the bytes used, or -1 when they do not fit.
+pub fn serialize[&g, &o](g: &g agg.Groups, out: &!o [byte]) -> [] int {
+    let n = vec.size(g.acc);
+    if 8 + 8 * n > len(out) {
+        return 0 - 1;
+    }
+    agg.put_i64(out, 0, n / width());
+    var i = 0;
+    while i < n {
+        agg.put_i64(out, 8 + 8 * i, vec.get(g.acc, i));
+        i = i + 1;
+    }
+    return 8 + 8 * n;
+}
+
+// Add a range's counters into `held`: the counts add, the maxima combine, and the first cell of a class is the earlier range's when it has one (else the
+// range's, its row and line offset by the records and the lines before the range). Answers the groups and 0, or the groups untouched and 1 when the
+// counters would pass `max_state`.
+pub fn merge[&h, &b](heap: &!h Heap, held: agg.Groups, blob: &b [byte], rows_before: int, lines_before: int, max_state: int) -> [heap] (agg.Groups, int) {
+    let ncols = agg.get_i64(blob, 0);
+    if ncols == 0 {
+        return (held, 0);
+    }
+    var g = held;
+    var size = 0;
+    borrow g as &gr in {
+        size = vec.size(gr.acc);
+    }
+    if size == 0 {
+        if 8 * width() * ncols > max_state {
+            return (g, 1);
+        }
+        g = agg.extend(heap, g, width() * ncols);
+    }
+    var m = 0;
+    while m < ncols {
+        let base = m * width();
+        let from = 8 + 8 * base;
+        borrow mut g as &!gw in {
+            var c = 0;
+            while c < 7 {
+                put(gw, base + c, get(gw, base + c) + agg.get_i64(blob, from + 8 * c));
+                c = c + 1;
+            }
+            c = 7;
+            while c < 10 {
+                let theirs = agg.get_i64(blob, from + 8 * c);
+                if theirs > get(gw, base + c) {
+                    put(gw, base + c, theirs);
+                }
+                c = c + 1;
+            }
+            // the firsts: (row, line) pairs at 10, 12, 14, 16, 18, and the other cell's length and bytes after the last
+            var f = 10;
+            while f <= 18 {
+                let their_row = agg.get_i64(blob, from + 8 * f);
+                if their_row > 0 && get(gw, base + f) == 0 {
+                    put(gw, base + f, their_row + rows_before);
+                    put(gw, base + f + 1, agg.get_i64(blob, from + 8 * (f + 1)) + lines_before);
+                    if f == 18 {
+                        c = 20;
+                        while c < 31 {
+                            put(gw, base + c, agg.get_i64(blob, from + 8 * c));
+                            c = c + 1;
+                        }
+                    }
+                }
+                f = f + 2;
+            }
+        }
+        m = m + 1;
+    }
+    return (g, 0);
+}
+
+// ---- the answer -----------------------------------------------------------------------------------------------------------------
+
+// The names of the report's columns, as json and as a csv line.
+pub fn names() -> [] &static [byte] {
+    return "name|cells|empty|int|dec|float|not_finite|other|dec_max_scale|int_digits_max|widest|suggest|first_empty_row|first_empty_line|first_not_int_row|first_not_int_line|first_not_dec_row|first_not_dec_line|first_not_float_row|first_not_float_line|first_other_row|first_other_line|first_other_cell|first_other_cell_truncated";
+}
+
+pub fn head_json[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var o = buffer.push(heap, buffer.empty(heap, 256), byte_of('['));
+    let all = names();
+    var start = 0;
+    var i = 0;
+    while i <= len(all) {
+        if i == len(all) || int_of(all[i]) == '|' {
+            if start > 0 {
+                o = buffer.push(heap, o, byte_of(','));
+            }
+            o = text.append_json(heap, o, all[start..i]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return buffer.push(heap, o, byte_of(']'));
+}
+
+pub fn head_csv[&h](heap: &!h Heap, delim: int) -> [heap] buffer.Buffer {
+    var o = buffer.empty(heap, 256);
+    let all = names();
+    var start = 0;
+    var i = 0;
+    while i <= len(all) {
+        if i == len(all) || int_of(all[i]) == '|' {
+            if start > 0 {
+                o = buffer.push(heap, o, byte_of(delim));
+            }
+            o = buffer.append(heap, o, all[start..i]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return o;
+}
+
+// The suggestion of the column at `base`, as the suffix that declares it: `:int`, `:dec(S)`, `:float`, or `none`.
+fn put_suggestion[&h, &g](heap: &!h Heap, out: buffer.Buffer, g: &g agg.Groups, base: int) -> [heap] buffer.Buffer {
+    let cells = get(g, base);
+    let empty = get(g, base + 1);
+    let ints = get(g, base + 2);
+    let decs = get(g, base + 3);
+    let floats = get(g, base + 4);
+    let bad = get(g, base + 5) + get(g, base + 6);
+    if cells == empty || bad > 0 {
+        return buffer.append(heap, out, "none");
+    }
+    if decs == 0 && floats == 0 {
+        return buffer.append(heap, out, ":int");
+    }
+    if floats == 0 && get(g, base + 8) + get(g, base + 7) <= 18 {
+        var o = buffer.append(heap, out, ":dec(");
+        o = buffer.push_nat(heap, o, get(g, base + 7));
+        return buffer.push(heap, o, byte_of(')'));
+    }
+    return buffer.append(heap, out, ":float");
+}
+
+fn put_number[&h](heap: &!h Heap, out: buffer.Buffer, v: int, as_csv: bool) -> [heap] buffer.Buffer {
+    var o = out;
+    if !as_csv {
+        o = buffer.push(heap, o, byte_of(34));
+    }
+    o = buffer.push_nat(heap, o, v);
+    if !as_csv {
+        o = buffer.push(heap, o, byte_of(34));
+    }
+    return o;
+}
+
+fn put_first[&h](heap: &!h Heap, out: buffer.Buffer, v: int, as_csv: bool) -> [heap] buffer.Buffer {
+    if v == 0 {
+        if as_csv {
+            return out;
+        }
+        return buffer.append(heap, out, "\"\"");
+    }
+    return put_number(heap, out, v, as_csv);
+}
+
+// The cell kept for the first `other`, from its integers.
+fn cell_of[&h, &g](heap: &!h Heap, out: buffer.Buffer, g: &g agg.Groups, base: int) -> [heap] buffer.Buffer {
+    var o = out;
+    let n = get(g, base + 20);
+    var i = 0;
+    while i < n && i < 64 {
+        o = buffer.push(heap, o, byte_of(get(g, base + 21 + i / 7) >> 8 * (i % 7) & 255));
+        i = i + 1;
+    }
+    return o;
+}
+
+fn sep[&h](heap: &!h Heap, out: buffer.Buffer, as_csv: bool, delim: int) -> [heap] buffer.Buffer {
+    if as_csv {
+        return buffer.push(heap, out, byte_of(delim));
+    }
+    return buffer.push(heap, out, byte_of(','));
+}
+
+fn field[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte], as_csv: bool, delim: int) -> [heap] buffer.Buffer {
+    if as_csv {
+        return writer.csv_value(heap, out, data, delim);
+    }
+    return text.append_json(heap, out, data);
+}
+
+// One row of the report, for report column `m` named `name`, into `out`: a json array of strings, or a csv line (without its newline).
+pub fn put_row[&h, &g, &n](heap: &!h Heap, out: buffer.Buffer, g: &g agg.Groups, m: int, name: &n [byte], as_csv: bool, delim: int) -> [heap] buffer.Buffer {
+    let base = m * width();
+    var o = out;
+    if !as_csv {
+        o = buffer.push(heap, o, byte_of('['));
+    }
+    o = field(heap, o, name, as_csv, delim);
+    var c = 0;
+    // cells, empty, int, dec, float, not_finite, other, dec_max_scale, int_digits_max, widest
+    while c < 10 {
+        o = sep(heap, o, as_csv, delim);
+        o = put_number(heap, o, get(g, base + c), as_csv);
+        c = c + 1;
+    }
+    var tmp = buffer.empty(heap, 32);
+    tmp = put_suggestion(heap, tmp, g, base);
+    o = sep(heap, o, as_csv, delim);
+    borrow tmp as &tr in {
+        o = field(heap, o, buffer.bytes(tr), as_csv, delim);
+    }
+    // the rows and lines of the first empty, not-int, not-dec, not-float and other cells
+    c = 10;
+    while c < 20 {
+        o = sep(heap, o, as_csv, delim);
+        o = put_first(heap, o, get(g, base + c), as_csv);
+        c = c + 1;
+    }
+    borrow mut tmp as &!tw in {
+        buffer.clear(tw);
+    }
+    tmp = cell_of(heap, tmp, g, base);
+    o = sep(heap, o, as_csv, delim);
+    borrow tmp as &tr in {
+        o = field(heap, o, buffer.bytes(tr), as_csv, delim);
+    }
+    o = sep(heap, o, as_csv, delim);
+    if get(g, base + 18) == 0 {
+        o = field(heap, o, "", as_csv, delim);
+    } else if get(g, base + 20) > 64 {
+        o = field(heap, o, "true", as_csv, delim);
+    } else {
+        o = field(heap, o, "false", as_csv, delim);
+    }
+    buffer.drop(heap, tmp);
+    if !as_csv {
+        o = buffer.push(heap, o, byte_of(']'));
+    }
+    return o;
+}

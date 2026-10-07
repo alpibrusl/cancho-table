@@ -25,8 +25,8 @@ MUTANTS = [
     ("the sign of a double is lost on the way back", "flt.cho", "    if bits < 0 {\n        return 0.0 - x;\n    }\n    return x;", "    return x;"),
     # reading
     ("a cell of 1,101 bytes is read", "flt.cho", "    if n > 1100 {", "    if n > 1101 {"),
-    ("nan is not finite only in lower case", "flt.cho", "        return word == 0x696e66 || word == 0x6e616e;", "        return word == 0x696e66 || word == 0x6e616f;"),
-    ("a capital letter is not folded", "flt.cho", "            c = c + 32;", "            c = c + 33;"),
+    ("nan is not finite only in lower case", "flt.cho", "        return word_is(data, at, \"inf\") || word_is(data, at, \"nan\");", "        return word_is(data, at, \"inf\") || word_is(data, at, \"nax\");"),
+    ("a capital letter is not folded", "flt.cho", "            c = c + 32;\n        }\n        if c != int_of(word[i]) {", "            c = c + 33;\n        }\n        if c != int_of(word[i]) {"),
     ("the fast path keeps one digit too many", "flt.cho", "            if m < 900719925474099 {", "            if m < 90071992547409900 {"),
     ("the fast path reads powers of ten past 22", "flt.cho", "    if !inexact && e10 >= 0 - 22 && e10 <= 22 {", "    if !inexact && e10 >= 0 - 23 && e10 <= 22 {"),
     ("a negative power of ten multiplies", "flt.cho", "            x = x / pow10_float[0 - e10];", "            x = x * pow10_float[0 - e10];"),

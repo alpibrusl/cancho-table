@@ -305,6 +305,15 @@ class Floats(unittest.TestCase):
             else:
                 self.assertEqual((got.status, got.data()["rows"]), (0, want_rows), (op, lit, cells, got))
 
+    def test_a_cell_of_three_or_eight_bytes_that_are_not_text_is_not_a_number_and_not_a_trap(self):
+        """The word check (`inf`, `nan`, `infinity`) once built a number from the bytes of a cell of 3 or 8: a first byte of 128 or more overflowed it (found by the type report's fuzz)."""
+        for cell in (b"\xff\xfe\xfd\xfc\xfb\xfa\xf9\xf8", b"+\xff\xfe\xfd\xfc\xfb\xfa\xf9\xf8", b"-\x80\x80\x80", b"\x80\x80\x80", b"\xff\xa96,38\xa9x", b"in\xff", b"infinit\xff"):
+            got = self.s.table("t.csv", b"id,x\n1," + cell.replace(b",", b"") + b"\n", "--where", "x:float > 0")
+            self.assertEqual((got.status, got.first_rule()), (8, "value.not-float"), (cell, got))
+        for cell in (b"INFINITY", b"-Infinity", b"+iNfInItY", b"Inf", b"-NaN"):
+            got = self.s.table("t.csv", b"id,x\n1," + cell + b"\n", "--where", "x:float > 0")
+            self.assertEqual(got.first_rule(), "value.not-finite", (cell, got))
+
     def test_bytes_that_are_not_text_in_a_float_column(self):
         for cell in (b"\xff\xfe", b"1.5\x00", b"\x80", b"\xc3\x28"):
             got = self.s.table("t.csv", b"id,x\n1," + cell + b"\n", "--where", "x:float > 0")
