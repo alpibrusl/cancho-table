@@ -381,7 +381,7 @@ Language and `std` (cancho): **(1)** no bulk read of standard input (`getchar` o
 
 The contract package (cancho-tools): `describe.Tool` has no grammar section (so [docs/query.md](query.md) puts the query grammar in the flag's help, where `;` and `|` cannot appear), allows one `schema` string (so the `explain` and `discover` documents join `table.v2`'s `oneOf` by hand in `scripts/schemas.py`), and has no per-subcommand description (so `explain` is a flag, not a subcommand).
 
-`table`: joins; `or`; a computed or renamed column; Parquet; compressed input; typed output beyond the aggregate columns of `jsonl`; grouping and sorting by `:dec` and `:float` (N5); JSON arrays and nested paths past a declared dotted path.
+`table`: joins; `or`; a computed or renamed column; Parquet; compressed input; typed output beyond the aggregate columns of `jsonl`; grouping and sorting by `:dec` and `:float` are built (N5), the type report is not (N6); JSON arrays and nested paths past a declared dotted path.
 
 ## 10. Open questions for the maintainer, with a recommendation each
 
