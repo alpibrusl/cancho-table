@@ -18,7 +18,7 @@ import mutlib  # noqa: E402
 
 class MutantsApply(unittest.TestCase):
     def test_every_script_applies(self):
-        for name in ("select", "filter", "parallel", "cellcost", "sort", "numbers", "float"):
+        for name in ("select", "filter", "parallel", "cellcost", "sort", "numbers", "float", "float_sum"):
             with self.subTest(name):
                 got = subprocess.run([sys.executable, str(ROOT / "scripts" / ("%s_mutants.py" % name)), "--check"], capture_output=True, text=True)
                 self.assertEqual((got.returncode, got.stdout.count("!!")), (0, 0), got.stdout)

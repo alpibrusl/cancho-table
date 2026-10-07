@@ -18,7 +18,7 @@ import mutlib  # noqa: E402
 TESTS = ["test_float_sum", "test_float", "test_rules"]
 
 PLAIN_FAST = ("facc.add_bits(g.acc, facc_at, bits_of_key(v));",
-              "{ let (cur, over) = facc.finalize_key(g.acc, facc_at); let s = flt.float_of_key(cur) + flt.float_of_key(v); var z = 0; while z < 73 { vec.set(g.acc, facc_at + z, 0); z = z + 1; } if s != 0.0 { facc.add_bits(g.acc, facc_at, bits_of_key(flt.key_of(s))); } }")
+              "if true { let (cur, over) = facc.finalize_key(g.acc, facc_at); let s = flt.float_of_key(cur) + flt.float_of_key(v); var z = 0; while z < 73 { vec.set(g.acc, facc_at + z, 0); z = z + 1; } if s != 0.0 { facc.add_bits(g.acc, facc_at, bits_of_key(flt.key_of(s))); } }")
 PLAIN_SLOW = ("        facc.add_bits(w, at, bits_of_key(key));",
               "        let (cur, over) = facc.finalize_key(w, at);\n        let s = flt.float_of_key(cur) + flt.float_of_key(key);\n        var z = 0;\n        while z < 73 {\n            vec.set(w, at + z, 0);\n            z = z + 1;\n        }\n        if s != 0.0 {\n            facc.add_bits(w, at, bits_of_key(flt.key_of(s)));\n        }")
 
