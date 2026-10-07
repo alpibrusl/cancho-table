@@ -62,6 +62,19 @@ fn j_payload() -> [] int {
     return scan.p_count() + 3;
 }
 
+// the partitioned grouping's: how many blobs a range's groups are cut into (0: one, the old way), how many splitters, how many group fields
+fn j_parts() -> [] int {
+    return scan.p_count() + 4;
+}
+
+fn j_nsplit() -> [] int {
+    return scan.p_count() + 5;
+}
+
+fn j_fields() -> [] int {
+    return scan.p_count() + 6;
+}
+
 fn j_size() -> [] int {
     return 24;
 }
@@ -74,6 +87,8 @@ res struct Job {
     sel: Box[[int]],
     par: Box[[int]],
     out: Box[[byte]],
+    split: Box[[byte]],
+    soff: Box[[int]],
 }
 
 // A thread: read the range of its job, write the answer into its slot.
@@ -127,6 +142,13 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
                     var n = 0;
                     if query.reporting(w.tree) {
                         n = report.serialize(gr, o[header_bytes()..len(o)]);
+                    } else if contents(w.par)[j_parts()] > 0 {
+                        let np = contents(w.par)[j_parts()];
+                        var scratch_w = box_slice(w.heap, 2 * agg.groups(gr) + 6 * np + 8, 0);
+                        borrow mut scratch_w as &!sw2 in {
+                            n = agg.serialize_parts(gr, o[header_bytes()..len(o)], contents(w.split), contents(w.soff), contents(w.par)[j_nsplit()], np, contents(w.par)[j_fields()], contents(sw2));
+                        }
+                        unbox_slice(w.heap, scratch_w);
                     } else {
                         n = agg.serialize(gr, o[header_bytes()..len(o)]);
                     }
@@ -176,9 +198,18 @@ fn copy_ints[&h, &s](heap: &!h Heap, from: &s [int]) -> [heap] Box[[int]] {
     return o;
 }
 
+fn copy_bytes[&h, &s](heap: &!h Heap, from: &s [byte]) -> [heap] Box[[byte]] {
+    let out = box_slice(heap, len(from) + 1, byte_of(0));
+    var o = out;
+    borrow mut o as &!ow in {
+        copy_into(contents(ow)[0..len(from)], from);
+    }
+    return o;
+}
+
 // One level of a wave: make job `k`, start its thread, make the rest, join it, and move its
 // slot up. `plan` holds where the ranges begin (`plan[k]`, and `plan[n]` where the last ends).
-fn fan[&p, &f, &x, &y, &z, &t, &c, &s, &r, &l, &u](parent: &!p Heap, fs: &f Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &t query.Query, cols: &c [int], sel: &s [int], par: &r [int], plan: &l [int], slots: &!u [byte], k: int, n: int, slot_bytes: int) -> [heap, conc, file_read, fs_read(""), dir_read] int {
+fn fan[&p, &f, &x, &y, &z, &t, &c, &s, &r, &l, &u, &m, &e](parent: &!p Heap, fs: &f Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &t query.Query, cols: &c [int], sel: &s [int], par: &r [int], plan: &l [int], slots: &!u [byte], split: &m [byte], soff: &e [int], k: int, n: int, slot_bytes: int) -> [heap, conc, file_read, fs_read(""), dir_read] int {
     if k >= n {
         return 0;
     }
@@ -189,7 +220,7 @@ fn fan[&p, &f, &x, &y, &z, &t, &c, &s, &r, &l, &u](parent: &!p Heap, fs: &f Fs("
         Opened::Ok(file) => {
             let forked = fork_heap(parent);
             let own = copy_ints(parent, par);
-            var job = Job { heap: forked, file: file, tree: query.duplicate(parent, tree), cols: copy_ints(parent, cols), sel: copy_ints(parent, sel), par: own, out: box_slice(parent, slot_bytes, byte_of(0)) };
+            var job = Job { heap: forked, file: file, tree: query.duplicate(parent, tree), cols: copy_ints(parent, cols), sel: copy_ints(parent, sel), par: own, out: box_slice(parent, slot_bytes, byte_of(0)), split: copy_bytes(parent, split), soff: copy_ints(parent, soff) };
             borrow mut job as &!kj in {
                 contents(kj.par)[j_start()] = plan[k];
                 contents(kj.par)[j_until()] = plan[k + 1];
@@ -198,16 +229,18 @@ fn fan[&p, &f, &x, &y, &z, &t, &c, &s, &r, &l, &u](parent: &!p Heap, fs: &f Fs("
             borrow mut job as &!kj in {
                 let body = work;
                 let thread = spawn(kj, body);
-                rest = fan(parent, fs, root, rel, full, tree, cols, sel, par, plan, slots, k + 1, n, slot_bytes);
+                rest = fan(parent, fs, root, rel, full, tree, cols, sel, par, plan, slots, split, soff, k + 1, n, slot_bytes);
                 join(thread);
             }
-            let Job { heap, file, tree, cols, sel, par, out } = job;
+            let Job { heap, file, tree, cols, sel, par, out, split, soff } = job;
             file_close(file);
             release(heap);
             query.drop(parent, tree);
             unbox_slice(parent, cols);
             unbox_slice(parent, sel);
             unbox_slice(parent, par);
+            unbox_slice(parent, split);
+            unbox_slice(parent, soff);
             var used = header_bytes();
             borrow out as &ob in {
                 used = used + agg.get_i64(contents(ob), 24);
@@ -314,6 +347,8 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     }
     var slots = box_slice(heap, threads * slot_bytes + 1, byte_of(0));
     var plan = box_slice(heap, threads + 2, 0);
+    let no_split = box_slice(heap, 1, byte_of(0));
+    let no_soff = box_slice(heap, 1, 0);
     var rows2 = rows;
     var scratch2 = scratch;
     var escr2 = escr;
@@ -366,7 +401,11 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
             }
             borrow wpar as &wr in {
                 borrow plan as &pr in {
-                    fan(heap, fs, root, rel, full, tree, cols, sel, contents(wr), contents(pr), contents(sw), 0, n, slot_bytes);
+                    borrow no_split as &nsr in {
+                        borrow no_soff as &nor in {
+                            fan(heap, fs, root, rel, full, tree, cols, sel, contents(wr), contents(pr), contents(sw), contents(nsr), contents(nor), 0, n, slot_bytes);
+                        }
+                    }
                 }
             }
         }
@@ -525,9 +564,684 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     unbox_slice(heap, wpar);
     unbox_slice(heap, slots);
     unbox_slice(heap, plan);
+    unbox_slice(heap, no_split);
+    unbox_slice(heap, no_soff);
     return (rows2, scratch2, escr2, kept2, groups2);
 }
 
 fn l_lines[&s](sl: &s [byte], at: int) -> [] int {
     return agg.get_i64(sl, at + 16);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The partitioned grouping (spike gap-groups, docs/gap-groups.md). `run_groups` reads the ranges as `run` does, but a
+// range's groups come back as `p` blobs cut at splitters (agg.serialize_parts), and the parent does not merge them: it hands
+// blob `k` of every range to thread `k`, which merges them into groups of its own (the keys of blob `k` are in no other
+// blob), and, in the last round, rounds the sums, sorts the groups and writes them as csv rows. Blob `k` sorts before blob
+// `k + 1`, so the rows end to end are the answer. Between waves of ranges a round of the same threads keeps the groups, as one
+// blob each (the state). Whatever the sequential read would have stopped at (a refusal, a bound, a page) is not decided here:
+// the whole read is declined, and the caller reads as before.
+// ---------------------------------------------------------------------------------------------------------------------
+
+fn hdr2() -> [] int {
+    return 64;
+}
+
+res struct Job2 {
+    heap: Heap,
+    tree: query.Query,
+    par: Box[[int]],
+    offs: Box[[int]],
+    inp: Box[[byte]],
+    out: Box[[byte]],
+}
+
+// A merge thread: the blobs of its input into groups; the groups out as a blob (mode 0), or settled, sorted and written as csv rows (mode 1).
+// Header: 0 status (0 done, 3 a blob would not merge, 4 a float sum beyond a double, 5 the answer did not fit), 8 payload bytes, 16 groups, 24 pairs, 32 bytes held.
+fn work2[&r](w: &!r Job2) -> [heap] int {
+    let mode = contents(w.par)[0];
+    let delim = contents(w.par)[1];
+    let nb = contents(w.par)[2];
+    let big = 1000000000000000000;
+    var groups = agg.start(w.heap, w.tree);
+    var status = 0;
+    let inp = contents(w.inp);
+    let offs = contents(w.offs);
+    var b = 0;
+    while b < nb && status == 0 {
+        var refused = 0;
+        let (g2, r2) = agg.merge(w.heap, groups, inp[offs[b]..offs[b + 1]], w.tree, big, big, big);
+        groups = g2;
+        refused = r2;
+        if refused != 0 {
+            status = 3;
+        }
+        b = b + 1;
+    }
+    let o = contents(w.out);
+    var payload = 0;
+    var ng = 0;
+    var np = 0;
+    var held = 0;
+    if status == 0 {
+        borrow groups as &gr in {
+            let (a1, a2, a3) = agg.totals(gr);
+            ng = a1;
+            np = a2;
+            held = a3;
+        }
+        if mode == 0 {
+            borrow groups as &gr in {
+                let n = agg.serialize(gr, o[hdr2()..len(o)]);
+                if n < 0 {
+                    status = 5;
+                } else {
+                    payload = n;
+                }
+            }
+        } else {
+            var over = 0;
+            borrow mut groups as &!gm in {
+                over = agg.settle(gm, w.tree);
+            }
+            if over != 0 {
+                status = 4;
+            } else {
+                var rows = buffer.empty(w.heap, 4096);
+                borrow groups as &gr in {
+                    rows = agg.rows_csv(w.heap, rows, gr, w.tree, delim);
+                }
+                borrow rows as &rr in {
+                    let text = buffer.bytes(rr);
+                    if len(text) > len(o) - hdr2() {
+                        status = 5;
+                    } else {
+                        copy_into(o[hdr2()..hdr2() + len(text)], text);
+                        payload = len(text);
+                    }
+                }
+                buffer.drop(w.heap, rows);
+            }
+        }
+    }
+    agg.put_i64(o, 0, status);
+    agg.put_i64(o, 8, payload);
+    agg.put_i64(o, 16, ng);
+    agg.put_i64(o, 24, np);
+    agg.put_i64(o, 32, held);
+    agg.drop(w.heap, groups);
+    return 0;
+}
+
+// The bytes of blob `k` of range `j`'s slot (or of the state), as offsets into `slots` (or `state`).
+fn blob_lo[&s](table: &s [byte], at: int, k: int) -> [] int {
+    return at + agg.get_i64(table, at + 8 * k);
+}
+
+fn blob_hi[&s](table: &s [byte], at: int, k: int) -> [] int {
+    return at + agg.get_i64(table, at + 8 * (k + 1));
+}
+
+// One level of the merge round: make job `k` (its input is the state's blob `k` and blob `k` of every range used), start its thread, make the rest, join it, and move
+// its answer up into `slots2` at `meta[np + 1 + k]`. `meta` holds the input bytes of each job, then where each job's slot starts.
+fn fan2[&p, &t, &r, &l, &u, &v, &x, &m](parent: &!p Heap, tree: &t query.Query, par2: &r [int], slots: &l [byte], used: &x [int], state: &v [byte], meta: &m [int], slots2: &!u [byte], k: int, np: int, n: int, slot_bytes: int) -> [heap, conc] int {
+    if k >= np {
+        return 0;
+    }
+    var nb = 1;
+    var j = 0;
+    while j < n {
+        if used[j] == 1 {
+            nb = nb + 1;
+        }
+        j = j + 1;
+    }
+    let inp = box_slice(parent, meta[k] + 1, byte_of(0));
+    let offs = box_slice(parent, nb + 2, 0);
+    var inp_w = inp;
+    var offs_w = offs;
+    borrow mut inp_w as &!iw in {
+        borrow mut offs_w as &!ow in {
+            let dst = contents(iw);
+            let od = contents(ow);
+            var at = 0;
+            var q = 0;
+            od[0] = 0;
+            let lo = blob_lo(state, 0, k);
+            let hi = blob_hi(state, 0, k);
+            copy_into(dst[at..at + hi - lo], state[lo..hi]);
+            at = at + hi - lo;
+            q = 1;
+            od[1] = at;
+            j = 0;
+            while j < n {
+                if used[j] == 1 {
+                    let base = j * slot_bytes + header_bytes();
+                    let slo = blob_lo(slots, base, k);
+                    let shi = blob_hi(slots, base, k);
+                    copy_into(dst[at..at + shi - slo], slots[slo..shi]);
+                    at = at + shi - slo;
+                    q = q + 1;
+                    od[q] = at;
+                }
+                j = j + 1;
+            }
+        }
+    }
+    var par = copy_ints(parent, par2);
+    borrow mut par as &!pw in {
+        contents(pw)[2] = nb;
+    }
+    let out_bytes = meta[np + 2 + k] - meta[np + 1 + k];
+    var job = Job2 { heap: fork_heap(parent), tree: query.duplicate(parent, tree), par: par, offs: offs_w, inp: inp_w, out: box_slice(parent, out_bytes, byte_of(0)) };
+    var rest = 0;
+    borrow mut job as &!kj in {
+        let body = work2;
+        let thread = spawn(kj, body);
+        rest = fan2(parent, tree, par2, slots, used, state, meta, slots2, k + 1, np, n, slot_bytes);
+        join(thread);
+    }
+    let Job2 { heap, tree, par, offs, inp, out } = job;
+    release(heap);
+    query.drop(parent, tree);
+    unbox_slice(parent, par);
+    unbox_slice(parent, offs);
+    unbox_slice(parent, inp);
+    borrow out as &ob in {
+        let o = contents(ob);
+        let status = agg.get_i64(o, 0);
+        var used_bytes = hdr2();
+        if status == 0 {
+            used_bytes = used_bytes + agg.get_i64(o, 8);
+        }
+        copy_into(slots2[meta[np + 1 + k]..meta[np + 1 + k] + used_bytes], o[0..used_bytes]);
+    }
+    unbox_slice(parent, out);
+    return rest;
+}
+
+// Read everything from `start` to the end of the file in the partitioned way, writing the answer's rows into `rows` (and to the output, as they fill). Answers the
+// buffers and the groups as `run` does, and 0, or 1 when the read was declined (nothing was changed: `a`, `rows`, the groups and the output are as they were) and
+// the caller reads as before. `a[k_done]` is 1 when the answer is complete.
+pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups, int) {
+    if threads < 2 {
+        return (rows, scratch, escr, kept, groups, 1);
+    }
+    let np = threads;
+    let fields = query.count_of(tree, 2);
+    let bound_groups = pp[scan.p_max_groups()];
+    let bound_distinct = pp[scan.p_max_distinct()];
+    let bound_state = pp[scan.p_max_state()];
+    let base_line0 = pp[scan.p_base_line()];
+    let most = pp[scan.p_most()];
+    let delim = pp[scan.p_delim()];
+    let wide = 1000000000000000;
+    var chunk = most_chunk;
+    let share = (size - start + threads - 1) / threads;
+    if share < chunk {
+        chunk = share;
+    }
+    if chunk < 1 {
+        chunk = 1;
+    }
+    // room for a range's answer: its groups cost no more than its bytes twice over, and each group with a float sum or mean is 584 bytes a float more than
+    // that, which `--max-state-bytes` bounds (a range that holds more than that is not clean): the allowance is that bound, to 64 MiB, and the pages of a slot
+    // that nothing writes are never resident (`box_slice` of zeros is `calloc`)
+    var allowance = 0;
+    if agg.float_state(tree) > 0 {
+        allowance = pp[scan.p_max_state()];
+        if allowance > 67108864 {
+            allowance = 67108864;
+        }
+    }
+    let payload_cap = 2 * chunk + 65536 + allowance;
+    let slot_bytes = header_bytes() + payload_cap;
+    var declined = 0;
+    var ta = box_slice(heap, engine.k_size(), 0);
+    borrow mut ta as &!tw in {
+        var m = 0;
+        while m < engine.k_size() {
+            contents(tw)[m] = a[m];
+            m = m + 1;
+        }
+    }
+    // The splitters: the keys at the quantiles of the groups in a sample of the file (16 places, 16 KiB each), cut at a line start.
+    var sg = agg.start(heap, tree);
+    var sa = box_slice(heap, engine.k_size(), 0);
+    var sp = box_slice(heap, j_size(), 0);
+    borrow mut sp as &!spw in {
+        var m = 0;
+        while m < scan.p_count() {
+            contents(spw)[m] = pp[m];
+            m = m + 1;
+        }
+        contents(spw)[scan.p_most()] = wide;
+        contents(spw)[scan.p_limit()] = wide;
+        contents(spw)[scan.p_budget()] = wide;
+        contents(spw)[scan.p_max_groups()] = wide;
+        contents(spw)[scan.p_max_distinct()] = wide;
+        contents(spw)[scan.p_max_state()] = wide;
+        contents(spw)[scan.p_from()] = 0;
+        contents(spw)[scan.p_yield()] = 0;
+        contents(spw)[scan.p_base_line()] = 0;
+    }
+    var srows = buffer.empty(heap, 16);
+    var sscr = buffer.empty(heap, 256);
+    var sesc = buffer.empty(heap, 16);
+    var skept = buffer.empty(heap, 64);
+    var wi = 0;
+    while wi < 16 {
+        let pos = start + (size - start) / 16 * wi;
+        let edge = align(heap, file, pos, size);
+        var until = edge + 16384;
+        if until > size {
+            until = size;
+        }
+        if edge < until {
+            borrow mut sa as &!saw in {
+                var m = 0;
+                while m < engine.k_size() {
+                    contents(saw)[m] = 0;
+                    m = m + 1;
+                }
+                contents(saw)[engine.k_columns()] = a[engine.k_columns()];
+                borrow sp as &spr in {
+                    let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, contents(spr), tree, cols, sel, cells, contents(saw), srows, sscr, sesc, skept, sg, edge, until);
+                    srows = r2;
+                    sscr = s2;
+                    sesc = e2;
+                    skept = k2;
+                    sg = g2;
+                }
+            }
+        }
+        wi = wi + 1;
+    }
+    buffer.drop(heap, srows);
+    buffer.drop(heap, sscr);
+    buffer.drop(heap, sesc);
+    buffer.drop(heap, skept);
+    unbox_slice(heap, sa);
+    var split_room = 0;
+    borrow sg as &sgr in {
+        split_room = agg.parts_size(sgr, 1) + 64;
+    }
+    var split = box_slice(heap, split_room, byte_of(0));
+    var soff = box_slice(heap, np + 2, 0);
+    var nsplit = 0;
+    borrow sg as &sgr in {
+        borrow mut split as &!spw in {
+            let used_split = agg.pick_splitters(heap, sgr, np, fields, contents(spw));
+            if used_split < 0 {
+                declined = 1;
+            } else {
+                nsplit = agg.get_i64(contents(spw), 0);
+                borrow mut soff as &!sow in {
+                    agg.splitter_offsets(contents(spw), 8, nsplit, contents(sow));
+                }
+            }
+        }
+    }
+    agg.drop(heap, sg);
+    unbox_slice(heap, sp);
+    // The state: the groups so far (the parent's, from the first rows) as `np` blobs.
+    var state = box_slice(heap, 1, byte_of(0));
+    if declined == 0 {
+        var need0 = 0;
+        var ng0 = 0;
+        borrow groups as &gr in {
+            need0 = agg.parts_size(gr, np);
+            ng0 = agg.groups(gr);
+        }
+        unbox_slice(heap, state);
+        state = box_slice(heap, need0 + 1, byte_of(0));
+        var work0 = box_slice(heap, 2 * ng0 + 6 * np + 8, 0);
+        borrow groups as &gr in {
+            borrow mut state as &!stw in {
+                borrow split as &spr in {
+                    borrow soff as &sor in {
+                        borrow mut work0 as &!w0 in {
+                            if agg.serialize_parts(gr, contents(stw), contents(spr), contents(sor), nsplit, np, fields, contents(w0)) < 0 {
+                                declined = 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, work0);
+    }
+    var wpar = box_slice(heap, j_size(), 0);
+    borrow mut wpar as &!wp in {
+        let u = contents(wp);
+        var k = 0;
+        while k < scan.p_count() {
+            u[k] = pp[k];
+            k = k + 1;
+        }
+        u[scan.p_budget()] = wide;
+        u[scan.p_limit()] = wide;
+        u[scan.p_most()] = wide;
+        u[scan.p_from()] = 0;
+        u[scan.p_base_line()] = 0;
+        u[scan.p_yield()] = payload_cap;
+        u[j_columns()] = a[engine.k_columns()];
+        u[j_parts()] = np;
+        u[j_nsplit()] = nsplit;
+        u[j_fields()] = fields;
+    }
+    var slots = box_slice(heap, threads * slot_bytes + 1, byte_of(0));
+    var plan = box_slice(heap, threads + 2, 0);
+    var used = box_slice(heap, threads + 2, 0);
+    var meta = box_slice(heap, 2 * np + 4, 0);
+    var rows2 = rows;
+    var scratch2 = scratch;
+    var escr2 = escr;
+    var kept2 = kept;
+    var cur = start;
+    var lines_before = lines0;
+    var finished = false;
+    var total_groups = 0;
+    while declined == 0 && !finished && cur < size {
+        let wave_began = cur;
+        var n = threads;
+        let ranges = (size - cur + chunk - 1) / chunk;
+        if ranges < n {
+            n = ranges;
+        }
+        borrow mut plan as &!pw in {
+            let pl = contents(pw);
+            pl[0] = cur;
+            var j = 1;
+            while j <= n {
+                var edge = align(heap, file, cur + j * chunk, size);
+                if edge < pl[j - 1] {
+                    edge = pl[j - 1];
+                }
+                pl[j] = edge;
+                j = j + 1;
+            }
+            if cur + n * chunk >= size {
+                pl[n] = size;
+            }
+        }
+        borrow mut slots as &!sw in {
+            var j = 0;
+            while j < n {
+                agg.put_i64(contents(sw), j * slot_bytes, 2);
+                j = j + 1;
+            }
+            borrow wpar as &wr in {
+                borrow plan as &pr in {
+                    borrow split as &spr in {
+                        borrow soff as &sor in {
+                            fan(heap, fs, root, rel, full, tree, cols, sel, contents(wr), contents(pr), contents(sw), contents(spr), contents(sor), 0, n, slot_bytes);
+                        }
+                    }
+                }
+            }
+        }
+        // The ranges, in file order: each is taken as it is or read again here into groups of its own, or the read is declined.
+        borrow mut ta as &!tw in {
+            var j = 0;
+            while j < n && declined == 0 {
+                var until = 0;
+                var first = 0;
+                borrow plan as &pr in {
+                    until = contents(pr)[j + 1];
+                    first = contents(pr)[j];
+                }
+                borrow mut used as &!uw in {
+                    contents(uw)[j] = 0;
+                }
+                if cur < until {
+                    var accepted = false;
+                    borrow slots as &sr in {
+                        let sl = contents(sr);
+                        let at = j * slot_bytes;
+                        if agg.get_i64(sl, at) == 0 && first == cur {
+                            let r = agg.get_i64(sl, at + 32 + 8 * engine.k_records());
+                            let g1 = agg.get_i64(sl, at + 32 + 8 * engine.k_ragged());
+                            let before = contents(tw)[engine.k_records()];
+                            if before < most && before + r <= most {
+                                accepted = true;
+                                let t = contents(tw);
+                                if t[engine.k_ragged()] == 0 && g1 > 0 {
+                                    t[engine.k_first_row()] = before + agg.get_i64(sl, at + 32 + 8 * engine.k_first_row());
+                                    t[engine.k_first_line()] = lines_before + agg.get_i64(sl, at + 32 + 8 * engine.k_first_line());
+                                    t[engine.k_first_found()] = agg.get_i64(sl, at + 32 + 8 * engine.k_first_found());
+                                }
+                                t[engine.k_records()] = before + r;
+                                t[engine.k_ragged()] = t[engine.k_ragged()] + g1;
+                                lines_before = lines_before + l_lines(sl, at);
+                                cur = agg.get_i64(sl, at + 8);
+                            }
+                        }
+                    }
+                    if accepted {
+                        borrow mut used as &!uw in {
+                            contents(uw)[j] = 1;
+                        }
+                    } else {
+                        // Read again, here, the way the sequential read does, into groups of its own.
+                        var rg = agg.start(heap, tree);
+                        var rscr = scratch2;
+                        var resc = escr2;
+                        var rkept = kept2;
+                        pp[scan.p_base_line()] = lines_before;
+                        pp[scan.p_max_groups()] = wide;
+                        pp[scan.p_max_distinct()] = wide;
+                        pp[scan.p_max_state()] = wide;
+                        let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, contents(tw), rows2, rscr, resc, rkept, rg, cur, until);
+                        rows2 = r2;
+                        rscr = s2;
+                        resc = e2;
+                        rkept = k2;
+                        rg = g2;
+                        let t = contents(tw);
+                        if st != 0 || t[engine.k_abort()] != 0 || t[engine.k_stop()] != 0 || t[engine.k_capped()] != 0 || t[engine.k_more()] != 0 {
+                            declined = 1;
+                        } else {
+                            borrow mut slots as &!sw in {
+                                borrow rg as &rgr in {
+                                    borrow split as &spr in {
+                                        borrow soff as &sor in {
+                                            var work1 = box_slice(heap, 2 * agg.groups(rgr) + 6 * np + 8, 0);
+                                            borrow mut work1 as &!w1 in {
+                                                let at = j * slot_bytes;
+                                                let nb = agg.serialize_parts(rgr, contents(sw)[at + header_bytes()..at + slot_bytes], contents(spr), contents(sor), nsplit, np, fields, contents(w1));
+                                                if nb < 0 {
+                                                    declined = 1;
+                                                } else {
+                                                    agg.put_i64(contents(sw), at, 0);
+                                                    agg.put_i64(contents(sw), at + 8, x2);
+                                                    agg.put_i64(contents(sw), at + 16, l2);
+                                                    agg.put_i64(contents(sw), at + 24, nb);
+                                                }
+                                            }
+                                            unbox_slice(heap, work1);
+                                        }
+                                    }
+                                }
+                            }
+                            if declined == 0 {
+                                lines_before = lines_before + l2;
+                                cur = x2;
+                                borrow mut used as &!uw in {
+                                    contents(uw)[j] = 1;
+                                }
+                            }
+                        }
+                        agg.drop(heap, rg);
+                        scratch2 = rscr;
+                        escr2 = resc;
+                        kept2 = rkept;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        if declined == 0 && cur == wave_began {
+            declined = 1;
+        }
+        if declined == 0 {
+            let last = cur >= size;
+            // The round: the input of each merge thread and where its answer goes.
+            var total_out = 0;
+            borrow mut meta as &!mw in {
+                let me = contents(mw);
+                var k = 0;
+                while k < np {
+                    var inl = 0;
+                    borrow state as &str in {
+                        inl = agg.get_i64(contents(str), 8 * (k + 1)) - agg.get_i64(contents(str), 8 * k);
+                    }
+                    borrow slots as &sr in {
+                        borrow used as &ur in {
+                            var j = 0;
+                            while j < n {
+                                if contents(ur)[j] == 1 {
+                                    let base = j * slot_bytes + header_bytes();
+                                    inl = inl + agg.get_i64(contents(sr), base + 8 * (k + 1)) - agg.get_i64(contents(sr), base + 8 * k);
+                                }
+                                j = j + 1;
+                            }
+                        }
+                    }
+                    me[k] = inl;
+                    me[np + 1 + k] = total_out;
+                    if last {
+                        total_out = total_out + hdr2() + 3 * inl + 4096;
+                    } else {
+                        total_out = total_out + hdr2() + inl + 64;
+                    }
+                    k = k + 1;
+                }
+                me[np + 1 + np] = total_out;
+            }
+            var slots2 = box_slice(heap, total_out + 1, byte_of(0));
+            var par2 = box_slice(heap, 4, 0);
+            borrow mut par2 as &!p2 in {
+                contents(p2)[0] = 1;
+                if !last {
+                    contents(p2)[0] = 0;
+                }
+                contents(p2)[1] = delim;
+            }
+            borrow mut slots2 as &!s2w in {
+                borrow par2 as &p2r in {
+                    borrow slots as &sr in {
+                        borrow used as &ur in {
+                            borrow state as &str in {
+                                borrow meta as &mr in {
+                                    fan2(heap, tree, contents(p2r), contents(sr), contents(ur), contents(str), contents(mr), contents(s2w), 0, np, n, slot_bytes);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            unbox_slice(heap, par2);
+            // Their answers: all done, and within the bounds, or the read is declined.
+            var ng_all = 0;
+            var pairs_all = 0;
+            var held_all = 0;
+            var payload_all = 0;
+            borrow slots2 as &s2r in {
+                borrow meta as &mr in {
+                    var k = 0;
+                    while k < np {
+                        let at = contents(mr)[np + 1 + k];
+                        if agg.get_i64(contents(s2r), at) != 0 {
+                            declined = 1;
+                        } else {
+                            payload_all = payload_all + agg.get_i64(contents(s2r), at + 8);
+                            ng_all = ng_all + agg.get_i64(contents(s2r), at + 16);
+                            pairs_all = pairs_all + agg.get_i64(contents(s2r), at + 24);
+                            held_all = held_all + agg.get_i64(contents(s2r), at + 32);
+                        }
+                        k = k + 1;
+                    }
+                }
+            }
+            if ng_all > bound_groups || pairs_all > bound_distinct || held_all > bound_state {
+                declined = 1;
+            }
+            if declined == 0 && last {
+                borrow slots2 as &s2r in {
+                    borrow meta as &mr in {
+                        var k = 0;
+                        while k < np && declined == 0 {
+                            let at = contents(mr)[np + 1 + k];
+                            let len_k = agg.get_i64(contents(s2r), at + 8);
+                            rows2 = buffer.append(heap, rows2, contents(s2r)[at + hdr2()..at + hdr2() + len_k]);
+                            let (after, ok) = engine.flush(io, rows2);
+                            rows2 = after;
+                            if !ok {
+                                borrow mut ta as &!tw in {
+                                    contents(tw)[engine.k_abort()] = 9;
+                                    contents(tw)[engine.k_stop()] = 1;
+                                }
+                            }
+                            k = k + 1;
+                        }
+                    }
+                }
+                total_groups = ng_all;
+                finished = true;
+            } else if declined == 0 {
+                // The new state: the merged groups of each, as one blob each.
+                var new_state = box_slice(heap, 8 * (np + 1) + payload_all + 1, byte_of(0));
+                borrow mut new_state as &!nsw in {
+                    borrow slots2 as &s2r in {
+                        borrow meta as &mr in {
+                            let ns = contents(nsw);
+                            var at = 8 * (np + 1);
+                            var k = 0;
+                            while k < np {
+                                agg.put_i64(ns, 8 * k, at);
+                                let from = contents(mr)[np + 1 + k];
+                                let len_k = agg.get_i64(contents(s2r), from + 8);
+                                copy_into(ns[at..at + len_k], contents(s2r)[from + hdr2()..from + hdr2() + len_k]);
+                                at = at + len_k;
+                                k = k + 1;
+                            }
+                            agg.put_i64(ns, 8 * np, at);
+                        }
+                    }
+                }
+                unbox_slice(heap, state);
+                state = new_state;
+            }
+            unbox_slice(heap, slots2);
+        }
+    }
+    pp[scan.p_max_groups()] = bound_groups;
+    pp[scan.p_max_distinct()] = bound_distinct;
+    pp[scan.p_max_state()] = bound_state;
+    pp[scan.p_base_line()] = base_line0;
+    unbox_slice(heap, wpar);
+    unbox_slice(heap, slots);
+    unbox_slice(heap, plan);
+    unbox_slice(heap, used);
+    unbox_slice(heap, meta);
+    unbox_slice(heap, state);
+    unbox_slice(heap, split);
+    unbox_slice(heap, soff);
+    if declined == 0 && finished {
+        borrow ta as &tr in {
+            var m = 0;
+            while m < engine.k_size() {
+                a[m] = contents(tr)[m];
+                m = m + 1;
+            }
+        }
+        a[engine.k_groups()] = total_groups;
+        a[engine.k_emitted()] = total_groups;
+        a[engine.k_done()] = 1;
+        unbox_slice(heap, ta);
+        return (rows2, scratch2, escr2, kept2, groups, 0);
+    }
+    unbox_slice(heap, ta);
+    return (rows2, scratch2, escr2, kept2, groups, 1);
 }

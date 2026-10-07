@@ -124,6 +124,11 @@ pub fn k_err_digits() -> [] int {
     return 26;
 }
 
+// 1 when the partitioned grouping (par.run_groups) has written the whole answer: nothing is left for `finish_groups`.
+pub fn k_done() -> [] int {
+    return 27;
+}
+
 pub fn k_size() -> [] int {
     return 32;
 }

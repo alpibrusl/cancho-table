@@ -163,12 +163,21 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
     let order = box_slice(heap, n + 1, 0);
     let spare = box_slice(heap, n + 1, 0);
     let prefixes = box_slice(heap, n + 1, 0);
+    let words2 = box_slice(heap, n + 1, 0);
+    let hist = box_slice(heap, 1792, 0);
     var pending = rows;
     var row = scratch;
+    let plain = agg.rows_plain(tree);
     borrow mut order as &!ow in {
         borrow mut spare as &!sw in {
             borrow mut prefixes as &!pw in {
-                agg.sort_into(groups, contents(ow), contents(sw), contents(pw), query.agg_count(tree), ng, a[engine.k_sort_field()], a[engine.k_sort_slot()], a[engine.k_sort_desc()] == 1);
+              borrow mut words2 as &!xw in {
+               borrow mut hist as &!hw in {
+                if a[engine.k_sort_field()] < 0 && a[engine.k_sort_slot()] < 0 {
+                    agg.sort_keys(groups, contents(ow), contents(sw), contents(pw), contents(xw), contents(hw), ng);
+                } else {
+                    agg.sort_into(groups, contents(ow), contents(sw), contents(pw), query.agg_count(tree), ng, a[engine.k_sort_field()], a[engine.k_sort_slot()], a[engine.k_sort_desc()] == 1);
+                }
                 var end = n;
                 if top > 0 && top < n {
                     end = top;
@@ -182,6 +191,29 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
                         a[engine.k_next()] = pos;
                         going = false;
                     } else if as_csv {
+                        var wrote = 0 - 1;
+                        if plain {
+                            pending = buffer.reserve(heap, pending, agg.row_room(groups, tree, x));
+                            borrow mut pending as &!pm in {
+                                wrote = agg.put_row_csv(pm, groups, tree, x, delim, ng);
+                            }
+                        }
+                        if wrote >= 0 {
+                            a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
+                            var held2 = 0;
+                            borrow pending as &pr2 in {
+                                held2 = buffer.size(pr2);
+                            }
+                            if held2 >= 65536 {
+                                let (after, ok) = engine.flush(io, pending);
+                                pending = after;
+                                if !ok {
+                                    a[engine.k_abort()] = 9;
+                                    going = false;
+                                }
+                            }
+                            pos = pos + 1;
+                        } else {
                         var j = 0;
                         while j < ng {
                             if j > 0 {
@@ -217,6 +249,7 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
                             }
                         }
                         pos = pos + 1;
+                        }
                     } else {
                         borrow mut row as &!rw in {
                             buffer.clear(rw);
@@ -250,12 +283,16 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
                         }
                     }
                 }
+               }
+              }
             }
         }
     }
     unbox_slice(heap, order);
     unbox_slice(heap, spare);
     unbox_slice(heap, prefixes);
+    unbox_slice(heap, words2);
+    unbox_slice(heap, hist);
     return (pending, row);
 }
 
@@ -1186,12 +1223,24 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             borrow mut cells as &!cw in {
                                                 borrow cols as &kr in {
                                                     borrow sel as &sr in {
-                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
-                                                        rows = r2;
-                                                        scratch = s2;
-                                                        escr = e2;
-                                                        kept = k2;
-                                                        groups = g2;
+                                                        var partitioned = false;
+                                                        if mode == 2 && !query.reporting(tree) && as_csv && a[engine.k_sort_field()] < 0 && a[engine.k_sort_slot()] < 0 && from == 0 && top == 0 && limit >= 100000000 {
+                                                            let (r1, s1, e1, k1, g1, declined) = par.run_groups(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
+                                                            rows = r1;
+                                                            scratch = s1;
+                                                            escr = e1;
+                                                            kept = k1;
+                                                            groups = g1;
+                                                            partitioned = declined == 0;
+                                                        }
+                                                        if !partitioned {
+                                                            let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
+                                                            rows = r2;
+                                                            scratch = s2;
+                                                            escr = e2;
+                                                            kept = k2;
+                                                            groups = g2;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1287,7 +1336,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
         }
         var finished = rows;
         var spare = scratch;
-        if mode == 2 && a[engine.k_abort()] == 0 {
+        if mode == 2 && a[engine.k_abort()] == 0 && a[engine.k_done()] == 0 {
             borrow cols as &kr in {
                 let (g2, k2) = settle_groups(heap, groups, kept, tree, contents(kr), a);
                 groups = g2;
