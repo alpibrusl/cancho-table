@@ -36,6 +36,7 @@ import std.bytes;
 import std.map;
 import std.vec;
 import dec;
+import flt;
 import plan;
 import query;
 import toolbox.text;
@@ -713,6 +714,9 @@ pub fn put_value[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, t
         }
         return dec.put_mean(heap, out, high, low, vec.get(g.acc, x * g.stride), scale, to);
     }
+    if (function == 2 || function == 3) && query.agg_at(tree, k, 2) == 21 {
+        return flt.put_float(heap, out, value_of(g, x, k, function));
+    }
     if (function == 2 || function == 3) && query.agg_at(tree, k, 2) >= 2 {
         return dec.put_scaled(heap, out, value_of(g, x, k, function), scale);
     }
@@ -814,7 +818,10 @@ fn tail_of[&d](item: &d [byte]) -> [] (int, int, int) {
         }
         e = k - 1;
     }
-    if e >= 4 && bytes.equal(item[e - 4..e], ":int") && !escaped_at(item, e - 4) && index_of_byte(item[0..e - 4], byte_of(':')) > 0 {
+    if e >= 6 && bytes.equal(item[e - 6..e], ":float") && !escaped_at(item, e - 6) && index_of_byte(item[0..e - 6], byte_of(':')) > 0 {
+        kind = 21;
+        e = e - 6;
+    } else if e >= 4 && bytes.equal(item[e - 4..e], ":int") && !escaped_at(item, e - 4) && index_of_byte(item[0..e - 4], byte_of(':')) > 0 {
         kind = 1;
         e = e - 4;
     } else if e >= 7 && int_of(item[e - 1]) == ')' {
@@ -958,6 +965,9 @@ pub fn parse_aggs[&h, &s](heap: &!h Heap, tree: query.Query, given: &s [byte]) -
                 var kind_final = kind;
                 var mean_final = 0;
                 if function == 0 {
+                    bad = i;
+                } else if kind == 21 && function == 1 {
+                    // the exact sum and mean of doubles are stage N4 (docs/numbers.md 4.4): not built
                     bad = i;
                 } else if is_mean {
                     // the scale is the column's when it is a decimal, and must be said otherwise

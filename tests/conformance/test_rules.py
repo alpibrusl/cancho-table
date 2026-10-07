@@ -40,7 +40,7 @@ LOCAL = {
     "value.decimal-too-wide": (8, "never", "18"),
     "column.type-conflict": (2, "never", "numeric type"),
     "value.not-float": (8, "never", "float"),
-    "value.not-finite": (8, "never", "finite"),
+    "value.not-finite": (8, "never", "inf or nan"),
     "value.float-range": (8, "never", "double"),
     "limit.number-too-long": (8, "never", "1,100"),
 }
@@ -61,6 +61,7 @@ class Rules(unittest.TestCase):
         s.write("many.csv", "a\n1\n2\n3\n")
         s.write("text.csv", "a,b\n1,x\n")
         s.write("big.csv", "a\n99999999999999999999\n")
+        s.write("ovf.csv", "a\n1e999\n")
         s.write("scale.csv", "a\n1.25\n")
         s.write("nan.csv", "a\nnan\n")
         s.write("long.csv", "a\n" + "1" * 1101 + "\n")
@@ -120,7 +121,7 @@ class Rules(unittest.TestCase):
             ("column.type-conflict", root + ["--where", "a:dec(2) > 0 and a:int > 0", "ok.csv"], None),
             ("value.not-float", root + ["--where", "b:float > 0", "text.csv"], None),
             ("value.not-finite", root + ["--where", "a:float > 0", "nan.csv"], None),
-            ("value.float-range", root + ["--where", "a:float > 0", "big.csv"], None),
+            ("value.float-range", root + ["--where", "a:float > 0", "ovf.csv"], None),
             ("limit.number-too-long", root + ["--where", "a:float > 0", "long.csv"], None),
         ]
         if os.geteuid() != 0 or True:

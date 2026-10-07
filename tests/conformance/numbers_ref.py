@@ -161,3 +161,15 @@ def float_text(x):
     if pos >= len(digits):
         return sign + digits + "0" * (pos - len(digits)) + ".0"
     return sign + digits[:pos] + "." + digits[pos:]
+
+
+def same_text(tool, x):
+    """Whether `tool` is a legitimate printing of the double `x`: the layout of `float_text`, or the same layout of the other shortest digit string when two
+    shortest strings are equally close to the double (`87992730773886.125` is `...86.12` in Python and `...86.13` in the tool: both read back to it; the
+    rule of 4.6 is "shortest that reads back", and a tie between two is not specified)."""
+    want = float_text(x)
+    if tool == want:
+        return True
+    if x == 0 or len(tool) != len(want) or float(tool) != x:
+        return False
+    return sum(a != b for a, b in zip(tool, want)) <= 1          # the same layout, and one digit apart: the tie

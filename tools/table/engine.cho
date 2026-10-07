@@ -287,6 +287,10 @@ fn digits_after_point[&d](record: &d [byte], first: int, last: int) -> [] int {
 // The abort code of a refusal of an aggregate's cell by its status (`agg.add`): 4 and 5 (not an integer, too large) are 16 and 17, and a
 // decimal's 6, 7 and 8 (not a decimal, too fine for the scale, too wide) are 26, 27 and 28.
 fn abort_of(status: int) -> [] int {
+    if status >= 9 {
+        // a float's 9 to 13 (flt.cho): 37 to 41
+        return 28 + status;
+    }
     if status >= 6 {
         return 20 + status;
     }
@@ -329,7 +333,10 @@ pub fn screen[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, cols
     // A condition met a cell it cannot compare.
     let column = cols[query.cond_at(tree, which, 3)];
     var code = 9 + verdict;
-    if verdict >= 4 {
+    if verdict >= 7 {
+        // 7 to 11: a :float cell that is not a number, inf or nan, past the range, rounds to zero, too long: 29 to 33
+        code = 22 + verdict;
+    } else if verdict >= 4 {
         // 4, 5, 6: a :dec cell that is not a decimal, too fine for the scale, too wide: 22, 23, 24
         code = 18 + verdict;
     }

@@ -30,6 +30,7 @@ module query;
 import std.buffer;
 import std.bytes;
 import std.vec;
+import flt;
 
 pub res struct Query {
     names: buffer.Buffer,
@@ -272,9 +273,14 @@ pub fn parse_dec[&d](data: &d [byte], scale: int) -> [] (int, int) {
     return (v, 0);
 }
 
-// `data` as a cell of the numeric type `kind` (1 :int, 2 + S :dec(S)), for an aggregate: (value, status), 0 it is, 4 not an integer,
-// 5 an integer past 64 bits, 6 not a decimal, 7 a decimal with more fractional digits than the scale, 8 one that is too wide.
+// `data` as a cell of the numeric type `kind` (1 :int, 2 + S :dec(S), 21 :float), for an aggregate: (value, status), 0 it is, 4 not an integer,
+// 5 an integer past 64 bits, 6 not a decimal, 7 a decimal with more fractional digits than the scale, 8 one that is too wide (and, for a float,
+// the 9 to 13 of `flt.parse_float`; a float's value is its key, an `int` that orders as the doubles do).
 pub fn parse_typed[&d](data: &d [byte], kind: int) -> [] (int, int) {
+    if kind == 21 {
+        // :float (flt.cho): the key of the double, statuses 9 not a number, 10 inf or nan, 11 past the range, 12 rounds to zero, 13 too long
+        return flt.parse_float(data);
+    }
     if kind >= 2 {
         let (v, bad) = parse_dec(data, kind - 2);
         if bad == 0 {

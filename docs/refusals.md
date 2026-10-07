@@ -121,7 +121,11 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `value.not-decimal` | 8 | never | a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone |
 | `value.decimal-scale` | 8 | sometimes | a cell of a :dec(S) column has more fractional digits than S (it is never rounded) |
 | `value.decimal-too-wide` | 8 | never | a cell of a :dec(S) column has 18 or more significant digits once scaled to S |
-| `column.type-conflict` | 2 | never | the plan reads one column as two numeric types: :int, or :dec with two scales |
+| `column.type-conflict` | 2 | never | the plan reads one column as two numeric types: :int, :float, or :dec with two scales |
+| `value.not-float` | 8 | never | a cell of a :float column is not a number: an empty cell, a space, a separator, a hex form, a sign or a point alone |
+| `value.not-finite` | 8 | never | a cell of a :float column is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float > 5) |
+| `value.float-range` | 8 | never | a cell of a :float column is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which) |
+| `limit.number-too-long` | 8 | never | a cell of a :float column is longer than 1,100 bytes, the longest cell that can be a double |
 <!-- /gen:rules -->
 
 The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other cancho-tools; the rest are `table`'s own.

@@ -83,7 +83,7 @@ class Floats(unittest.TestCase):
         data = enc([["k", "x"]] + [[str(i), c] for i, c in enumerate(cells)])
         got = self.s.table("t.csv", data, "--group", "k", "--agg", "min:x:float,max:x:float,distinct:x:float,count", "--format", "csv", "--max-groups", "1000000", *extra)
         self.assertEqual(got.status, 0, got)
-        return list(csv.reader(io.StringIO(got.stdout.decode("latin-1"), newline="")))[1:]
+        return sorted(list(csv.reader(io.StringIO(got.stdout.decode("latin-1"), newline="")))[1:], key=lambda r: int(r[0]))      # the groups come out in key order, as text
 
     # ---- G1: the cells ------------------------------------------------------------------------------------------------
 
@@ -169,15 +169,15 @@ class Floats(unittest.TestCase):
         self.assertGreater(len(cells), 400)
         rows = self.mm(cells)
         for cell, (k, lo, hi, dist, count) in zip(cells, rows):
-            want = ref.float_text(ref.flt(cell)[1])
-            self.assertEqual((lo, hi, dist, count), (want, want, "1", "1"), cell[:60])
+            x = ref.flt(cell)[1]
+            self.assertTrue(ref.same_text(lo, x) and lo == hi and (dist, count) == ("1", "1"), (cell[:60], lo, ref.float_text(x)))
 
     def test_random_cells_of_every_shape_are_read_and_written_as_python_does(self):
         rng = random.Random(42)
         cells = lex_float_cells(rng, 6000)
         for cell, (k, lo, hi, dist, count) in zip(cells, self.mm(cells)):
-            want = ref.float_text(ref.flt(cell)[1])
-            self.assertEqual((lo, hi), (want, want), cell[:60])
+            x = ref.flt(cell)[1]
+            self.assertTrue(ref.same_text(lo, x) and lo == hi, (cell[:60], lo, ref.float_text(x)))
 
     def test_the_printer_lays_out_the_decimal_as_the_design_says(self):
         for cell, text in (("0.1", "0.1"), ("100", "100.0"), ("12345.67", "12345.67"), ("1e21", "1e21"), ("1e20", "100000000000000000000.0"), ("1.5e-7", "1.5e-7"), ("1e-6", "0.000001"), ("1e-7", "1e-7"),
@@ -444,6 +444,19 @@ def float_reference(names, rows, plan):
     return ("groups", labels, [r[1] for r in out])
 
 
+def cell_eq(got, want):
+    if got == want:
+        return True
+    try:
+        return ref.same_text(got, float(want))
+    except ValueError:
+        return False
+
+
+def rows_eq(got, want):
+    return len(got) == len(want) and all(len(g) == len(w) and all(cell_eq(a, b) for a, b in zip(g, w)) for g, w in zip(got, want))
+
+
 class FloatPlans(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -484,14 +497,15 @@ class FloatPlans(unittest.TestCase):
                 kind, labels, wrows = want
                 if fmt == "csv":
                     out = [r for r in csv.reader(io.StringIO(got.stdout.decode("latin-1"), newline=""))]
-                    self.assertEqual(out, [labels] + wrows if wrows or kind == "groups" else out, (args, data))
+                    self.assertTrue(out[:1] == [labels] and rows_eq(out[1:], wrows) or not (wrows or kind == "groups"), (out, [labels] + wrows, args, data))
                     self.assertEqual(got.status, 8 if ragged else 0, (args, data, got))
                 else:
                     d = got.data() if got.status == 0 else None
                     if d is None:
                         self.assertTrue(ragged, (args, data, got))
                         continue
-                    self.assertEqual((d["columns"], d["rows"]), (labels, wrows), (args, data, got))
+                    self.assertEqual(d["columns"], labels, (args, data, got))
+                    self.assertTrue(rows_eq(d["rows"], wrows), (d["rows"], wrows, args, data))
         self.assertGreater(answers, 900)
         self.assertGreater(refusals, 80)
 
