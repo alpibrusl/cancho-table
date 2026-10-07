@@ -424,7 +424,7 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
                     let at = j * slot_bytes;
                     // Where the range's first record begins: its start, or after the tail of the record it began in.
                     var first = agg.get_i64(sl, at + 32 + 8 * engine.k_first_at());
-                    // What this wave says about the size of an answer: the largest, and whether one did not fit or was not clean.
+                    // What this wave says about the size of an answer: the largest, and whether one did not fit, was not clean or was not used (read again by the parent).
                     if agg.get_i64(sl, at) == 0 {
                         if agg.get_i64(sl, at + 24) > wave_peak {
                             wave_peak = agg.get_i64(sl, at + 24);
@@ -514,6 +514,7 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
                     }
                 } else {
                     // Read it again, here, the way the sequential read does.
+                    wave_bad = true;
                     var again = true;
                     while again {
                         pp[scan.p_base_line()] = lines_before;
@@ -545,7 +546,7 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
             j = j + 1;
         }
         // The next wave's ranges (groups, --chunk-bytes not given): longer, by as much as keeps an answer that grows with the range
-        // inside half of the slot; back to the first size for good as soon as one answer did not fit or was not clean.
+        // inside half of the slot; back to the first size for good as soon as one answer did not fit, was not clean or was read again by the parent.
         if growing {
             if wave_bad {
                 growing = false;
