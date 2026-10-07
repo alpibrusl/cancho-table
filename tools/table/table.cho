@@ -259,74 +259,109 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
     return (pending, row);
 }
 
+// `--report types` answers with its own columns, whatever the frame made of the selection: the frame's json header, or the report's (functions of their own: this
+// code inside the read function made the compiler spend more on every row of every one-thread read).
+fn report_head[&h](heap: &!h Heap, reporting: bool, head: buffer.Buffer) -> [heap] buffer.Buffer {
+    if reporting {
+        buffer.drop(heap, head);
+        return report.head_json(heap);
+    }
+    return head;
+}
+
+fn report_lead[&h](heap: &!h Heap, reporting: bool, lead: buffer.Buffer, delim: int) -> [heap] buffer.Buffer {
+    if reporting {
+        buffer.drop(heap, lead);
+        return report.head_csv(heap, delim);
+    }
+    return lead;
+}
+
 // The report's rows (report.cho), one for each column asked for, the page `--from` and `--limit` ask for, as csv written out or as json rows kept.
-fn finish_report[&h, &i, &g, &q, &n, &e, &c, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, groups: &g agg.Groups, tree: &q query.Query, names: &n buffer.Buffer, hends: &e vec.Vec[int], cols: &c [int], ncols: int, as_csv: bool, delim: int, from: int, limit: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer) {
+fn finish_report[&h, &i, &q, &n, &e, &c, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, held: agg.Groups, tree: &q query.Query, names: &n buffer.Buffer, hends: &e vec.Vec[int], cols: &c [int], max_state: int, as_csv: bool, delim: int, from: int, limit: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, agg.Groups) {
+    let ncols = report.columns_of(tree, a[engine.k_columns()]);
+    var groups = held;
+    var seen = 0;
+    borrow groups as &zr in {
+        seen = vec.size(zr.acc);
+    }
+    if seen == 0 {
+        // no row was read: the columns are listed with zeros
+        if 8 * report.width() * ncols > max_state {
+            a[engine.k_abort()] = 43;
+            a[engine.k_stop()] = 1;
+            return (rows, scratch, groups);
+        }
+        groups = agg.extend(heap, groups, report.width() * ncols);
+    }
     a[engine.k_groups()] = ncols;
     var pending = rows;
     var row = scratch;
     let ns = query.count_of(tree, 0);
     var pos = from;
     var going = true;
-    while pos < ncols && going {
-        var column = pos;
-        if ns > 0 {
-            column = cols[pos];
-        }
-        if a[engine.k_emitted()] >= limit {
-            a[engine.k_more()] = 1;
-            a[engine.k_next()] = pos;
-            going = false;
-        } else if as_csv {
-            pending = report.put_row(heap, pending, groups, pos, name_of(names, hends, column), true, delim);
-            pending = buffer.push(heap, pending, byte_of(10));
-            a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
-            var held = 0;
-            borrow pending as &pr in {
-                held = buffer.size(pr);
+    borrow groups as &gr in {
+        while pos < ncols && going {
+            var column = pos;
+            if ns > 0 {
+                column = cols[pos];
             }
-            if held >= 65536 {
-                let (after, ok) = engine.flush(io, pending);
-                pending = after;
-                if !ok {
-                    a[engine.k_abort()] = 9;
-                    going = false;
-                }
-            }
-            pos = pos + 1;
-        } else {
-            borrow mut row as &!rw in {
-                buffer.clear(rw);
-            }
-            row = report.put_row(heap, row, groups, pos, name_of(names, hends, column), false, delim);
-            var have = 0;
-            var need = 0;
-            borrow pending as &pr in {
-                have = buffer.size(pr);
-            }
-            borrow row as &rr in {
-                need = buffer.size(rr);
-            }
-            if have + need + 1 > budget {
+            if a[engine.k_emitted()] >= limit {
+                a[engine.k_more()] = 1;
+                a[engine.k_next()] = pos;
                 going = false;
-                if a[engine.k_emitted()] == 0 {
-                    a[engine.k_abort()] = 8;
-                } else {
-                    a[engine.k_more()] = 1;
-                    a[engine.k_next()] = pos;
+            } else if as_csv {
+                pending = report.put_row(heap, pending, gr, pos, name_of(names, hends, column), true, delim);
+                pending = buffer.push(heap, pending, byte_of(10));
+                a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
+                var held = 0;
+                borrow pending as &pr in {
+                    held = buffer.size(pr);
                 }
+                if held >= 65536 {
+                    let (after, ok) = engine.flush(io, pending);
+                    pending = after;
+                    if !ok {
+                        a[engine.k_abort()] = 9;
+                        going = false;
+                    }
+                }
+                pos = pos + 1;
             } else {
-                if a[engine.k_emitted()] > 0 {
-                    pending = buffer.push(heap, pending, byte_of(','));
+                borrow mut row as &!rw in {
+                    buffer.clear(rw);
+                }
+                row = report.put_row(heap, row, gr, pos, name_of(names, hends, column), false, delim);
+                var have = 0;
+                var need = 0;
+                borrow pending as &pr in {
+                    have = buffer.size(pr);
                 }
                 borrow row as &rr in {
-                    pending = buffer.append(heap, pending, buffer.bytes(rr));
+                    need = buffer.size(rr);
                 }
-                a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
-                pos = pos + 1;
+                if have + need + 1 > budget {
+                    going = false;
+                    if a[engine.k_emitted()] == 0 {
+                        a[engine.k_abort()] = 8;
+                    } else {
+                        a[engine.k_more()] = 1;
+                        a[engine.k_next()] = pos;
+                    }
+                } else {
+                    if a[engine.k_emitted()] > 0 {
+                        pending = buffer.push(heap, pending, byte_of(','));
+                    }
+                    borrow row as &rr in {
+                        pending = buffer.append(heap, pending, buffer.bytes(rr));
+                    }
+                    a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
+                    pos = pos + 1;
+                }
             }
         }
     }
-    return (pending, row);
+    return (pending, row, groups);
 }
 
 // The header's own spelling of column `col`.
@@ -823,7 +858,6 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     let filtering = query.count_of(tree, 1) > 0;
     let fast_ok = engine.fast_ok(tree);
     let ordering = query.count_of(tree, 4) > 0;
-    let reporting = query.reporting(tree);
     let max_sort_rows = cli.nat(args, parsed, table, "max-sort-rows");
     // `--order-by` goes where the grouping goes: the rows are held in the groups' place (sorter.cho), and the bound on the groups is
     // the bound on the rows. The loop below is not told: a third thing to do with a row, there, made it 15 percent slower for the other two.
@@ -1069,19 +1103,14 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                     cols = fcols;
                                     sel = fsel;
                                     cells = fcells;
-                                    head = fhead;
-                                    if reporting {
-                                        // `--report types` answers with its own columns, whatever the frame made of the selection
-                                        buffer.drop(heap, head);
-                                        head = report.head_json(heap);
-                                    }
+                                    head = report_head(heap, query.reporting(tree), fhead);
                                     labels = flabels;
                                     lends = flends;
                                     picked = fpicked;
                                     a[engine.k_sort_field()] = fsort_field;
                                     a[engine.k_sort_slot()] = fsort_slot;
                                     a[engine.k_sort_desc()] = fdesc;
-                                    if ordering && !reporting && fabort == 0 {
+                                    if ordering && !query.reporting(tree) && fabort == 0 {
                                         let nk = query.order_count(tree);
                                         var okeys = box_slice(heap, 3 * nk + 1, 0);
                                         borrow mut okeys as &!ow in {
@@ -1105,11 +1134,8 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                         a[engine.k_bad_name()] = fbad;
                                         going = false;
                                     }
-                                    if as_csv && fabort == 0 && reporting {
-                                        buffer.drop(heap, flead);
-                                        rows = start_output(heap, rows, report.head_csv(heap, delim));
-                                    } else if as_csv && fabort == 0 {
-                                        rows = start_output(heap, rows, flead);
+                                    if as_csv && fabort == 0 {
+                                        rows = start_output(heap, rows, report_lead(heap, query.reporting(tree), flead, delim));
                                     } else {
                                         buffer.drop(heap, flead);
                                     }
@@ -1117,7 +1143,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                 // The rest of the file, by several threads, when that is asked for and
                                 // worth it (par.cho): it leaves the tally, the output and the groups as
                                 // this loop would have.
-                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (!ordering || reporting) && (mode == 2 || row_from == 0) {
+                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0) {
                                     var size = 0;
                                     match file_size(file) {
                                         Done::Ok(n) => {
@@ -1139,7 +1165,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             let u = contents(pw);
                                             u[scan.p_delim()] = delim;
                                             u[scan.p_mode()] = mode;
-                                            if reporting {
+                                            if query.reporting(tree) {
                                                 u[scan.p_mode()] = 2;
                                             }
                                             if as_csv {
@@ -1275,30 +1301,14 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                 }
             }
         }
-        if reporting && a[engine.k_abort()] == 0 {
-            var acols = report.columns_of(tree, a[engine.k_columns()]);
-            var empty_state = 0;
-            borrow groups as &zr in {
-                empty_state = vec.size(zr.acc);
-            }
-            if empty_state == 0 {
-                if 8 * report.width() * acols > max_state {
-                    a[engine.k_abort()] = 43;
-                    a[engine.k_stop()] = 1;
-                } else {
-                    groups = agg.extend(heap, groups, report.width() * acols);
-                }
-            }
-            if a[engine.k_abort()] == 0 {
-                borrow groups as &hr in {
-                    borrow names as &nr in {
-                        borrow hends as &er3 in {
-                            borrow cols as &kr in {
-                                let (r2, s2) = finish_report(heap, io, finished, spare, hr, tree, nr, er3, contents(kr), acols, as_csv, delim, from, limit, budget, a);
-                                finished = r2;
-                                spare = s2;
-                            }
-                        }
+        if query.reporting(tree) && a[engine.k_abort()] == 0 {
+            borrow names as &nr in {
+                borrow hends as &er3 in {
+                    borrow cols as &kr in {
+                        let (r2, s2, g2) = finish_report(heap, io, finished, spare, groups, tree, nr, er3, contents(kr), max_state, as_csv, delim, from, limit, budget, a);
+                        finished = r2;
+                        spare = s2;
+                        groups = g2;
                     }
                 }
             }
