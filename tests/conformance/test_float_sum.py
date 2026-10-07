@@ -49,6 +49,53 @@ def text_of(r):
     return ref.float_text(r[1])
 
 
+def spike_cases(r, big):
+    """The generator of scripts/spikes/superacc_check.py, as it was (seed 1 gives its 502 cases)."""
+    dbl_max = 1.7976931348623157e308
+
+    def rand_double():
+        while True:
+            x = struct.unpack("<d", struct.pack("<Q", r.getrandbits(64)))[0]
+            if math.isfinite(x):
+                return x
+
+    def frombits(b):
+        return struct.unpack("<d", struct.pack("<Q", b & (2 ** 64 - 1)))[0]
+
+    c = []
+    c += [[0.0], [-0.0], [1.0, -1.0], [0.1] * 10, [1e16, 1.0, -1e16, 1.0], [1.0, 2 ** -53], [1.0, 2 ** -53, 2 ** -200],
+          [1.0, 2 ** -53, -2 ** -200], [1.0 + 2 ** -52, 2 ** -53], [1.0 + 2 ** -52, 2 ** -53, 2 ** -200],
+          [dbl_max, dbl_max, -dbl_max], [dbl_max, -dbl_max], [dbl_max], [-dbl_max, -dbl_max],
+          [5e-324], [5e-324] * 3, [-5e-324, 5e-324 * 2], [2.2250738585072014e-308, -5e-324], [2.2250738585072009e-308] * 7,
+          [2 ** -1074 * 3, 2 ** -1074 * 5], [1e308, 1e308, -1e308], [1e308, 1e-308, -1e308], [2 ** 1023, 2 ** 1023, -2 ** 1023, 2 ** -1074],
+          [0.1, 0.2, 0.3], [1e100, 1.0, -1e100], [3.0] * 1000, [float(i) for i in range(1, 2001)]]
+    c.append([2.0 ** 53, 1.0, 1.0])
+    c.append([2.0 ** 53, 1.0])
+    c.append([2.0 ** 53, 3.0])
+    c.append([2.0 ** 53 + 2, 1.0])
+    for n in (1, 2, 3, 5, 10, 100, 1000):
+        for _ in range(30):
+            c.append([rand_double() for _ in range(n)])
+    for _ in range(60):
+        xs = [rand_double() * 2.0 ** -r.randint(0, 80) for _ in range(r.randint(2, 200))]
+        ys = xs + [-x for x in xs] + [rand_double() * 2.0 ** -1000 if r.random() < .5 else 0.0]
+        r.shuffle(ys)
+        c.append(ys)
+    for _ in range(60):
+        c.append([frombits(r.getrandbits(52) | (r.getrandbits(1) << 63)) for _ in range(r.randint(1, 300))])
+    for _ in range(60):
+        c.append([r.choice([1, -1]) * r.choice([2.0 ** r.randint(-1074, 1023), 1e308 * r.random(), 1e-300 * r.random()]) for _ in range(r.randint(2, 400))])
+    for _ in range(40):
+        c.append([round(r.uniform(-1000, 1000), 2) for _ in range(r.randint(1, 5000))])
+    for _ in range(40):
+        b = rand_double()
+        u = math.ulp(b) if abs(b) < dbl_max / 2 else 1.0
+        c.append([b, u / 2, r.choice([-1, 1]) * 2.0 ** -1074 * r.randint(0, 3)])
+    if big:
+        c.append([rand_double() * 2.0 ** -r.randint(0, 900) for _ in range(big)])
+    return c
+
+
 class Sums(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -208,6 +255,40 @@ class Sums(unittest.TestCase):
     def test_a_group_of_one_and_zeros_and_mixed_signs(self):
         for col in (["0"], ["-0"], ["0.5"], ["-2.75"], ["0", "0", "0"], ["1e308"], ["-1e308"], ["5e-324"], ["-5e-324"], ["1", "-1", "1", "-1", "3"], ["123456789.123456789", "-123456789.123456789"]):
             self.check_columns([col])
+
+    def test_the_502_cases_of_the_spike_every_one(self):
+        """scripts/spikes/superacc_check.py's generator, ported: random bit patterns of 1 to 1,000 doubles, cancelling runs, subnormals, huge and tiny mixes, forty
+        lists of two-decimal prices, sums that sit at or near a tie, DBL_MAX sums, and one list of 300,000 random doubles (the spike used 1,000,000). Each is one group
+        of one table; the sum and the mean must be Python's exact integer arithmetic rounded once. The cases whose exact sum is beyond the largest double
+        (30 of them) are the refusal, run alone and named, and their mean is a number."""
+        rng = random.Random(1)
+        cs = spike_cases(rng, 300000)
+        self.assertEqual(len(cs), 502)
+        finite = [c for c in cs if ref.fsum_ref(c)[0] == "ok"]
+        over = [c for c in cs if ref.fsum_ref(c)[0] == "overflow"]
+        self.assertGreater(len(over), 10)                                            # random exponents overflow the sum of a long list often
+        self.assertGreater(len(finite), 400)
+        rows = [[str(i), cell(x)] for i, c in enumerate(finite) for x in c]
+        data = enc([["k", "x"]] + rows)
+        got = self.s.table("t.csv", data, "--group", "k", "--agg", "sum:x:float,mean:x:float", "--format", "csv", "--max-groups", "1000", "--max-state-bytes", "100000000")
+        self.assertEqual(got.status, 0, got)
+        out = sorted(list(csv.reader(io.StringIO(got.stdout.decode("latin-1"), newline="")))[1:], key=lambda r: int(r[0]))
+        self.assertEqual(len(out), len(finite))
+        for c, (k, s_, m_) in zip(finite, out):
+            xs = [float(cell(x)) for x in c]
+            self.assertTrue(ref.same_text(s_, ref.fsum_ref(xs)[1]) and ref.same_text(m_, ref.fmean_ref(xs)[1]), (k, len(c), c[:3], s_, m_))
+            try:
+                f = math.fsum(xs)
+            except OverflowError:
+                continue
+            self.assertEqual(ref.fsum_ref(xs)[1], 0.0 if f == 0 else f)           # and math.fsum agrees where it can
+        rows = [[str(i), cell(x)] for i, c in enumerate(over) for x in c]
+        for i, c in enumerate(over):                                                    # each alone: the refusal names one group
+            got = self.s.table("t.csv", enc([["k", "x"]] + [["z", cell(x)] for x in c]), "--group", "k", "--agg", "sum:x:float,mean:x:float")
+            self.assertEqual((got.first_rule(), got.error()["detail"]["group"]), ("agg.float-overflow", "z"), got)
+            got = self.s.table("t.csv", enc([["k", "x"]] + [["z", cell(x)] for x in c]), "--group", "k", "--agg", "mean:x:float", "--format", "csv")
+            want_mean = ref.fmean_ref([float(cell(x)) for x in c])
+            self.assertTrue(got.status == 0 and ref.same_text(got.stdout.decode().split("\n")[1].split(",")[1], want_mean[1]), (got, want_mean))
 
     # ---- overflow: the exact sum is beyond the largest double --------------------------------------------------------------
 

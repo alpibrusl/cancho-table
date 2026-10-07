@@ -4,6 +4,7 @@ rebuilt, and run against the float-sum, float and rule tests. A mutant is killed
 
     python3 scripts/float_sum_mutants.py [name-substring ...]
     python3 scripts/float_sum_mutants.py --parallel-only      the plain-f64 mutants against test_float_sum.Parallel alone (they die at N >= 2 by themselves)
+    python3 scripts/float_sum_mutants.py --lowered            builds with the carry threshold lowered to 3 and to 1 addition: they must PASS every test (the rep_check of the spike)
 
 `--check` only verifies that every site still matches (no build; CI runs it). See mutlib.py.
 
@@ -126,12 +127,50 @@ EQUIVALENT = [
     ("the room for 64 groups' accumulators in a worker's answer", "performance only: a range whose groups do not fit is read by the parent, the same bytes"),
 ]
 
+# Builds that are NOT defective and must pass every test: the carry threshold lowered (the test-only constant of the stage table's `rep_check`). With the
+# threshold at 3 additions, or 1, the carry runs between nearly every addition, so the carry, the sign limb and the counter are tested by the whole suite;
+# at 2^27 they are only reached by 134 million additions of one group (scripts/spikes/rep_check.py does that outside the tool).
+LOWERED = [
+    ("carry every 3 additions", "facc.cho", "    if n >= 134217728 {", "    if n >= 3 {"),
+    ("carry after every addition", "facc.cho", "    if n >= 134217728 {", "    if n >= 1 {"),
+]
+
+
+def lowered(argv):
+    import os
+    import signal
+    problems = mutlib.check(LOWERED)
+    for p in problems:
+        print("!! " + p)
+    if problems or "--check" in argv:
+        return 1 if problems else 0
+    compiler = os.environ.get("CANCHO", "cancho")
+    extra = os.environ.get("CANCHO_ARGS", "").split()
+    text = (mutlib.SRC / "facc.cho").read_text()
+    signal.signal(signal.SIGTERM, lambda *a: ((mutlib.SRC / "facc.cho").write_text(text), sys.exit(143)))
+    bad = 0
+    try:
+        for name, file, old, new in LOWERED:
+            (mutlib.SRC / file).write_text(text.replace(old, new, 1))
+            verdict, why = mutlib.build_and_test(TESTS, compiler, extra)
+            print("%-32s %s" % (name, "pass" if verdict == "SURVIVED" else "%s [%s]" % (verdict, why)), flush=True)
+            bad += verdict != "SURVIVED"
+    finally:
+        (mutlib.SRC / "facc.cho").write_text(text)
+    return 1 if bad else 0
+
+
 if __name__ == "__main__":
     argv = sys.argv[1:]
+    if "--lowered" in argv:
+        sys.exit(lowered([a for a in argv if a != "--lowered"]))
     tests = TESTS
     mutants = MUTANTS
     if "--parallel-only" in argv:
         argv.remove("--parallel-only")
         tests = ["test_float_sum.Parallel"]
         mutants = [m for m in MUTANTS if m[0].startswith("plain f64")]
+    if "--check" in argv and mutlib.check(LOWERED):
+        print("!! a lowered-threshold build cannot be applied")
+        sys.exit(1)
     sys.exit(mutlib.main(mutants, tests, argv))
