@@ -3,10 +3,11 @@
 
     python3 scripts/bench_numbers_agg.py [--bin build/table] [--runs 7] [--file build/num/data.csv] [--threads 16]
 
-The file of scripts/bench_numbers.py (id,status,bytes,price,ratio,path: `price` two decimals, `bytes` an integer). Questions, by `status`:
+The file of scripts/bench_numbers.py (id,status,bytes,price,ratio,path,cents: `price` two decimals, `cents` the same number as an integer of as many
+digits: the integer cell the decimal one is compared with). Questions, by `status`:
 
-  sum     sum of the value                          sum:bytes            | sum:price:dec(2)
-  mean    mean of the value (4 fractional digits)   mean:bytes@4         | mean:price:dec(2)@4
+  sum     sum of the value                          sum:cents            | sum:price:dec(2)
+  mean    mean of the value (4 fractional digits)   mean:cents@4         | mean:price:dec(2)@4
   minmax  the minimum and the maximum               min,max              | min,max
   all     count, sum, min, max, mean                everything above
 
@@ -34,15 +35,15 @@ LIMIT = 1.15
 
 
 def exact(data):
-    """status -> (count, exact sum, min, max, mean at 4 digits) of price (Decimal) and of bytes, by Python."""
+    """status -> (count, exact sum, min, max, mean at 4 digits) of price (Decimal) and of cents, by Python."""
     getcontext().prec = 60
-    rows = {"price": {}, "bytes": {}}
+    rows = {"price": {}, "cents": {}}
     with open(data, newline="") as f:
         rd = csv.reader(f)
         next(rd)
         for r in rd:
             rows["price"].setdefault(r[1], []).append(Decimal(r[3]))
-            rows["bytes"].setdefault(r[1], []).append(Decimal(r[2]))
+            rows["cents"].setdefault(r[1], []).append(Decimal(r[6]))
     out = {}
     for col, groups in rows.items():
         out[col] = {}
@@ -108,7 +109,7 @@ def main():
         sel = []
         for fn in QS[q]:
             sel.append({"count": "count(*)", "sum": "sum(price)", "min": "min(price)", "max": "max(price)", "mean": "avg(price)"}[fn])
-        rd = f"read_csv('{d}', header=true, columns={{'id':'bigint','status':'int','bytes':'bigint','price':'{typ}','ratio':'double','path':'varchar'}})"
+        rd = f"read_csv('{d}', header=true, columns={{'id':'bigint','status':'int','bytes':'bigint','price':'{typ}','ratio':'double','path':'varchar','cents':'bigint'}})"
         return ["duckdb", "-csv", "-noheader", "-c", f"set threads={threads}; copy (select status, {', '.join(sel)} from {rd} group by status order by 1) to '/dev/stdout' (format csv, header false)"]
 
     def with_header(argv_fn, cols):
@@ -117,7 +118,7 @@ def main():
     cells = []
     for q in QS:
         for threads in (1, a.threads):
-            cells.append((f"table int   {q:6} t={threads}", ("int", q, threads), table_argv("bytes", False, q, threads), "bytes", "exact", q, True))
+            cells.append((f"table int   {q:6} t={threads}", ("int", q, threads), table_argv("cents", False, q, threads), "cents", "exact", q, True))
             cells.append((f"table dec   {q:6} t={threads}", ("dec", q, threads), table_argv("price", True, q, threads), "price", "exact", q, True))
         if shutil.which("duckdb"):
             for threads in (1, a.threads):

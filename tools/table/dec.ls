@@ -116,9 +116,9 @@ pub fn put_sum[&h](heap: &!h Heap, out: buffer.Buffer, high: int, low: int, scal
         limbs[0] = l;
         limbs[1] = h & 0xffffffff;
         limbs[2] = h >> 32;
-        let nonzero = !is_zero(limbs, 3);
         let count = digits_of_limbs(limbs, 3, d, scale);
-        o = emit(heap, o, d, count, scale, high < 0 && nonzero);
+        // (a negative `high` is a value of at most -1: never a zero that would be written -0.00)
+        o = emit(heap, o, d, count, scale, high < 0);
     }
     return o;
 }

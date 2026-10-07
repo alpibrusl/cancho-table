@@ -58,9 +58,10 @@ status,count,sum:bytes
   so `x != '' and x:int > 5` guards an empty cell. A malformed expression is
   `where.syntax` with the byte offset of the error. It composes with `--select` and
   paging, and is applied before grouping;
-* **group and aggregate**: `--group NAMES --agg count,sum:COL,min:COL,max:COL,distinct:COL
+* **group and aggregate**: `--group NAMES --agg count,sum:COL,min:COL,max:COL,mean:COL@N,distinct:COL
   [--sort [-]COLUMN] [--top N]`, as json (`table.v2` rows plus `group_count`) or csv.
-  Sums, minima and maxima are exact integers; a sum is a pair of integers, never wraps
+  Sums, minima and maxima are exact integers, or exact decimals written at their scale
+  (`sum:price:dec(2)`, `mean:price:dec(2)@4`: exact, rounded half to even, `docs/numbers.md` N2); a sum is a pair of integers, never wraps
   and is printed in full past 64 bits (`docs/numbers.md` N0p). Groups come out in key order (bytewise, field by
   field), or `--sort` order with ties by key, so the same rows give the same bytes
   in any order. Bounded by `--max-groups`, `--max-distinct` and `--max-state-bytes`,

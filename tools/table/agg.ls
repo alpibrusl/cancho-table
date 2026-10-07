@@ -447,12 +447,24 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
     let before = vec.get(g.acc, slot);
     vec.set(g.acc, slot, before + 1);
     k = 0;
+    // The cell an aggregate reads is read once for the ones that follow it on the same column and type (`sum, min, max, mean` of one column).
+    var seen_column = 0 - 1;
+    var seen_kind = 0;
+    var v = 0;
+    var bad = 0;
     while k < na {
         let function = query.agg_at(tree, k, 0);
         if function != 0 {
             let column = cols[query.agg_at(tree, k, 1)];
             let now = vec.get(g.acc, slot + 1 + k);
-            let (v, bad) = query.parse_typed(record[cells[3 * column]..cells[3 * column + 1]], query.agg_at(tree, k, 2));
+            let kind = query.agg_at(tree, k, 2);
+            if column != seen_column || kind != seen_kind {
+                let (v2, bad2) = query.parse_typed(record[cells[3 * column]..cells[3 * column + 1]], kind);
+                v = v2;
+                bad = bad2;
+                seen_column = column;
+                seen_kind = kind;
+            }
             if bad != 0 {
                 return (bad, k);
             }

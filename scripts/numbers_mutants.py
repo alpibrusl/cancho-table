@@ -60,7 +60,8 @@ MUTANTS = [
     ("a remainder of the division by the scale is forgotten", "dec.ls", "            if div_small(limbs, 8, p) != 0 {\n                inexact = true;", "            if false && div_small(limbs, 8, p) != 0 {\n                inexact = true;"),
     ("a remainder of the division by the count is forgotten", "dec.ls", "        var inexact = div_small(limbs, 8, count) != 0;", "        var inexact = div_small(limbs, 8, count) < 0;"),
     ("the sign of a negative mean is lost", "dec.ls", "        o = emit(heap, o, d, n, scale, high < 0 && nonzero);", "        o = emit(heap, o, d, n, scale, false);"),
-    ("a negative sum that is zero is written -0.00", "dec.ls", "        o = emit(heap, o, d, count, scale, high < 0 && nonzero);", "        o = emit(heap, o, d, count, scale, high < 0);"),
+    # (Not here: a sum written `-` when it is zero. A negative high half is a value of at most -1, so there is no zero to write -0.00: put_sum has no test for it.)
+    ("a mean that rounds to zero from below is written -0.00", "dec.ls", "        o = emit(heap, o, d, n, scale, high < 0 && nonzero);", "        o = emit(heap, o, d, n, scale, high < 0);"),
     ("the point is one digit off", "dec.ls", "        if i == scale && scale > 0 {", "        if i == scale + 1 && scale > 0 {"),
     ("a value smaller than one is not padded", "dec.ls", "    while count < scale + 1 {", "    while count < scale {"),
     ("the leading zeros of a group of nine are kept", "dec.ls", "    while count > scale + 1 && int_of(d[count - 1]) == '0' {", "    while count > scale + 1 && false && int_of(d[count - 1]) == '0' {"),
@@ -68,7 +69,9 @@ MUTANTS = [
     ("a mean is compared as a sum", "dec.ls", "magnitude_times(hx, lx, cy);", "magnitude_times(hx, lx, 1);"),
     ("the order of two negative means is not reversed", "dec.ls", "    if sx < 0 {\n        return 0 - out;", "    if false {\n        return 0 - out;"),
     ("distinct counts the text of a decimal", "agg.ls", "                    if query.agg_at(tree, k, 2) != 0 {\n                        // by value", "                    if false {\n                        // by value"),
-    ("an aggregate reads a decimal cell as an integer, in place", "agg.ls", "record[cells[3 * column]..cells[3 * column + 1]], query.agg_at(tree, k, 2));", "record[cells[3 * column]..cells[3 * column + 1]], 1);"),
+    ("an aggregate reads a decimal cell as an integer, in place", "agg.ls", "let (v2, bad2) = query.parse_typed(record[cells[3 * column]..cells[3 * column + 1]], kind);", "let (v2, bad2) = query.parse_typed(record[cells[3 * column]..cells[3 * column + 1]], 1);"),
+    # (Not here: `|| kind != seen_kind` dropped. A column has one numeric type in a plan (column.type-conflict), so two aggregates on one column never differ in it: equivalent.)
+    ("the cell of the first aggregate is used for all the others", "agg.ls", "            if column != seen_column || kind != seen_kind {", "            if seen_column < 0 {"),
     ("an aggregate reads a decimal cell as an integer, by value", "agg.ls", "typed_cell(heap, scr, record, first, last, quoted, query.agg_at(tree, k, 2));\n                    scr = s3;", "typed_cell(heap, scr, record, first, last, quoted, 1);\n                    scr = s3;"),
     ("too many fractional digits is said to be not a decimal, in an aggregate", "query.ls", "        if bad == 3 {\n            return (0, 7);", "        if bad == 3 {\n            return (0, 6);"),
     ("a mean of a decimal defaults to scale 0", "agg.ls", "        var to = scale;", "        var to = 0;"),
