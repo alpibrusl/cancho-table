@@ -66,13 +66,13 @@ def main():
             for t in threads:
                 cont.append(("%s -t%d" % (label, t), pre_cmd + [b, "--root", adv, *targs, "--format", "csv", *BIG, "--threads", str(t), *shlex.split(a.extra), a.file]))
         if a.duck and shutil.which("duckdb"):
-            q = "SELECT %s, %s FROM read_csv('%s') GROUP BY %s" % (col, agg, path, col)
+            q = "SELECT %s, %s FROM read_csv('%s') GROUP BY %s" % (col, agg, path, col) if col else "SELECT %s FROM read_csv('%s')" % (agg, path)
             dt = a.duck_threads
             for t in [1] + ([] if threads == [1] else [dt if dt else 0]):
                 pre = "SET threads=%d; " % t if t else ""
                 name = "-t1" if t == 1 else ("-t%d" % t if t else "default")
                 cont.append(("duckdb %s unsorted" % name, pre_cmd + ["duckdb", "-c", "%sCOPY (%s) TO '/dev/null' (FORMAT csv)" % (pre, q)]))
-                cont.append(("duckdb %s ORDER BY" % name, pre_cmd + ["duckdb", "-c", "%sCOPY (%s ORDER BY %s) TO '/dev/null' (FORMAT csv)" % (pre, q, col)]))
+                cont.append(("duckdb %s ORDER BY" % name, pre_cmd + ["duckdb", "-c", "%sCOPY (%s%s) TO '/dev/null' (FORMAT csv)" % (pre, q, (" ORDER BY " + col) if col else "")]))
         if a.csvtk and shutil.which("csvtk") and cid in ("B1", "B3", "B2", "B4"):
             if "sum" in agg:
                 cont.append(("csvtk -j1", pre_cmd + ["csvtk", "-j", "1", "summary", "-g", col, "-f", "v:sum", path]))
