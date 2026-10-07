@@ -102,7 +102,7 @@ cannot be a refusal) and `introspect` says so. In the query form it is `from std
 
 *Trade-off considered:* requiring `-` (so a forgotten `FILE` stays `args.missing-operand`) is safer for a person at a terminal, where `table --where x` would otherwise wait
 for the keyboard. It was rejected because every other reader in the family takes no operand, because an agent's subprocess has a closed or empty standard input (the forgotten
-`FILE` is then an immediate, ordinary empty-input answer, below) and because MCP's schema generator wants one rule per operand. Open question 1 asks for the maintainer's call.
+`FILE` is then an immediate, ordinary empty-input answer, below) and because MCP's schema generator wants one rule per operand. Decision 1 of section 10 (decided) settles for the maintainer's call.
 
 ### 3.2 What it does, and the refusals and degradations
 
@@ -244,7 +244,7 @@ Every rule names the **line** (1-based, physical, blank lines counted, a BOM not
 ### 5.5 A JSON-lines file pointed at as CSV
 
 If the CSV header's first byte is `{` and its last is `}`, any refusal (`select.unknown-column`, `column.unknown`, `parse.csv-*`) adds `detail.looks_like: "jsonl"` and a `choose` repair with `--input-format jsonl --discover`. The *success* path (a shape of a one-column file) is not changed (a CSV whose header
-starts with a brace is legal). Open question 4.
+starts with a brace is legal). Decision 4 of section 10 (decided).
 
 ### 5.6 Flags (all go in the flag table, so `introspect`, `skill` and MCP's schema are generated)
 
@@ -345,7 +345,7 @@ The reading side of a round trip is a gate: `csv -> jsonl -> csv` is byte-identi
 
 ## 8. Stages and gates
 
-Fixed before the build. Each stage ends with every earlier gate green. **G6** is `docs/numbers.md`'s regression gate for the CSV paths (its third revision is being built on `numbers-n4`; this document uses it as it ends and does not restate it: the requirement is that no CSV cell is slower than the build-to-build noise it measures); a stage that touches nothing
+Fixed before the build. Each stage ends with every earlier gate green. **G6** is `docs/numbers.md`'s regression gate for the CSV paths (its third revision, with its instruction-count form `gate_regress.py --counter`, bound 1.01, on both machines; this document does not restate it: the requirement is that no CSV cell executes more instructions than `main`'s build beyond that bound); a stage that touches nothing
 in `reader.cho`, `scan.cho`, `par.cho`, `engine.cho`'s hot functions and the read loops of `table.cho` passes it by construction and says so (the proof is `git diff --stat` on those files, which the stage's PR carries).
 
 | stage | what | gates (pass lines, each able to fail) | fail line |
@@ -383,13 +383,18 @@ The contract package (cancho-tools): `describe.Tool` has no grammar section (so 
 
 `table`: joins; `or`; a computed or renamed column; Parquet; compressed input; typed output beyond the aggregate columns of `jsonl`; grouping and sorting by `:dec` and `:float` are built (N5), the type report is not (N6); JSON arrays and nested paths past a declared dotted path.
 
-## 10. Open questions for the maintainer, with a recommendation each
+## 10. Decisions of the maintainer (2026-10-07: "go with the recommendations")
 
-1. **No operand = standard input, or require `-`?** Recommendation: **no operand reads standard input** (the family's rule, `tally`/`jsonq`), because MCP's generated schema and the agents' habit want one rule, and a forgotten `FILE` from an agent's subprocess is an immediate empty-input answer.
-2. **`--format jsonl`: numbers for aggregate columns, or everything a string like the pages?** Recommendation: **numbers for aggregates** (a count is a count; it is what every consumer of a pipe wants); the pages keep their strings (`table.v2` is shipped).
-3. **`--absent` default `refuse` or `empty`?** Recommendation: **`refuse`**, with the repair that runs: one extra call, no silent conflation.
-4. **A `looks_like: "jsonl"` hint on the refusals of a CSV whose header starts with `{`: yes, or leave the silent one-column success?** Recommendation: **the hint in refusals only**; the success path does not change.
-5. **Ask upstream for `std.json.parse_with` and `std.io.read_into` before R1/R2, or build on what exists?** Recommendation: **ask for both now (they are small and measured), build R1 on `getchar` (honest and correct) and hold R2's Mac gates J4/J5 for U1.** If U1 is refused, R2b (the scanner) becomes mandatory on the Mac.
-6. **`ndjson` as an alias of `jsonl`, or `jsonl` only?** Recommendation: **both spellings**, one behaviour (agents will type either).
-7. **Ship `--format md`?** Recommendation: **no, until a user asks.**
-8. **`--discover`: part of R2 or later?** Recommendation: **part of R2**: without it the required `--fields` has no repair and an agent facing an unknown file has nothing to start from.
+Every question that was open here is **decided**, on 2026-10-07, **accepted by the maintainer as recommended**. Nothing is open in this document. What each decision means for the build is the stage it names; the approvals that the stages needed are at the end.
+
+1. **No operand = standard input, or require `-`?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **no operand reads standard input, and `-` is accepted too** (the family's rule, `tally`/`jsonq`), because MCP's generated schema and the agents' habit want one rule, and a forgotten `FILE` from an agent's subprocess is an immediate empty-input answer.
+2. **`--format jsonl`: numbers for aggregate columns, or everything a string like the pages?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **numbers for aggregates** (a count is a count; it is what every consumer of a pipe wants); the pages keep their strings (`table.v2` is shipped).
+3. **`--absent` default `refuse` or `empty`?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **`refuse`**, with the repair that runs: one extra call, no silent conflation.
+4. **A `looks_like: "jsonl"` hint on the refusals of a CSV whose header starts with `{`: yes, or leave the silent one-column success?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **the hint in refusals only**; the success path does not change.
+5. **Ask upstream for `std.json.parse_with` and `std.io.read_into` before R1/R2, or build on what exists?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **ask for both now (they are small and measured), build R1 on `getchar` (honest and correct) and hold R2's Mac gates J4/J5 for U1.** If U1 is refused, R2b (the scanner) becomes mandatory on the Mac.
+6. **`ndjson` as an alias of `jsonl`, or `jsonl` only?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **both spellings**, one behaviour (agents will type either).
+7. **Ship `--format md`?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **no, until a user asks.**
+8. **`--discover`: part of R2 or later?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **part of R2**: without it the required `--fields` has no repair and an agent facing an unknown file has nothing to start from.
+
+**Approvals the stages needed, also decided on 2026-10-07 (accepted by the maintainer):** (a) **`io_read` in the `[table]` ceiling of `tools.toml`** is approved for the standard-input stage (R1); the authority row grows by `io_read` there and nowhere before. (b) The upstream pieces (U1 `std.json.parse_with`, U2 `std.io.read_into`) are being added to cancho by a separate session: R1 is shipped on `getchar` meanwhile (correct, and measured as slow in 3.4), R2's Mac gates J4 and J5 wait for U1, and if U1 is refused R2b (the scanner) becomes mandatory on the Mac. (c) `--format md` is not shipped.
+
