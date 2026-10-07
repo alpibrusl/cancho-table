@@ -21,6 +21,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import time
 from decimal import Decimal, InvalidOperation
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -130,6 +131,22 @@ def duck(path, sql, threads=None):
 
 def sh(cmd):
     return ["sh", "-c", cmd]
+
+
+def timed_run(name, argv, once=None, tries=5, pause=0.2):
+    """The seconds of one run of `argv`, a run that exited non-zero not counted: it is run again, and `tries` failures in a row stop the script.
+
+    A run that failed is fast, and the minimum of the runs would be its time. It happens: DuckDB takes a lock on the file it writes, and
+    `COPY ... TO '/dev/null'` finds `/dev/null` locked by any other DuckDB on the machine (`IO Error: Could not set lock on file
+    "/dev/null"`), exits 1 after 50 ms, and a "sort of 1M rows in 0.059 s" went into a table. (Every contender is checked before the
+    timing, so the answer was right; only the timing loop did not look at the status.)"""
+    once = bench.once if once is None else once
+    for _ in range(tries):
+        seconds, rc = once(argv)
+        if rc == 0:
+            return seconds
+        time.sleep(pause)
+    sys.exit("%s exited non-zero %d times in a row: %s" % (name, tries, " ".join(argv)[:200]))
 
 
 def cells(table, nthreads):
@@ -448,8 +465,7 @@ def main():
         times = {n: [] for n in names}
         for r in range(runs):
             for n in names[r % len(names):] + names[:r % len(names)]:
-                s, rc = bench.once(good[n])
-                times[n].append(s)
+                times[n].append(timed_run(n, good[n]))
         peaks = {n: bench.rss(good[n]) for n in names}
         size = os.path.getsize(path) / 1e6
         print("\n%s  %s   (%.0f MB, min of %d)" % (cid, title, size, runs))
