@@ -1,4 +1,4 @@
-Throwaway spikes behind `docs/numbers.md` (a design; nothing here is part of the tool).
+Throwaway spikes behind `docs/numbers.md`, `docs/readers.md` and `docs/query.md` (designs; nothing here is part of the tool).
 
 | file | what it measures or checks |
 |---|---|
@@ -6,5 +6,9 @@ Throwaway spikes behind `docs/numbers.md` (a design; nothing here is part of the
 | `numparse.cho`, `numparse_check.py`, `timecells.py` | reading a decimal cell and a float cell (Clinger's fast path inline, `std.json` as the exact fallback): differential against `numbers_ref.py`, cost per cell against `parse_int` |
 | `numbers_ref.py` | the reference semantics of the design for one cell and for the aggregates, and the table of edge cells (`--compare` prints what DuckDB, csvtk, pandas and Python make of the same cells) |
 | `bench_engines.py` | the same questions on a numeric column through `table`, DuckDB (DECIMAL and DOUBLE), csvtk and pandas, answers checked before timing |
+| `jsonl_scan.cho`, `jsonl_scan_x.cho` + `make_jsonx.py`, `jsonl_gen.py`, `jsonl_time.py`, `jsonl_check.py` | docs/readers.md section 6: what reading one record costs for CSV (the tool's `reader.fields`), for JSON lines through `std.json` (a tape reused, or allocated in a region per line), through `std.json` with the two ints of its state passed in by the caller (`jsonx`: no region per call) and through a hand-written flat-object scanner that falls back to `std.json`; per record and with threads; the scanner against `std.json` and Python's `json` on 25,070 lines (`jsonl_check.py`) |
+| `stdin_read.cho` | docs/readers.md section 3.4: what reading standard input costs (`getchar`, `getchar` into the chunk's room, the path `/dev/stdin` through `file_read`, an ordinary file) |
+| `bench_jsonl.py` | docs/readers.md section 6.5: the four questions of `scripts/bench.py` on the JSON-lines file through DuckDB (`read_ndjson`, `read_json_auto`), jq and Miller, answers checked first, peak resident set |
+| `query_proto.py`, `query_gate.py`, `query_examples.py` | docs/query.md: a Python prototype of the `--query` translator (the grammar made executable), the equivalence gate run against the real `table` (random tables with awkward names and random plans rendered as flags and as SQL; `--mutants` applies the prototype's 26 mutants), and every worked example and pinned error offset of the document |
 
 Build a `.cho` with the Mac compiler: `cancho build FILE.cho --std -o OUT --ignore-compiler-rev`.

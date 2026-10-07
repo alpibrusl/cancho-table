@@ -97,36 +97,37 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `io.is-a-directory` | 2 | never | a directory where a file is wanted |
 | `io.permission-denied` | 4 | never | the operating system refused access |
 | `io.read-failed` | 1 | never | the operating system failed a read |
+| `io.write-failed` | 1 | never | the operating system failed a write, or a write was short |
 | `limit.line-too-long` | 8 | sometimes | a line longer than --max-line-bytes |
-| `limit.header-too-large` | 8 | never | the header record holds more than --max-line-bytes bytes |
-| `limit.record-too-large` | 8 | never | a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes |
-| `limit.output-too-large` | 8 | never | the first row of a page is longer than --max-bytes |
-| `limit.too-many-rows` | 8 | never | --format csv reached --max-rows with rows left unread |
-| `limit.too-many-sort-rows` | 8 | never | --order-by would hold more than --max-sort-rows rows to sort |
-| `limit.too-many-groups` | 8 | never | more groups than --max-groups |
-| `limit.too-many-distinct` | 8 | never | more distinct values than --max-distinct |
-| `limit.state-too-large` | 8 | never | the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes |
-| `parse.csv-ragged-row` | 8 | never | a row has a different number of fields than the header |
-| `parse.csv-bad-quote` | 8 | never | a closing quote is followed by something other than the delimiter or the end of the record |
-| `parse.csv-unterminated-quote` | 8 | never | a quoted field is still open at the end of the input |
-| `select.unknown-column` | 3 | sometimes | a name or position in --select that is not a column of the header |
-| `select.ambiguous-column` | 8 | never | a name in --select that is the name of more than one column |
-| `column.unknown` | 3 | never | a name or position in --where, --group or --agg that is not a column of the header |
-| `column.ambiguous` | 8 | never | a name in --where, --group or --agg that is the name of more than one column |
-| `where.syntax` | 2 | never | --where is not an expression of the grammar, at the offset the detail gives |
-| `agg.bad-spec` | 2 | never | an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes |
-| `sort.unknown-key` | 2 | never | --sort names no output column of the grouping |
-| `value.not-integer` | 8 | never | a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not) |
-| `value.integer-overflow` | 8 | never | a cell of an :int column or of sum, min or max does not fit 64 bits |
-| `value.not-decimal` | 8 | never | a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone |
-| `value.decimal-scale` | 8 | sometimes | a cell of a :dec(S) column has more fractional digits than S (it is never rounded) |
-| `value.decimal-too-wide` | 8 | never | a cell of a :dec(S) column has 18 or more significant digits once scaled to S |
-| `column.type-conflict` | 2 | never | the plan reads one column as two numeric types: :int, :float, or :dec with two scales |
-| `value.not-float` | 8 | never | a cell of a :float column is not a number: an empty cell, a space, a separator, a hex form, a sign or a point alone |
-| `value.not-finite` | 8 | never | a cell of a :float column is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float > 5) |
-| `value.float-range` | 8 | never | a cell of a :float column is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which) |
-| `limit.number-too-long` | 8 | never | a cell of a :float column is longer than 1,100 bytes, the longest cell that can be a double |
-| `agg.float-overflow` | 8 | never | the exact sum of a :float column in a group is beyond the largest double, about 1.8e308 (detail.group names the group) |
+| `limit.header-too-large` | 8 | never | the header record holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none. |
+| `limit.record-too-large` | 8 | never | a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none. |
+| `limit.output-too-large` | 8 | never | the first row of a page is longer than --max-bytes. Hint: raise --max-bytes, up to the ceiling introspect names, or select fewer columns. Repair: none. |
+| `limit.too-many-rows` | 8 | never | --format csv reached --max-rows with rows left unread. Hint: raise --max-rows, up to the ceiling introspect names, or page with --limit and --from. Repair: none. |
+| `limit.too-many-sort-rows` | 8 | never | --order-by would hold more than --max-sort-rows rows to sort. Hint: ask for the first rows only with --top N or a smaller --limit (they are kept in bounded memory), keep fewer rows with --where, or raise --max-sort-rows, up to the ceiling introspect names. Repair: none. |
+| `limit.too-many-groups` | 8 | never | more groups than --max-groups. Hint: raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns. Repair: none. |
+| `limit.too-many-distinct` | 8 | never | more distinct values than --max-distinct. Hint: raise --max-distinct, up to the ceiling introspect names. Repair: none. |
+| `limit.state-too-large` | 8 | never | the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes. Hint: raise --max-state-bytes, up to the ceiling introspect names, or group by shorter values. Repair: none. |
+| `parse.csv-ragged-row` | 8 | never | a row has a different number of fields than the header. Hint: make every row as wide as the header, quoting fields that hold the delimiter. Repair: none. |
+| `parse.csv-bad-quote` | 8 | never | a closing quote is followed by something other than the delimiter or the end of the record. Hint: double a quote that is text, or put the delimiter after the closing quote. Repair: none. |
+| `parse.csv-unterminated-quote` | 8 | never | a quoted field is still open at the end of the input. Hint: close the quote, or double the quotes that are text. Repair: none. |
+| `select.unknown-column` | 3 | sometimes | a name or position in --select that is not a column of the header. Hint: pick from detail.available. Repair: choose. |
+| `select.ambiguous-column` | 8 | never | a name in --select that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none. |
+| `column.unknown` | 3 | never | a name or position in --where, --group or --agg that is not a column of the header. Hint: pick from detail.available. Repair: none. |
+| `column.ambiguous` | 8 | never | a name in --where, --group or --agg that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none. |
+| `where.syntax` | 2 | never | --where is not an expression of the grammar, at the offset the detail gives. Hint: the grammar is in the help of --where: COLUMN OP VALUE joined by and. Repair: none. |
+| `agg.bad-spec` | 2 | never | an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes. Hint: --agg count,sum:bytes,max:bytes,distinct:status, a mean of an integer column needs its scale, mean:bytes@2, a decimal column is declared sum:price:dec(2). Repair: none. |
+| `sort.unknown-key` | 2 | never | --sort names no output column of the grouping. Hint: pick from detail.available, with a - before it to sort descending. Repair: none. |
+| `value.not-integer` | 8 | never | a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not). Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none. |
+| `value.integer-overflow` | 8 | never | a cell of an :int column or of sum, min or max does not fit 64 bits. Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none. |
+| `value.not-decimal` | 8 | never | a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a decimal of this column. Repair: none. |
+| `value.decimal-scale` | 8 | sometimes | a cell of a :dec(S) column has more fractional digits than S (it is never rounded). Hint: declare a larger scale, :dec(N) with N the most fractional digits the column holds. Repair: choose. |
+| `value.decimal-too-wide` | 8 | never | a cell of a :dec(S) column has 18 or more significant digits once scaled to S. Hint: declare a smaller scale, or compare the column as text. Repair: none. |
+| `column.type-conflict` | 2 | never | the plan reads one column as two numeric types: :int, :float, or :dec with two scales. Hint: give the column one type: the same :int, or the same :dec(N), in every place it is named. Repair: none. |
+| `value.not-float` | 8 | never | a cell of a :float column is not a number: an empty cell, a space, a separator, a hex form, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a float of this column. Repair: none. |
+| `value.not-finite` | 8 | never | a cell of a :float column is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float > 5). Hint: keep them out with --where first: x != 'NaN' and x:float > 5 never reads the NaN cell as a number. Repair: none. |
+| `value.float-range` | 8 | never | a cell of a :float column is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which). Hint: keep out the rows with such a cell with --where first, or compare the column as text. Repair: none. |
+| `limit.number-too-long` | 8 | never | a cell of a :float column is longer than 1,100 bytes, the longest cell that can be a double. Hint: a number of this length is not a double, compare the column as text. Repair: none. |
+| `agg.float-overflow` | 8 | never | the exact sum of a :float column in a group is beyond the largest double, about 1.8e308 (detail.group names the group). Hint: sum fewer rows with --where, group by more columns, or sum in a smaller unit (the mean of the same group is a number: mean:COL:float). Repair: none. |
 <!-- /gen:rules -->
 
 The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other cancho-tools; the rest are `table`'s own.

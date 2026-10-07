@@ -1,0 +1,185 @@
+// SPIKE (throwaway, docs/readers.md): what reading standard input costs, three ways, counting bytes and newlines in
+// 64 KiB chunks and keeping nothing (memory is one chunk):
+//
+//     stdin_read getchar < file     `getchar` one byte at a time into a 64 KiB chunk (what toolbox.lines.fill_stdin does)
+//     stdin_read room   < file      `getchar` straight into the chunk's room, no `buffer.push` per byte
+//     stdin_read dev    < file      open the path /dev/stdin through `Fs` and `file_read` it (bulk `read(2)`; NOT proposed:
+//                                   it reaches standard input through the file system, so the authority row would say
+//                                   fs_read, not io_read, and a path is a name the confinement of `--root` knows nothing of)
+//     stdin_read file PATH          `file_read` of an ordinary path (what `table FILE` does): the floor
+// Prints "bytes newlines".
+edition 5;
+
+import std.buffer;
+import std.bytes;
+import std.io;
+
+fn drain[&h, &f](heap: &!h Heap, file: &!f File) -> [heap, file_read] (int, int) {
+    var chunk = buffer.empty(heap, 65536);
+    var total = 0;
+    var lines = 0;
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+            match file_read(file, buffer.room(cw)) {
+                Read::Got(n) => {
+                    buffer.filled(cw, n);
+                    got = n;
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+        if got > 0 {
+            total = total + got;
+            borrow chunk as &cr in {
+                lines = lines + bytes.count_byte(buffer.bytes(cr), 10);
+            }
+        }
+    }
+    buffer.drop(heap, chunk);
+    return (total, lines);
+}
+
+fn drain_getchar[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] (int, int) {
+    var chunk = buffer.empty(heap, 65536);
+    var total = 0;
+    var lines = 0;
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+        }
+        while got < 65536 && going {
+            let c = getchar(io);
+            if c < 0 {
+                going = false;
+            } else {
+                chunk = buffer.push(heap, chunk, byte_of(c));
+                got = got + 1;
+            }
+        }
+        total = total + got;
+        borrow chunk as &cr in {
+            lines = lines + bytes.count_byte(buffer.bytes(cr), 10);
+        }
+    }
+    buffer.drop(heap, chunk);
+    return (total, lines);
+}
+
+// `getchar` straight into the chunk's room (no `buffer.push` per byte): the cheapest way the language has to read standard input.
+fn drain_getchar_room[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] (int, int) {
+    var chunk = buffer.empty(heap, 65536);
+    var total = 0;
+    var lines = 0;
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+            let room = buffer.room(cw);
+            while got < len(room) && going {
+                let c = getchar(io);
+                if c < 0 {
+                    going = false;
+                } else {
+                    room[got] = byte_of(c);
+                    got = got + 1;
+                }
+            }
+            buffer.filled(cw, got);
+        }
+        total = total + got;
+        borrow chunk as &cr in {
+            lines = lines + bytes.count_byte(buffer.bytes(cr), 10);
+        }
+    }
+    buffer.drop(heap, chunk);
+    return (total, lines);
+}
+
+fn through_path[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, file_read, fs_read("")] (int, int) {
+    match open_read(fs, path) {
+        Opened::Ok(file) => {
+            var fl = file;
+            var t = 0;
+            var l = 0;
+            borrow mut fl as &!fw in {
+                let (t2, l2) = drain(heap, fw);
+                t = t2;
+                l = l2;
+            }
+            file_close(fl);
+            return (t, l);
+        }
+        Opened::Failed(reason) => {
+            return (0 - reason, 0);
+        }
+    }
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    var how = 0;
+    borrow args as &g in {
+        let a1 = arg(g, 1);
+        if int_of(a1[0]) == 'g' {
+            how = 0;
+        } else if int_of(a1[0]) == 'r' {
+            how = 3;
+        } else if int_of(a1[0]) == 'd' {
+            how = 1;
+        } else {
+            how = 2;
+        }
+    }
+    var total = 0;
+    var lines = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            if how == 3 {
+                let (t, l) = drain_getchar_room(h, i);
+                total = t;
+                lines = l;
+            } else if how == 0 {
+                let (t, l) = drain_getchar(h, i);
+                total = t;
+                lines = l;
+            } else if how == 1 {
+                borrow fs as &f in {
+                    let (t, l) = through_path(h, f, "/dev/stdin");
+                    total = t;
+                    lines = l;
+                }
+            } else {
+                borrow fs as &f in {
+                    borrow args as &g2 in {
+                        let (t, l) = through_path(h, f, arg(g2, 2));
+                        total = t;
+                        lines = l;
+                    }
+                }
+            }
+            io.print_int(i, total);
+            io.space(i);
+            io.print_int(i, lines);
+            io.newline(i);
+        }
+    }
+    release(args);
+    release(fs);
+    release(heap);
+    release(io);
+    return 0;
+}
