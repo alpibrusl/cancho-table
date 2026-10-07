@@ -113,9 +113,16 @@ function). **A sum is exact whatever its width: it is a pair of integers** (the 
 one, the rest in the other), so it cannot wrap or refuse, and one past 64 bits is printed in full (up to 28
 digits; `--max-rows`' ceiling of 10^9 keeps the pair below 2^93). The first versions refused it
 (`agg.sum-overflow`); the rule is gone, `docs/numbers.md` stage N0p;
-`distinct` counts distinct byte strings, empty included. `mean` and `describe` of the
-design are not built: an exact fixed-point mean needs a stated rounding rule and a
-scale flag, and none was needed to answer the first question.
+`distinct` counts distinct byte strings, empty included. **Typed items (docs/numbers.md, stage N2)**: an item
+may end in `:int` or `:dec(S)` (`sum:price:dec(2)`, `min:price:dec(2)`, `distinct:price:dec(2)`), which reads the
+cells as exact decimals of at most `S` fractional digits and writes a sum, minimum or maximum at exactly `S`;
+`distinct:price:dec(2)` counts by value (`1.5` and `1.50` are one). `mean:COL[:dec(S)][@N]` is the exact sum over the
+group's count, rounded half to even at `N` fractional digits (the column's own scale when it is `:dec(S)`; an
+integer column has none, so `mean:n@2` must say). The refusals are `--where`'s (`value.not-decimal`,
+`value.decimal-scale`, `value.decimal-too-wide`) with `context` naming the function, `scale` and `digits`.
+A suffix is a suffix only when a column name is left before it (`sum:int` sums a column called `int`);
+a column really called `x:dec(2)`, `x:int` or `x@2` is written `sum:x\:dec(2)`, `sum:x\:int`, `mean:x\@2@3`.
+`describe` is not built.
 
 **Output** is `table.v2` rows like a selection: `columns` (the group columns, then
 `count`, `sum:NAME`, ... spelled with the header's own name), `rows` of strings (numbers

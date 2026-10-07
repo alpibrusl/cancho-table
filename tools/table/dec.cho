@@ -1,0 +1,311 @@
+edition 5;
+
+module dec;
+
+// Decimals as text, and the exact mean (docs/numbers.md, sections 3.3, 3.6 and 3.7).
+//
+// A decimal is an integer of 10^-S ("scaled"); a sum of them is a pair of integers (`hi * 2^32 + lo`, see agg.cho) and may be wider than an
+// `int`, so a value is written from limbs of 32 bits (little endian, in an `int` slice: a limb times a number below 2^31 plus a carry fits an `int`).
+// Everything here is exact integer arithmetic. There is no float anywhere.
+
+import std.buffer;
+
+// The digits of a non-negative number, least significant first, as the bytes '0' to '9' in `d`: at least `scale + 1` of them, so that
+// there is always a digit before the point. Answers how many.
+fn digits_of_limbs[&a, &d](limbs: &!a [int], n: int, d: &!d [byte], scale: int) -> [] int {
+    var count = 0;
+    var more = true;
+    while more {
+        // divide by 10^9
+        var rem = 0;
+        var i = n - 1;
+        var any = false;
+        while i >= 0 {
+            let cur = rem * 4294967296 + limbs[i];
+            let q = cur / 1000000000;
+            rem = cur - q * 1000000000;
+            limbs[i] = q;
+            if q != 0 {
+                any = true;
+            }
+            i = i - 1;
+        }
+        var g = 0;
+        while g < 9 {
+            d[count] = byte_of('0' + rem % 10);
+            rem = rem / 10;
+            count = count + 1;
+            g = g + 1;
+        }
+        more = any;
+    }
+    // the groups of nine pad with zeros: drop the ones that are leading
+    while count > scale + 1 && int_of(d[count - 1]) == '0' {
+        count = count - 1;
+    }
+    while count < scale + 1 {
+        d[count] = byte_of('0');
+        count = count + 1;
+    }
+    return count;
+}
+
+// The digits `d[0..count]` (least significant first) with the point `scale` digits from the right, and a `-` first when `negative`.
+fn emit[&h, &d](heap: &!h Heap, out: buffer.Buffer, d: &d [byte], count: int, scale: int, negative: bool) -> [heap] buffer.Buffer {
+    var o = out;
+    if negative {
+        o = buffer.push(heap, o, byte_of('-'));
+    }
+    var i = count - 1;
+    while i >= 0 {
+        o = buffer.push(heap, o, d[i]);
+        if i == scale && scale > 0 {
+            o = buffer.push(heap, o, byte_of('.'));
+        }
+        i = i - 1;
+    }
+    return o;
+}
+
+fn is_zero[&a](limbs: &a [int], n: int) -> [] bool {
+    var i = 0;
+    while i < n {
+        if limbs[i] != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// The value `v` (a scaled integer: a cell, a minimum, a maximum; never the one `int` that has no magnitude) at `scale` fractional digits.
+pub fn put_scaled[&h](heap: &!h Heap, out: buffer.Buffer, v: int, scale: int) -> [heap] buffer.Buffer {
+    var o = out;
+    region r {
+        let limbs = alloc_slice[r](3, 0);
+        let d = alloc_slice[r](48, byte_of(0));
+        var m = v;
+        if v < 0 {
+            m = 0 - v;
+        }
+        limbs[0] = m & 0xffffffff;
+        limbs[1] = m >> 32;
+        let count = digits_of_limbs(limbs, 3, d, scale);
+        o = emit(heap, o, d, count, scale, v < 0);
+    }
+    return o;
+}
+
+// A sum, `high * 2^32 + low` with `low` in [0, 2^32) (after `agg.settle`), at `scale` fractional digits: any width up to 2^93.
+pub fn put_sum[&h](heap: &!h Heap, out: buffer.Buffer, high: int, low: int, scale: int) -> [heap] buffer.Buffer {
+    var o = out;
+    region r {
+        let limbs = alloc_slice[r](3, 0);
+        let d = alloc_slice[r](48, byte_of(0));
+        var h = high;
+        var l = low;
+        if high < 0 {
+            // the magnitude: 0 - (high * 2^32 + low)
+            if low == 0 {
+                h = 0 - high;
+            } else {
+                h = 0 - high - 1;
+                l = 4294967296 - low;
+            }
+        }
+        limbs[0] = l;
+        limbs[1] = h & 0xffffffff;
+        limbs[2] = h >> 32;
+        let count = digits_of_limbs(limbs, 3, d, scale);
+        // (a negative `high` is a value of at most -1: never a zero that would be written -0.00)
+        o = emit(heap, o, d, count, scale, high < 0);
+    }
+    return o;
+}
+
+fn mul_small[&a](limbs: &!a [int], n: int, m: int) -> [] int {
+    var carry = 0;
+    var i = 0;
+    while i < n {
+        let p = limbs[i] * m + carry;
+        limbs[i] = p & 0xffffffff;
+        carry = p >> 32;
+        i = i + 1;
+    }
+    return carry;
+}
+
+// limbs / m, in place; answers the remainder. `m` is below 2^30, so the remainder times 2^32 plus a limb fits an `int`.
+fn div_small[&a](limbs: &!a [int], n: int, m: int) -> [] int {
+    var rem = 0;
+    var i = n - 1;
+    while i >= 0 {
+        let cur = rem * 4294967296 + limbs[i];
+        let q = cur / m;
+        rem = cur - q * m;
+        limbs[i] = q;
+        i = i - 1;
+    }
+    return rem;
+}
+
+// The mean of a group: its sum (`high`, `low`, at `sum_scale`) over its `count` of rows (below 2^30), as an integer of 10^-`scale`,
+// rounded half to even from the exact quotient (docs/numbers.md 3.6), written at `scale` fractional digits.
+//
+// The exact way: the magnitude of the sum is doubled, multiplied by 10^(scale - sum_scale) (or, when the scale asked for is the smaller, divided by
+// 10^(sum_scale - scale) after the division by the count), and divided by the count; T = floor(2 * |mean|), and whether any of the divisions left a
+// remainder. T halved is the integer part to be, and the low bit of T says that the fraction is half or more: more when something was left over, and
+// then it rounds up; exactly half when nothing was, and then it rounds to the even integer. The sign is put back (and no `-` before a zero).
+pub fn put_mean[&h](heap: &!h Heap, out: buffer.Buffer, high: int, low: int, count: int, sum_scale: int, scale: int) -> [heap] buffer.Buffer {
+    var o = out;
+    region r {
+        let limbs = alloc_slice[r](8, 0);
+        let d = alloc_slice[r](64, byte_of(0));
+        var h = high;
+        var l = low;
+        if high < 0 {
+            if low == 0 {
+                h = 0 - high;
+            } else {
+                h = 0 - high - 1;
+                l = 4294967296 - low;
+            }
+        }
+        limbs[0] = l;
+        limbs[1] = h & 0xffffffff;
+        limbs[2] = h >> 32;
+        mul_small(limbs, 8, 2);
+        var up = scale - sum_scale;
+        while up > 0 {
+            var step = up;
+            if step > 9 {
+                step = 9;
+            }
+            var p = 1;
+            var k = 0;
+            while k < step {
+                p = p * 10;
+                k = k + 1;
+            }
+            mul_small(limbs, 8, p);
+            up = up - step;
+        }
+        var inexact = div_small(limbs, 8, count) != 0;
+        var down = sum_scale - scale;
+        while down > 0 {
+            var step = down;
+            if step > 9 {
+                step = 9;
+            }
+            var p = 1;
+            var k = 0;
+            while k < step {
+                p = p * 10;
+                k = k + 1;
+            }
+            if div_small(limbs, 8, p) != 0 {
+                inexact = true;
+            }
+            down = down - step;
+        }
+        // T = limbs; the integer part is T >> 1, and the low bit of T says "half or more"
+        let bit = limbs[0] & 1;
+        var i = 0;
+        while i < 8 {
+            var next = 0;
+            if i + 1 < 8 {
+                next = limbs[i + 1] & 1;
+            }
+            limbs[i] = limbs[i] >> 1 | next << 31;
+            i = i + 1;
+        }
+        var up_one = false;
+        if bit == 1 {
+            if inexact || limbs[0] & 1 == 1 {
+                up_one = true;
+            }
+        }
+        if up_one {
+            var carry = 1;
+            i = 0;
+            while i < 8 && carry > 0 {
+                let v = limbs[i] + carry;
+                limbs[i] = v & 0xffffffff;
+                carry = v >> 32;
+                i = i + 1;
+            }
+        }
+        let nonzero = !is_zero(limbs, 8);
+        let n = digits_of_limbs(limbs, 8, d, scale);
+        o = emit(heap, o, d, n, scale, high < 0 && nonzero);
+    }
+    return o;
+}
+
+// The order of two means, exactly, without dividing: sum x / count x against sum y / count y, as the sign of
+// (sum x) * (count y) - (sum y) * (count x): -1, 0 or 1. A sum is (high, low) with low in [0, 2^32); a count is below 2^30.
+fn magnitude_times(high: int, low: int, count: int) -> [] (int, int, int, int) {
+    var h = high;
+    var l = low;
+    if high < 0 {
+        if low == 0 {
+            h = 0 - high;
+        } else {
+            h = 0 - high - 1;
+            l = 4294967296 - low;
+        }
+    }
+    let t0 = l * count;
+    let t1 = (h & 0xffffffff) * count + (t0 >> 32);
+    let t2 = (h >> 32) * count + (t1 >> 32);
+    return (t0 & 0xffffffff, t1 & 0xffffffff, t2 & 0xffffffff, t2 >> 32);
+}
+
+pub fn compare_means(hx: int, lx: int, cx: int, hy: int, ly: int, cy: int) -> [] int {
+    let nx = hx < 0;
+    let ny = hy < 0;
+    let zx = hx == 0 && lx == 0;
+    let zy = hy == 0 && ly == 0;
+    var sx = 1;
+    if zx {
+        sx = 0;
+    } else if nx {
+        sx = 0 - 1;
+    }
+    var sy = 1;
+    if zy {
+        sy = 0;
+    } else if ny {
+        sy = 0 - 1;
+    }
+    if sx != sy {
+        if sx < sy {
+            return 0 - 1;
+        }
+        return 1;
+    }
+    if sx == 0 {
+        return 0;
+    }
+    var out = 0;
+    let (a0, a1, a2, a3) = magnitude_times(hx, lx, cy);
+    let (b0, b1, b2, b3) = magnitude_times(hy, ly, cx);
+    if a3 != b3 {
+        out = a3 - b3;
+    } else if a2 != b2 {
+        out = a2 - b2;
+    } else if a1 != b1 {
+        out = a1 - b1;
+    } else if a0 != b0 {
+        out = a0 - b0;
+    }
+    if out < 0 {
+        out = 0 - 1;
+    } else if out > 0 {
+        out = 1;
+    }
+    if sx < 0 {
+        return 0 - out;
+    }
+    return out;
+}

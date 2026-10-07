@@ -82,7 +82,7 @@ fn tool() -> [] describe.Tool {
 // The tool's own rules, beside the contract's catalogue: tag, exit code,
 // repairable, summary.
 fn extra() -> [] &static [byte] {
-    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes;limit.record-too-large|8|never|a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread;limit.too-many-sort-rows|8|never|--order-by would hold more than --max-sort-rows rows to sort;limit.too-many-groups|8|never|more groups than --max-groups;limit.too-many-distinct|8|never|more distinct values than --max-distinct;limit.state-too-large|8|never|the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes;parse.csv-ragged-row|8|never|a row has a different number of fields than the header;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header;select.ambiguous-column|8|never|a name in --select that is the name of more than one column;column.unknown|3|never|a name or position in --where, --group or --agg that is not a column of the header;column.ambiguous|8|never|a name in --where, --group or --agg that is the name of more than one column;where.syntax|2|never|--where is not an expression of the grammar, at the offset the detail gives;agg.bad-spec|2|never|an item of --agg that is not count, sum:COL, min:COL, max:COL or distinct:COL;sort.unknown-key|2|never|--sort names no output column of the grouping;value.not-integer|8|never|a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not);value.integer-overflow|8|never|a cell of an :int column or of sum, min or max does not fit 64 bits;value.not-decimal|8|never|a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone;value.decimal-scale|8|sometimes|a cell of a :dec(S) column has more fractional digits than S (it is never rounded);value.decimal-too-wide|8|never|a cell of a :dec(S) column has 18 or more significant digits once scaled to S;column.type-conflict|2|never|the plan reads one column as two numeric types: :int, or :dec with two scales";
+    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes;limit.record-too-large|8|never|a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread;limit.too-many-sort-rows|8|never|--order-by would hold more than --max-sort-rows rows to sort;limit.too-many-groups|8|never|more groups than --max-groups;limit.too-many-distinct|8|never|more distinct values than --max-distinct;limit.state-too-large|8|never|the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes;parse.csv-ragged-row|8|never|a row has a different number of fields than the header;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header;select.ambiguous-column|8|never|a name in --select that is the name of more than one column;column.unknown|3|never|a name or position in --where, --group or --agg that is not a column of the header;column.ambiguous|8|never|a name in --where, --group or --agg that is the name of more than one column;where.syntax|2|never|--where is not an expression of the grammar, at the offset the detail gives;agg.bad-spec|2|never|an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes;sort.unknown-key|2|never|--sort names no output column of the grouping;value.not-integer|8|never|a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not);value.integer-overflow|8|never|a cell of an :int column or of sum, min or max does not fit 64 bits;value.not-decimal|8|never|a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone;value.decimal-scale|8|sometimes|a cell of a :dec(S) column has more fractional digits than S (it is never rounded);value.decimal-too-wide|8|never|a cell of a :dec(S) column has 18 or more significant digits once scaled to S;column.type-conflict|2|never|the plan reads one column as two numeric types: :int, or :dec with two scales";
 }
 
 fn built() -> [] describe.Built {
@@ -125,7 +125,7 @@ fn delimiter_of[&t](given: &t [byte]) -> [] int {
 // its limit, 8 a first row past the budget, 9 standard output refused a write,
 // 11 and 12 --where met a cell that is not an integer / too large, 13 more
 // groups than allowed, 14 more distinct values, 15 more key bytes, 16 and 17 an
-// aggregate met a cell that is not an integer / too large, (18 was a sum past 64
+// aggregate met a cell that is not an integer / too large, 26, 27 and 28 one that is not a decimal / has too many fractional digits / is too wide, (18 was a sum past 64
 // bits: a sum is a pair of integers now and cannot leave them), 19 a --sort key that is no output column, 22, 23 and 24 --where met a
 // :dec cell that is not a decimal / has more fractional digits than the scale / is too wide, 25 a column read as two numeric types; `abort_line` is the line it is
 // about.
@@ -194,7 +194,7 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
                             if ng + k > 0 {
                                 pending = buffer.push(heap, pending, byte_of(delim));
                             }
-                            pending = agg.put_value(heap, pending, groups, x, k, query.agg_at(tree, k, 0));
+                            pending = agg.put_value(heap, pending, groups, tree, x, k);
                             k = k + 1;
                         }
                         pending = buffer.push(heap, pending, byte_of(10));
@@ -281,6 +281,29 @@ fn over_limit[&h, &s](heap: &!h Heap, e: fail.Errors, rule: &static [byte], mess
     w = fail.detail_text(heap, w, "path", shown);
     w = fail.detail_int(heap, w, "limit", bound);
     return fail.add(heap, e, w);
+}
+
+// What a refusal says it was reading for: the function of the aggregate, or the condition (`err_fn` -1), or the sort key (-2).
+fn context_of(function: int) -> [] &static [byte] {
+    if function == -2 {
+        return "order-by";
+    }
+    if function == 1 {
+        return "sum";
+    }
+    if function == 2 {
+        return "min";
+    }
+    if function == 3 {
+        return "max";
+    }
+    if function == 4 {
+        return "distinct";
+    }
+    if function == 5 {
+        return "mean";
+    }
+    return "where";
 }
 
 // A type code (`query.cho`: 1 :int, 2 + S :dec(S)) as it is written.
@@ -435,18 +458,7 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
             rule = "value.integer-overflow";
             what = "a cell is an integer that does not fit 64 bits";
         }
-        var context = "where";
-        if c.err_fn == -2 {
-            context = "order-by";
-        } else if c.err_fn == 1 {
-            context = "sum";
-        } else if c.err_fn == 2 {
-            context = "min";
-        } else if c.err_fn == 3 {
-            context = "max";
-        } else if c.err_fn == 4 {
-            context = "distinct";
-        }
+        let context = context_of(c.err_fn);
         var w = fail.open_in(heap, extra(), rule, what, hint);
         w = fail.repair_none(heap, w, "what the cell was meant to be is not known");
         w = fail.detail_open(heap, w);
@@ -458,16 +470,25 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         w = fail.detail_text(heap, w, "value", buffer.bytes(kept));
         w = fail.detail_bool(heap, w, "value_truncated", buffer.size(kept) >= 64);
         e = fail.add(heap, e, w);
-    } else if c.abort == 22 || c.abort == 23 || c.abort == 24 {
-        let scale = query.cond_at(tree, c.err_cond, 1) - 2;
+    } else if c.abort == 22 || c.abort == 23 || c.abort == 24 || c.abort == 26 || c.abort == 27 || c.abort == 28 {
+        // a :dec cell refused by --where (22 to 24) or by an aggregate (26 to 28, the same three in the same order)
+        let in_agg = c.abort >= 26;
+        var code = c.abort;
+        var scale = 0;
+        if in_agg {
+            code = c.abort - 4;
+            scale = query.agg_at(tree, c.err_cond, 2) - 2;
+        } else {
+            scale = query.cond_at(tree, c.err_cond, 1) - 2;
+        }
         var rule = "value.not-decimal";
         var what = "a cell of a :dec column is not a decimal: digits and at most one point, optionally signed, nothing else (an empty cell is not one)";
         var hint = "keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a decimal of this column";
-        if c.abort == 23 {
+        if code == 23 {
             rule = "value.decimal-scale";
             what = "a cell of a :dec column has more fractional digits than the scale; a decimal is never rounded";
             hint = "declare a larger scale, :dec(N) with N the most fractional digits the column holds";
-        } else if c.abort == 24 {
+        } else if code == 24 {
             rule = "value.decimal-too-wide";
             what = "a cell of a :dec column has 18 or more significant digits once scaled to the column's scale";
             hint = "declare a smaller scale, or compare the column as text";
@@ -476,7 +497,7 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
         var w = fail.open_in(heap, extra(), rule, what, hint);
         let given = cli.text(args, parsed, table, "where");
         let where_at = cli.value_index(parsed, table, "where");
-        if c.abort == 23 && where_at >= 0 {
+        if code == 23 && where_at >= 0 && !in_agg {
             // the whole invocation with this condition's :dec(S) written :dec(digits)
             let fixed = rewrite_scale(heap, given, query.cond_at(tree, c.err_cond, 6), digits);
             var o = fail.choose_open(heap, w);
@@ -485,21 +506,23 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
             }
             buffer.drop(heap, fixed);
             w = fail.choose_close(heap, o);
-        } else if c.abort == 22 {
+        } else if code == 22 {
             w = fail.repair_none(heap, w, "what the cell was meant to be is not known (an exponent is a float, which this tool does not read yet)");
+        } else if code == 23 {
+            w = fail.repair_none(heap, w, "write :dec(N) in the aggregate with N the digits of the cell, or more");
         } else {
             w = fail.repair_none(heap, w, "what the cell was meant to be is not known");
         }
         w = fail.detail_open(heap, w);
         w = fail.detail_text(heap, w, "path", shown);
-        w = fail.detail_str(heap, w, "context", "where");
+        w = fail.detail_str(heap, w, "context", context_of(c.err_fn));
         w = fail.detail_text(heap, w, "column", name_of(names, hends, c.err_col));
         w = fail.detail_int(heap, w, "row", c.err_row);
         w = fail.detail_int(heap, w, "line", c.err_line);
         w = fail.detail_text(heap, w, "value", buffer.bytes(kept));
         w = fail.detail_bool(heap, w, "value_truncated", buffer.size(kept) >= 64);
         w = fail.detail_int(heap, w, "scale", scale);
-        if c.abort == 23 {
+        if code == 23 {
             w = fail.detail_int(heap, w, "digits", digits);
         }
         e = fail.add(heap, e, w);
@@ -1460,7 +1483,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
             if bad == -2 {
                 e = flag_problem(heap, e, "args.bad-value", "--agg is items separated by commas, and a backslash escapes only a comma, a backslash or a #", "--agg count,sum:bytes", "--agg");
             } else if bad >= 0 {
-                var w = fail.open_in(heap, extra(), "agg.bad-spec", "an item of --agg is not count, sum:COL, min:COL, max:COL or distinct:COL", "--agg count,sum:bytes,max:bytes,distinct:status");
+                var w = fail.open_in(heap, extra(), "agg.bad-spec", "an item of --agg is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or its :int, :dec(S) or @N is not one that item takes", "--agg count,sum:bytes,max:bytes,distinct:status; a mean of an integer column needs its scale, mean:bytes@2; a decimal column is declared sum:price:dec(2)");
                 w = fail.no_repair(heap, w);
                 w = fail.detail_open(heap, w);
                 w = fail.detail_int(heap, w, "item", bad);
@@ -1468,7 +1491,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
                 e = fail.add(heap, e, w);
             }
         } else {
-            tree = query.add_agg(heap, tree, 0, -1);
+            tree = query.add_agg(heap, tree, 0, -1, 0, 0);
         }
     }
     if has_order && !grouped {

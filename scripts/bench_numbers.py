@@ -3,8 +3,9 @@
 
     python3 scripts/bench_numbers.py [--bin build/table] [--rows 1000000] [--runs 7] [--file build/num/data.csv] [--threads 16]
 
-A seeded file of id,status,bytes,price,ratio,path (`price` two decimals in 0..99999.99, `bytes` an integer in 0..99999, `ratio` a
-double in shortest form). The questions, each asked of `table` as the integer cell and as the decimal cell, and of DuckDB (DECIMAL(18,2)
+A seeded file of id,status,bytes,price,ratio,path,cents (`price` two decimals in 0..99999.99, `cents` the same number as an integer of
+7 digits at most, `bytes` an integer in 0..99999, `ratio` a double in shortest form). The integer cell the decimal one is compared with is `cents`: as many
+digits as the price, so that the ratio is the cost of the decimal reader and not of a longer cell. The questions, each asked of `table` as the integer cell and as the decimal cell, and of DuckDB (DECIMAL(18,2)
 and DOUBLE), csvtk and Miller (when installed):
 
   count   how many rows have status=404 and value >= 500          (the comparison, nothing written)
@@ -35,9 +36,12 @@ def generate(path, rows):
     path.parent.mkdir(parents=True, exist_ok=True)
     r = random.Random(1)
     with open(path, "w", newline="") as f:
-        f.write("id,status,bytes,price,ratio,path\n")
+        f.write("id,status,bytes,price,ratio,path,cents\n")
         for i in range(rows):
-            f.write(f"{i},{r.choice([200, 200, 200, 301, 404, 500])},{r.randint(0, 99999)},{r.randint(0, 9999999) / 100:.2f},{r.uniform(0, 1000)!r},/p/{r.randint(0, 999)}\n")
+            status = r.choice([200, 200, 200, 301, 404, 500])
+            size = r.randint(0, 99999)
+            cents = r.randint(0, 9999999)
+            f.write(f"{i},{status},{size},{cents / 100:.2f},{r.uniform(0, 1000)!r},/p/{r.randint(0, 999)},{cents}\n")
 
 
 def truth(path):
@@ -47,8 +51,8 @@ def truth(path):
         next(rd)
         for row in rd:
             if row[1] == "404":
-                if int(row[2]) >= 500:
-                    ints.append((row[0], Decimal(row[2])))
+                if int(row[6]) >= 50000:
+                    ints.append((row[0], Decimal(row[6])))
                 if Decimal(row[3]) >= 500:
                     decs.append((row[0], Decimal(row[3])))
     return ints, decs
@@ -91,7 +95,7 @@ def main():
         return [a.bin, *root, "--where", where, "--select", select, "--format", "csv", *t, name]
 
     def duck(col, typ, count, threads):
-        rd = f"read_csv('{d}', header=true, columns={{'id':'bigint','status':'int','bytes':'bigint','price':'{typ}','ratio':'double','path':'varchar'}})"
+        rd = f"read_csv('{d}', header=true, columns={{'id':'bigint','status':'int','bytes':'bigint','price':'{typ}','ratio':'double','path':'varchar','cents':'bigint'}})"
         sel = "count(*)" if count else f"id, {col}"
         fmt = "(header false)" if count else "(format csv, header false)"
         return ["duckdb", "-csv", "-noheader", "-c", f"set threads={threads}; copy (select {sel} from {rd} where status=404 and {col}>=500) to '/dev/stdout' {fmt}"]
@@ -102,7 +106,7 @@ def main():
         want_i, want_d = ints, decs
         chk = (lambda w: (lambda o: int(o.strip().split("\n")[-1].split(",")[-1]) == len(w))) if count else (lambda w: (lambda o: rows_of(o) == w))
         for threads in (1, a.threads):
-            cells.append((f"table int   {q} t={threads}", (q, threads, "int"), table("status = 404 and bytes:int >= 500", "id,bytes", threads, count), chk(want_i)))
+            cells.append((f"table int   {q} t={threads}", (q, threads, "int"), table("status = 404 and cents:int >= 50000", "id,cents", threads, count), chk(want_i)))
             cells.append((f"table dec   {q} t={threads}", (q, threads, "dec"), table("status = 404 and price:dec(2) >= 500.00", "id,price", threads, count), chk(want_d)))
         for threads in (1, a.threads) if shutil.which("duckdb") else ():
             cells.append((f"duckdb DECIMAL {q} t={threads}", (q, threads, "duck-dec"), duck("price", "decimal(18,2)", count, threads), chk(want_d)))
@@ -156,4 +160,5 @@ def main():
     return 0 if worst <= LIMIT else 1
 
 
-sys.exit(main())
+if __name__ == "__main__":
+    sys.exit(main())

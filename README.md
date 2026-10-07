@@ -26,7 +26,7 @@ $ table --where 'status = 200' --select customer,bytes orders.csv
 
 Most data tools optimise for flexibility. `table` optimises for predictability.
 
-* **Explicit types.** A column is text unless you write `:int` (an exact 64-bit integer) or `:dec(S)` (an exact decimal with S fractional digits, in `--where`); a cell that is not one is refused. [docs/filter.md](docs/filter.md)
+* **Explicit types.** A column is text unless you write `:int` (an exact 64-bit integer) or `:dec(S)` (an exact decimal with S fractional digits, in `--where` and `--agg`); a cell that is not one is refused. [docs/filter.md](docs/filter.md)
 * **Explicit operations.** One plan from flags, no expressions or functions. [docs/filter.md](docs/filter.md)
 * **Bounded resource use.** Rows, line and record size, groups, distinct values and group state each have a limit with its own rule. Peak memory is about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). `table introspect` lists the limits; [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html)
 * **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, and nothing written to disk. CI fails if the binary differs from the committed [`manifests/table.authority.json`](manifests/table.authority.json). [docs/architecture.md](docs/architecture.md)
@@ -122,14 +122,30 @@ id,customer
 <!-- gen:t-decimal -->
 ```console
 $ table --where "price:dec(2) >= 12.50" --format csv prices.csv
-item,price
-book,12.50
-lamp,12.5
+item,category,price
+book,office,12.50
+lamp,home,12.5
 $ table --where "price:dec(1) >= 12.5" prices.csv
 {"rule": "value.decimal-scale", "hint": "declare a larger scale, :dec(N) with N the most fractional digits the column holds", "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "price:dec(2) >= 12.5", "prices.csv"]}]}}
 # exit status 8; the rule, hint, repair of the JSON line it prints
 ```
 <!-- /gen:t-decimal -->
+
+### Sum and average decimals
+
+`sum:price:dec(2)` is exact and printed at the column's scale. `mean:price:dec(2)@3` is the exact quotient rounded half to even at three digits (`@N` is required for a whole-number column), the same on any number of cores. `distinct` counts by value, so `12.5` and `12.50` are one. Sums are exact at any width. A column whose name really ends in `:int`, `:dec(2)` or `@2` is written with a backslash: `sum:x\:dec(2)`.
+
+<!-- gen:t-decagg -->
+```console
+$ table --group category --agg "sum:price:dec(2),mean:price:dec(2)@3" --format csv prices.csv
+category,sum:price,mean:price
+home,15.70,7.850
+office,14.00,7.000
+$ table --agg "min:price:dec(2),max:price:dec(2),distinct:price:dec(2)" --format csv prices.csv
+min:price,max:price,distinct:price
+1.50,12.50,3
+```
+<!-- /gen:t-decagg -->
 
 ### Sort rows
 
@@ -147,7 +163,7 @@ id,customer,bytes
 
 ### Count and sum by a key
 
-`count`, `sum`, `min`, `max` and `distinct`. Sums are exact at any width: a sum past 64 bits is printed in full (up to 28 digits), and it is the same on any number of cores.
+`count`, `sum`, `min`, `max`, `mean` and `distinct`, of whole numbers and of `:dec(S)` columns. Sums are exact at any width: a sum past 64 bits is printed in full (up to 28 digits), and it is the same on any number of cores.
 
 <!-- gen:t-group -->
 ```console
@@ -218,7 +234,7 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## What it cannot do yet
 
-* **Decimals are only half built.** `:dec(S)` works in `--where`. Summing, min, max, mean, grouping by and `distinct` of a decimal column, printing decimals, and floats are decided and in progress ([docs/numbers.md](docs/numbers.md)); until then those are refused. In `sum`, `min` and `max`, cells must be whole numbers.
+* **Decimals are mostly built.** `:dec(S)` filters and aggregates (`sum`, `min`, `max`, `mean`, `distinct`, `count`). Not yet: grouping by a decimal column by value, `--order-by price:dec(2)`, and floats; they are decided and in progress ([docs/numbers.md](docs/numbers.md)).
 * **One core for a sort.** `--threads` is accepted with `--order-by`, and gives the same bytes, but the sort runs on one core. There is no sort that spills to disk.
 * **No joins**, and **one input file** at a time, named on the command line (no standard input).
 * **No JSON lines**, no Parquet. Only CSV and TSV (comma, tab or semicolon).
