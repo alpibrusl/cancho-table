@@ -261,7 +261,7 @@ the partitioned read each blob carries the pairs of its own groups, renumbered, 
 * `bigcheck`-style full-size comparisons on `f2.csv`: ten plans (distinct, floats, mean, typed keys, `--where`, `--sort -count --top 5`, pages) at 1, 2, 6, 16 and 64 threads, chunks from 100 KB to 4 MiB.
 * The conformance suite (`python3 -m unittest discover -s .` in `tests/conformance`, with the compiler on `PATH`): **Mac 356 tests OK (2 skipped)**; **Linux (gram, clean clone of the pushed
   commit, niced, cores 0-5, scratch removed afterwards) 355 of 356, the one failure being `test_mcp...test_the_schema_follows_the_flag_table_of_the_tool`, which fails on that box's
-  non-pinned compiler without this branch too**. They include `test_memory` and the parallel differential (2, 3, 4, 8, 16 and 64 threads, ranges from 1 byte; the one-thread read is the oracle). The
+  non-pinned compiler**. They include `test_memory` and the parallel differential (2, 3, 4, 8, 16 and 64 threads, ranges from 1 byte; the one-thread read is the oracle). The
   mutation scripts of the base named 12 pieces of text this branch changed; they are re-pointed (`filter`, `parallel`, `cellcost`, `float_sum`, `typed_keys`) and the 12 are killed in a real run on
   Linux (`results/repointed_gram.txt`). `test_memory` caught a first version (a float slot sized to the state bound was resident on the Mac).
 * `scripts/spikes/groups/partition_mutants.py`: 25 mutants of the new code (bounds not checked on the totals, a wrong-guess range taken, tables not merged, blobs cut the wrong way, pairs not renumbered,
