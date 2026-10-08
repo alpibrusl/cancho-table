@@ -33,6 +33,10 @@ cites, next to its conditions). What is generated:
     limits        index.html              the limits `table introspect` lists
     rules         index.html              the rules `table introspect` lists
 
+Two whole files are also written (and checked) from the list of pages below, so that
+the pages and the sitemap cannot disagree: docs/sitemap.xml and docs/robots.txt. The
+site's base address is the one the README already links (GitHub Pages of the repository).
+
 The commands run in a temporary directory on a fixed fixture, as `table` found on
 PATH (so a repair that names the tool says `table`). Standard output and standard
 error are one stream, as in a terminal. Needs the standard library and the built
@@ -339,6 +343,24 @@ REGIONS = {
 }
 
 
+SITE_BASE = "https://alpibrusl.github.io/cancho-table/"
+# the pages that are meant to be found; docs/evidence.html only redirects, and is left out
+PAGES = ["", "benchmarks.html"]
+
+
+def sitemap(_ctx=None):
+    urls = "".join("  <url><loc>%s%s</loc></url>\n" % (SITE_BASE, p) for p in PAGES)
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + urls + "</urlset>\n")
+
+
+def robots(_ctx=None):
+    return "User-agent: *\nAllow: /\n\nSitemap: %ssitemap.xml\n" % SITE_BASE
+
+
+WHOLE_FILES = {"docs/sitemap.xml": sitemap, "docs/robots.txt": robots}
+
+
 def splice(text, name, body):
     start = "<!-- gen:%s -->\n" % name
     end = "<!-- /gen:%s -->" % name
@@ -386,6 +408,18 @@ def main():
             else:
                 path.write_text(new)
                 print("wrote", rel)
+    for rel, fn in WHOLE_FILES.items():
+        path = ROOT / rel
+        new = fn()
+        old = path.read_text() if path.exists() else None
+        if new == old:
+            continue
+        if args.check:
+            bad += 1
+            sys.stderr.write("site.py: %s differs from what the page list produces; run `python3 scripts/site.py`\n" % rel)
+        else:
+            path.write_text(new)
+            print("wrote", rel)
     if args.check and not bad:
         print("site.py: generated regions are current")
     return 1 if bad else 0
