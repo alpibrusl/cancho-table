@@ -1,0 +1,267 @@
+// SPIKE (docs/gap-float.md): what reading a float cell costs, per reader, over a file of cells (one per line), and the checks of the differential.
+//
+//     fbench MODE ROUNDS < cells.txt
+//
+//   MODE  what a round does with every cell
+//   l     line: finds the line ends and adds the lengths (the floor every mode shares)
+//   o     the reader of origin/main (flt0: Clinger's fast path, then std.json for the rest)
+//   n     the new reader (flt: Clinger, then Eisel-Lemire, then std.json for the undecided)
+//   m     mul128 alone on the digits of the cell (the cost of the multiply-high)
+//   m     mul128 (a copy of flt.cho's) on two numbers made from the cell's length: the cost of the multiply-high
+//   z     clz64 (a copy) likewise
+//   M     mul128 as a dependent chain (each product feeds the next), one per 18 bytes of the file: its latency
+//   Z     clz64 as a dependent chain likewise
+//   C     checksum: the (key, status) of every cell of the file through the new reader, folded to one number (equal to checksum.py's for the same file)
+//   O     the same through the reader of origin/main (the pair of C)
+//   D     print "status key" for every cell through the new reader (to localise a difference)
+// Prints one number (the fold of the answers, so that nothing is optimised away) for l/o/n/m, the checksum for C/O.
+edition 5;
+
+import std.buffer;
+import std.bytes;
+import std.io;
+import flt;
+import flt0;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn read_all[&h, &f](heap: &!h Heap, file: &!f File, text: buffer.Buffer) -> [heap, file_read] buffer.Buffer {
+    var out = text;
+    var chunk = buffer.empty(heap, 1048576);
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+            match file_read(file, buffer.room(cw)) {
+                Read::Got(n) => {
+                    buffer.filled(cw, n);
+                    got = n;
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+        if got > 0 {
+            borrow chunk as &cr in {
+                out = buffer.append(heap, out, buffer.bytes(cr));
+            }
+        }
+    }
+    buffer.drop(heap, chunk);
+    return out;
+}
+
+// The checksum of the differential: the sum, in wrapping arithmetic, of mix(key ^ mix(status + 1)) over the cells (splitmix64's finaliser; the same in
+// reference.py). A logical shift is the arithmetic one and a mask.
+fn mix(v: int) -> [] int {
+    var x = v;
+    x = x ^ ((x >> 30) & 0x3ffffffff);
+    x = wrapping_mul(x, (0xbf58476d << 32) | 0x1ce4e5b9);
+    x = x ^ ((x >> 27) & 0x1fffffffff);
+    x = wrapping_mul(x, (0x94d049bb << 32) | 0x133111eb);
+    x = x ^ ((x >> 31) & 0x1ffffffff);
+    return x;
+}
+
+// copies of the two helpers of flt.cho, to time them alone
+fn mul128(a: int, b: int) -> [] (int, int) {
+    let a0 = a & 0xffffffff;
+    let a1 = (a >> 32) & 0xffffffff;
+    let b0 = b & 0xffffffff;
+    let b1 = (b >> 32) & 0xffffffff;
+    let p00 = wrapping_mul(a0, b0);
+    let u = wrapping_add(wrapping_mul(a0, b1), (p00 >> 32) & 0xffffffff);
+    let v = wrapping_add(wrapping_mul(a1, b0), u & 0xffffffff);
+    let hi = wrapping_add(wrapping_add(wrapping_mul(a1, b1), (u >> 32) & 0xffffffff), (v >> 32) & 0xffffffff);
+    return ((v << 32) | (p00 & 0xffffffff), hi);
+}
+
+fn clz64(w: int) -> [] int {
+    var n = 0;
+    var x = w;
+    if (x >> 32) & 0xffffffff == 0 {
+        n = 32;
+        x = x << 32;
+    }
+    if (x >> 48) & 0xffff == 0 {
+        n = n + 16;
+        x = x << 16;
+    }
+    if (x >> 56) & 0xff == 0 {
+        n = n + 8;
+        x = x << 8;
+    }
+    if (x >> 60) & 0xf == 0 {
+        n = n + 4;
+        x = x << 4;
+    }
+    if (x >> 62) & 3 == 0 {
+        n = n + 2;
+        x = x << 2;
+    }
+    if x >= 0 {
+        n = n + 1;
+    }
+    return n;
+}
+
+fn show[&s, &i](io: &!i Io, src: &s [byte]) -> [io_write] int {
+    var at = 0;
+    while at < len(src) {
+        var stop = index_of_byte(src[at..len(src)], byte_of(10));
+        if stop < 0 {
+            stop = len(src) - at;
+        }
+        let (key, st) = flt.parse_float(src[at..at + stop]);
+        at = at + stop + 1;
+        io.print_int(io, st);
+        io.space(io);
+        io.print_int(io, key);
+        io.newline(io);
+    }
+    return 0;
+}
+
+fn run[&s](src: &s [byte], mode: int, rounds: int) -> [] int {
+    var total = 0;
+    var bad = 0;
+    var h = 0;
+    var round = 0;
+    while round < rounds && mode >= 7 {
+        var x = 12345 + round;
+        var k = 0;
+        while k < len(src) / 18 {
+            if mode == 7 {
+                let (lo, hi) = mul128(x | (1 << 62), (0x9e3779b9 << 32) | 0x7f4a7c15);
+                x = lo ^ hi;
+            } else {
+                x = wrapping_add(wrapping_mul(clz64(x | 1), 1000003), x);
+            }
+            k = k + 1;
+        }
+        total = x % 1000000007;
+        round = round + 1;
+    }
+    round = 0;
+    while round < rounds && mode < 7 {
+        var at = 0;
+        while at < len(src) {
+            var stop = index_of_byte(src[at..len(src)], byte_of(10));
+            if stop < 0 {
+                stop = len(src) - at;
+            }
+            let cell = src[at..at + stop];
+            at = at + stop + 1;
+            if mode == 0 {
+                total = total + len(cell);
+            } else if mode == 1 {
+                let (key, st) = flt0.parse_float(cell);
+                if st != 0 {
+                    bad = bad + 1;
+                }
+                total = total ^ key;
+            } else if mode == 2 {
+                let (key, st) = flt.parse_float(cell);
+                if st != 0 {
+                    bad = bad + 1;
+                }
+                total = total ^ key;
+            } else if mode == 5 {
+                let (lo, hi) = mul128(wrapping_add(total, len(cell) * 1000003), (0x9e3779b9 << 32) | 0x7f4a7c15);
+                total = lo ^ hi;
+            } else if mode == 6 {
+                total = total + clz64(len(cell) * 1000003 + total + 1);
+            } else if mode == 3 {
+                let (key, st) = flt.parse_float(cell);
+                h = wrapping_add(h, mix(key ^ mix(st + 1)));
+            } else if mode == 4 {
+                let (key, st) = flt0.parse_float(cell);
+                h = wrapping_add(h, mix(key ^ mix(st + 1)));
+            }
+        }
+        round = round + 1;
+    }
+    if mode == 3 || mode == 4 {
+        return h;
+    }
+    return bad * 1000000007 + total % 1000000007;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    var mode = 0;
+    var rounds = 1;
+    borrow args as &g in {
+        let a1 = arg(g, 1);
+        if int_of(a1[0]) == 'o' {
+            mode = 1;
+        } else if int_of(a1[0]) == 'n' {
+            mode = 2;
+        } else if int_of(a1[0]) == 'C' {
+            mode = 3;
+        } else if int_of(a1[0]) == 'O' {
+            mode = 4;
+        } else if int_of(a1[0]) == 'D' {
+            mode = 99;
+        } else if int_of(a1[0]) == 'm' {
+            mode = 5;
+        } else if int_of(a1[0]) == 'z' {
+            mode = 6;
+        } else if int_of(a1[0]) == 'M' {
+            mode = 7;
+        } else if int_of(a1[0]) == 'Z' {
+            mode = 8;
+        }
+        rounds = number_of(arg(g, 2));
+    }
+    release(args);
+    borrow mut heap as &!hp in {
+        borrow mut io as &!i in {
+            var text = buffer.empty(hp, 1048576);
+            borrow fs as &f in {
+                match open_read(f, "/dev/stdin") {
+                    Opened::Ok(file) => {
+                        var fl = file;
+                        borrow mut fl as &!fw in {
+                            text = read_all(hp, fw, text);
+                        }
+                        file_close(fl);
+                    }
+                    Opened::Failed(reason) => {
+                        io.print_int(i, 0 - reason);
+                    }
+                }
+            }
+            borrow text as &b in {
+                if mode == 99 {
+                    show(i, buffer.bytes(b));
+                } else {
+                    let answer = run(buffer.bytes(b), mode, rounds);
+                    io.print_int(i, answer);
+                    io.newline(i);
+                }
+            }
+            buffer.drop(hp, text);
+        }
+    }
+    release(fs);
+    release(heap);
+    release(io);
+    return 0;
+}

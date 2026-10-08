@@ -21,6 +21,7 @@ F = {
     "q": ROOT / "build" / "adv" / "quoted.csv",
     "long": ROOT / "build" / "adv" / "long.csv",
     "wide": ROOT / "build" / "adv" / "wide.csv",
+    "num": ROOT / "build" / "num" / "data.csv",     # scripts/bench_numbers.py's file: the 17-digit column `ratio` (stage N3b)
 }
 BIG = ["--max-groups", "1000000", "--max-state-bytes", "1073741824", "--max-distinct", "10000000"]
 PLANS = {
@@ -39,6 +40,11 @@ PLANS = {
     ],
     "q": [["--select", "status,note"], ["--where", "status=404 and bytes:int>50000"], ["--group", "status"], ["--group", "status", "--agg", "sum:bytes"]],
     "long": [["--select", "id,g"], ["--group", "g"], ["--select", "text", "--where", "g=g3"]],
+    "num": [
+        ["--group", "status", "--agg", "min:ratio:float,max:ratio:float"], ["--group", "status", "--agg", "sum:ratio:float,count"], ["--group", "status", "--agg", "mean:ratio:float"],
+        ["--where", "status=404 and ratio:float>=500", "--select", "id,ratio"], ["--where", "ratio:float<1", "--select", "id"], ["--group", "status", "--agg", "min:price:float,max:price:float,sum:price:float"],
+        ["--group", "status", "--agg", "distinct:ratio:float"] + BIG, ["--order-by", "-ratio:float", "--select", "id,ratio", "--top", "100"],
+    ],
     "wide": [["--select", "c5,c100,c199"], ["--where", "c7:int>500", "--select", "c1,c199"], ["--group", "c3"] + BIG],
 }
 VARIANTS = [["--threads", "1"], ["--threads", "4", "--parallel-min-bytes", "0", "--chunk-bytes", "65536"], ["--threads", "3", "--parallel-min-bytes", "0", "--chunk-bytes", "65536"]]
