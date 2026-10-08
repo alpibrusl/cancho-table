@@ -51,6 +51,9 @@ CELLS = {
     "order-by -bytes:int top 100": ["--order-by", "-bytes:int", "--select", "id,bytes", "--top", "100", "--format", "csv"],
     "order-by status,path rows": ["--order-by", "status,path", "--select", "id", "--top", "1000", "--format", "csv"],
     "float min/max by status": ["--group", "status", "--agg", "min:ratio:float,max:ratio:float", "--format", "csv"],
+    # the 17-digit column (stage N3b): the reader of a double that Clinger's fast path cannot decide
+    "float17 filter ratio:float>=500": ["--where", "status = 404 and ratio:float >= 500", "--select", "id", "--format", "csv"],
+    "float17 sum,min,max ratio": ["--group", "status", "--agg", "sum:ratio:float,min:ratio:float,max:ratio:float", "--format", "csv"],
 }
 
 

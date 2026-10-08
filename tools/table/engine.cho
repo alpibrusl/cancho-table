@@ -129,6 +129,12 @@ pub fn k_psorted() -> [] int {
     return 28;
 }
 
+// Where the first record of a range begins (a worker's answer to the parent: the speculation held when this is where
+// the range before it ended). Not part of a sequential read's tally.
+pub fn k_first_at() -> [] int {
+    return 27;
+}
+
 pub fn k_size() -> [] int {
     return 32;
 }

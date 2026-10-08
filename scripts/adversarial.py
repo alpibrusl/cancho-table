@@ -290,7 +290,7 @@ def cells(table, nthreads):
     def c1():
         header, rows = python_rows(wide)
         return sorted((r[5], r[100], r[199]) for r in rows)
-    out["C1"] = ("select 3 of 200 columns (200,000 rows)", wide, c1, common(wide, "C1", ["--select", "c5,c100,c199", "--format", "csv"], ex), "rows")
+    out["C1"] = ("select 3 of 200 columns (200,000 rows)", wide, c1, common(wide, "C1", ["--select", "c5,c100,c199", "--format", "csv"], ex), "canon")
 
     # D
     q = d + "/quoted.csv"
@@ -303,7 +303,7 @@ def cells(table, nthreads):
     if shutil.which("duckdb"):
         ex["duckdb -t1"] = duck(q, "SELECT status, note FROM @", 1)
         ex["duckdb default"] = duck(q, "SELECT status, note FROM @")
-    out["D1"] = ("cut 2 columns, all fields quoted", q, dcut, common(q, "D1", ["--select", "status,note", "--format", "csv"], ex), "rows")
+    out["D1"] = ("cut 2 columns, all fields quoted", q, dcut, common(q, "D1", ["--select", "status,note", "--format", "csv"], ex), "canon")
     def dfilt():
         header, rows = python_rows(q)
         return sorted(tuple(r) for r in rows if r[1] == "404" and int(r[2]) > 50000)
@@ -313,7 +313,7 @@ def cells(table, nthreads):
     if shutil.which("duckdb"):
         ex["duckdb -t1"] = duck(q, "SELECT * FROM @ WHERE status = 404 AND bytes > 50000", 1)
         ex["duckdb default"] = duck(q, "SELECT * FROM @ WHERE status = 404 AND bytes > 50000")
-    out["D2"] = ("filter status=404 and bytes>50000, all quoted", q, dfilt, common(q, "D2", ["--where", "status=404 and bytes:int>50000", "--format", "csv"], ex), "rows")
+    out["D2"] = ("filter status=404 and bytes>50000, all quoted", q, dfilt, common(q, "D2", ["--where", "status=404 and bytes:int>50000", "--format", "csv"], ex), "canon")
     group_cell("D3", "group-count by status, all quoted", q, "status", None)
 
     # E
@@ -327,7 +327,7 @@ def cells(table, nthreads):
     if shutil.which("duckdb"):
         ex["duckdb -t1"] = duck(lg, "SELECT id, g FROM @", 1)
         ex["duckdb default"] = duck(lg, "SELECT id, g FROM @")
-    out["E1"] = ("select 2 columns, 1-10 KB fields", lg, e1, common(lg, "E1", ["--select", "id,g", "--format", "csv"], ex), "rows")
+    out["E1"] = ("select 2 columns, 1-10 KB fields", lg, e1, common(lg, "E1", ["--select", "id,g", "--format", "csv"], ex), "canon")
     group_cell("E2", "group-count by g, 1-10 KB fields", lg, "g", None)
 
     # H1
@@ -341,7 +341,7 @@ def cells(table, nthreads):
     if shutil.which("duckdb"):
         ex["duckdb -t1"] = duck(f1, "SELECT * FROM @ WHERE bytes > 10000", 1)
         ex["duckdb default"] = duck(f1, "SELECT * FROM @ WHERE bytes > 10000")
-    out["H1"] = ("filter keeping ~90% of 1M rows (output-bound)", f1, h1, common(f1, "H1", ["--where", "bytes:int>10000", "--format", "csv"], ex), "rows")
+    out["H1"] = ("filter keeping ~90% of 1M rows (output-bound)", f1, h1, common(f1, "H1", ["--where", "bytes:int>10000", "--format", "csv"], ex), "canon")
 
     # G (1 GB): the expected answers are the 1M file's, times 34
     big_path = d + "/big.csv"

@@ -1,0 +1,216 @@
+diff --git a/crates/lex-sys-codegen-llvm/src/body/arith.rs b/crates/lex-sys-codegen-llvm/src/body/arith.rs
+index c95cbef..d413403 100644
+--- a/crates/lex-sys-codegen-llvm/src/body/arith.rs
++++ b/crates/lex-sys-codegen-llvm/src/body/arith.rs
+@@ -131,6 +131,8 @@ impl<'a> FuncEmitter<'a> {
+                     | Builtin::CopyWithin
+                     | Builtin::CopyInto
+                     | Builtin::IndexOfByte
++                    | Builtin::ByteMask64
++                    | Builtin::TrailingZeros
+                     | Builtin::ConnDetach
+                     | Builtin::Release,
+                 ) => Ok(LKind::I64),
+diff --git a/crates/lex-sys-codegen-llvm/src/body/expr.rs b/crates/lex-sys-codegen-llvm/src/body/expr.rs
+index 8d4b643..155bf77 100644
+--- a/crates/lex-sys-codegen-llvm/src/body/expr.rs
++++ b/crates/lex-sys-codegen-llvm/src/body/expr.rs
+@@ -1009,6 +1009,21 @@ impl<'a> FuncEmitter<'a> {
+                 }
+                 self.copy_into(&args)
+             }
++            // SPIKE (docs/gap-scan.md): a 64-byte structural mask, and the count of trailing zeros.
++            Callee::Builtin(Builtin::ByteMask64) => {
++                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
++                if args.len() != 6 {
++                    return Err(format!("`byte_mask64` needs 6 leaves but {} were given", args.len()));
++                }
++                self.byte_mask64(&args)
++            }
++            Callee::Builtin(Builtin::TrailingZeros) => {
++                let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
++                if args.len() != 1 {
++                    return Err(format!("`trailing_zeros` needs 1 leaf but {} were given", args.len()));
++                }
++                self.trailing_zeros(&args)
++            }
+             // `docs/byte-search.md`: one `memchr`.
+             Callee::Builtin(Builtin::IndexOfByte) => {
+                 let args: Vec<LValue> = evaluated.into_iter().flatten().collect();
+diff --git a/crates/lex-sys-codegen-llvm/src/body/memory.rs b/crates/lex-sys-codegen-llvm/src/body/memory.rs
+index 645a10c..87f1eab 100644
+--- a/crates/lex-sys-codegen-llvm/src/body/memory.rs
++++ b/crates/lex-sys-codegen-llvm/src/body/memory.rs
+@@ -60,6 +60,71 @@ impl<'a> FuncEmitter<'a> {
+         Ok(vec![args[3].clone()])
+     }
+ 
++    /// `byte_mask64(text, at, a, b, c)` (SPIKE, docs/gap-scan.md): `args` is the slice's pointer and length, `at`, then the
++    /// three bytes. Traps unless `0 <= at <= len - 64`. Four 16-byte loads, three compares each, one bit per byte.
++    pub(crate) fn byte_mask64(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
++        let (base, length, at) = (operand(&args[0]), operand(&args[1]), operand(&args[2]));
++        let room = self.fresh();
++        self.out.push_str(&format!("  {room} = sub i64 {length}, 64\n"));
++        let past = self.fresh();
++        self.out.push_str(&format!("  {past} = icmp ugt i64 {at}, {room}\n"));
++        // `at` unsigned above `len - 64` covers a negative `at`; `len < 64` makes `room` negative, which is huge unsigned only
++        // when `at` is not: so test `len < 64` too.
++        let short = self.fresh();
++        self.out.push_str(&format!("  {short} = icmp slt i64 {length}, 64\n"));
++        let failed = self.fresh();
++        self.out.push_str(&format!("  {failed} = or i1 {past}, {short}\n"));
++        self.trap_if(&failed)?;
++        let start = self.fresh();
++        self.out.push_str(&format!("  {start} = getelementptr i8, ptr {base}, i64 {at}\n"));
++        let mut acc = String::from("0");
++        for q in 0..4 {
++            let p = self.fresh();
++            self.out.push_str(&format!("  {p} = getelementptr i8, ptr {start}, i64 {}\n", 16 * q));
++            let v = self.fresh();
++            self.out.push_str(&format!("  {v} = load <16 x i8>, ptr {p}, align 1\n"));
++            let mut hit = String::new();
++            for (n, byte) in [&args[3], &args[4], &args[5]].iter().enumerate() {
++                let wanted = operand(byte);
++                let ins = self.fresh();
++                self.out.push_str(&format!("  {ins} = insertelement <16 x i8> poison, i8 {wanted}, i64 0\n"));
++                let splat = self.fresh();
++                self.out.push_str(&format!("  {splat} = shufflevector <16 x i8> {ins}, <16 x i8> poison, <16 x i32> zeroinitializer\n"));
++                let eq = self.fresh();
++                self.out.push_str(&format!("  {eq} = icmp eq <16 x i8> {v}, {splat}\n"));
++                if n == 0 {
++                    hit = eq;
++                } else {
++                    let joined = self.fresh();
++                    self.out.push_str(&format!("  {joined} = or <16 x i1> {hit}, {eq}\n"));
++                    hit = joined;
++                }
++            }
++            let bits = self.fresh();
++            self.out.push_str(&format!("  {bits} = bitcast <16 x i1> {hit} to i16\n"));
++            let wide = self.fresh();
++            self.out.push_str(&format!("  {wide} = zext i16 {bits} to i64\n"));
++            let shifted = self.fresh();
++            self.out.push_str(&format!("  {shifted} = shl i64 {wide}, {}\n", 16 * q));
++            if q == 0 {
++                acc = shifted;
++            } else {
++                let joined = self.fresh();
++                self.out.push_str(&format!("  {joined} = or i64 {acc}, {shifted}\n"));
++                acc = joined;
++            }
++        }
++        Ok(vec![LValue::Reg(acc)])
++    }
++
++    /// `trailing_zeros(x)` (SPIKE): `cttz`, 64 for zero.
++    pub(crate) fn trailing_zeros(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
++        let x = operand(&args[0]);
++        let n = self.fresh();
++        self.out.push_str(&format!("  {n} = call i64 @llvm.cttz.i64(i64 {x}, i1 false)\n"));
++        Ok(vec![LValue::Reg(n)])
++    }
++
+     /// `index_of_byte(text, b)` (`docs/byte-search.md`): one `memchr`. `args` is the slice's pointer and length, then the
+     /// byte. Answers the offset of the first match, or -1 when `memchr` answers null.
+     pub(crate) fn index_of_byte(&mut self, args: &[LValue]) -> Result<Vec<LValue>, String> {
+diff --git a/crates/lex-sys-codegen-llvm/src/emit.rs b/crates/lex-sys-codegen-llvm/src/emit.rs
+index 59d61c5..571579c 100644
+--- a/crates/lex-sys-codegen-llvm/src/emit.rs
++++ b/crates/lex-sys-codegen-llvm/src/emit.rs
+@@ -295,6 +295,7 @@ pub(crate) fn emit_module(
+     // unconditionally, the same way `putchar` is -- an unused `declare`
+     // costs nothing, and every function in the module shares one `.ll`.
+     text.push_str("declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)\n");
++    text.push_str("declare i64 @llvm.cttz.i64(i64, i1)\n");
+     text.push_str("declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)\n");
+     text.push_str("declare {i64, i1} @llvm.smul.with.overflow.i64(i64, i64)\n");
+     // `sqrt` (§7.17, `docs/float-math.md` §2): correctly rounded per
+diff --git a/crates/lex-sys-codegen/src/body/expr.rs b/crates/lex-sys-codegen/src/body/expr.rs
+index 16c790c..70d1682 100644
+--- a/crates/lex-sys-codegen/src/body/expr.rs
++++ b/crates/lex-sys-codegen/src/body/expr.rs
+@@ -705,6 +705,9 @@ impl<'a, 'f> BodyEmitter<'a, 'f> {
+                     Callee::Builtin(Builtin::CopyWithin) => self.copy_within(&args),
+                     Callee::Builtin(Builtin::CopyInto) => self.copy_into(&args),
+                     Callee::Builtin(Builtin::IndexOfByte) => self.index_of_byte(&args),
++                    Callee::Builtin(Builtin::ByteMask64 | Builtin::TrailingZeros) => {
++                        unreachable!("SPIKE builtins are LLVM-only")
++                    }
+                     // `docs/native-sockets.md` §4: the poller.
+                     Callee::Builtin(Builtin::PollerNew) => self.poller_new(),
+                     Callee::Builtin(Builtin::ClockMs) => self.clock_ms(false),
+diff --git a/crates/lex-sys-ir/src/builtin.rs b/crates/lex-sys-ir/src/builtin.rs
+index 328bc5f..d95e447 100644
+--- a/crates/lex-sys-ir/src/builtin.rs
++++ b/crates/lex-sys-ir/src/builtin.rs
+@@ -116,6 +116,13 @@ pub enum Builtin {
+     /// `memchr` answers. Pure and capability-free: it reads only the slice it was given. Edition 5.
+     /// `docs/byte-search.md`.
+     IndexOfByte,
++    /// `byte_mask64(text: &t [byte], at: int, a: byte, b: byte, c: byte) -> int` -- SPIKE (docs/gap-scan.md): bit `k` of
++    /// the answer is set when `text[at + k]` is `a`, `b` or `c`, for `k` in 0..64; traps unless `0 <= at` and
++    /// `at + 64 <= len(text)`. Four 16-byte vector compares and their movemasks on the LLVM backend. Pure.
++    ByteMask64,
++    /// `trailing_zeros(x: int) -> int` -- SPIKE: the number of zero bits below the lowest set bit of `x`, 64 for 0
++    /// (`cttz`; `tzcnt` / `rbit clz`). Pure.
++    TrailingZeros,
+     /// `fork_clock(c: &x Clock) -> Clock` — a second owned `Clock` from a
+     /// shared borrow of the first (`docs/parallelism.md` §9).
+     ///
+@@ -674,6 +681,8 @@ impl Builtin {
+         Builtin::CopyWithin,
+         Builtin::CopyInto,
+         Builtin::IndexOfByte,
++        Builtin::ByteMask64,
++        Builtin::TrailingZeros,
+         Builtin::WrappingAdd,
+         Builtin::WrappingSub,
+         Builtin::WrappingMul,
+@@ -796,6 +805,8 @@ impl Builtin {
+             Builtin::CopyWithin => "copy_within",
+             Builtin::CopyInto => "copy_into",
+             Builtin::IndexOfByte => "index_of_byte",
++            Builtin::ByteMask64 => "byte_mask64",
++            Builtin::TrailingZeros => "trailing_zeros",
+             Builtin::WrappingAdd => "wrapping_add",
+             Builtin::WrappingSub => "wrapping_sub",
+             Builtin::WrappingMul => "wrapping_mul",
+@@ -952,6 +963,8 @@ impl Builtin {
+             | Builtin::CopyWithin
+             | Builtin::CopyInto
+             | Builtin::IndexOfByte
++            | Builtin::ByteMask64
++            | Builtin::TrailingZeros
+             | Builtin::ListenerClose => 5,
+             // `docs/checked-output.md`: a name a program may already have
+             // declared for itself, so it is visible from edition 5 only.
+@@ -1131,6 +1144,7 @@ impl Builtin {
+             | Builtin::ForkClock
+             | Builtin::CopyWithin
+             | Builtin::IndexOfByte
++            | Builtin::ByteMask64
+             | Builtin::ClockMs
+             | Builtin::ClockUnixMs => 1,
+             // The destination's region and the source's.
+@@ -1699,6 +1713,21 @@ impl Builtin {
+                 ],
+                 Type::Int,
+             ),
++            Builtin::ByteMask64 => (
++                vec![
++                    Type::Ref {
++                        unique: false,
++                        region: Region::Param(0),
++                        inner: Box::new(Type::Slice(Box::new(Type::Byte))),
++                    },
++                    Type::Int,
++                    Type::Byte,
++                    Type::Byte,
++                    Type::Byte,
++                ],
++                Type::Int,
++            ),
++            Builtin::TrailingZeros => (vec![Type::Int], Type::Int),
+             Builtin::IndexOfByte => (
+                 vec![
+                     Type::Ref {
