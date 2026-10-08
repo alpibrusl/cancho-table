@@ -56,6 +56,16 @@ class ReadLoop(unittest.TestCase):
             with self.subTest(word):
                 self.assertNotIn(word, run, "the loop function must not read flags or render answers (%s)" % word)
 
+    def test_every_invariant_the_loop_reads_is_written_by_read_file(self):
+        """The box is read in `run` and filled in `read_file`: an entry read and never written is zero for ever, and for the entries that only
+        choose a faster path (threads for a sort, a chunk size that was given) no output test would notice."""
+        run = function(self.loop, "run")
+        read = set(re.findall(r"contents\(pr\)\[(p_\w+)\(\)\]", run))
+        self.assertGreaterEqual(len(read), 20)
+        for name in sorted(read):
+            with self.subTest(name):
+                self.assertRegex(self.table, r"u\[readloop\.%s\(\)\] = " % name, "%s is read by the loop and never set by read_file" % name)
+
     def test_the_loop_module_does_not_import_the_cli(self):
         self.assertNotRegex(self.loop, r"^import (cli|out|fail);", "the loop module is below the cli")
 
