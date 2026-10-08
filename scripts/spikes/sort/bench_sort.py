@@ -62,6 +62,7 @@ def main():
     ap.add_argument("--sorts", default="m,r")
     ap.add_argument("--outs", default="m")
     ap.add_argument("--others", default="duckdb,csvtk,sort")
+    ap.add_argument("--duck-threads", type=int, default=0, help="DuckDB's default ignores a taskset mask (16 threads on 6 cpus): say how many it gets")
     a = ap.parse_args()
     f = os.path.abspath(a.file)
     root, name = os.path.dirname(f), os.path.basename(f)
@@ -86,7 +87,8 @@ def main():
         if "duckdb" in others and shutil.which("duckdb"):
             q = "COPY (SELECT * FROM read_csv('%s') ORDER BY %s) TO '/dev/stdout' (FORMAT csv)" % (f, dorder)
             contenders["duckdb t=1"] = (ts + ["duckdb", "-c", "SET threads=1; " + q.replace("/dev/stdout", "/dev/null")], ts + ["duckdb", "-c", "SET threads=1; " + q])
-            contenders["duckdb default"] = (ts + ["duckdb", "-c", q.replace("/dev/stdout", "/dev/null")], ts + ["duckdb", "-c", q])
+            pre = "SET threads=%d; " % a.duck_threads if a.duck_threads else ""
+            contenders["duckdb default" if not a.duck_threads else "duckdb t=%d" % a.duck_threads] = (ts + ["duckdb", "-c", pre + q.replace("/dev/stdout", "/dev/null")], ts + ["duckdb", "-c", pre + q])
         if "csvtk" in others and shutil.which("csvtk") and ckeys:
             contenders["csvtk sort"] = ts + ["csvtk", "-j", "1", "sort"] + ckeys + [f]
         if "sort" in others:
@@ -114,15 +116,23 @@ def main():
                 good[nme] = timed
             else:
                 print("  %s: output differs, not timed" % nme)
-        print("\n%s %s (%d lines, min of %d)" % (cid, title, len(ref), a.runs))
+        print("\n%s %s (%d lines, min of %d; load average at the start %s)" % (cid, title, len(ref), a.runs, " ".join("%.1f" % x for x in os.getloadavg())))
         print("%-26s %8s %8s %9s" % ("contender", "wall s", "cpu s", "RSS MB"))
         names = list(good)
         best = {n: [9e9, 9e9] for n in names}
         for r in range(a.runs):
             for n in names[r % len(names):] + names[:r % len(names)]:
-                w, c, rc = once(good[n])
+                # a run that exited non-zero is not a time (DuckDB finds /dev/null locked by another DuckDB: docs/gap-sort.md section 1)
+                for attempt in range(5):
+                    w, c, rc = once(good[n])
+                    if rc == 0:
+                        break
+                    time.sleep(0.2)
+                else:
+                    sys.exit("%s exited non-zero 5 times in a row" % n)
                 if w < best[n][0]:
                     best[n] = [w, c]
+        print("(load average at the end of the timing %s)" % " ".join("%.1f" % x for x in os.getloadavg()))
         for n in names:
             m = rss(good[n])
             print("%-26s %8.3f %8.3f %9s" % (n, best[n][0], best[n][1], "%.0f" % m if m else "n/a"))
