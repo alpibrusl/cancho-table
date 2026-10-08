@@ -1,0 +1,95 @@
+// SPIKE (docs/gap-sort.md section 7): what an 8-byte integer costs to write into a byte slice and read back, with the byte loops that
+// agg.put_i64 and agg.get_i64 are (the language has no wider load or store of a slice).
+//
+//     i64cost MODE ROUNDS      MODE  put: write 1M integers into 8 MB, ROUNDS times;  get: read 1M integers with agg.get_i64, ROUNDS times;
+//                              h: the same with get_i64_shift (eight shifts, no split of the top byte)
+//
+// ns per integer = (time at ROUNDS=41 - time at ROUNDS=1) / 40 / 1M.
+edition 5;
+
+import std.buffer;
+import std.io;
+
+fn put_i64[&o](out: &!o [byte], at: int, v: int) -> [] int {
+    var i = 0;
+    while i < 8 {
+        out[at + i] = byte_of(v >> 8 * i & 255);
+        i = i + 1;
+    }
+    return at + 8;
+}
+
+fn get_i64[&b](blob: &b [byte], at: int) -> [] int {
+    let low = int_of(blob[at]) | int_of(blob[at + 1]) << 8 | int_of(blob[at + 2]) << 16 | int_of(blob[at + 3]) << 24;
+    var top = int_of(blob[at + 7]);
+    if top >= 128 {
+        top = top - 256;
+    }
+    let high = int_of(blob[at + 4]) | int_of(blob[at + 5]) << 8 | int_of(blob[at + 6]) << 16;
+    return (high + top * 16777216) * 4294967296 + low;
+}
+
+// the same, with the eight bytes put together by shifts (a shift does not trap, so the top byte's shift makes the sign)
+fn get_i64_shift[&b](blob: &b [byte], at: int) -> [] int {
+    return int_of(blob[at]) | int_of(blob[at + 1]) << 8 | int_of(blob[at + 2]) << 16 | int_of(blob[at + 3]) << 24 | int_of(blob[at + 4]) << 32 | int_of(blob[at + 5]) << 40 | int_of(blob[at + 6]) << 48 | int_of(blob[at + 7]) << 56;
+}
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(clock);
+    var mode = 0;
+    var rounds = 1;
+    borrow args as &g in {
+        if int_of(arg(g, 1)[0]) == 'g' {
+            mode = 1;
+        }
+        if int_of(arg(g, 1)[0]) == 'h' {
+            mode = 2;
+        }
+        rounds = number_of(arg(g, 2));
+    }
+    release(args);
+    var hp = heap;
+    var sum = 0;
+    borrow mut hp as &!h in {
+        var b = box_slice(h, 8000008, byte_of(7));
+        borrow mut b as &!bw in {
+            let s = contents(bw);
+            var r = 0;
+            while r < rounds {
+                var i = 0;
+                while i < 1000000 {
+                    if mode == 0 {
+                        put_i64(s, 8 * i, i * 1000003 + r);
+                    } else if mode == 1 {
+                        sum = sum + get_i64(s, 8 * i) % 1000;
+                    } else {
+                        sum = sum + get_i64_shift(s, 8 * i) % 1000;
+                    }
+                    i = i + 1;
+                }
+                r = r + 1;
+            }
+        }
+        unbox_slice(h, b);
+        borrow mut io as &!i2 in {
+            io.print_int(i2, sum);
+        }
+    }
+    release(hp);
+    release(io);
+    return 0;
+}

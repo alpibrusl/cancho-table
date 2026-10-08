@@ -100,10 +100,10 @@ A sort has state; every bound is a rule with a repair that suggests the way out.
 
 ## Threads
 
-The sort reads sequentially for now: `--threads N` with `--order-by` is accepted and runs the sequential read, and the
-answer is the same bytes (it is the same code). The design that would parallelise it is per-range sorted runs
-merged in order, with the stable tie-break by file position making the merge deterministic; it needs the groups'
-serialise-and-merge machinery for rows, and the benchmark below says whether it is worth it. It is not in this branch.
+The sort reads sequentially unless it is a whole sort written as csv: `--threads N` with `--order-by` and `--format csv`, without `--top`,
+`--limit` or `--from`, sorts each range of the file in its own thread into a run and merges the runs in as many partitions as threads (`psort.cho`),
+and the answer is the same bytes as the sequential sort's for every thread count (`docs/gap-sort.md`: the design, the proof, the measurements and the
+tests). A page, `--top` and json are the sequential sort, which keeps the first rows in bounded memory. (The sequential sort is 3.4x to 3.9x slower than DuckDB's default on the 16-core Mac; with 16 threads it is 2.0x to 2.2x faster, `docs/gap-sort.md` section 6.)
 
 ## Rules
 
@@ -118,7 +118,7 @@ now covers sorting), `limit.too-many-rows`, `args.conflict`, `args.required-flag
 
 `--order-by` and `--max-sort-rows` as designed, and `--top` for rows. A key's `:int`, `-`, `\-` and `\:` are as above.
 Two points where the build differs from the sketch above: the sort is stable because the merge is (the rows are not
-numbered), and `--threads` is accepted and sorts sequentially, with the same bytes, as said.
+numbered), and `--threads` was accepted and sorted sequentially, with the same bytes, as said (a whole sort written as csv is sorted by the threads since `docs/gap-sort.md`, with the same bytes).
 
 **Everything held is a record of the file plus ints.** A million rows of 40 bytes with one key hold about 130 MB
 (Mac RSS 173 to 181 MB for A1 and A2; 98 to 101 MB on Linux); the top 1000 hold 2.1 MB, the same as `--select`.
