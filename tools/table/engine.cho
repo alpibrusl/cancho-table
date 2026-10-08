@@ -9,6 +9,18 @@ module engine;
 // a block of csv is pending) or added to its group. The sequential read in table.cho
 // and the scan of a byte range in scan.cho (what a worker thread runs, and what the
 // parent runs again when a worker's answer cannot be trusted) call the same ones.
+//
+// The READER CONTRACT (docs/readers.md section 2). A reader is not a type but whatever turns bytes into what this module consumes, with one loop per format over this same
+// engine (no `if format` in a loop, no function value per record: both were measured and refused):
+//
+//   header   the names as a Buffer and where each ends (frame.cho resolves the plan against them): the first record for csv, the declared fields for json lines
+//   record   the bytes of the record, whole (csv: its lines joined by LF, the last CR dropped; json lines: the line, CR dropped), and for each field of the header three ints
+//            in header order: first, last, flag (into the record; flag 0: the cell is the bytes as they are, flag 1: csv-quoted, a doubled quote in it is one quote)
+//   line     the 1-based physical line the record began on, for the reports; the record number is this module's count (`count_row`)
+//   status   a record, NEED more bytes, DONE, LONG (a line past --max-line-bytes) or REFUSED (a rule, its line, its facts)
+//
+// The csv loops are readloop.cho (the sequential read, which no other code shares a function with) and scan.cho (a byte range); R0 moved the first out of table.cho
+// unchanged, so that an edit to the code that parses the flags cannot move its machine code (docs/numbers.md, "What was built: R0 and Q0").
 
 import std.buffer;
 import std.bytes;

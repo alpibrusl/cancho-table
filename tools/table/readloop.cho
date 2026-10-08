@@ -1,0 +1,612 @@
+edition 5;
+
+module readloop;
+
+// The sequential read: the loop that takes a file's lines and gives each record to the engine (docs/readers.md, section 2; docs/query.md Q0).
+//
+// It is a function of its own, and not a part of `table.cho`'s `read_file`, for a measured reason (docs/numbers.md, N6): **the instruction count of this loop is a
+// function of the text of the function it is compiled in.** The same sources gave +1.0%, +0.7% and +0.15% in every one-thread read according to what else
+// `read_file` held (flag parsing, the finishing of the answer, the explanation of a refusal), with no edit to the loop itself. Here its neighbours are only what it
+// calls, so the flag parsing and the rendering can change without moving it, and a stage that adds a reader writes its own loop beside this one (section 2, way C).
+//
+// Everything it needs is passed in. The ints of the plan and the bounds are in `p` (the `P_` functions name them); the state that the loop makes and the rest of the read
+// uses afterwards is `Held`, moved in and out. `a` is the tally (engine.cho's `k_` functions).
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import agg;
+import engine;
+import frame;
+import par;
+import query;
+import reader;
+import report;
+import scan;
+import sorter;
+import toolbox.lines;
+import toolbox.out;
+
+pub fn p_delim() -> [] int {
+    return 0;
+}
+
+pub fn p_mode() -> [] int {
+    return 1;
+}
+
+pub fn p_csv() -> [] int {
+    return 2;
+}
+
+pub fn p_from() -> [] int {
+    return 3;
+}
+
+pub fn p_limit() -> [] int {
+    return 4;
+}
+
+pub fn p_budget() -> [] int {
+    return 5;
+}
+
+pub fn p_most() -> [] int {
+    return 6;
+}
+
+pub fn p_cap() -> [] int {
+    return 7;
+}
+
+pub fn p_row_from() -> [] int {
+    return 8;
+}
+
+pub fn p_row_mode() -> [] int {
+    return 9;
+}
+
+pub fn p_max_groups() -> [] int {
+    return 10;
+}
+
+pub fn p_max_distinct() -> [] int {
+    return 11;
+}
+
+pub fn p_max_state() -> [] int {
+    return 12;
+}
+
+pub fn p_threads() -> [] int {
+    return 13;
+}
+
+pub fn p_chunk() -> [] int {
+    return 14;
+}
+
+pub fn p_min_bytes() -> [] int {
+    return 15;
+}
+
+pub fn p_ordering() -> [] int {
+    return 16;
+}
+
+pub fn p_wanted() -> [] int {
+    return 17;
+}
+
+pub fn p_max_sort_rows() -> [] int {
+    return 18;
+}
+
+pub fn p_filtering() -> [] int {
+    return 19;
+}
+
+pub fn p_fast_ok() -> [] int {
+    return 20;
+}
+
+pub fn p_count() -> [] int {
+    return 21;
+}
+
+// What the loop makes and the rest of the read uses.
+pub res struct Held {
+    names: buffer.Buffer,
+    hends: vec.Vec[int],
+    head: buffer.Buffer,
+    rows: buffer.Buffer,
+    scratch: buffer.Buffer,
+    escr: buffer.Buffer,
+    kept: buffer.Buffer,
+    groups: agg.Groups,
+    rec: buffer.Buffer,
+    cols: Box[[int]],
+    cells: Box[[int]],
+    sel: Box[[int]],
+    labels: buffer.Buffer,
+    lends: vec.Vec[int],
+    picked: int,
+    header: bool,
+    quoted: bool,
+    opened: int,
+    tally: Box[[int]],
+}
+
+// The output of a csv answer starts with its header line.
+fn start_output[&h](heap: &!h Heap, rows: buffer.Buffer, lead: buffer.Buffer) -> [heap] buffer.Buffer {
+    var r = rows;
+    var empty = true;
+    borrow lead as &lr in {
+        empty = buffer.size(lr) == 0;
+        r = buffer.append(heap, r, buffer.bytes(lr));
+    }
+    if empty {
+        // One empty name is `""`: a blank line is no record.
+        r = buffer.append(heap, r, "\"\"");
+    }
+    r = buffer.push(heap, r, byte_of(10));
+    buffer.drop(heap, lead);
+    return r;
+}
+
+// `--report types` answers with its own columns, whatever the frame made of the selection: the frame's json header, or the report's (functions of their own: this
+// code inside the read function made the compiler spend more on every row of every one-thread read).
+fn report_head[&h](heap: &!h Heap, reporting: bool, head: buffer.Buffer) -> [heap] buffer.Buffer {
+    if reporting {
+        buffer.drop(heap, head);
+        return report.head_json(heap);
+    }
+    return head;
+}
+
+fn report_lead[&h](heap: &!h Heap, reporting: bool, lead: buffer.Buffer, delim: int) -> [heap] buffer.Buffer {
+    if reporting {
+        buffer.drop(heap, lead);
+        return report.head_csv(heap, delim);
+    }
+    return lead;
+}
+
+// The loop. Answers the held state and the reader (left for the caller to ask what failed and to drop).
+pub fn run[&h, &i, &f, &fs, &rt, &rl, &fu, &q](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &fs Fs(""), root: &rt [byte], rel: &rl [byte], full: &fu [byte], tree: &q query.Query, prm: Box[[int]], sort: &static [byte]) -> [heap, file_read, io_write, conc, fs_read(""), dir_read] (Held, lines.Lines) {
+    //heap: &!h Heap, io: &!i Io, file: &!f File, fs: &fs Fs(""), root: &rt [byte], rel: &rl [byte], full: &fu [byte], tree: &q query.Query, prm: Box[[int]], sort: &static [byte]) -> [heap, file_read, io_write, conc, fs_read(""), dir_read] (Held, lines.Lines) {
+    var delim = 0;
+    var mode = 0;
+    var as_csv = false;
+    var from = 0;
+    var limit = 0;
+    var budget = 0;
+    var most = 0;
+    var cap = 0;
+    var row_from = 0;
+    var row_mode = 0;
+    var max_groups = 0;
+    var max_distinct = 0;
+    var max_state = 0;
+    var threads = 0;
+    var chunk = 0;
+    var min_bytes = 0;
+    var ordering = false;
+    var wanted = 0;
+    var max_sort_rows = 0;
+    var filtering = false;
+    var fast_ok = false;
+    borrow prm as &pr in {
+        delim = contents(pr)[p_delim()];
+        mode = contents(pr)[p_mode()];
+        as_csv = contents(pr)[p_csv()] == 1;
+        from = contents(pr)[p_from()];
+        limit = contents(pr)[p_limit()];
+        budget = contents(pr)[p_budget()];
+        most = contents(pr)[p_most()];
+        cap = contents(pr)[p_cap()];
+        row_from = contents(pr)[p_row_from()];
+        row_mode = contents(pr)[p_row_mode()];
+        max_groups = contents(pr)[p_max_groups()];
+        max_distinct = contents(pr)[p_max_distinct()];
+        max_state = contents(pr)[p_max_state()];
+        threads = contents(pr)[p_threads()];
+        chunk = contents(pr)[p_chunk()];
+        min_bytes = contents(pr)[p_min_bytes()];
+        ordering = contents(pr)[p_ordering()] == 1;
+        wanted = contents(pr)[p_wanted()];
+        max_sort_rows = contents(pr)[p_max_sort_rows()];
+        filtering = contents(pr)[p_filtering()] == 1;
+        fast_ok = contents(pr)[p_fast_ok()] == 1;
+    }
+    unbox_slice(heap, prm);
+    var names = buffer.empty(heap, 1);
+    var hends = vec.empty(heap, 1, 0);
+    var head = buffer.empty(heap, 1);
+    var rows = buffer.empty(heap, 1);
+    var scratch = buffer.empty(heap, 1);
+    var escr = buffer.empty(heap, 16);
+    var kept = buffer.empty(heap, 64);
+    var groups = agg.start(heap, tree);
+    var rec = buffer.empty(heap, 256);
+    var cols = box_slice(heap, 1, 0);
+    var cells = box_slice(heap, 3, 0);
+    var sel = box_slice(heap, 1, 0);
+    var labels = buffer.empty(heap, 1);
+    var lends = vec.empty(heap, 1, 0);
+    var tally = box_slice(heap, engine.k_size(), 0);
+    var picked = 0;
+    var header = false;
+    var quoted = false;
+    var opened = 0;
+    var seps = 0;
+    var r = lines.start(heap, cap);
+    var going = true;
+    borrow mut tally as &!tw in {
+        let a = contents(tw);
+        while going {
+            var status = 9;
+            borrow mut r as &!rw in {
+                status = scan.next_fast(rw);
+            }
+            if status == 9 {
+                let (stepped, answer) = lines.next(heap, r);
+                r = stepped;
+                status = answer;
+            }
+            if status == lines.need() {
+                r = lines.fill_file(r, file);
+            } else if status == lines.done() {
+                going = false;
+            } else if status == lines.long() {
+                a[engine.k_abort()] = 4;
+                borrow r as &rr in {
+                    a[engine.k_abort_line()] = lines.number(rr);
+                    a[engine.k_long()] = lines.length(rr);
+                }
+                going = false;
+            } else {
+                borrow r as &rr in {
+                    let number = lines.number(rr);
+                    var line = lines.text(rr);
+                    // A byte order mark belongs to the file, not to the first name.
+                    if number == 1 && len(line) >= 3 && int_of(line[0]) == 239 && int_of(line[1]) == 187 && int_of(line[2]) == 191 {
+                        line = line[3..len(line)];
+                    }
+                    let whole = line;
+                    if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                        line = line[0..len(line) - 1];
+                    }
+                    if !quoted && len(line) == 0 {
+                        // A blank line between records is not a record.
+                    } else if header && !quoted && a[engine.k_records()] >= most {
+                        // A record past the bound: not read, so not judged.
+                        a[engine.k_capped()] = 1;
+                        going = false;
+                    } else if header && !quoted && mode == 1 && !filtering && a[engine.k_records()] >= from && a[engine.k_emitted()] >= limit {
+                        // The page is full and there is another record.
+                        a[engine.k_more()] = 1;
+                        a[engine.k_next()] = a[engine.k_records()];
+                        going = false;
+                    } else if header && !quoted {
+                        // A data record begins; most are whole on this line.
+                        var inside = false;
+                        var found = 0;
+                        var bad = false;
+                        if mode != 0 {
+                            borrow mut cells as &!cw in {
+                                let (n, open, wrong) = reader.fields(line, delim, contents(cw), a[engine.k_columns()]);
+                                found = n;
+                                inside = open;
+                                bad = wrong;
+                            }
+                        } else {
+                            let (open, n, wrong) = reader.scan(line, delim, false, 0);
+                            found = n + 1;
+                            inside = open;
+                            seps = n;
+                            bad = wrong;
+                        }
+                        if bad {
+                            a[engine.k_abort()] = 1;
+                            a[engine.k_abort_line()] = number;
+                            going = false;
+                        } else if inside {
+                            quoted = true;
+                            opened = number;
+                            borrow mut rec as &!rw in {
+                                buffer.clear(rw);
+                            }
+                            if mode != 0 {
+                                rec = buffer.append(heap, rec, whole);
+                                rec = buffer.push(heap, rec, byte_of(10));
+                            }
+                        } else if engine.count_row(a, found, number, row_from) && mode != 0 {
+                            borrow cells as &cr in {
+                                borrow sel as &sr in {
+                                    borrow cols as &kr in {
+                                        if row_mode == 1 {
+                                            let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), line, contents(cr), contents(sr), picked, delim, as_csv, budget, number, limit, a);
+                                            rows = r2;
+                                            scratch = s2;
+                                            escr = e2;
+                                            kept = k2;
+                                        } else {
+                                            var hot = 1;
+                                            if !fast_ok {
+                                                // a distinct count is not added in place: `process_groups`
+                                            } else if !filtering {
+                                                var got = 1;
+                                                borrow mut groups as &!gw in {
+                                                    got = engine.group_plain(gw, tree, contents(kr), line, contents(cr));
+                                                }
+                                                if got >= 16 {
+                                                    kept = engine.group_refused(heap, kept, tree, contents(kr), line, contents(cr), number, got, a);
+                                                    hot = 0;
+                                                } else {
+                                                    hot = got;
+                                                }
+                                            } else {
+                                                borrow mut groups as &!gw in {
+                                                    let (f2, e2, k2) = engine.group_fast(heap, gw, escr, kept, tree, contents(kr), line, contents(cr), number, a);
+                                                    hot = f2;
+                                                    escr = e2;
+                                                    kept = k2;
+                                                }
+                                            }
+                                            if hot == 1 || hot == 3 {
+                                                let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), line, contents(cr), number, max_groups, max_distinct, max_state, hot == 3, a);
+                                                groups = g2;
+                                                escr = e2;
+                                                kept = k2;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // The header, or the rest of a record that has quotes open: kept.
+                        if !quoted {
+                            opened = number;
+                            borrow mut rec as &!rw in {
+                                buffer.clear(rw);
+                            }
+                            seps = 0;
+                        }
+                        let (inside, n, bad) = reader.scan(line, delim, quoted, seps);
+                        seps = n;
+                        if !header || mode != 0 {
+                            rec = buffer.append(heap, rec, whole);
+                        }
+                        var held = 0;
+                        borrow rec as &rw in {
+                            held = buffer.size(rw);
+                        }
+                        if bad {
+                            a[engine.k_abort()] = 1;
+                            a[engine.k_abort_line()] = number;
+                            going = false;
+                        } else if inside {
+                            quoted = true;
+                            if !header || mode != 0 {
+                                rec = buffer.push(heap, rec, byte_of(10));
+                            }
+                            if held + 1 > cap {
+                                a[engine.k_abort()] = 3;
+                                if header {
+                                    a[engine.k_abort()] = 7;
+                                }
+                                a[engine.k_abort_line()] = opened;
+                                going = false;
+                            }
+                        } else {
+                            quoted = false;
+                            seps = 0;
+                            if !header {
+                                buffer.drop(heap, names);
+                                vec.drop(heap, hends);
+                                borrow rec as &rw in {
+                                    let (nm, en) = reader.split_header(heap, buffer.bytes(rw), delim);
+                                    names = nm;
+                                    hends = en;
+                                }
+                                header = true;
+                                borrow hends as &er in {
+                                    a[engine.k_columns()] = vec.size(er);
+                                }
+                                if mode != 0 {
+                                    var made = frame.none(heap);
+                                    frame.drop(heap, made);
+                                    borrow names as &nr in {
+                                        borrow hends as &er in {
+                                            made = frame.prepare(heap, tree, nr, er, a[engine.k_columns()], mode, delim, sort);
+                                        }
+                                    }
+                                    let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
+                                    unbox_slice(heap, cols);
+                                    unbox_slice(heap, sel);
+                                    unbox_slice(heap, cells);
+                                    buffer.drop(heap, head);
+                                    buffer.drop(heap, labels);
+                                    vec.drop(heap, lends);
+                                    cols = fcols;
+                                    sel = fsel;
+                                    cells = fcells;
+                                    head = report_head(heap, query.reporting(tree), fhead);
+                                    labels = flabels;
+                                    lends = flends;
+                                    picked = fpicked;
+                                    a[engine.k_sort_field()] = fsort_field;
+                                    a[engine.k_sort_slot()] = fsort_slot;
+                                    a[engine.k_sort_desc()] = fdesc;
+                                    if ordering && !query.reporting(tree) && fabort == 0 {
+                                        let nk = query.order_count(tree);
+                                        var okeys = box_slice(heap, 3 * nk + 1, 0);
+                                        borrow mut okeys as &!ow in {
+                                            borrow cols as &cr in {
+                                                var j = 0;
+                                                while j < nk {
+                                                    contents(ow)[3 * j] = contents(cr)[query.order_name(tree, j)];
+                                                    contents(ow)[3 * j + 1] = query.order_flags(tree, j) % 2;
+                                                    contents(ow)[3 * j + 2] = query.order_flags(tree, j) / 2;
+                                                    j = j + 1;
+                                                }
+                                            }
+                                        }
+                                        borrow okeys as &okr in {
+                                            groups = sorter.configure(groups, nk, wanted, max_sort_rows, max_state, contents(okr));
+                                        }
+                                        unbox_slice(heap, okeys);
+                                    }
+                                    if fabort != 0 {
+                                        a[engine.k_abort()] = fabort;
+                                        a[engine.k_bad_name()] = fbad;
+                                        going = false;
+                                    }
+                                    if as_csv && fabort == 0 {
+                                        rows = start_output(heap, rows, report_lead(heap, query.reporting(tree), flead, delim));
+                                    } else {
+                                        buffer.drop(heap, flead);
+                                    }
+                                }
+                                // The rest of the file, by several threads, when that is asked for and
+                                // worth it (par.cho): it leaves the tally, the output and the groups as
+                                // this loop would have.
+                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0) {
+                                    var size = 0;
+                                    match file_size(file) {
+                                        Done::Ok(n) => {
+                                            size = n;
+                                        }
+                                        Done::Failed(reason) => {
+                                            size = 0;
+                                        }
+                                    }
+                                    var at = 0;
+                                    var lines_so_far = 0;
+                                    borrow r as &rr in {
+                                        at = lines.consumed(rr);
+                                        lines_so_far = lines.number(rr);
+                                    }
+                                    if size - at >= min_bytes && size - at > 0 {
+                                        var pp = box_slice(heap, scan.p_count(), 0);
+                                        borrow mut pp as &!pw in {
+                                            let u = contents(pw);
+                                            u[scan.p_delim()] = delim;
+                                            u[scan.p_mode()] = mode;
+                                            if query.reporting(tree) {
+                                                u[scan.p_mode()] = 2;
+                                            }
+                                            if as_csv {
+                                                u[scan.p_csv()] = 1;
+                                                u[scan.p_yield()] = 65536;
+                                            }
+                                            u[scan.p_picked()] = picked;
+                                            u[scan.p_budget()] = budget;
+                                            u[scan.p_limit()] = limit;
+                                            u[scan.p_most()] = most;
+                                            u[scan.p_from()] = row_from;
+                                            u[scan.p_max_groups()] = max_groups;
+                                            u[scan.p_max_distinct()] = max_distinct;
+                                            u[scan.p_max_state()] = max_state;
+                                            u[scan.p_cap()] = cap;
+                                            u[scan.p_base_line()] = lines_so_far;
+                                            u[scan.p_size()] = size;
+                                            borrow mut cells as &!cw in {
+                                                borrow cols as &kr in {
+                                                    borrow sel as &sr in {
+                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
+                                                        rows = r2;
+                                                        scratch = s2;
+                                                        escr = e2;
+                                                        kept = k2;
+                                                        groups = g2;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        unbox_slice(heap, pp);
+                                        going = false;
+                                    }
+                                }
+                            } else {
+                                // A data record that spanned lines, whole in `rec`.
+                                var record_len = 0;
+                                borrow rec as &rw in {
+                                    record_len = buffer.size(rw);
+                                    var record = buffer.bytes(rw);
+                                    if record_len > 0 && int_of(record[record_len - 1]) == 13 {
+                                        record = record[0..record_len - 1];
+                                    }
+                                    var found = n + 1;
+                                    var wrong = false;
+                                    if mode != 0 {
+                                        borrow mut cells as &!cw in {
+                                            let (n, open, bad_quote) = reader.fields(record, delim, contents(cw), a[engine.k_columns()]);
+                                            found = n;
+                                            wrong = bad_quote || open;
+                                        }
+                                    }
+                                    if wrong {
+                                        a[engine.k_abort()] = 1;
+                                        a[engine.k_abort_line()] = opened;
+                                        going = false;
+                                    } else if engine.count_row(a, found, opened, row_from) && mode != 0 {
+                                        borrow cells as &cr in {
+                                            borrow sel as &sr in {
+                                                borrow cols as &kr in {
+                                                    if row_mode == 1 {
+                                                        let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), record, contents(cr), contents(sr), picked, delim, as_csv, budget, opened, limit, a);
+                                                        rows = r2;
+                                                        scratch = s2;
+                                                        escr = e2;
+                                                        kept = k2;
+                                                    } else {
+                                                        var hot = 1;
+                                                        if !fast_ok {
+                                                            // a distinct count is not added in place: `process_groups`
+                                                        } else if !filtering {
+                                                            var got = 1;
+                                                            borrow mut groups as &!gw in {
+                                                                got = engine.group_plain(gw, tree, contents(kr), record, contents(cr));
+                                                            }
+                                                            if got >= 16 {
+                                                                kept = engine.group_refused(heap, kept, tree, contents(kr), record, contents(cr), opened, got, a);
+                                                                hot = 0;
+                                                            } else {
+                                                                hot = got;
+                                                            }
+                                                        } else {
+                                                            borrow mut groups as &!gw in {
+                                                                let (f2, e2, k2) = engine.group_fast(heap, gw, escr, kept, tree, contents(kr), record, contents(cr), opened, a);
+                                                                hot = f2;
+                                                                escr = e2;
+                                                                kept = k2;
+                                                            }
+                                                        }
+                                                        if hot == 1 || hot == 3 {
+                                                            let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), record, contents(cr), opened, max_groups, max_distinct, max_state, hot == 3, a);
+                                                            groups = g2;
+                                                            escr = e2;
+                                                            kept = k2;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if a[engine.k_stop()] == 1 {
+                    going = false;
+                }
+            }
+        }
+    }
+    return (Held { names: names, hends: hends, head: head, rows: rows, scratch: scratch, escr: escr, kept: kept, groups: groups, rec: rec, cols: cols, cells: cells, sel: sel, labels: labels, lends: lends, picked: picked, header: header, quoted: quoted, opened: opened, tally: tally }, r);
+}

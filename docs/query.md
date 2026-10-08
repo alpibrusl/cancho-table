@@ -22,7 +22,7 @@
 | `select *` alone | needs one new flag, **`--rows`** (rows, all columns, no condition): today `table FILE` is the shape, and there is no way to ask for every row without a condition | a small gap the front end found |
 | errors | `query.syntax` (offset, what was expected), `query.unsupported` (the feature, what to write), `query.group-mismatch`, `query.too-long`; all exit 2 | as `where.syntax` does |
 | the gate | **a random plan rendered twice (flags, SQL), both run on the same table: same stdout, same stderr, same exit, refusals included**; prototype run: 0 differences in 1,556 runs; 26 of 26 mutants killed | section 8 |
-| `table explain` | **`--explain`, a flag** (not a subcommand): the resolved plan, columns with positions and types, bounds, the work class, the refusals that are certain without reading data and the ones that are possible; it reads the first chunk of the file for the header and nothing else, and nothing from standard input | section 9. Open question 1: the maintainer may want the subcommand |
+| `table explain` | **`--explain`, a flag** (not a subcommand): the resolved plan, columns with positions and types, bounds, the work class, the refusals that are certain without reading data and the ones that are possible; it reads the first chunk of the file for the header and nothing else, and nothing from standard input | section 9. Decided (section 13, 1): the flag |
 | surface | `introspect` and `skill` stay generated from the flag table and the rule table; the grammar's lexical tables (keywords, functions, types) are static tables the lexer and `introspect` both read; the examples in the skill are tested by parsing them | section 10 |
 
 ## 1. Why a translator, and what it costs
@@ -238,7 +238,7 @@ Nothing here builds a join; the grammar is shaped so that one fits without break
 
 ## 9. `--explain`
 
-`table --explain [the flags or --query] [FILE]` answers what the call *would do*, without doing it. **Why a flag and not `table explain`:** the contract's `describe.Tool` describes one command, so a subcommand has no flag table of its own, no input schema in MCP and no entry in `introspect`; a flag appears in all three with no new mechanism, as `--dry-run` does in the writers. (Open question 1.)
+`table --explain [the flags or --query] [FILE]` answers what the call *would do*, without doing it. **Why a flag and not `table explain`:** the contract's `describe.Tool` describes one command, so a subcommand has no flag table of its own, no input schema in MCP and no entry in `introspect`; a flag appears in all three with no new mechanism, as `--dry-run` does in the writers. (Decided: section 13, 1.)
 
 **What it reads.** It opens the file and reads the first chunk (the 64 KiB `lines` reads) to take the header, and closes it: **no record after the header is framed, split or counted** (gate E2: the bytes read from the file are at most the first chunk plus a header longer than that, and it takes under 20 ms on a 1 GB file). For **standard input it reads nothing** (consuming it would take the first record from the pipeline for no one's gain): the columns are `unresolved`, and only the refusals that need no header are reported. For JSON lines there is no header: the declared `--fields` are the columns, and nothing is read. **A file that does not exist, cannot be read or has a header past `--max-line-bytes` is refused as the run would refuse it** (`io.not-found` exit 3, `limit.header-too-large` exit 8, and so on), because a call that cannot open its input has nothing to explain.
 
@@ -343,7 +343,7 @@ A `from 'x'` in a query reaches the file through the same confinement as the `fi
 
 ## 11. Stages and gates
 
-Fixed before the build. Each stage ends with every earlier gate green, and with **G6** (`docs/numbers.md`; its third revision is being built on `numbers-n4` and is used as it ends): the stages Q0 to Q3 touch `body` and add modules and **do not touch `reader.cho`, `scan.cho`, `par.cho`, `engine.cho` or the read loops**, which the stage's `git diff --stat` shows, so G6 holds by construction; a stage that changes any of them measures it.
+Fixed before the build. Each stage ends with every earlier gate green, and with **G6** (`docs/numbers.md`, third revision, with its instruction-count form `gate_regress.py --counter`): the stages Q0 to Q3 touch `body` and add modules and **do not touch `reader.cho`, `scan.cho`, `par.cho`, `engine.cho` or the read loops**, which the stage's `git diff --stat` shows, so G6 holds by construction; a stage that changes any of them measures it.
 
 | stage | what | gates (pass lines, each able to fail) | fail line |
 |---|---|---|---|
@@ -361,13 +361,15 @@ Fixed before the build. Each stage ends with every earlier gate green, and with 
 5. **`select *` alone has no flag form**, and `--format csv` of every row of a file is "needs `--select`, `--where` or `--group`" today: `--rows` closes it, in the flags and in the query.
 6. **A query has no way to set paging separately from `limit`**: `--top` (keep N groups, `group_count` still the whole) has no query form; it stays flag-only, and `--query` conflicts with it only when the query has `limit`. A documented asymmetry, listed so that no one reads the gate as covering it.
 
-## 13. Open questions for the maintainer, with a recommendation each
+## 13. Decisions of the maintainer (2026-10-07: "go with the recommendations")
 
-1. **`--explain` (a flag) or `table explain` (a subcommand)?** Recommendation: **the flag**: it appears in `introspect`, in MCP's schema and in the skill with no change to the contract. If the subcommand is wanted, `describe.Tool` needs per-command descriptions first (cancho-tools).
-2. **Translator (flags) or a second plan builder?** Recommendation: **the translator**, for the reason in section 1; the cost is the repair in flag form and the front end's own literal checks.
-3. **Repairs of a query refusal: the flag form (v1) or the query form (needs spans)?** Recommendation: **flag form in v1** (runnable, exact); the query form when someone needs it.
-4. **`--rows`: accept the new flag?** Recommendation: **yes**: it is the only way to say "every row" and is a fix to the tool on its own merit.
-5. **Fix the `--agg \#` bug now (a separate PR) or with Q1?** Recommendation: **now, separately**, with the line in the gate's pool as its test, after the N4 stage lands (the same file).
-6. **`or` in `--where` (and so in the query)?** Recommendation: **not in this slice.** It changes the engine (`conds` is a conjunction, evaluated left to right and stopping at the first false one), the typed-cell refusals (what `a:int > 1 or b = 'x'` does with a bad `a` when `b = 'x'` is true) and `explain`; `docs/backlog.md` item 6 already asks for its own design.
-7. **Reserve the future words now?** Recommendation: **yes** (list in section 2): a query that is valid today must stay valid.
-8. **A `max` on a `text` flag in the contract (query length in MCP's schema)?** Recommendation: **nice to have, upstream, not a blocker.**
+Every question that was open here is **decided**, on 2026-10-07, **accepted by the maintainer as recommended**. Nothing is open in this document.
+
+1. **`--explain` (a flag) or `table explain` (a subcommand)?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **the flag**: it appears in `introspect`, in MCP's schema and in the skill with no change to the contract. If the subcommand is wanted, `describe.Tool` needs per-command descriptions first (cancho-tools).
+2. **Translator (flags) or a second plan builder?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **the translator**, for the reason in section 1; the cost is the repair in flag form and the front end's own literal checks.
+3. **Repairs of a query refusal: the flag form (v1) or the query form (needs spans)?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **flag form in v1** (runnable, exact); the query form when someone needs it.
+4. **`--rows`: accept the new flag?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **yes**: it is the only way to say "every row" and is a fix to the tool on its own merit.
+5. **Fix the `--agg \#` bug now (a separate PR) or with Q1?** (a separate session is on it; `agg.cho`'s handling of `\#` is not touched by the stages here) DECIDED 2026-10-07, accepted by the maintainer as recommended: **now, separately**, with the line in the gate's pool as its test, after the N4 stage lands (the same file).
+6. **`or` in `--where` (and so in the query)?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **not in this slice.** It changes the engine (`conds` is a conjunction, evaluated left to right and stopping at the first false one), the typed-cell refusals (what `a:int > 1 or b = 'x'` does with a bad `a` when `b = 'x'` is true) and `explain`; `docs/backlog.md` item 6 already asks for its own design.
+7. **Reserve the future words now?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **yes** (list in section 2): a query that is valid today must stay valid.
+8. **A `max` on a `text` flag in the contract (query length in MCP's schema)?** DECIDED 2026-10-07, accepted by the maintainer as recommended: **nice to have, upstream, not a blocker.**

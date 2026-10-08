@@ -21,7 +21,7 @@ How `table` is put together, and what its authority row says. Short on purpose: 
  [ reader.cho ]  RFC 4180: records, fields   --->   [ engine.cho ] ---------+
     ^                                              per row: ragged? --where? emit or add
     |                                                   |
-    +-- sequential read (table.cho)                      v
+    +-- sequential read (readloop.cho)                   v
     +-- parallel read (par.cho, scan.cho):          [ agg.cho ]  groups, sums, limits
         ranges of the file, one thread each,
         the parent takes them in file order
@@ -30,7 +30,8 @@ How `table` is put together, and what its authority row says. Short on purpose: 
 | piece | what it does |
 |---|---|
 | contract package (`cancho-tools`, modules `cli`, `describe`, `fail`, `limit`, `lines`, `out`, `path`, `place`, `text`) | the parts every tool of the family shares: the flag table, `introspect` and `skill`, the `table.v2` envelope, rules and repairs, limits, the line reader, paths confined beneath `--root`. Pinned by commit in `cancho.toml`, installed by `cancho build` |
-| `tools/table/table.cho` | the flags, the sequential read loop, the answers |
+| `tools/table/table.cho` | the flags (read once into one `Inputs` value, which `body` checks and builds the plan from), the answers |
+| `tools/table/readloop.cho` | the sequential read loop, in a function of its own that parses no flag and renders no answer: the loop's machine code, and so its instruction count, does not depend on the text of `table.cho` (`docs/numbers.md`, "What was built: R0 and Q0"). It is the csv *reader loop* of the reader contract (`docs/readers.md` section 2, written in `engine.cho`'s header); a loop for another format is another function like it |
 | `query.cho`, `plan.cho`, `expr.cho`, `frame.cho` | the plan: `--select`, `--where`, `--group` and `--agg` fill one `Query`; it is resolved against the header before any row is read, so a wrong column is refused at the cost of one line |
 | `reader.cho` | the RFC 4180 reader of its own: quotes, doubled quotes, newlines inside quotes, a byte order mark |
 | `engine.cho` | what is done with one row: counted, ragged (never used), kept by `--where`, then written or added to its group. Both reads call the same functions |

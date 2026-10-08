@@ -57,6 +57,7 @@ import par;
 import plan;
 import query;
 import reader;
+import readloop;
 import report;
 import scan;
 import sorter;
@@ -257,24 +258,6 @@ fn finish_groups[&h, &i, &g, &q, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Bu
     unbox_slice(heap, spare);
     unbox_slice(heap, prefixes);
     return (pending, row);
-}
-
-// `--report types` answers with its own columns, whatever the frame made of the selection: the frame's json header, or the report's (functions of their own: this
-// code inside the read function made the compiler spend more on every row of every one-thread read).
-fn report_head[&h](heap: &!h Heap, reporting: bool, head: buffer.Buffer) -> [heap] buffer.Buffer {
-    if reporting {
-        buffer.drop(heap, head);
-        return report.head_json(heap);
-    }
-    return head;
-}
-
-fn report_lead[&h](heap: &!h Heap, reporting: bool, lead: buffer.Buffer, delim: int) -> [heap] buffer.Buffer {
-    if reporting {
-        buffer.drop(heap, lead);
-        return report.head_csv(heap, delim);
-    }
-    return lead;
 }
 
 // The report's rows (report.cho), one for each column asked for, the page `--from` and `--limit` ask for, as csv written out or as json rows kept.
@@ -778,23 +761,6 @@ fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args
     return e;
 }
 
-// The output of a csv answer starts with its header line.
-fn start_output[&h](heap: &!h Heap, rows: buffer.Buffer, lead: buffer.Buffer) -> [heap] buffer.Buffer {
-    var r = rows;
-    var empty = true;
-    borrow lead as &lr in {
-        empty = buffer.size(lr) == 0;
-        r = buffer.append(heap, r, buffer.bytes(lr));
-    }
-    if empty {
-        // One empty name is `""`: a blank line is no record.
-        r = buffer.append(heap, r, "\"\"");
-    }
-    r = buffer.push(heap, r, byte_of(10));
-    buffer.drop(heap, lead);
-    return r;
-}
-
 // The sorted rows of `--order-by`, written as `--select` writes them: the rows from `from` on, up to `limit` and `top`, as
 // csv written out or as json kept (a page that stops short because of the byte budget or the limit says where the next one
 // begins: `next` is a place in the sorted answer).
@@ -887,395 +853,61 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
         row_from = 0;
     }
     var e = errs;
-    var names = buffer.empty(heap, 1);
-    var hends = vec.empty(heap, 1, 0);
-    var head = buffer.empty(heap, 1);
-    var rows = buffer.empty(heap, 1);
-    var scratch = buffer.empty(heap, 1);
-    var escr = buffer.empty(heap, 16);
-    var kept = buffer.empty(heap, 64);
-    var groups = agg.start(heap, tree);
-    var rec = buffer.empty(heap, 256);
-    var cols = box_slice(heap, 1, 0);
-    var cells = box_slice(heap, 3, 0);
-    var sel = box_slice(heap, 1, 0);
-    var labels = buffer.empty(heap, 1);
-    var lends = vec.empty(heap, 1, 0);
-    var tally = box_slice(heap, engine.k_size(), 0);
     var out_rows = buffer.empty(heap, 1);
     var out_kept = buffer.empty(heap, 1);
-    var picked = 0;
-    var header = false;
-    var quoted = false;
-    var seps = 0;
-    var opened = 0;
-    var r = lines.start(heap, cap);
-    var going = true;
     var c = Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+    var prm = box_slice(heap, readloop.p_count(), 0);
+    borrow mut prm as &!pw in {
+        let u = contents(pw);
+        u[readloop.p_delim()] = delim;
+        u[readloop.p_mode()] = mode;
+        if as_csv {
+            u[readloop.p_csv()] = 1;
+        }
+        u[readloop.p_from()] = from;
+        u[readloop.p_limit()] = limit;
+        u[readloop.p_budget()] = budget;
+        u[readloop.p_most()] = most;
+        u[readloop.p_cap()] = cap;
+        u[readloop.p_row_from()] = row_from;
+        u[readloop.p_row_mode()] = row_mode;
+        u[readloop.p_max_groups()] = max_groups;
+        u[readloop.p_max_distinct()] = max_distinct;
+        u[readloop.p_max_state()] = max_state;
+        u[readloop.p_threads()] = threads;
+        u[readloop.p_chunk()] = chunk;
+        u[readloop.p_min_bytes()] = min_bytes;
+        if ordering {
+            u[readloop.p_ordering()] = 1;
+        }
+        u[readloop.p_wanted()] = wanted;
+        u[readloop.p_max_sort_rows()] = max_sort_rows;
+        if filtering {
+            u[readloop.p_filtering()] = 1;
+        }
+        if fast_ok {
+            u[readloop.p_fast_ok()] = 1;
+        }
+    }
+    let (h1, r1) = readloop.run(heap, io, file, fs, root, rel, full, tree, prm, sort);
+    let readloop.Held { names, hends, head, rows, scratch, escr, kept, groups, rec, cols, cells, sel, labels, lends, picked, header, quoted, opened, tally } = h1;
+    var names = names;
+    var hends = hends;
+    var head = head;
+    var rows = rows;
+    var scratch = scratch;
+    var escr = escr;
+    var kept = kept;
+    var groups = groups;
+    var rec = rec;
+    var cols = cols;
+    var cells = cells;
+    var sel = sel;
+    var labels = labels;
+    var lends = lends;
+    var r = r1;
     borrow mut tally as &!tw in {
         let a = contents(tw);
-        while going {
-            var status = 9;
-            borrow mut r as &!rw in {
-                status = scan.next_fast(rw);
-            }
-            if status == 9 {
-                let (stepped, answer) = lines.next(heap, r);
-                r = stepped;
-                status = answer;
-            }
-            if status == lines.need() {
-                r = lines.fill_file(r, file);
-            } else if status == lines.done() {
-                going = false;
-            } else if status == lines.long() {
-                a[engine.k_abort()] = 4;
-                borrow r as &rr in {
-                    a[engine.k_abort_line()] = lines.number(rr);
-                    a[engine.k_long()] = lines.length(rr);
-                }
-                going = false;
-            } else {
-                borrow r as &rr in {
-                    let number = lines.number(rr);
-                    var line = lines.text(rr);
-                    // A byte order mark belongs to the file, not to the first name.
-                    if number == 1 && len(line) >= 3 && int_of(line[0]) == 239 && int_of(line[1]) == 187 && int_of(line[2]) == 191 {
-                        line = line[3..len(line)];
-                    }
-                    let whole = line;
-                    if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
-                        line = line[0..len(line) - 1];
-                    }
-                    if !quoted && len(line) == 0 {
-                        // A blank line between records is not a record.
-                    } else if header && !quoted && a[engine.k_records()] >= most {
-                        // A record past the bound: not read, so not judged.
-                        a[engine.k_capped()] = 1;
-                        going = false;
-                    } else if header && !quoted && mode == 1 && !filtering && a[engine.k_records()] >= from && a[engine.k_emitted()] >= limit {
-                        // The page is full and there is another record.
-                        a[engine.k_more()] = 1;
-                        a[engine.k_next()] = a[engine.k_records()];
-                        going = false;
-                    } else if header && !quoted {
-                        // A data record begins; most are whole on this line.
-                        var inside = false;
-                        var found = 0;
-                        var bad = false;
-                        if mode != 0 {
-                            borrow mut cells as &!cw in {
-                                let (n, open, wrong) = reader.fields(line, delim, contents(cw), a[engine.k_columns()]);
-                                found = n;
-                                inside = open;
-                                bad = wrong;
-                            }
-                        } else {
-                            let (open, n, wrong) = reader.scan(line, delim, false, 0);
-                            found = n + 1;
-                            inside = open;
-                            seps = n;
-                            bad = wrong;
-                        }
-                        if bad {
-                            a[engine.k_abort()] = 1;
-                            a[engine.k_abort_line()] = number;
-                            going = false;
-                        } else if inside {
-                            quoted = true;
-                            opened = number;
-                            borrow mut rec as &!rw in {
-                                buffer.clear(rw);
-                            }
-                            if mode != 0 {
-                                rec = buffer.append(heap, rec, whole);
-                                rec = buffer.push(heap, rec, byte_of(10));
-                            }
-                        } else if engine.count_row(a, found, number, row_from) && mode != 0 {
-                            borrow cells as &cr in {
-                                borrow sel as &sr in {
-                                    borrow cols as &kr in {
-                                        if row_mode == 1 {
-                                            let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), line, contents(cr), contents(sr), picked, delim, as_csv, budget, number, limit, a);
-                                            rows = r2;
-                                            scratch = s2;
-                                            escr = e2;
-                                            kept = k2;
-                                        } else {
-                                            var hot = 1;
-                                            if !fast_ok {
-                                                // a distinct count is not added in place: `process_groups`
-                                            } else if !filtering {
-                                                var got = 1;
-                                                borrow mut groups as &!gw in {
-                                                    got = engine.group_plain(gw, tree, contents(kr), line, contents(cr));
-                                                }
-                                                if got >= 16 {
-                                                    kept = engine.group_refused(heap, kept, tree, contents(kr), line, contents(cr), number, got, a);
-                                                    hot = 0;
-                                                } else {
-                                                    hot = got;
-                                                }
-                                            } else {
-                                                borrow mut groups as &!gw in {
-                                                    let (f2, e2, k2) = engine.group_fast(heap, gw, escr, kept, tree, contents(kr), line, contents(cr), number, a);
-                                                    hot = f2;
-                                                    escr = e2;
-                                                    kept = k2;
-                                                }
-                                            }
-                                            if hot == 1 || hot == 3 {
-                                                let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), line, contents(cr), number, max_groups, max_distinct, max_state, hot == 3, a);
-                                                groups = g2;
-                                                escr = e2;
-                                                kept = k2;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // The header, or the rest of a record that has quotes open: kept.
-                        if !quoted {
-                            opened = number;
-                            borrow mut rec as &!rw in {
-                                buffer.clear(rw);
-                            }
-                            seps = 0;
-                        }
-                        let (inside, n, bad) = reader.scan(line, delim, quoted, seps);
-                        seps = n;
-                        if !header || mode != 0 {
-                            rec = buffer.append(heap, rec, whole);
-                        }
-                        var held = 0;
-                        borrow rec as &rw in {
-                            held = buffer.size(rw);
-                        }
-                        if bad {
-                            a[engine.k_abort()] = 1;
-                            a[engine.k_abort_line()] = number;
-                            going = false;
-                        } else if inside {
-                            quoted = true;
-                            if !header || mode != 0 {
-                                rec = buffer.push(heap, rec, byte_of(10));
-                            }
-                            if held + 1 > cap {
-                                a[engine.k_abort()] = 3;
-                                if header {
-                                    a[engine.k_abort()] = 7;
-                                }
-                                a[engine.k_abort_line()] = opened;
-                                going = false;
-                            }
-                        } else {
-                            quoted = false;
-                            seps = 0;
-                            if !header {
-                                buffer.drop(heap, names);
-                                vec.drop(heap, hends);
-                                borrow rec as &rw in {
-                                    let (nm, en) = reader.split_header(heap, buffer.bytes(rw), delim);
-                                    names = nm;
-                                    hends = en;
-                                }
-                                header = true;
-                                borrow hends as &er in {
-                                    a[engine.k_columns()] = vec.size(er);
-                                }
-                                if mode != 0 {
-                                    var made = frame.none(heap);
-                                    frame.drop(heap, made);
-                                    borrow names as &nr in {
-                                        borrow hends as &er in {
-                                            made = frame.prepare(heap, tree, nr, er, a[engine.k_columns()], mode, delim, sort);
-                                        }
-                                    }
-                                    let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
-                                    unbox_slice(heap, cols);
-                                    unbox_slice(heap, sel);
-                                    unbox_slice(heap, cells);
-                                    buffer.drop(heap, head);
-                                    buffer.drop(heap, labels);
-                                    vec.drop(heap, lends);
-                                    cols = fcols;
-                                    sel = fsel;
-                                    cells = fcells;
-                                    head = report_head(heap, query.reporting(tree), fhead);
-                                    labels = flabels;
-                                    lends = flends;
-                                    picked = fpicked;
-                                    a[engine.k_sort_field()] = fsort_field;
-                                    a[engine.k_sort_slot()] = fsort_slot;
-                                    a[engine.k_sort_desc()] = fdesc;
-                                    if ordering && !query.reporting(tree) && fabort == 0 {
-                                        let nk = query.order_count(tree);
-                                        var okeys = box_slice(heap, 3 * nk + 1, 0);
-                                        borrow mut okeys as &!ow in {
-                                            borrow cols as &cr in {
-                                                var j = 0;
-                                                while j < nk {
-                                                    contents(ow)[3 * j] = contents(cr)[query.order_name(tree, j)];
-                                                    contents(ow)[3 * j + 1] = query.order_flags(tree, j) % 2;
-                                                    contents(ow)[3 * j + 2] = query.order_flags(tree, j) / 2;
-                                                    j = j + 1;
-                                                }
-                                            }
-                                        }
-                                        borrow okeys as &okr in {
-                                            groups = sorter.configure(groups, nk, wanted, max_sort_rows, max_state, contents(okr));
-                                        }
-                                        unbox_slice(heap, okeys);
-                                    }
-                                    if fabort != 0 {
-                                        a[engine.k_abort()] = fabort;
-                                        a[engine.k_bad_name()] = fbad;
-                                        going = false;
-                                    }
-                                    if as_csv && fabort == 0 {
-                                        rows = start_output(heap, rows, report_lead(heap, query.reporting(tree), flead, delim));
-                                    } else {
-                                        buffer.drop(heap, flead);
-                                    }
-                                }
-                                // The rest of the file, by several threads, when that is asked for and
-                                // worth it (par.cho): it leaves the tally, the output and the groups as
-                                // this loop would have.
-                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0) {
-                                    var size = 0;
-                                    match file_size(file) {
-                                        Done::Ok(n) => {
-                                            size = n;
-                                        }
-                                        Done::Failed(reason) => {
-                                            size = 0;
-                                        }
-                                    }
-                                    var at = 0;
-                                    var lines_so_far = 0;
-                                    borrow r as &rr in {
-                                        at = lines.consumed(rr);
-                                        lines_so_far = lines.number(rr);
-                                    }
-                                    if size - at >= min_bytes && size - at > 0 {
-                                        var pp = box_slice(heap, scan.p_count(), 0);
-                                        borrow mut pp as &!pw in {
-                                            let u = contents(pw);
-                                            u[scan.p_delim()] = delim;
-                                            u[scan.p_mode()] = mode;
-                                            if query.reporting(tree) {
-                                                u[scan.p_mode()] = 2;
-                                            }
-                                            if as_csv {
-                                                u[scan.p_csv()] = 1;
-                                                u[scan.p_yield()] = 65536;
-                                            }
-                                            u[scan.p_picked()] = picked;
-                                            u[scan.p_budget()] = budget;
-                                            u[scan.p_limit()] = limit;
-                                            u[scan.p_most()] = most;
-                                            u[scan.p_from()] = row_from;
-                                            u[scan.p_max_groups()] = max_groups;
-                                            u[scan.p_max_distinct()] = max_distinct;
-                                            u[scan.p_max_state()] = max_state;
-                                            u[scan.p_cap()] = cap;
-                                            u[scan.p_base_line()] = lines_so_far;
-                                            u[scan.p_size()] = size;
-                                            borrow mut cells as &!cw in {
-                                                borrow cols as &kr in {
-                                                    borrow sel as &sr in {
-                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
-                                                        rows = r2;
-                                                        scratch = s2;
-                                                        escr = e2;
-                                                        kept = k2;
-                                                        groups = g2;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        unbox_slice(heap, pp);
-                                        going = false;
-                                    }
-                                }
-                            } else {
-                                // A data record that spanned lines, whole in `rec`.
-                                var record_len = 0;
-                                borrow rec as &rw in {
-                                    record_len = buffer.size(rw);
-                                    var record = buffer.bytes(rw);
-                                    if record_len > 0 && int_of(record[record_len - 1]) == 13 {
-                                        record = record[0..record_len - 1];
-                                    }
-                                    var found = n + 1;
-                                    var wrong = false;
-                                    if mode != 0 {
-                                        borrow mut cells as &!cw in {
-                                            let (n, open, bad_quote) = reader.fields(record, delim, contents(cw), a[engine.k_columns()]);
-                                            found = n;
-                                            wrong = bad_quote || open;
-                                        }
-                                    }
-                                    if wrong {
-                                        a[engine.k_abort()] = 1;
-                                        a[engine.k_abort_line()] = opened;
-                                        going = false;
-                                    } else if engine.count_row(a, found, opened, row_from) && mode != 0 {
-                                        borrow cells as &cr in {
-                                            borrow sel as &sr in {
-                                                borrow cols as &kr in {
-                                                    if row_mode == 1 {
-                                                        let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, contents(kr), record, contents(cr), contents(sr), picked, delim, as_csv, budget, opened, limit, a);
-                                                        rows = r2;
-                                                        scratch = s2;
-                                                        escr = e2;
-                                                        kept = k2;
-                                                    } else {
-                                                        var hot = 1;
-                                                        if !fast_ok {
-                                                            // a distinct count is not added in place: `process_groups`
-                                                        } else if !filtering {
-                                                            var got = 1;
-                                                            borrow mut groups as &!gw in {
-                                                                got = engine.group_plain(gw, tree, contents(kr), record, contents(cr));
-                                                            }
-                                                            if got >= 16 {
-                                                                kept = engine.group_refused(heap, kept, tree, contents(kr), record, contents(cr), opened, got, a);
-                                                                hot = 0;
-                                                            } else {
-                                                                hot = got;
-                                                            }
-                                                        } else {
-                                                            borrow mut groups as &!gw in {
-                                                                let (f2, e2, k2) = engine.group_fast(heap, gw, escr, kept, tree, contents(kr), record, contents(cr), opened, a);
-                                                                hot = f2;
-                                                                escr = e2;
-                                                                kept = k2;
-                                                            }
-                                                        }
-                                                        if hot == 1 || hot == 3 {
-                                                            let (g2, e2, k2) = engine.process_groups(heap, groups, escr, kept, tree, contents(kr), record, contents(cr), opened, max_groups, max_distinct, max_state, hot == 3, a);
-                                                            groups = g2;
-                                                            escr = e2;
-                                                            kept = k2;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if a[engine.k_stop()] == 1 {
-                    going = false;
-                }
-            }
-        }
         // No header at all: no column to name.
         if mode != 0 && !header && a[engine.k_abort()] == 0 {
             a[engine.k_abort()] = 5;
@@ -1713,18 +1345,66 @@ fn add_order_keys[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, 
     return (q, e);
 }
 
+// The plan's values as the flags give them (docs/query.md, Q0): the columns, the condition, the grouping, the aggregates, the sort, the order, the cut and the page,
+// the rows to read and the source, which `body` reads through this one value and not flag by flag. A later `--query` fills the same value from a query's translation, so
+// what `body` checks and builds from does not depend on where the values came from. The text fields are the flags' own (empty when the flag is not given), and `has_*` says
+// whether it was given.
+struct Inputs {
+    has_select: bool,
+    has_where: bool,
+    has_group: bool,
+    has_agg: bool,
+    has_order: bool,
+    has_report: bool,
+    has_sort: bool,
+    has_top: bool,
+    has_limit: bool,
+    has_from: bool,
+    select_text: &static [byte],
+    where_text: &static [byte],
+    group_text: &static [byte],
+    agg_text: &static [byte],
+    order_text: &static [byte],
+    report_text: &static [byte],
+    root_text: &static [byte],
+    top_n: int,
+    limit_n: int,
+    from_n: int,
+    rows_n: int,
+    select_whole: bool,
+    select_at: int,
+    root_at: int,
+    operands: int,
+    source_at: int,
+}
+
+fn inputs_from_flags[&g, &p](args: &g Args, parsed: &p cli.Parsed) -> [args] Inputs {
+    let table = flag_table();
+    var source_at = -1;
+    if cli.operand_count(parsed) > 0 {
+        source_at = cli.operand_index(parsed, 0);
+    }
+    let has_select = cli.has(parsed, table, "select");
+    var select_at = -1;
+    if has_select && cli.value_is_whole(parsed, table, "select") {
+        select_at = cli.value_index(parsed, table, "select");
+    }
+    return Inputs { has_select: has_select, has_where: cli.has(parsed, table, "where"), has_group: cli.has(parsed, table, "group"), has_agg: cli.has(parsed, table, "agg"), has_order: cli.has(parsed, table, "order-by"), has_report: cli.has(parsed, table, "report"), has_sort: cli.has(parsed, table, "sort"), has_top: cli.has(parsed, table, "top"), has_limit: cli.has(parsed, table, "limit"), has_from: cli.has(parsed, table, "from"), select_text: cli.text(args, parsed, table, "select"), where_text: cli.text(args, parsed, table, "where"), group_text: cli.text(args, parsed, table, "group"), agg_text: cli.text(args, parsed, table, "agg"), order_text: cli.text(args, parsed, table, "order-by"), report_text: cli.text(args, parsed, table, "report"), root_text: cli.text(args, parsed, table, "root"), top_n: cli.nat(args, parsed, table, "top"), limit_n: cli.nat(args, parsed, table, "limit"), from_n: cli.nat(args, parsed, table, "from"), rows_n: cli.nat(args, parsed, table, "max-rows"), select_whole: select_at >= 0, select_at: select_at, root_at: cli.value_index(parsed, table, "root"), operands: cli.operand_count(parsed), source_at: source_at };
+}
+
 fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read, io_write, err_write, conc] int {
     let table = flag_table();
+    let inp = inputs_from_flags(args, parsed);
     var e = errs;
     let form = cli.text(args, parsed, table, "format");
     let text_mode = bytes.equal(form, "text");
     let as_csv = bytes.equal(form, "csv");
-    let has_select = cli.has(parsed, table, "select");
-    let has_where = cli.has(parsed, table, "where");
-    let has_group = cli.has(parsed, table, "group");
-    let has_agg = cli.has(parsed, table, "agg");
-    let has_order = cli.has(parsed, table, "order-by");
-    let has_report = cli.has(parsed, table, "report");
+    let has_select = inp.has_select;
+    let has_where = inp.has_where;
+    let has_group = inp.has_group;
+    let has_agg = inp.has_agg;
+    let has_order = inp.has_order;
+    let has_report = inp.has_report;
     let grouped = has_group || has_agg;
     var mode = 0;
     if grouped {
@@ -1736,7 +1416,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     if delim < 0 {
         e = flag_problem(heap, e, "args.bad-value", "--delimiter is a comma, tab or a semicolon", "--delimiter tab", "--delimiter");
     }
-    if cli.nat(args, parsed, table, "max-rows") > row_ceiling() {
+    if inp.rows_n > row_ceiling() {
         e = flag_problem(heap, e, "args.bad-value", "--max-rows is above the ceiling", "1000000000 is the most this tool counts", "--max-rows");
     }
     if cli.nat(args, parsed, table, "max-line-bytes") > line_ceiling() {
@@ -1779,17 +1459,17 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     }
     var from = 0;
     var top = 0;
-    if cli.has(parsed, table, "limit") {
-        limit = cli.nat(args, parsed, table, "limit");
+    if inp.has_limit {
+        limit = inp.limit_n;
         if limit < 1 || limit > 1000000 {
             e = flag_problem(heap, e, "args.bad-value", "--limit is from 1 to 1000000", "--limit 1000", "--limit");
         }
     }
-    if cli.has(parsed, table, "from") {
-        from = cli.nat(args, parsed, table, "from");
+    if inp.has_from {
+        from = inp.from_n;
     }
-    if cli.has(parsed, table, "top") {
-        top = cli.nat(args, parsed, table, "top");
+    if inp.has_top {
+        top = inp.top_n;
         if top < 1 {
             e = flag_problem(heap, e, "args.bad-value", "--top is at least 1", "--top 10", "--top");
         }
@@ -1798,7 +1478,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         if as_csv {
             e = flag_problem(heap, e, "args.required-flag", "--format csv writes rows or groups, so it needs --select, --where or --group", "--select NAMES", "--format --select --where --group");
         }
-        if cli.has(parsed, table, "limit") || cli.has(parsed, table, "from") {
+        if inp.has_limit || inp.has_from {
             e = flag_problem(heap, e, "args.required-flag", "--limit and --from page rows or groups, so they need --select, --where or --group", "--select NAMES", "--limit --from --select");
         }
     } else if text_mode {
@@ -1811,25 +1491,25 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         e = flag_problem(heap, e, "args.conflict", "--order-by sorts rows, and with --group or --agg the rows are counted into groups: order those with --sort and --top", "drop --order-by", "--order-by --group --agg");
     }
     if has_report {
-        if !bytes.equal(cli.text(args, parsed, table, "report"), "types") {
+        if !bytes.equal(inp.report_text, "types") {
             e = flag_problem(heap, e, "args.bad-value", "--report is types: the only report there is", "--report types", "--report");
         }
-        if grouped || has_order || cli.has(parsed, table, "sort") || cli.has(parsed, table, "top") {
+        if grouped || has_order || inp.has_sort || inp.has_top {
             e = flag_problem(heap, e, "args.conflict", "--report types describes the columns of the whole table: it is not a grouping, a sort or a cut of rows", "drop --group, --agg, --order-by, --sort or --top", "--report --group --agg --order-by --sort --top");
         }
     }
-    if !has_report && !grouped && (cli.has(parsed, table, "sort") || cli.has(parsed, table, "top") && !has_order) {
+    if !has_report && !grouped && (inp.has_sort || inp.has_top && !has_order) {
         e = flag_problem(heap, e, "args.required-flag", "--sort orders groups and --top cuts groups or sorted rows, so they need --group, --agg or --order-by", "--group NAMES", "--sort --top --group");
     }
     // The plan.
     var tree = query.empty(heap);
     if has_select {
-        let (t2, e2) = add_names(heap, tree, e, cli.text(args, parsed, table, "select"), 0, "--select");
+        let (t2, e2) = add_names(heap, tree, e, inp.select_text, 0, "--select");
         tree = t2;
         e = e2;
     }
     if has_where {
-        let given = cli.text(args, parsed, table, "where");
+        let given = inp.where_text;
         let (t2, what, at) = expr.parse(heap, tree, given);
         tree = t2;
         if what != 0 {
@@ -1843,13 +1523,13 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         }
     }
     if has_group {
-        let (t2, e2) = add_names(heap, tree, e, cli.text(args, parsed, table, "group"), 2, "--group");
+        let (t2, e2) = add_names(heap, tree, e, inp.group_text, 2, "--group");
         tree = t2;
         e = e2;
     }
     if grouped {
         if has_agg {
-            let given = cli.text(args, parsed, table, "agg");
+            let given = inp.agg_text;
             let (t2, bad) = agg.parse_aggs(heap, tree, given);
             tree = t2;
             if bad == -2 {
@@ -1870,15 +1550,15 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         tree = query.set_reporting(heap, tree);
     }
     if has_order && !grouped && !has_report {
-        let (t2, e2) = add_order_keys(heap, tree, e, cli.text(args, parsed, table, "order-by"));
+        let (t2, e2) = add_order_keys(heap, tree, e, inp.order_text);
         tree = t2;
         e = e2;
     }
-    let (root, after_root) = path.root(heap, args, cli.text(args, parsed, table, "root"), cli.value_index(parsed, table, "root"), e);
+    let (root, after_root) = path.root(heap, args, inp.root_text, inp.root_at, e);
     e = after_root;
-    if cli.operand_count(parsed) == 0 {
+    if inp.operands == 0 {
         e = flag_problem(heap, e, "args.missing-operand", "table takes the FILE to read", "table FILE", "FILE");
-    } else if cli.operand_count(parsed) > 1 {
+    } else if inp.operands > 1 {
         e = flag_problem(heap, e, "args.too-many-operands", "table takes one FILE", "read one file per call", "FILE");
     }
     var payload = buffer.empty(heap, 1);
@@ -1889,12 +1569,12 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         refused = fail.count(er) > 0;
     }
     var names_at = -1;
-    if has_select && cli.value_is_whole(parsed, table, "select") {
-        names_at = cli.value_index(parsed, table, "select");
+    if inp.select_whole {
+        names_at = inp.select_at;
     }
     if !refused {
         borrow root as &rr in {
-            let (target, checked) = path.operand(heap, args, buffer.bytes(rr), cli.operand_index(parsed, 0), e);
+            let (target, checked) = path.operand(heap, args, buffer.bytes(rr), inp.source_at, e);
             e = checked;
             borrow target as &tp in {
                 if path.ok(tp) {
