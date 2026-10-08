@@ -1,0 +1,44 @@
+cell                               thr old M instr new M instr   ratio spr old spr new  
+filter status=404 and bytes>50000    1    1542.6    1532.5   0.993    0.0%    0.0%  
+filter status=404 and bytes>50000    3    1664.2    1662.2   0.999    0.0%    0.0%  
+cut status,bytes                     1    1567.0    1552.0   0.990    0.0%    0.0%  
+cut status,bytes                     3    1689.0    1687.0   0.999    0.0%    0.0%  
+group-count status                   1    1659.6    1595.6   0.961    0.0%    0.0%  
+group-count status                   3    1690.5    1649.9   0.976    0.0%    0.0%  
+group-sum bytes by status            1    1869.1    1803.1   0.965    0.0%    0.0%  
+group-sum bytes by status            3    1900.1    1858.3   0.978    0.0%    0.0%  
+group count,sum,min,max              1    2042.1    1972.1   0.966    0.0%    0.0%  
+group count,sum,min,max              3    2073.1    2028.1   0.978    0.0%    0.0%  
+text filter path contains            1    1566.3    1556.2   0.994    0.0%    0.0%  
+text filter path contains            3    1688.0    1686.0   0.999    0.0%    0.0%  
+sum of everything                    1    1676.0    1610.0   0.961    0.0%    0.0%  
+sum of everything                    3    1706.9    1664.3   0.975    0.0%    0.0%  
+dec filter price:dec(2)>=500         1    1495.8    1485.6   0.993    0.0%    0.0%  
+dec filter price:dec(2)>=500         3    1617.8    1615.8   0.999    0.0%    0.0%  
+dec group-sum cents                  1    2442.9    2372.9   0.971    0.0%    0.0%  
+dec group-sum cents                  3    2473.9    2430.7   0.983    0.0%    0.0%  
+float filter price:float>=500        1    1507.8    1497.7   0.993    0.0%    0.0%  
+float filter price:float>=500        3    1629.9    1627.9   0.999    0.0%    0.0%  
+order-by -bytes:int top 100          1    1569.0    1513.0   0.964    0.0%    0.0%  
+order-by -bytes:int top 100          3    1570.7    1514.7   0.964    0.0%    0.0%  
+order-by status,path rows            1    1675.8    1619.8   0.967    0.0%    0.0%  
+order-by status,path rows            3    1677.5    1621.5   0.967    0.0%    0.0%  
+float min/max by status              1    2431.6    2364.6   0.972    0.0%    0.0%  
+float min/max by status              3    2462.6    2422.4   0.984    0.0%    0.0%  
+report types                         1    6167.0    5825.0   0.945    0.0%    0.0%  
+report types                         3    6182.1    5861.1   0.948    0.0%    0.0%  
+group-count path (1000 keys)         1    1829.6    1780.0   0.973    0.0%    0.0%  
+group-count path (1000 keys)         3    1878.8    1845.4   0.982    0.0%    0.0%  
+group-count id (1M keys)             1    4966.1    2767.5   0.557    0.0%    0.0%  
+group-count id (1M keys)             3    6730.8    4580.1   0.680    0.0%    0.0%  
+group-sum bytes by id (1M keys)      1    6147.7    3145.0   0.512    0.0%    0.0%  
+group-sum bytes by id (1M keys)      3    8129.5    4962.6   0.610    0.0%    0.0%  
+distinct id by status                1    3444.4    2996.1   0.870    0.0%    0.0%  
+distinct id by status                3    5100.6    4262.9   0.836    0.0%    0.0%  
+group-count id json page             1    4485.9    2352.8   0.524    0.0%    0.0%  
+group-count id json page             3    6250.6    4186.2   0.670    0.0%    0.0%  
+float17 filter ratio:float>=500      1    1538.1    1528.0   0.993    0.0%    0.0%  
+float17 filter ratio:float>=500      3    1659.6    1657.6   0.999    0.0%    0.0%  
+float17 sum,min,max ratio            1    2587.5    2520.5   0.974    0.0%    0.0%  
+float17 sum,min,max ratio            3    2618.9    2579.4   0.985    0.0%    0.0%  
+G6: PASS

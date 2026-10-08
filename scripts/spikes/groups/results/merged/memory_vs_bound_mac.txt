@@ -1,0 +1,5 @@
+Mac, B3 (--group k1m, f2.csv), peak RSS MB by wait4, main (92a4305) against this branch. The state the flag counts is the key bytes: 1M groups x 14 = 14,000,000.
+bound 14000000 (accepted):   main t1 179, t2 213, t6 290, t16 327   |  branch t1 170, t2 349, t6 295, t16 297
+bound 13999999 (refused, rc 8): main t1 171, t2 206, t6 304, t16 325 |  branch t1 170, t2 429, t6 410, t16 471
+bound 2000000  (refused, rc 8): main t1  30, t2  53, t6 140, t16 181 |  branch t1  27, t2 178, t6 268, t16 360
+(2T+3) x bound, in MB: bound 14e6: t1 70, t2 98, t6 210, t16 490; bound 2e6: t1 10, t2 14, t6 30, t16 70.

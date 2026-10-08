@@ -1,0 +1,65 @@
+ 07:28:03 up 20:47,  2 users,  load average: 1,36, 1,45, 1,29
+Linux x86_64, 16 cores; table /home/alpibru/Workspace/gap-groups2/g_new1/build/table; csvtk ?; mlr not installed; duckdb v1.5.6 (Variegata) 069cc9f9b5
+  csvtk -j1: output differs or failed (rc 1), not timed: ''
+
+B1  group-count, 100,000 distinct keys   (40 MB, min of 5; load average 1.3 1.4 1.3 at the end)
+contender                              min s  peak RSS MB
+table -t1                             0.1335         14.8
+table -t6                             0.1134        102.2
+sh cut|sort|uniq -c                   0.1850         37.4
+duckdb -t1                            0.1593         76.0
+duckdb default                        0.1029        126.5
+duckdb -t1 ordered                    0.1721         79.3
+duckdb default ordered                0.1174        130.6
+base -t1                              0.1782         16.5
+base -t6                              0.1788         75.1
+  csvtk -j1: output differs or failed (rc 1), not timed: ''
+
+B2  group-sum of v, 100,000 keys   (40 MB, min of 5; load average 1.2 1.4 1.3 at the end)
+contender                              min s  peak RSS MB
+table -t1                             0.1544         14.8
+table -t6                             0.1244        103.0
+duckdb -t1                            0.1877         77.8
+duckdb default                        0.1165        137.6
+duckdb -t1 ordered                    0.1956         82.2
+duckdb default ordered                0.1327        139.6
+base -t1                              0.2097         16.5
+base -t6                              0.2068         78.1
+  csvtk -j1: output differs or failed (rc 1), not timed: ''
+
+B3  group-count, 1,000,000 distinct keys   (40 MB, min of 5; load average 1.1 1.3 1.3 at the end)
+contender                              min s  peak RSS MB
+table -t1                             0.4170        117.3
+table -t6                             0.2349        239.2
+sh cut|sort|uniq -c                   0.2549         41.5
+duckdb -t1                            0.2853        132.3
+duckdb default                        0.1326        134.1
+duckdb -t1 ordered                    0.5391        138.5
+duckdb default ordered                0.2349        182.1
+base -t1                              1.1937        135.5
+base -t6                              1.3016        191.0
+  csvtk -j1: output differs or failed (rc 1), not timed: ''
+
+B4  group-sum of v, 1,000,000 keys   (40 MB, min of 5; load average 1.1 1.3 1.2 at the end)
+contender                              min s  peak RSS MB
+table -t1                             0.5018        117.3
+table -t6                             0.2901        245.6
+duckdb -t1                            0.3389        148.2
+duckdb default                        0.1563        150.1
+duckdb -t1 ordered                    0.6630        151.0
+duckdb default ordered                0.2861        202.6
+base -t1                              1.4798        135.5
+base -t6                              1.5814        191.0
+  csvtk -j1: output differs or failed (rc 1), not timed: ''
+
+I1  distinct:id (1M distinct) per s   (40 MB, min of 5; load average 1.1 1.3 1.2 at the end)
+contender                              min s  peak RSS MB
+table -t1                             0.2965         57.7
+table -t6                             0.1980         92.8
+sh cut|sort -u|uniq -c                0.2392         62.2
+duckdb -t1                            0.2789        125.8
+duckdb default                        0.1359        128.1
+duckdb -t1 ordered                    0.2866        126.4
+duckdb default ordered                0.1424        129.3
+base -t1                              0.4151         89.1
+base -t6                              0.4316        151.5

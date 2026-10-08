@@ -189,6 +189,86 @@ class Adversarial(Same):
             self.same(data, args, "bytes")
 
 
+def _q(text):
+    return '"' + text.replace('"', '""') + '"'
+
+
+def speculation_files(rng, rows):
+    """Files for the look-ahead that guesses whether a range starts inside a quoted field (scan.guess): the ones where the guess is
+    right (long multi-line fields, E1/E2 of docs/adversarial.md), where 'outside' is right, and the ones built so that the wrong
+    reading also looks right (quoted lines that are themselves whole records of the file's width: the guess is wrong and the
+    parent must read the range again), or that break the reading (stray quotes, a bad quote, ragged rows, an open quote)."""
+    def lookalike():
+        return "\n".join("%d,x%d,y%d" % (rng.randrange(1000), rng.randrange(10), rng.randrange(10)) for _ in range(rng.randrange(2, 12)))
+
+    def stray():
+        return "".join(rng.choice(['ab"c', "x", ' y"', "z"]) for _ in range(rng.randrange(1, 4)))
+
+    def long_text():
+        letters = "abcdefghijklmnopqrstuvwxyz ,\n\""
+        n = rng.randrange(400, 2500)
+        return "".join(rng.choice(letters) for _ in range(n // 10)) * 10
+
+    head = "id,g,text\n"
+    f = {}
+    f["e1"] = head + "".join("%d,g%d,%s\n" % (i, i % 10, _q(long_text())) for i in range(rows))
+    f["lookalike"] = head + "".join("%d,g%d,%s\n" % (i, i % 7, _q(lookalike())) for i in range(rows))
+    f["lookalike crlf"] = head.replace("\n", "\r\n") + "".join("%d,g%d,%s\r\n" % (i, i % 7, _q(lookalike().replace("\n", "\r\n"))) for i in range(rows))
+    f["stray"] = head + "".join("%s,g%d,%s\n" % (stray() if i % 5 == 0 else i, i % 5, _q("l1\nl2,%d\nl3" % i) if i % 3 == 0 else stray()) for i in range(rows))
+    f["few"] = head + "".join("%d,g%d,%s\n" % (i, i % 7, _q("a\nb") if i % 10 == 0 else "plain %d" % i) for i in range(rows))
+    f["ragged"] = head + "".join("%d,g%d,%s%s\n" % (i, i % 7, _q("a\nb\nc,d"), ",extra" if i in (rows // 3, rows // 2 + 1) else "") for i in range(rows))
+    f["bad quote"] = head + "".join("%d,g%d,%s\n" % (i, i % 7, _q("a\nb") if i != rows * 2 // 3 else '"x"y') for i in range(rows))
+    f["open quote"] = head + "".join("%d,g%d,%s\n" % (i, i % 7, _q("a\nb")) for i in range(rows)) + '1,g,"open\nnever closed\n'
+    f["one column"] = "text\n" + "".join("%s\n" % (_q("l1\nl2\n%d" % i) if i % 2 else "plain %d" % i) for i in range(rows))
+    return {k: v.encode() for k, v in f.items()}
+
+
+class Speculation(Same):
+    """A range that starts inside a quoted field (a guess made by looking ahead) or that the guess gets wrong gives the sequential bytes, for every
+    thread count, with tiny ranges (the boundary in every record) and with ranges of a few records up to the default."""
+
+    def check(self, data, plans, chunks, label):
+        for args in plans:
+            want = self.outcome(data, args)
+            for threads in THREADS:
+                for chunk in chunks:
+                    got = self.outcome(data, args, threads, chunk)
+                    self.assertEqual(got, want, "%s threads %d chunk %d args %r" % (label, threads, chunk, args))
+
+    PLANS = (["--select", "id,g", "--format", "csv"], ["--group", "g"], ["--group", "g", "--agg", "count,sum:id,min:id,max:id"], ["--where", "id:int > 10", "--select", "g"],
+             ["--report", "types", "--format", "csv"])
+
+    def test_tiny_ranges(self):
+        for name, data in speculation_files(random.Random(5), 40).items():
+            plans = self.PLANS if name != "one column" else (["--select", "text", "--format", "csv"], ["--group", "text"])
+            self.check(data, plans, (1, 7, 64, 1000), name)
+
+    def test_ranges_of_a_few_records_and_the_default(self):
+        for name, data in speculation_files(random.Random(6), 700).items():
+            plans = self.PLANS if name != "one column" else (["--select", "text", "--format", "csv"], ["--group", "text"])
+            self.check(data, plans, (4000, 30000, 4 << 20), name)
+
+    def test_random_quoting_with_ragged_rows(self):
+        # Rows made of pieces that are sometimes a whole record, sometimes ragged, sometimes a quoted field with newlines or a stray quote: at some
+        # boundaries the look-ahead says 'inside' where the truth is 'outside' and the other way round, and every one must still give the oracle's bytes.
+        rng = random.Random(11)
+        pieces = ["1,a,b", "2,c", "3,d,e,f", '4,"x",y', '5,"p\nq",r', '"6,s,t', 'u",7,8', '9,"a""b",c', 'k"l,m,n', '"', "", "10,11,12", '13,"multi\nline\nfield",z']
+        for case in range(25):
+            body = "\n".join(rng.choice(pieces) for _ in range(rng.randrange(20, 60)))
+            data = ("id,g,text\n" + body + "\n").encode()
+            for args in (["--select", "id,g", "--format", "csv"], ["--group", "g"]):
+                want = self.outcome(data, args)
+                for threads in (2, 3, 8):
+                    for chunk in (1, 7, 20, 64):
+                        got = self.outcome(data, args, threads, chunk)
+                        self.assertEqual(got, want, "case %d threads %d chunk %d args %r data %r" % (case, threads, chunk, args, data[:200]))
+
+    def test_e1_e2_files_of_several_ranges(self):
+        # 1-10 KB quoted fields with a newline every few bytes, as adversarial.py's long.csv, but a few MB.
+        data = speculation_files(random.Random(7), 1500)["e1"]
+        self.check(data, (["--select", "id,g", "--format", "csv"], ["--group", "g"]), (65536, 1 << 20, 4 << 20), "e1")
+
+
 class Scale(Same):
     @classmethod
     def setUpClass(cls):
@@ -213,6 +293,23 @@ class Scale(Same):
                 for chunk in (65536, 1 << 20, 4 << 20):
                     got = run_argv([binary(), "--root", str(self.s.dir), *args, "--threads", str(threads), "--chunk-bytes", str(chunk), "--parallel-min-bytes", "0", "big.csv"])
                     self.assertEqual((got.status, got.stdout, got.stderr), (want.status, want.stdout, want.stderr), (args, threads, chunk))
+
+    def test_ranges_that_grow_for_groups_when_chunk_bytes_is_not_given(self):
+        # Without --chunk-bytes a grouping's ranges grow after the first wave while the answers stay small, and fall back to the first size when one does not fit
+        # (here the keys are few in the first half of the file and almost all different in the second). Same bytes as the sequential read in every case.
+        rng = random.Random(21)
+        rows = ["id,k,v,f,note"]
+        for i in range(450000):
+            k = "k%d" % (i % 7) if i < 225000 else "u%d" % i
+            rows.append("%d,%s,%d,%d.%d,%s" % (i, k, rng.randint(0, 99999), rng.randint(0, 999), rng.randint(0, 99), '"a,b\nc"' if i % 50000 == 3 else "n"))
+        self.s.write("grow.csv", ("\n".join(rows) + "\n").encode())
+        for args in (["--group", "k", "--agg", "count,sum:v,min:v,max:v", "--max-groups", "1000000", "--max-state-bytes", "1073741824"], ["--group", "k", "--agg", "sum:f:float", "--max-groups", "1000000", "--max-state-bytes", "1073741824"],
+                     ["--group", "v", "--agg", "count"], ["--report", "types", "--format", "csv"], ["--agg", "sum:v,distinct:k", "--max-distinct", "1000000", "--max-state-bytes", "1073741824"]):
+            want = run_argv([binary(), "--root", str(self.s.dir), *args, "grow.csv"])
+            for threads in (2, 3, 4, 8):
+                for extra in ([], ["--chunk-bytes", "1048576"]):
+                    got = run_argv([binary(), "--root", str(self.s.dir), *args, "--threads", str(threads), "--parallel-min-bytes", "0", *extra, "grow.csv"])
+                    self.assertEqual((got.status, got.stdout, got.stderr), (want.status, want.stdout, want.stderr), (args, threads, extra))
 
     def test_the_default_threshold_keeps_a_small_file_sequential_and_the_answer_the_same(self):
         self.s.write("big.csv", self.big)

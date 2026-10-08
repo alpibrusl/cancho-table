@@ -111,8 +111,16 @@ pub fn p_fast_ok() -> [] int {
     return 20;
 }
 
-pub fn p_count() -> [] int {
+pub fn p_psortable() -> [] int {
     return 21;
+}
+
+pub fn p_chunk_given() -> [] int {
+    return 22;
+}
+
+pub fn p_count() -> [] int {
+    return 23;
 }
 
 // What the loop makes and the rest of the read uses.
@@ -197,6 +205,8 @@ pub fn run[&h, &i, &f, &fs, &rt, &rl, &fu, &q](heap: &!h Heap, io: &!i Io, file:
     var max_sort_rows = 0;
     var filtering = false;
     var fast_ok = false;
+    var psortable = false;
+    var chunk_given = false;
     borrow prm as &pr in {
         delim = contents(pr)[p_delim()];
         mode = contents(pr)[p_mode()];
@@ -219,6 +229,8 @@ pub fn run[&h, &i, &f, &fs, &rt, &rl, &fu, &q](heap: &!h Heap, io: &!i Io, file:
         max_sort_rows = contents(pr)[p_max_sort_rows()];
         filtering = contents(pr)[p_filtering()] == 1;
         fast_ok = contents(pr)[p_fast_ok()] == 1;
+        psortable = contents(pr)[p_psortable()] == 1;
+        chunk_given = contents(pr)[p_chunk_given()] == 1;
     }
     unbox_slice(heap, prm);
     var names = buffer.empty(heap, 1);
@@ -474,7 +486,7 @@ pub fn run[&h, &i, &f, &fs, &rt, &rl, &fu, &q](heap: &!h Heap, io: &!i Io, file:
                                 // The rest of the file, by several threads, when that is asked for and
                                 // worth it (par.cho): it leaves the tally, the output and the groups as
                                 // this loop would have.
-                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0) {
+                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (!ordering || query.reporting(tree) || psortable) && (mode == 2 || row_from == 0) {
                                     var size = 0;
                                     match file_size(file) {
                                         Done::Ok(n) => {
@@ -496,7 +508,7 @@ pub fn run[&h, &i, &f, &fs, &rt, &rl, &fu, &q](heap: &!h Heap, io: &!i Io, file:
                                             let u = contents(pw);
                                             u[scan.p_delim()] = delim;
                                             u[scan.p_mode()] = mode;
-                                            if query.reporting(tree) {
+                                            if query.reporting(tree) || ordering {
                                                 u[scan.p_mode()] = 2;
                                             }
                                             if as_csv {
@@ -517,7 +529,7 @@ pub fn run[&h, &i, &f, &fs, &rt, &rl, &fu, &q](heap: &!h Heap, io: &!i Io, file:
                                             borrow mut cells as &!cw in {
                                                 borrow cols as &kr in {
                                                     borrow sel as &sr in {
-                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
+                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk, chunk_given);
                                                         rows = r2;
                                                         scratch = s2;
                                                         escr = e2;

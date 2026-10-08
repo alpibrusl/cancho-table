@@ -1,0 +1,1773 @@
+// SPIKE (throwaway, docs/gap-sort.md): a parallel stable sort of the rows of a CSV file by one or two keys, to measure what
+// the design costs and where Amdahl stops it. It is not `table`: no quoted fields, no refusals, valid cells, the output row is
+// the input row. What it is: the algorithm of docs/gap-sort.md section 3, with every phase timed.
+//
+//     sortpar FILE THREADS MODE SORT KEYS [TOP [OUT]]
+//
+//   THREADS ranges and merge partitions (1 is the sequential algorithm: one run, one partition)
+//   MODE    w  write the sorted rows to standard output
+//           t  no output; print the milliseconds of each phase and, summed over the threads, of the parts of phase A
+//           a  stop after phase A, b after phase B, c after phase C (no write)
+//   SORT    m  each run is sorted by a stable merge sort of row numbers (the algorithm of sorter.cho)
+//           r  each run is sorted by a stable LSD radix sort of the key words, then the groups of equal words that may
+//              differ in their full key are merge-sorted (docs/gap-sort.md section 6)
+//   KEYS    COL:KIND:DIR[,COL:KIND:DIR]   COL 0-based; KIND t (bytes) or i (integer); DIR a or d
+//   TOP     the first TOP rows only (0: all): every thread keeps its own TOP best rows (a bounded selection), the
+//           merge is one partition, and the write stops after TOP rows
+//   OUT     m  the run holds the rows themselves (default); p  the run holds (key words, file offset) and the merge
+//           threads read the rows back from the file with pread, in sorted order
+//
+// Phases:
+//   A  every thread reads its byte range (aligned to line starts), finds the key words of each row, sorts the rows of its
+//      range (stable: by key, then file order) and writes the SORTED RUN to its slot: for each row
+//      [row length][word 1][word 2][word 3][flags][aux][row bytes], and a sparse index of every 64th entry.
+//   B  the parent samples the sparse indexes, picks THREADS-1 splitters (the first key's word pair), and finds in each run
+//      the byte offset where each splitter falls (binary search in the sparse index, a short scan).
+//   C  every thread merges its partition: one slice of every run (copied into its input by the parent), a stable k-way
+//      merge by (key, run number), the rows written to its output.
+//   D  the parent writes the outputs in partition order.
+// Stability: the runs are in file order; a tie goes to the lower run; inside a run the sort was stable; a partition is a range
+// of the first key's word pairs, so all rows with an equal first key are in one partition.
+edition 5;
+
+import std.buffer;
+import std.bytes;
+import std.io;
+
+fn hdr() -> [] int {
+    return 48;
+}
+
+// ---------------------------------------------------------------------------------------------- byte-level ints
+
+fn put_i64[&o](out: &!o [byte], at: int, v: int) -> [] int {
+    var i = 0;
+    while i < 8 {
+        out[at + i] = byte_of(v >> 8 * i & 255);
+        i = i + 1;
+    }
+    return at + 8;
+}
+
+fn get_i64[&b](blob: &b [byte], at: int) -> [] int {
+    let low = int_of(blob[at]) | int_of(blob[at + 1]) << 8 | int_of(blob[at + 2]) << 16 | int_of(blob[at + 3]) << 24;
+    var top = int_of(blob[at + 7]);
+    if top >= 128 {
+        top = top - 256;
+    }
+    let high = int_of(blob[at + 4]) | int_of(blob[at + 5]) << 8 | int_of(blob[at + 6]) << 16;
+    return (high + top * 16777216) * 4294967296 + low;
+}
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+// ---------------------------------------------------------------------------------------------- keys
+
+// The key spec `ks`: 0 number of keys, 1 column, 2 kind (0 bytes, 1 integer), 3 descending; 4, 5, 6 the same for the second.
+
+// The cell [first, end) of column `col` of `row` (a line without its newline).
+fn cell_of[&r](row: &r [byte], col: int) -> [] (int, int) {
+    var first = 0;
+    var c = 0;
+    while c < col {
+        let k = index_of_byte(row[first..len(row)], byte_of(44));
+        if k < 0 {
+            return (len(row), len(row));
+        }
+        first = first + k + 1;
+        c = c + 1;
+    }
+    let k = index_of_byte(row[first..len(row)], byte_of(44));
+    if k < 0 {
+        return (first, len(row));
+    }
+    return (first, first + k);
+}
+
+fn prefix_of[&k](key: &k [byte], from: int) -> [] int {
+    var v = 0;
+    var i = from;
+    while i < from + 7 {
+        v = v * 256;
+        if i < len(key) {
+            v = v + int_of(key[i]);
+        }
+        i = i + 1;
+    }
+    return v;
+}
+
+fn int_of_cell[&k](key: &k [byte]) -> [] int {
+    var at = 0;
+    var negative = false;
+    if len(key) > 0 && int_of(key[0]) == '-' {
+        negative = true;
+        at = 1;
+    }
+    var v = 0;
+    while at < len(key) {
+        v = v * 10 + (int_of(key[at]) - '0');
+        at = at + 1;
+    }
+    if negative {
+        return 0 - v;
+    }
+    return v;
+}
+
+// The key words of a row (a line without its newline): word 1 and 2 of the first key (a number, or two 7-byte prefixes),
+// word 3 of the second (a number, or a 7-byte prefix), and the flags: 1 the first key may be longer than its words (more
+// than 14 bytes, or a NUL), 2 the second.
+fn words_of[&r, &k, &b](row: &r [byte], ks: &k [int], skip: int, pb: &b [int]) -> [] (int, int, int, int) {
+    var p1 = 0;
+    var p2 = 0;
+    var q1 = 0;
+    var fl = 0;
+    let (f, e) = cell_of(row, ks[1]);
+    if ks[2] == 0 {
+        // the first key's bytes after the `skip` bytes that the file's keys share (docs/gap-sort.md section 6.2); a key that does not start with
+        // them is below all the others (word 0) or above all of them (word 2^56 + 1), and is flagged: its bytes decide among its kind
+        let key = row[f..e];
+        var outlier = 0;
+        if skip > 0 {
+            var i = 0;
+            while i < skip && outlier == 0 {
+                if i >= len(key) {
+                    outlier = 1;
+                } else if int_of(key[i]) < pb[i] {
+                    outlier = 1;
+                } else if int_of(key[i]) > pb[i] {
+                    outlier = 2;
+                }
+                i = i + 1;
+            }
+        }
+        if outlier == 1 {
+            p1 = 0;
+            fl = 1;
+        } else if outlier == 2 {
+            p1 = 72057594037927936 + 1;
+            fl = 1;
+        } else {
+            let rest = key[skip..len(key)];
+            p1 = prefix_of(rest, 0) + 1;
+            p2 = prefix_of(rest, 7);
+            if len(rest) > 14 || bytes.count_byte(rest, 0) > 0 {
+                fl = 1;
+            }
+        }
+    } else {
+        p1 = int_of_cell(row[f..e]);
+    }
+    if ks[0] == 2 {
+        let (f2, e2) = cell_of(row, ks[4]);
+        if ks[5] == 0 {
+            q1 = prefix_of(row[f2..e2], 0);
+            if e2 - f2 > 7 || bytes.count_byte(row[f2..e2], 0) > 0 {
+                fl = fl | 2;
+            }
+        } else {
+            q1 = int_of_cell(row[f2..e2]);
+        }
+    }
+    return (p1, p2, q1, fl);
+}
+
+// -1, 0, 1: a pair of numbers, a before b in the order of the sort (descending reverses it).
+fn cmp_one(a: int, b: int, desc: int) -> [] int {
+    var c = 0;
+    if a < b {
+        c = 0 - 1;
+    } else if a > b {
+        c = 1;
+    }
+    if desc == 1 {
+        return 0 - c;
+    }
+    return c;
+}
+
+// -1, 0, 1: prefix pair a against b.
+fn cmp_pre(a1: int, a2: int, b1: int, b2: int, desc: int) -> [] int {
+    var c = 0;
+    if a1 != b1 {
+        if a1 < b1 {
+            c = 0 - 1;
+        } else {
+            c = 1;
+        }
+    } else if a2 != b2 {
+        if a2 < b2 {
+            c = 0 - 1;
+        } else {
+            c = 1;
+        }
+    }
+    if desc == 1 {
+        return 0 - c;
+    }
+    return c;
+}
+
+// The full text key of two rows (each a line without its newline), in the order of the sort.
+fn cmp_cell[&x, &y](rx: &x [byte], ry: &y [byte], col: int, desc: int) -> [] int {
+    let (fx, ex) = cell_of(rx, col);
+    let (fy, ey) = cell_of(ry, col);
+    let c = bytes.compare(rx[fx..ex], ry[fy..ey]);
+    var s = 0;
+    if c < 0 {
+        s = 0 - 1;
+    } else if c > 0 {
+        s = 1;
+    }
+    if desc == 1 {
+        return 0 - s;
+    }
+    return s;
+}
+
+// The order of two rows by all their keys: -1 a first, 1 b first, 0 equal.
+fn cmp_all[&x, &y, &k](a1: int, a2: int, aq: int, af: int, ra: &x [byte], b1: int, b2: int, bq: int, bf: int, rb: &y [byte], ks: &k [int]) -> [] int {
+    var c = cmp_pre(a1, a2, b1, b2, ks[3]);
+    if c != 0 {
+        return c;
+    }
+    if ks[2] == 0 && (af | bf) & 1 == 1 {
+        c = cmp_cell(ra, rb, ks[1], ks[3]);
+        if c != 0 {
+            return c;
+        }
+    }
+    if ks[0] == 2 {
+        c = cmp_one(aq, bq, ks[6]);
+        if c != 0 {
+            return c;
+        }
+        if ks[5] == 0 && (af | bf) & 2 == 2 {
+            c = cmp_cell(ra, rb, ks[4], ks[6]);
+            if c != 0 {
+                return c;
+            }
+        }
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------------------------- phase A: a run
+
+// rec: 6 integers a row: where its line begins in `data`, its length with the newline, the three key words, the flags.
+// Is row x strictly before row y?
+fn before[&r, &d, &k](rec: &r [int], data: &d [byte], ks: &k [int], x: int, y: int) -> [] bool {
+    let ox = rec[6 * x];
+    let oy = rec[6 * y];
+    return cmp_all(rec[6 * x + 2], rec[6 * x + 3], rec[6 * x + 4], rec[6 * x + 5], data[ox..ox + rec[6 * x + 1] - 1], rec[6 * y + 2], rec[6 * y + 3], rec[6 * y + 4], rec[6 * y + 5], data[oy..oy + rec[6 * y + 1] - 1], ks) < 0;
+}
+
+// Sort order[lo0..hi0) (row numbers) stably by the keys, a bottom-up merge sort through `spare`.
+fn merge_range[&r, &d, &k, &o, &t](rec: &r [int], data: &d [byte], ks: &k [int], order: &!o [int], spare: &!t [int], lo0: int, hi0: int) -> [] int {
+    var width = 1;
+    while width < hi0 - lo0 {
+        var lo = lo0;
+        while lo < hi0 {
+            var mid = lo + width;
+            if mid > hi0 {
+                mid = hi0;
+            }
+            var hi = lo + 2 * width;
+            if hi > hi0 {
+                hi = hi0;
+            }
+            var p = lo;
+            var q = mid;
+            var w = lo;
+            while w < hi {
+                if p < mid && (q >= hi || !before(rec, data, ks, order[q], order[p])) {
+                    spare[w] = order[p];
+                    p = p + 1;
+                } else {
+                    spare[w] = order[q];
+                    q = q + 1;
+                }
+                w = w + 1;
+            }
+            lo = hi;
+        }
+        var c = lo0;
+        while c < hi0 {
+            order[c] = spare[c];
+            c = c + 1;
+        }
+        width = width * 2;
+    }
+    return 0;
+}
+
+fn merge_sort[&r, &d, &k, &o, &t](rec: &r [int], data: &d [byte], ks: &k [int], order: &!o [int], spare: &!t [int], n: int) -> [] int {
+    var i = 0;
+    while i < n {
+        order[i] = i;
+        i = i + 1;
+    }
+    return merge_range(rec, data, ks, order, spare, 0, n);
+}
+
+// The first `top` rows in order, by a bounded selection (the one of sorter.cho): rows are collected in `order`; at 2 top + 1 they are
+// sorted and cut to `top`, and from then on a row that is not strictly before the last of them is dropped. Answers how many.
+fn select_top[&r, &d, &k, &o, &t](rec: &r [int], data: &d [byte], ks: &k [int], order: &!o [int], spare: &!t [int], n: int, top: int) -> [] int {
+    var c = 0;
+    var thr = 0 - 1;
+    var i = 0;
+    while i < n {
+        if thr >= 0 && !before(rec, data, ks, i, thr) {
+            i = i + 1;
+        } else {
+            order[c] = i;
+            c = c + 1;
+            if c == 2 * top + 1 {
+                merge_range(rec, data, ks, order, spare, 0, c);
+                c = top;
+                thr = order[top - 1];
+            }
+            i = i + 1;
+        }
+    }
+    merge_range(rec, data, ks, order, spare, 0, c);
+    if c > top {
+        c = top;
+    }
+    return c;
+}
+
+fn bit_length(v: int) -> [] int {
+    var b = 0;
+    var x = v;
+    while x > 0 {
+        b = b + 1;
+        x = x >> 1;
+    }
+    return b;
+}
+
+// The digits of the radix sort, least significant first, in `dt` six integers each: the word of a record, the shift, the width, the base the
+// word is offset by, the top (for descending), whether descending. Answers how many, or -1 when an integer key's range is too wide.
+fn plan_digits[&r, &k, &d](rec: &r [int], ks: &k [int], dt: &!d [int], n: int) -> [] int {
+    var nd = 0;
+    var which = ks[0];
+    while which >= 1 {
+        var kind = ks[2];
+        var desc = ks[3];
+        var w1 = 2;
+        if which == 2 {
+            kind = ks[5];
+            desc = ks[6];
+            w1 = 4;
+        }
+        if kind == 1 {
+            var lo = rec[w1];
+            var hi = rec[w1];
+            var i = 1;
+            while i < n {
+                let v = rec[6 * i + w1];
+                if v < lo {
+                    lo = v;
+                }
+                if v > hi {
+                    hi = v;
+                }
+                i = i + 1;
+            }
+            if lo < 0 {
+                if hi > lo + 4611686018427387904 {
+                    return 0 - 1;
+                }
+            } else if hi - lo > 4611686018427387904 {
+                return 0 - 1;
+            }
+            var m = (bit_length(hi - lo) + 10) / 11;
+            if m == 0 {
+                m = 1;
+            }
+            var d2 = 0;
+            while d2 < m {
+                dt[6 * nd] = w1;
+                dt[6 * nd + 1] = 11 * d2;
+                dt[6 * nd + 2] = 11;
+                dt[6 * nd + 3] = lo;
+                dt[6 * nd + 4] = hi;
+                dt[6 * nd + 5] = desc;
+                nd = nd + 1;
+                d2 = d2 + 1;
+            }
+        } else {
+            // a text key: the second word (if any) then the first, 7 bytes of 8 bits each, least significant first
+            var words = 1;
+            if which == 1 {
+                words = 2;
+            }
+            var wk = 0;
+            while wk < words {
+                var wi = w1;
+                if which == 1 && wk == 0 {
+                    wi = 3;
+                }
+                var d2 = 0;
+                var ndig = 7;
+                var wtop = 72057594037927935;
+                if which == 1 && wk == 1 {
+                    ndig = 8;
+                    wtop = 144115188075855872;
+                }
+                while d2 < ndig {
+                    dt[6 * nd] = wi;
+                    dt[6 * nd + 1] = 8 * d2;
+                    dt[6 * nd + 2] = 8;
+                    dt[6 * nd + 3] = 0;
+                    dt[6 * nd + 4] = wtop;
+                    dt[6 * nd + 5] = desc;
+                    nd = nd + 1;
+                    d2 = d2 + 1;
+                }
+                wk = wk + 1;
+            }
+        }
+        which = which - 1;
+    }
+    return nd;
+}
+
+fn digit_of[&d](v: int, dt: &d [int], g: int) -> [] int {
+    var k = v - dt[6 * g + 3];
+    if dt[6 * g + 5] == 1 {
+        k = dt[6 * g + 4] - v;
+    }
+    return k >> dt[6 * g + 1] & (1 << dt[6 * g + 2]) - 1;
+}
+
+// Stable LSD radix sort of the rows' numbers by their key words, a digit that is the same in every row skipped; then the groups of
+// rows whose first key's words are equal and that may differ in their full keys are merge-sorted, in place, by all the keys.
+// Answers 0, or 1 when an integer key's range is too wide to offset (the caller falls back to the merge sort).
+fn radix_sort[&r, &d, &k, &o, &t, &h, &z](rec: &r [int], data: &d [byte], ks: &k [int], order: &!o [int], spare: &!t [int], hist: &!h [int], dt: &!z [int], n: int) -> [] int {
+    let nd = plan_digits(rec, ks, dt, n);
+    if nd < 0 {
+        return 1;
+    }
+    var i = 0;
+    while i < nd * 2048 {
+        hist[i] = 0;
+        i = i + 1;
+    }
+    i = 0;
+    while i < n {
+        var g = 0;
+        while g < nd {
+            let b = g * 2048 + digit_of(rec[6 * i + dt[6 * g]], dt, g);
+            hist[b] = hist[b] + 1;
+            g = g + 1;
+        }
+        order[i] = i;
+        i = i + 1;
+    }
+    var from_order = true;
+    var g = 0;
+    while g < nd {
+        var constant = false;
+        var acc = 0;
+        var b = 0;
+        let width = dt[6 * g + 2];
+        while b < 1 << width {
+            let c = hist[g * 2048 + b];
+            if c == n {
+                constant = true;
+            }
+            hist[g * 2048 + b] = acc;
+            acc = acc + c;
+            b = b + 1;
+        }
+        if !constant {
+            var j = 0;
+            while j < n {
+                var x = 0;
+                if from_order {
+                    x = order[j];
+                } else {
+                    x = spare[j];
+                }
+                let dig = digit_of(rec[6 * x + dt[6 * g]], dt, g);
+                let at = hist[g * 2048 + dig];
+                hist[g * 2048 + dig] = at + 1;
+                if from_order {
+                    spare[at] = x;
+                } else {
+                    order[at] = x;
+                }
+                j = j + 1;
+            }
+            from_order = !from_order;
+        }
+        g = g + 1;
+    }
+    if !from_order {
+        var c = 0;
+        while c < n {
+            order[c] = spare[c];
+            c = c + 1;
+        }
+    }
+    // equal first words: a group is sorted by the full keys if any member's first key may be longer than its words (and
+    // with a second key, then the subgroups of equal second word if any member's second key may be)
+    var lo = 0;
+    while lo < n {
+        var hi = lo + 1;
+        var any = rec[6 * order[lo] + 5];
+        while hi < n && rec[6 * order[hi] + 2] == rec[6 * order[lo] + 2] && rec[6 * order[hi] + 3] == rec[6 * order[lo] + 3] {
+            any = any | rec[6 * order[hi] + 5];
+            hi = hi + 1;
+        }
+        if hi - lo > 1 && any != 0 {
+            if any & 1 == 1 {
+                merge_range(rec, data, ks, order, spare, lo, hi);
+            } else {
+                var s = lo;
+                while s < hi {
+                    var e = s + 1;
+                    var f2 = rec[6 * order[s] + 5];
+                    while e < hi && rec[6 * order[e] + 4] == rec[6 * order[s] + 4] {
+                        f2 = f2 | rec[6 * order[e] + 5];
+                        e = e + 1;
+                    }
+                    if e - s > 1 && f2 != 0 {
+                        merge_range(rec, data, ks, order, spare, s, e);
+                    }
+                    s = e;
+                }
+            }
+        }
+        lo = hi;
+    }
+    return 0;
+}
+
+// Job parameters: 0 start, 1 until, 2 top, 3 out (0 rows, 1 offsets), 4 sort (0 merge, 1 radix); results: 8 rows, 9 status (0 ok,
+// 1 the run did not fit its slot), 10 bytes of the range, 11 to 14 the milliseconds of reading, scanning, sorting, writing the run;
+// the key spec from 16.
+res struct JobA {
+    heap: Heap,
+    file: File,
+    clock: Clock,
+    par: Box[[int]],
+    out: Box[[byte]],
+}
+
+fn read_range[&h, &f](heap: &!h Heap, file: &!f File, start: int, until: int) -> [heap, file_read] buffer.Buffer {
+    var data = buffer.empty(heap, until - start + 1);
+    var got_total = 0;
+    var going = true;
+    while going && got_total < until - start {
+        borrow mut data as &!dw in {
+            let room = buffer.room(dw);
+            var want = until - start - got_total;
+            if want > len(room) {
+                want = len(room);
+            }
+            match file_pread(file, start + got_total, room[0..want]) {
+                Read::Got(n) => {
+                    buffer.filled(dw, n);
+                    got_total = got_total + n;
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+    }
+    return data;
+}
+
+fn work_a[&r](w: &!r JobA) -> [heap, file_read, clock] int {
+    let t_0 = clock_ms(w.clock);
+    let start = contents(w.par)[0];
+    let until = contents(w.par)[1];
+    let top = contents(w.par)[2];
+    let by_offset = contents(w.par)[3];
+    let radix = contents(w.par)[4];
+    let ks = contents(w.par)[16..23];
+    let skip = contents(w.par)[24];
+    let pb = contents(w.par)[25..25 + skip];
+    let data_buf = read_range(w.heap, w.file, start, until);
+    let t_read = clock_ms(w.clock);
+    var t_scan = t_read;
+    var t_sort = t_read;
+    var n = 0;
+    var rows_bytes = 0;
+    borrow data_buf as &dr in {
+        let data = buffer.bytes(dr);
+        rows_bytes = len(data);
+        n = bytes.count_byte(data, 10);
+        var rec = box_slice(w.heap, 6 * n + 6, 0);
+        var order = box_slice(w.heap, n + 1, 0);
+        var spare = box_slice(w.heap, n + 1, 0);
+        borrow mut rec as &!rw in {
+            let rc = contents(rw);
+            var at = 0;
+            var i = 0;
+            while i < n {
+                let k = index_of_byte(data[at..len(data)], byte_of(10));
+                let (a, b, c, d) = words_of(data[at..at + k], ks, skip, pb);
+                rc[6 * i] = at;
+                rc[6 * i + 1] = k + 1;
+                rc[6 * i + 2] = a;
+                rc[6 * i + 3] = b;
+                rc[6 * i + 4] = c;
+                rc[6 * i + 5] = d;
+                at = at + k + 1;
+                i = i + 1;
+            }
+        }
+        t_scan = clock_ms(w.clock);
+        var kept = n;
+        var hist = box_slice(w.heap, 24 * 2048 + 8, 0);
+        var dt = box_slice(w.heap, 6 * 32, 0);
+        borrow rec as &rr in {
+            borrow mut order as &!ow in {
+                borrow mut spare as &!sw in {
+                    borrow mut hist as &!hw in {
+                        borrow mut dt as &!dw2 in {
+                            if top > 0 && 2 * top + 1 < n {
+                                kept = select_top(contents(rr), data, ks, contents(ow), contents(sw), n, top);
+                            } else {
+                                var fell = 1;
+                                if radix == 1 && n > 0 {
+                                    fell = radix_sort(contents(rr), data, ks, contents(ow), contents(sw), contents(hw), contents(dw2), n);
+                                }
+                                if fell == 1 {
+                                    merge_sort(contents(rr), data, ks, contents(ow), contents(sw), n);
+                                }
+                                if top > 0 && kept > top {
+                                    kept = top;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(w.heap, hist);
+        unbox_slice(w.heap, dt);
+        t_sort = clock_ms(w.clock);
+        // the run
+        let sparse = (kept + 63) / 64;
+        let o = contents(w.out);
+        let e0 = 32 + 32 * sparse;
+        var cur = 0;
+        var fits = true;
+        borrow rec as &rr in {
+            borrow order as &or in {
+                let rc = contents(rr);
+                let od = contents(or);
+                var need = e0 + hdr() * kept;
+                var flags_or = 0;
+                if by_offset == 0 {
+                    need = need + rows_bytes;
+                }
+                if need > len(o) {
+                    fits = false;
+                } else {
+                    var i = 0;
+                    while i < kept {
+                        let x = od[i];
+                        let rl = rc[6 * x + 1];
+                        if i % 64 == 0 {
+                            let sp = 32 + 32 * (i / 64);
+                            put_i64(o, sp, cur);
+                            put_i64(o, sp + 8, rc[6 * x + 2]);
+                            put_i64(o, sp + 16, rc[6 * x + 3]);
+                            put_i64(o, sp + 24, rc[6 * x + 4]);
+                        }
+                        let at = e0 + cur;
+                        put_i64(o, at, rl);
+                        put_i64(o, at + 8, rc[6 * x + 2]);
+                        put_i64(o, at + 16, rc[6 * x + 3]);
+                        put_i64(o, at + 24, rc[6 * x + 4]);
+                        put_i64(o, at + 32, rc[6 * x + 5]);
+                        put_i64(o, at + 40, start + rc[6 * x]);
+                        flags_or = flags_or | rc[6 * x + 5];
+                        if by_offset == 0 {
+                            copy_into(o[at + hdr()..at + hdr() + rl], data[rc[6 * x]..rc[6 * x] + rl]);
+                            cur = cur + hdr() + rl;
+                        } else {
+                            cur = cur + hdr();
+                        }
+                        i = i + 1;
+                    }
+                    contents(w.par)[15] = flags_or;
+                }
+            }
+        }
+        if fits {
+            put_i64(o, 0, kept);
+            put_i64(o, 8, sparse);
+            put_i64(o, 16, cur);
+            put_i64(o, 24, contents(w.par)[15]);
+            contents(w.par)[9] = 0;
+        } else {
+            contents(w.par)[9] = 1;
+        }
+        unbox_slice(w.heap, rec);
+        unbox_slice(w.heap, order);
+        unbox_slice(w.heap, spare);
+    }
+    contents(w.par)[8] = n;
+    contents(w.par)[10] = rows_bytes;
+    let t_end = clock_ms(w.clock);
+    contents(w.par)[11] = t_read - t_0;
+    contents(w.par)[12] = t_scan - t_read;
+    contents(w.par)[13] = t_sort - t_scan;
+    contents(w.par)[14] = t_end - t_sort;
+    buffer.drop(w.heap, data_buf);
+    return 0;
+}
+
+fn copy_ints[&h, &s](heap: &!h Heap, from: &s [int]) -> [heap] Box[[int]] {
+    let out = box_slice(heap, len(from) + 1, 0);
+    var o = out;
+    borrow mut o as &!ow in {
+        let t = contents(ow);
+        var i = 0;
+        while i < len(from) {
+            t[i] = from[i];
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+// One level of phase A: make job k, start its thread, make the rest, join it, move its slot up.
+fn fan_a[&p, &x, &r, &q, &l, &u, &st, &ck, &ps](parent: &!p Heap, clk: &ck Clock, psec: &!ps [int], fs: &x Fs(""), path: &r [byte], par: &q [int], plan: &l [int], slots: &!u [byte], stats: &!st [int], k: int, n: int, slot_bytes: int) -> [heap, conc, file_read, fs_read(""), clock] int {
+    if k >= n {
+        return 0;
+    }
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            return 1;
+        }
+        Opened::Ok(file) => {
+            let ta = clock_ms(clk);
+            let forked = fork_heap(parent);
+            var job = JobA { heap: forked, file: file, clock: fork_clock(clk), par: copy_ints(parent, par), out: box_slice(parent, slot_bytes, byte_of(0)) };
+            borrow mut job as &!kj in {
+                contents(kj.par)[0] = plan[k];
+                contents(kj.par)[1] = plan[k + 1];
+            }
+            var rest = 0;
+            psec[0] = psec[0] + clock_ms(clk) - ta;
+            borrow mut job as &!kj in {
+                let body = work_a;
+                let thread = spawn(kj, body);
+                rest = fan_a(parent, clk, psec, fs, path, par, plan, slots, stats, k + 1, n, slot_bytes);
+                join(thread);
+            }
+            let tc = clock_ms(clk);
+            let JobA { heap, file, clock, par, out } = job;
+            file_close(file);
+            release(heap);
+            release(clock);
+            borrow par as &pr in {
+                stats[8 * k] = contents(pr)[8];
+                stats[8 * k + 1] = contents(pr)[9];
+                stats[8 * k + 2] = contents(pr)[10];
+                stats[8 * k + 3] = contents(pr)[11];
+                stats[8 * k + 4] = contents(pr)[12];
+                stats[8 * k + 5] = contents(pr)[13];
+                stats[8 * k + 6] = contents(pr)[14];
+            }
+            unbox_slice(parent, par);
+            borrow out as &ob in {
+                var used = 32;
+                if stats[8 * k + 1] == 0 {
+                    used = 32 + 32 * get_i64(contents(ob), 8) + get_i64(contents(ob), 16);
+                }
+                copy_into(slots[k * slot_bytes..k * slot_bytes + used], contents(ob)[0..used]);
+            }
+            unbox_slice(parent, out);
+            psec[0] = psec[0] + clock_ms(clk) - tc;
+            return rest;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------- phase C: a partition
+
+// par: 0 runs, 1 to runs the slice lengths, runs + 1 the output length (result), runs + 2 out (0 rows, 1 offsets), the key spec from runs + 3.
+res struct JobC {
+    heap: Heap,
+    file: File,
+    par: Box[[int]],
+    inp: Box[[byte]],
+    out: Box[[byte]],
+}
+
+// Is the head of cursor a before the head of cursor b (ties: the lower run)?
+fn head_before[&i, &h1, &h2, &h3, &h4, &cp, &k](inp: &i [byte], hh1: &h1 [int], hh2: &h2 [int], hh3: &h3 [int], hh4: &h4 [int], cpos: &cp [int], ks: &k [int], a: int, b: int) -> [] bool {
+    let c = cmp_pre(hh1[a], hh2[a], hh1[b], hh2[b], ks[3]);
+    if c != 0 {
+        return c < 0;
+    }
+    if hh4[a] | hh4[b] == 0 {
+        if ks[0] == 2 {
+            let d2 = cmp_one(hh3[a], hh3[b], ks[6]);
+            if d2 != 0 {
+                return d2 < 0;
+            }
+        }
+        return a < b;
+    }
+    if true {
+        let pa = cpos[a];
+        let pb = cpos[b];
+        let la = get_i64(inp, pa);
+        let lb = get_i64(inp, pb);
+        let d = cmp_all(hh1[a], hh2[a], hh3[a], hh4[a], inp[pa + hdr()..pa + hdr() + la - 1], hh1[b], hh2[b], hh3[b], hh4[b], inp[pb + hdr()..pb + hdr() + lb - 1], ks);
+        if d != 0 {
+            return d < 0;
+        }
+    }
+    return a < b;
+}
+
+// Same, when the rows are not in the input (the run holds offsets): only the key words decide, ties go to the lower run.
+fn head_before_words[&h1, &h2, &h3, &k](hh1: &h1 [int], hh2: &h2 [int], hh3: &h3 [int], ks: &k [int], a: int, b: int) -> [] bool {
+    var c = cmp_pre(hh1[a], hh2[a], hh1[b], hh2[b], ks[3]);
+    if c == 0 && ks[0] == 2 {
+        c = cmp_one(hh3[a], hh3[b], ks[6]);
+    }
+    if c != 0 {
+        return c < 0;
+    }
+    return a < b;
+}
+
+fn work_c[&r](w: &!r JobC) -> [heap, file_read] int {
+    let runs = contents(w.par)[0];
+    let by_offset = contents(w.par)[runs + 2];
+    let ks = contents(w.par)[runs + 3..runs + 10];
+    var cpos = box_slice(w.heap, runs + 1, 0);
+    var cend = box_slice(w.heap, runs + 1, 0);
+    var h1 = box_slice(w.heap, runs + 1, 0);
+    var h2 = box_slice(w.heap, runs + 1, 0);
+    var h3 = box_slice(w.heap, runs + 1, 0);
+    var h4 = box_slice(w.heap, runs + 1, 0);
+    var hp = box_slice(w.heap, runs + 1, 0);
+    var m = 0;
+    var used = 0;
+    if true {
+        let inp = contents(w.inp);
+        borrow mut cpos as &!cw in {
+            borrow mut cend as &!ew in {
+                borrow mut h1 as &!w1 in {
+                    borrow mut h2 as &!w2 in {
+                        borrow mut h3 as &!w3 in {
+                            borrow mut h4 as &!w4 in {
+                                borrow mut hp as &!hw in {
+                                    let cp = contents(cw);
+                                    let ce = contents(ew);
+                                    let a1 = contents(w1);
+                                    let a2 = contents(w2);
+                                    let a3 = contents(w3);
+                                    let a4 = contents(w4);
+                                    let hh = contents(hw);
+                                    var at = 0;
+                                    var r = 0;
+                                    while r < runs {
+                                        cp[r] = at;
+                                        ce[r] = at + contents(w.par)[1 + r];
+                                        at = at + contents(w.par)[1 + r];
+                                        if cp[r] < ce[r] {
+                                            a1[r] = get_i64(inp, cp[r] + 8);
+                                            a2[r] = get_i64(inp, cp[r] + 16);
+                                            a3[r] = get_i64(inp, cp[r] + 24);
+                                            a4[r] = get_i64(inp, cp[r] + 32);
+                                            hh[m] = r;
+                                            m = m + 1;
+                                        }
+                                        r = r + 1;
+                                    }
+                                    // heapify
+                                    var j = m / 2;
+                                    while j > 0 {
+                                        j = j - 1;
+                                        var at2 = j;
+                                        var going = true;
+                                        while going {
+                                            let l = 2 * at2 + 1;
+                                            if l >= m {
+                                                going = false;
+                                            } else {
+                                                var s = l;
+                                                var lt = false;
+                                                if l + 1 < m {
+                                                    if by_offset == 1 {
+                                                        lt = head_before_words(a1, a2, a3, ks, hh[l + 1], hh[l]);
+                                                    } else {
+                                                        lt = head_before(inp, a1, a2, a3, a4, cp, ks, hh[l + 1], hh[l]);
+                                                    }
+                                                }
+                                                if lt {
+                                                    s = l + 1;
+                                                }
+                                                var up = false;
+                                                if by_offset == 1 {
+                                                    up = head_before_words(a1, a2, a3, ks, hh[s], hh[at2]);
+                                                } else {
+                                                    up = head_before(inp, a1, a2, a3, a4, cp, ks, hh[s], hh[at2]);
+                                                }
+                                                if up {
+                                                    let t = hh[s];
+                                                    hh[s] = hh[at2];
+                                                    hh[at2] = t;
+                                                    at2 = s;
+                                                } else {
+                                                    going = false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    let o = contents(w.out);
+                                    while m > 0 {
+                                        let r0 = hh[0];
+                                        let rl = get_i64(inp, cp[r0]);
+                                        if by_offset == 0 {
+                                            copy_into(o[used..used + rl], inp[cp[r0] + hdr()..cp[r0] + hdr() + rl]);
+                                            cp[r0] = cp[r0] + hdr() + rl;
+                                        } else {
+                                            // the row is read back from the file, at the offset in its entry
+                                            var got = 0;
+                                            let off = get_i64(inp, cp[r0] + 40);
+                                            while got < rl {
+                                                match file_pread(w.file, off + got, o[used + got..used + rl]) {
+                                                    Read::Got(n) => {
+                                                        got = got + n;
+                                                    }
+                                                    Read::End => {
+                                                        got = rl;
+                                                    }
+                                                    Read::Failed(reason) => {
+                                                        got = rl;
+                                                    }
+                                                }
+                                            }
+                                            cp[r0] = cp[r0] + hdr();
+                                        }
+                                        used = used + rl;
+                                        if cp[r0] < ce[r0] {
+                                            a1[r0] = get_i64(inp, cp[r0] + 8);
+                                            a2[r0] = get_i64(inp, cp[r0] + 16);
+                                            a3[r0] = get_i64(inp, cp[r0] + 24);
+                                            a4[r0] = get_i64(inp, cp[r0] + 32);
+                                        } else {
+                                            hh[0] = hh[m - 1];
+                                            m = m - 1;
+                                        }
+                                        // sift down from the root
+                                        var at3 = 0;
+                                        var going2 = true;
+                                        while going2 {
+                                            let l = 2 * at3 + 1;
+                                            if l >= m {
+                                                going2 = false;
+                                            } else {
+                                                var s = l;
+                                                var lt = false;
+                                                if l + 1 < m {
+                                                    if by_offset == 1 {
+                                                        lt = head_before_words(a1, a2, a3, ks, hh[l + 1], hh[l]);
+                                                    } else {
+                                                        lt = head_before(inp, a1, a2, a3, a4, cp, ks, hh[l + 1], hh[l]);
+                                                    }
+                                                }
+                                                if lt {
+                                                    s = l + 1;
+                                                }
+                                                var up = false;
+                                                if by_offset == 1 {
+                                                    up = head_before_words(a1, a2, a3, ks, hh[s], hh[at3]);
+                                                } else {
+                                                    up = head_before(inp, a1, a2, a3, a4, cp, ks, hh[s], hh[at3]);
+                                                }
+                                                if up {
+                                                    let t = hh[s];
+                                                    hh[s] = hh[at3];
+                                                    hh[at3] = t;
+                                                    at3 = s;
+                                                } else {
+                                                    going2 = false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    contents(w.par)[runs + 1] = used;
+    unbox_slice(w.heap, cpos);
+    unbox_slice(w.heap, cend);
+    unbox_slice(w.heap, h1);
+    unbox_slice(w.heap, h2);
+    unbox_slice(w.heap, h3);
+    unbox_slice(w.heap, h4);
+    unbox_slice(w.heap, hp);
+    return 0;
+}
+
+// One level of phase C: build the input of partition k (a slice of every run), start its thread, make the rest, join.
+// `bnd[r * (parts + 1) + q]` is the absolute offset in `slots` where partition q begins in run r.
+fn fan_c[&p, &q, &u, &o, &b, &v, &z, &x, &y, &ck, &ps](parent: &!p Heap, clk: &ck Clock, psec: &!ps [int], fs: &x Fs(""), path: &y [byte], par: &q [int], bnd: &b [int], slots: &u [byte], outs: &!o [byte], used: &!v [int], k: int, parts: int, runs: int, out_at: &z [int]) -> [heap, conc, file_read, fs_read(""), clock] int {
+    if k >= parts {
+        return 0;
+    }
+    var total = 0;
+    var r = 0;
+    while r < runs {
+        total = total + bnd[r * (parts + 1) + k + 1] - bnd[r * (parts + 1) + k];
+        r = r + 1;
+    }
+    match open_read(fs, path) {
+        Opened::Failed(reason) => {
+            return 1;
+        }
+        Opened::Ok(file) => {
+            let ta = clock_ms(clk);
+            let forked = fork_heap(parent);
+            var job = JobC { heap: forked, file: file, par: copy_ints(parent, par), inp: box_slice(parent, total + 1, byte_of(0)), out: box_slice(parent, out_at[k + 1] - out_at[k] + 1, byte_of(0)) };
+            borrow mut job as &!kj in {
+                var ip = 0;
+                var r2 = 0;
+                while r2 < runs {
+                    let lo = bnd[r2 * (parts + 1) + k];
+                    let hi = bnd[r2 * (parts + 1) + k + 1];
+                    contents(kj.par)[1 + r2] = hi - lo;
+                    copy_into(contents(kj.inp)[ip..ip + hi - lo], slots[lo..hi]);
+                    ip = ip + hi - lo;
+                    r2 = r2 + 1;
+                }
+            }
+            var rest = 0;
+            psec[1] = psec[1] + clock_ms(clk) - ta;
+            borrow mut job as &!kj in {
+                let body = work_c;
+                let thread = spawn(kj, body);
+                rest = fan_c(parent, clk, psec, fs, path, par, bnd, slots, outs, used, k + 1, parts, runs, out_at);
+                join(thread);
+            }
+            let tc = clock_ms(clk);
+            let JobC { heap, file, par, inp, out } = job;
+            file_close(file);
+            release(heap);
+            borrow par as &pr in {
+                used[k] = contents(pr)[runs + 1];
+            }
+            unbox_slice(parent, par);
+            unbox_slice(parent, inp);
+            borrow out as &ob in {
+                copy_into(outs[out_at[k]..out_at[k] + used[k]], contents(ob)[0..used[k]]);
+            }
+            unbox_slice(parent, out);
+            psec[1] = psec[1] + clock_ms(clk) - tc;
+            return rest;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------- the parent
+
+fn align[&h, &f](heap: &!h Heap, file: &!f File, p: int, size: int) -> [heap, file_read] int {
+    if p >= size {
+        return size;
+    }
+    var window = buffer.empty(heap, 65536);
+    var at = p - 1;
+    var found = size;
+    var rounds = 0;
+    var going = true;
+    while going && rounds < 16 {
+        var got = 0;
+        borrow mut window as &!ww in {
+            buffer.clear(ww);
+            match file_pread(file, at, buffer.room(ww)) {
+                Read::Got(n) => {
+                    buffer.filled(ww, n);
+                    got = n;
+                }
+                Read::End => {
+                    got = 0;
+                }
+                Read::Failed(reason) => {
+                    got = 0;
+                }
+            }
+        }
+        if got == 0 {
+            going = false;
+        } else {
+            var q = -1;
+            borrow window as &wr in {
+                q = index_of_byte(buffer.bytes(wr), byte_of(10));
+            }
+            if q >= 0 {
+                found = at + q + 1;
+                going = false;
+            } else {
+                at = at + got;
+                rounds = rounds + 1;
+            }
+        }
+    }
+    buffer.drop(heap, window);
+    return found;
+}
+
+// The order of two samples or entries by the first key's word pair and, when `use_q`, the second key's word: -1, 0, 1.
+fn cmp_tuple[&k](a1: int, a2: int, aq: int, b1: int, b2: int, bq: int, ks: &k [int], use_q: int) -> [] int {
+    let c = cmp_pre(a1, a2, b1, b2, ks[3]);
+    if c != 0 || use_q == 0 {
+        return c;
+    }
+    return cmp_one(aq, bq, ks[6]);
+}
+
+// Sort `n` sample indexes by their tuples, stably (bottom-up merge sort).
+fn sort_samples[&a, &b, &c, &k, &o, &t](s1: &a [int], s2: &b [int], s3: &c [int], ks: &k [int], use_q: int, order: &!o [int], spare: &!t [int], n: int) -> [] int {
+    var i = 0;
+    while i < n {
+        order[i] = i;
+        i = i + 1;
+    }
+    var width = 1;
+    while width < n {
+        var lo = 0;
+        while lo < n {
+            var mid = lo + width;
+            if mid > n {
+                mid = n;
+            }
+            var hi = lo + 2 * width;
+            if hi > n {
+                hi = n;
+            }
+            var p = lo;
+            var q = mid;
+            var w = lo;
+            while w < hi {
+                if p < mid && (q >= hi || cmp_tuple(s1[order[q]], s2[order[q]], s3[order[q]], s1[order[p]], s2[order[p]], s3[order[p]], ks, use_q) >= 0) {
+                    spare[w] = order[p];
+                    p = p + 1;
+                } else {
+                    spare[w] = order[q];
+                    q = q + 1;
+                }
+                w = w + 1;
+            }
+            lo = hi;
+        }
+        var cc = 0;
+        while cc < n {
+            order[cc] = spare[cc];
+            cc = cc + 1;
+        }
+        width = width * 2;
+    }
+    return 0;
+}
+
+// Phase B. `sl` holds the `t` runs, each in a slot of `slot_bytes`. Fills `bnd[r * (parts + 1) + q]` with the absolute offset in `sl` where partition q
+// begins in run r (partition 0 begins at the run's first entry, partition `parts` ends at its last). The splitters are `parts - 1` quantiles of the
+// runs' sparse samples, as tuples (the first key's word pair and, when the second key's words are exact in every row of every run, its word); a run's
+// entries before a splitter are found by a binary search in its sparse index and a short scan. Answers the number of runs whose rows are all in one
+// partition's range, for the report (not used).
+fn plan_parts[&h, &s, &k, &b](heap: &!h Heap, sl: &s [byte], ks: &k [int], bnd: &!b [int], t: int, parts: int, slot_bytes: int, by_offset: int) -> [heap] int {
+    var any = 0;
+    var ns = 0;
+    var r = 0;
+    while r < t {
+        let base = r * slot_bytes;
+        let spn = get_i64(sl, base + 8);
+        ns = ns + spn;
+        any = any | get_i64(sl, base + 24);
+        bnd[r * (parts + 1)] = base + 32 + 32 * spn;
+        bnd[r * (parts + 1) + parts] = base + 32 + 32 * spn + get_i64(sl, base + 16);
+        r = r + 1;
+    }
+    if parts <= 1 {
+        return 0;
+    }
+    var use_q = 0;
+    if ks[0] == 2 && any == 0 {
+        use_q = 1;
+    }
+    var s1 = box_slice(heap, ns + 1, 0);
+    var s2 = box_slice(heap, ns + 1, 0);
+    var s3 = box_slice(heap, ns + 1, 0);
+    var so = box_slice(heap, ns + 1, 0);
+    var st = box_slice(heap, ns + 1, 0);
+    var sp1 = box_slice(heap, parts + 1, 0);
+    var sp2 = box_slice(heap, parts + 1, 0);
+    var sp3 = box_slice(heap, parts + 1, 0);
+    borrow mut s1 as &!w1 in {
+        borrow mut s2 as &!w2 in {
+            borrow mut s3 as &!w3 in {
+                borrow mut so as &!ow in {
+                    borrow mut st as &!tw in {
+                        borrow mut sp1 as &!v1 in {
+                            borrow mut sp2 as &!v2 in {
+                                borrow mut sp3 as &!v3 in {
+                                    let a1 = contents(w1);
+                                    let a2 = contents(w2);
+                                    let a3 = contents(w3);
+                                    var at = 0;
+                                    var k2 = 0;
+                                    while k2 < t {
+                                        let base = k2 * slot_bytes;
+                                        let spn = get_i64(sl, base + 8);
+                                        var j = 0;
+                                        while j < spn {
+                                            a1[at] = get_i64(sl, base + 32 + 32 * j + 8);
+                                            a2[at] = get_i64(sl, base + 32 + 32 * j + 16);
+                                            a3[at] = get_i64(sl, base + 32 + 32 * j + 24);
+                                            at = at + 1;
+                                            j = j + 1;
+                                        }
+                                        k2 = k2 + 1;
+                                    }
+                                    sort_samples(a1, a2, a3, ks, use_q, contents(ow), contents(tw), ns);
+                                    var q = 1;
+                                    while q < parts {
+                                        let ix = contents(ow)[q * ns / parts];
+                                        contents(v1)[q] = a1[ix];
+                                        contents(v2)[q] = a2[ix];
+                                        contents(v3)[q] = a3[ix];
+                                        q = q + 1;
+                                    }
+                                    var run = 0;
+                                    while run < t {
+                                        let base = run * slot_bytes;
+                                        let spn = get_i64(sl, base + 8);
+                                        let ebytes = get_i64(sl, base + 16);
+                                        let e0 = base + 32 + 32 * spn;
+                                        var q2 = 1;
+                                        while q2 < parts {
+                                            let x1 = contents(v1)[q2];
+                                            let x2 = contents(v2)[q2];
+                                            let x3 = contents(v3)[q2];
+                                            var lo = 0;
+                                            var hi = spn;
+                                            while lo < hi {
+                                                let mid = (lo + hi) / 2;
+                                                if cmp_tuple(get_i64(sl, base + 32 + 32 * mid + 8), get_i64(sl, base + 32 + 32 * mid + 16), get_i64(sl, base + 32 + 32 * mid + 24), x1, x2, x3, ks, use_q) < 0 {
+                                                    lo = mid + 1;
+                                                } else {
+                                                    hi = mid;
+                                                }
+                                            }
+                                            var pos = 0;
+                                            if lo > 0 {
+                                                pos = get_i64(sl, base + 32 + 32 * (lo - 1));
+                                            }
+                                            var going = true;
+                                            while going && pos < ebytes {
+                                                if cmp_tuple(get_i64(sl, e0 + pos + 8), get_i64(sl, e0 + pos + 16), get_i64(sl, e0 + pos + 24), x1, x2, x3, ks, use_q) < 0 {
+                                                    var step = get_i64(sl, e0 + pos);
+                                                    if by_offset == 1 {
+                                                        step = 0;
+                                                    }
+                                                    pos = pos + hdr() + step;
+                                                } else {
+                                                    going = false;
+                                                }
+                                            }
+                                            bnd[run * (parts + 1) + q2] = e0 + pos;
+                                            q2 = q2 + 1;
+                                        }
+                                        run = run + 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, s1);
+    unbox_slice(heap, s2);
+    unbox_slice(heap, s3);
+    unbox_slice(heap, so);
+    unbox_slice(heap, st);
+    unbox_slice(heap, sp1);
+    unbox_slice(heap, sp2);
+    unbox_slice(heap, sp3);
+    return use_q;
+}
+
+// The first key's bytes that 32 rows spread over the file all start with (at most 200): the file's keys that do not are the outliers of `words_of`.
+// The shared bytes are left in `pbo`, as integers. Answers how many.
+fn sample_skip[&h, &f, &o](heap: &!h Heap, file: &!f File, hdr_end: int, size: int, col: int, pbo: &!o [int]) -> [heap, file_read] int {
+    var win = buffer.empty(heap, 8192);
+    var skip = 0;
+    var have = false;
+    var i = 0;
+    while i < 32 {
+        let pos = hdr_end + i * ((size - hdr_end) / 32);
+        var got = 0;
+        borrow mut win as &!ww in {
+            buffer.clear(ww);
+            match file_pread(file, pos, buffer.room(ww)) {
+                Read::Got(n) => {
+                    buffer.filled(ww, n);
+                    got = n;
+                }
+                Read::End => {
+                    got = 0;
+                }
+                Read::Failed(reason) => {
+                    got = 0;
+                }
+            }
+        }
+        borrow win as &wr in {
+            let w = buffer.bytes(wr);
+            var from = 0;
+            if i > 0 {
+                from = index_of_byte(w, byte_of(10)) + 1;
+            }
+            if from > 0 || i == 0 {
+                let rest = w[from..len(w)];
+                let q = index_of_byte(rest, byte_of(10));
+                if q >= 0 {
+                    let line = rest[0..q];
+                    let (f0, e0) = cell_of(line, col);
+                    let key = line[f0..e0];
+                    if !have {
+                        var n0 = len(key);
+                        if n0 > 200 {
+                            n0 = 200;
+                        }
+                        var k = 0;
+                        while k < n0 {
+                            pbo[k] = int_of(key[k]);
+                            k = k + 1;
+                        }
+                        skip = n0;
+                        have = true;
+                    } else {
+                        var l = 0;
+                        while l < skip && l < len(key) && int_of(key[l]) == pbo[l] {
+                            l = l + 1;
+                        }
+                        skip = l;
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    buffer.drop(heap, win);
+    return skip;
+}
+
+fn print_phase[&i, &l](io: &!i Io, label: &l [byte], ms: int) -> [io_write] int {
+    write_bytes(io, label);
+    io.print_int(io, ms);
+    write_bytes(io, " ms\n");
+    return 0;
+}
+
+// COL:KIND:DIR[,COL:KIND:DIR]
+fn parse_keys[&s, &k](text: &s [byte], ks: &!k [int]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(text) {
+        var end = at;
+        while end < len(text) && int_of(text[end]) != ',' {
+            end = end + 1;
+        }
+        let part = text[at..end];
+        let c1 = index_of_byte(part, byte_of(':'));
+        let col = number_of(part[0..c1]);
+        var kind = 0;
+        if int_of(part[c1 + 1]) == 'i' {
+            kind = 1;
+        }
+        var desc = 0;
+        if int_of(part[c1 + 3]) == 'd' {
+            desc = 1;
+        }
+        ks[1 + 3 * n] = col;
+        ks[2 + 3 * n] = kind;
+        ks[3 + 3 * n] = desc;
+        n = n + 1;
+        at = end + 1;
+    }
+    ks[0] = n;
+    return n;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    var threads = 1;
+    var mode = 'w';
+    var sort_variant = 0;
+    var top = 0;
+    var by_offset = 0;
+    var status = 0;
+    var hp = heap;
+    borrow mut hp as &!h in {
+        var ksb = box_slice(h, 8, 0);
+        var path = buffer.empty(h, 16);
+        borrow args as &g in {
+            path = buffer.append(h, path, arg(g, 1));
+            threads = number_of(arg(g, 2));
+            mode = int_of(arg(g, 3)[0]);
+            if int_of(arg(g, 4)[0]) == 'r' {
+                sort_variant = 1;
+            }
+            borrow mut ksb as &!kw in {
+                parse_keys(arg(g, 5), contents(kw));
+            }
+            if arg_count(g) > 6 {
+                top = number_of(arg(g, 6));
+            }
+            if arg_count(g) > 7 {
+                if int_of(arg(g, 7)[0]) == 'p' {
+                    by_offset = 1;
+                }
+            }
+        }
+        release(args);
+        borrow mut io as &!i in {
+            borrow fs as &fsr in {
+                borrow path as &pb in {
+                    let pth = buffer.bytes(pb);
+                    var size = 0;
+                    var header = buffer.empty(h, 1024);
+                    var hdr_end = 0;
+                    match open_read(fsr, pth) {
+                        Opened::Failed(reason) => {
+                            status = 2;
+                        }
+                        Opened::Ok(file0) => {
+                            var file = file0;
+                            borrow mut file as &!fb in {
+                                match file_size(fb) {
+                                    Done::Ok(n) => {
+                                        size = n;
+                                    }
+                                    Done::Failed(reason) => {
+                                        status = 3;
+                                    }
+                                }
+                                // the header line
+                                var probe = buffer.empty(h, 65536);
+                                borrow mut probe as &!ww in {
+                                    match file_pread(fb, 0, buffer.room(ww)) {
+                                        Read::Got(n) => {
+                                            buffer.filled(ww, n);
+                                        }
+                                        Read::End => {
+                                        }
+                                        Read::Failed(reason) => {
+                                        }
+                                    }
+                                }
+                                borrow probe as &wr in {
+                                    let k = index_of_byte(buffer.bytes(wr), byte_of(10));
+                                    hdr_end = k + 1;
+                                    header = buffer.append(h, header, buffer.bytes(wr)[0..k + 1]);
+                                }
+                                buffer.drop(h, probe);
+                                var t0 = 0;
+                                borrow clock as &cl in {
+                                    t0 = clock_ms(cl);
+                                }
+                                if status == 0 {
+                                    let t = threads;
+                                    let span = size - hdr_end;
+                                    var plan = box_slice(h, t + 2, 0);
+                                    borrow mut plan as &!pw in {
+                                        let pl = contents(pw);
+                                        pl[0] = hdr_end;
+                                        var j = 1;
+                                        while j < t {
+                                            var edge = align(h, fb, hdr_end + j * (span / t), size);
+                                            if edge < pl[j - 1] {
+                                                edge = pl[j - 1];
+                                            }
+                                            pl[j] = edge;
+                                            j = j + 1;
+                                        }
+                                        pl[t] = size;
+                                    }
+                                    // room for a run: 48 bytes a row (a row is at least 2 bytes) is the worst case; a row of 20 bytes or more, the usual one, takes
+                                    // 48 + its bytes. The spike takes the size of 80 bytes' rows and says so when a run does not fit.
+                                    var slot_bytes = 48 * (span / t / 20 + 1000) + 65536;
+                                    if by_offset == 0 {
+                                        slot_bytes = slot_bytes + span / t + 400000;
+                                    }
+                                    var slots = box_slice(h, t * slot_bytes + 1, byte_of(0));
+                                    var stats = box_slice(h, 8 * t + 8, 0);
+                                    var psec = box_slice(h, 8, 0);
+                                    var apar = box_slice(h, 300, 0);
+                                    var skip = 0;
+                                    if status == 0 {
+                                        borrow mut apar as &!aw in {
+                                            borrow ksb as &kr in {
+                                                if contents(kr)[2] == 0 && sort_variant == 1 && size - hdr_end > 2000 {
+                                                    skip = sample_skip(h, fb, hdr_end, size, contents(kr)[1], contents(aw)[25..225]);
+                                                }
+                                            }
+                                            contents(aw)[24] = skip;
+                                        }
+                                    }
+                                    borrow mut apar as &!aw in {
+                                        contents(aw)[2] = top;
+                                        contents(aw)[3] = by_offset;
+                                        contents(aw)[4] = sort_variant;
+                                        borrow ksb as &kr in {
+                                            var q = 0;
+                                            while q < 7 {
+                                                contents(aw)[16 + q] = contents(kr)[q];
+                                                q = q + 1;
+                                            }
+                                        }
+                                    }
+                                    borrow clock as &clockr in {
+                                        borrow mut slots as &!sw in {
+                                            borrow mut stats as &!tw in {
+                                                borrow mut psec as &!psw in {
+                                                    borrow plan as &pr in {
+                                                        borrow apar as &ar in {
+                                                            fan_a(h, clockr, contents(psw), fsr, pth, contents(ar), contents(pr), contents(sw), contents(tw), 0, t, slot_bytes);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    var t1 = 0;
+                                    borrow clock as &cl in {
+                                        t1 = clock_ms(cl);
+                                    }
+                                    var all_ok = true;
+                                    borrow stats as &tr in {
+                                        var k = 0;
+                                        while k < t {
+                                            if contents(tr)[8 * k + 1] != 0 {
+                                                all_ok = false;
+                                            }
+                                            k = k + 1;
+                                        }
+                                    }
+                                    if !all_ok {
+                                        status = 4;
+                                    }
+                                    // ---- phase B: splitters and the slices
+                                    var parts = t;
+                                    if top > 0 {
+                                        parts = 1;
+                                    }
+                                    var bnd = box_slice(h, t * (parts + 1) + 1, 0);
+                                    var out_at = box_slice(h, parts + 2, 0);
+                                    var total_in = 0;
+                                    if status == 0 && mode != 'a' {
+                                        borrow mut bnd as &!bw in {
+                                            borrow slots as &sr in {
+                                                borrow ksb as &kr in {
+                                                    plan_parts(h, contents(sr), contents(kr), contents(bw), t, parts, slot_bytes, by_offset);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    var t2 = 0;
+                                    borrow clock as &cl in {
+                                        t2 = clock_ms(cl);
+                                    }
+                                    // ---- phase C: merge the partitions
+                                    var outs = box_slice(h, 1, byte_of(0));
+                                    var used = box_slice(h, parts + 1, 0);
+                                    if status == 0 && mode != 'a' && mode != 'b' {
+                                        // a partition's output is at most its input when the run holds the rows; when it holds offsets, it is the sum of
+                                        // the rows' lengths, read from the entries
+                                        borrow mut out_at as &!oa in {
+                                            borrow bnd as &br in {
+                                                borrow slots as &sr in {
+                                                    var q = 0;
+                                                    var acc = 0;
+                                                    while q < parts {
+                                                        contents(oa)[q] = acc;
+                                                        var k = 0;
+                                                        while k < t {
+                                                            let lo = contents(br)[k * (parts + 1) + q];
+                                                            let hi = contents(br)[k * (parts + 1) + q + 1];
+                                                            if by_offset == 0 {
+                                                                acc = acc + hi - lo;
+                                                            } else {
+                                                                var pos = lo;
+                                                                while pos < hi {
+                                                                    acc = acc + get_i64(contents(sr), pos);
+                                                                    pos = pos + hdr();
+                                                                }
+                                                            }
+                                                            k = k + 1;
+                                                        }
+                                                        q = q + 1;
+                                                    }
+                                                    contents(oa)[parts] = acc;
+                                                    total_in = acc;
+                                                }
+                                            }
+                                        }
+                                        unbox_slice(h, outs);
+                                        outs = box_slice(h, total_in + 1, byte_of(0));
+                                        var cpar = box_slice(h, t + 16, 0);
+                                        borrow mut cpar as &!cw in {
+                                            contents(cw)[0] = t;
+                                            contents(cw)[t + 2] = by_offset;
+                                            borrow ksb as &kr in {
+                                                var q = 0;
+                                                while q < 7 {
+                                                    contents(cw)[t + 3 + q] = contents(kr)[q];
+                                                    q = q + 1;
+                                                }
+                                            }
+                                        }
+                                        borrow clock as &clockr2 in {
+                                            borrow mut psec as &!psw2 in {
+                                                borrow cpar as &cr in {
+                                                    borrow bnd as &br in {
+                                                        borrow out_at as &oar in {
+                                                            borrow slots as &sr in {
+                                                                borrow mut outs as &!ow in {
+                                                                    borrow mut used as &!uw in {
+                                                                        fan_c(h, clockr2, contents(psw2), fsr, pth, contents(cr), contents(br), contents(sr), contents(ow), contents(uw), 0, parts, t, contents(oar));
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        unbox_slice(h, cpar);
+                                    }
+                                    var t3 = 0;
+                                    borrow clock as &cl in {
+                                        t3 = clock_ms(cl);
+                                    }
+                                    // ---- phase D: the write
+                                    if status == 0 && mode == 'w' {
+                                        borrow header as &hr in {
+                                            write_bytes(i, buffer.bytes(hr));
+                                        }
+                                        borrow outs as &ob in {
+                                            borrow used as &ur in {
+                                                borrow out_at as &oar in {
+                                                    var q = 0;
+                                                    var left = top;
+                                                    while q < parts {
+                                                        var len_q = contents(ur)[q];
+                                                        if top > 0 {
+                                                            // the first `left` rows of the output
+                                                            var cutat = 0;
+                                                            var seen = 0;
+                                                            while seen < left && cutat < len_q {
+                                                                let nl = index_of_byte(contents(ob)[contents(oar)[q] + cutat..contents(oar)[q] + len_q], byte_of(10));
+                                                                cutat = cutat + nl + 1;
+                                                                seen = seen + 1;
+                                                            }
+                                                            left = left - seen;
+                                                            len_q = cutat;
+                                                        }
+                                                        write_bytes(i, contents(ob)[contents(oar)[q]..contents(oar)[q] + len_q]);
+                                                        q = q + 1;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        flush_out(i);
+                                    }
+                                    var t4 = 0;
+                                    borrow clock as &cl in {
+                                        t4 = clock_ms(cl);
+                                    }
+                                    if mode == 't' {
+                                        print_phase(i, "A runs ", t1 - t0);
+                                        print_phase(i, "B splitters ", t2 - t1);
+                                        print_phase(i, "C merge ", t3 - t2);
+                                        print_phase(i, "D write ", t4 - t3);
+                                        print_phase(i, "total ", t4 - t0);
+                                        borrow psec as &psr in {
+                                            print_phase(i, "  the parent alone, in A: allocate, copy the runs up ", contents(psr)[0]);
+                                            print_phase(i, "  the parent alone, in C: copy slices in, outputs up ", contents(psr)[1]);
+                                        }
+                                        borrow stats as &tr in {
+                                            var rd = 0;
+                                            var sc = 0;
+                                            var so2 = 0;
+                                            var mt = 0;
+                                            var k = 0;
+                                            while k < t {
+                                                rd = rd + contents(tr)[8 * k + 3];
+                                                sc = sc + contents(tr)[8 * k + 4];
+                                                so2 = so2 + contents(tr)[8 * k + 5];
+                                                mt = mt + contents(tr)[8 * k + 6];
+                                                k = k + 1;
+                                            }
+                                            print_phase(i, "  worker-ms summed: read ", rd);
+                                            print_phase(i, "  scan keys ", sc);
+                                            print_phase(i, "  sort ", so2);
+                                            print_phase(i, "  materialise run ", mt);
+                                        }
+                                    }
+                                    unbox_slice(h, outs);
+                                    unbox_slice(h, used);
+                                    unbox_slice(h, plan);
+                                    unbox_slice(h, slots);
+                                    unbox_slice(h, stats);
+                                    unbox_slice(h, psec);
+                                    unbox_slice(h, apar);
+                                    unbox_slice(h, bnd);
+                                    unbox_slice(h, out_at);
+                                }
+                            }
+                            file_close(file);
+                        }
+                    }
+                    buffer.drop(h, header);
+                }
+            }
+        }
+        buffer.drop(h, path);
+        unbox_slice(h, ksb);
+    }
+    release(hp);
+    release(io);
+    release(fs);
+    release(clock);
+    return status;
+}

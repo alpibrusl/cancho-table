@@ -51,6 +51,13 @@ CELLS = {
     "order-by -bytes:int top 100": ["--order-by", "-bytes:int", "--select", "id,bytes", "--top", "100", "--format", "csv"],
     "order-by status,path rows": ["--order-by", "status,path", "--select", "id", "--top", "1000", "--format", "csv"],
     "float min/max by status": ["--group", "status", "--agg", "min:ratio:float,max:ratio:float", "--format", "csv"],
+    # the cells of docs/gap-groups.md: many keys (id is unique, path has 1000 values), the paths the sequential changes touch
+    "report types": ["--report", "types", "--format", "csv"],
+    "group-count path (1000 keys)": ["--group", "path", "--format", "csv"],
+    "group-count id (1M keys)": ["--group", "id", "--format", "csv", "--max-groups", "1000000", "--max-state-bytes", "1073741824"],
+    "group-sum bytes by id (1M keys)": ["--group", "id", "--agg", "sum:bytes", "--format", "csv", "--max-groups", "1000000", "--max-state-bytes", "1073741824"],
+    "distinct id by status": ["--group", "status", "--agg", "distinct:id", "--format", "csv", "--max-distinct", "10000000", "--max-state-bytes", "1073741824"],
+    "group-count id json page": ["--group", "id", "--max-groups", "1000000", "--max-state-bytes", "1073741824"],
     # the 17-digit column (stage N3b): the reader of a double that Clinger's fast path cannot decide
     "float17 filter ratio:float>=500": ["--where", "status = 404 and ratio:float >= 500", "--select", "id", "--format", "csv"],
     "float17 sum,min,max ratio": ["--group", "status", "--agg", "sum:ratio:float,min:ratio:float,max:ratio:float", "--format", "csv"],

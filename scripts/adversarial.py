@@ -21,6 +21,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import time
 from decimal import Decimal, InvalidOperation
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -122,7 +123,12 @@ def counts(path, col, pick=None):
 
 # ------------------------------------------------------------------------------------------------ cells
 
+DUCK_THREADS = [None]   # --duck-threads: the thread count of "duckdb default" (on a box where the process is pinned to fewer cores than DuckDB sees)
+
+
 def duck(path, sql, threads=None):
+    if threads is None:
+        threads = DUCK_THREADS[0]
     pre = "" if threads is None else "SET threads=%d; " % threads
     return ["duckdb", "-c", "%sCOPY (%s) TO '/dev/null' (FORMAT csv)" % (pre, sql.replace("@", "read_csv('%s')" % path))], \
            ["duckdb", "-c", "%sCOPY (%s) TO '/dev/stdout' (FORMAT csv)" % (pre, sql.replace("@", "read_csv('%s')" % path))]
@@ -130,6 +136,22 @@ def duck(path, sql, threads=None):
 
 def sh(cmd):
     return ["sh", "-c", cmd]
+
+
+def timed_run(name, argv, once=None, tries=5, pause=0.2):
+    """The seconds of one run of `argv`, a run that exited non-zero not counted: it is run again, and `tries` failures in a row stop the script.
+
+    A run that failed is fast, and the minimum of the runs would be its time. It happens: DuckDB takes a lock on the file it writes, and
+    `COPY ... TO '/dev/null'` finds `/dev/null` locked by any other DuckDB on the machine (`IO Error: Could not set lock on file
+    "/dev/null"`), exits 1 after 50 ms, and a "sort of 1M rows in 0.059 s" went into a table. (Every contender is checked before the
+    timing, so the answer was right; only the timing loop did not look at the status.)"""
+    once = bench.once if once is None else once
+    for _ in range(tries):
+        seconds, rc = once(argv)
+        if rc == 0:
+            return seconds
+        time.sleep(pause)
+    sys.exit("%s exited non-zero %d times in a row: %s" % (name, tries, " ".join(argv)[:200]))
 
 
 def cells(table, nthreads):
@@ -218,6 +240,9 @@ def cells(table, nthreads):
             if shutil.which("duckdb"):
                 ex["duckdb -t1"] = duck(path, "SELECT %s, count(*) FROM @ GROUP BY %s" % (col, col), 1)
                 ex["duckdb default"] = duck(path, "SELECT %s, count(*) FROM @ GROUP BY %s" % (col, col))
+                # `table`'s groups come out in key order by contract; DuckDB's GROUP BY has no order, so the same question for it is with ORDER BY (docs/gap-groups.md)
+                ex["duckdb -t1 ordered"] = duck(path, "SELECT %s, count(*) FROM @ GROUP BY %s ORDER BY %s" % (col, col, col), 1)
+                ex["duckdb default ordered"] = duck(path, "SELECT %s, count(*) FROM @ GROUP BY %s ORDER BY %s" % (col, col, col))
         else:
             ex["csvtk -j1"] = (["csvtk", "-j", "1", "summary", "-g", col, "-f", "%s:sum" % valcol, path], None)
             if shutil.which("mlr"):
@@ -225,6 +250,8 @@ def cells(table, nthreads):
             if shutil.which("duckdb"):
                 ex["duckdb -t1"] = duck(path, "SELECT %s, sum(%s) FROM @ GROUP BY %s" % (col, valcol, col), 1)
                 ex["duckdb default"] = duck(path, "SELECT %s, sum(%s) FROM @ GROUP BY %s" % (col, valcol, col))
+                ex["duckdb -t1 ordered"] = duck(path, "SELECT %s, sum(%s) FROM @ GROUP BY %s ORDER BY %s" % (col, valcol, col, col), 1)
+                ex["duckdb default ordered"] = duck(path, "SELECT %s, sum(%s) FROM @ GROUP BY %s ORDER BY %s" % (col, valcol, col, col))
         def expected():
             header, rows = python_rows(path)
             i = header.index(col)
@@ -260,6 +287,8 @@ def cells(table, nthreads):
     if shutil.which("duckdb"):
         ex["duckdb -t1"] = duck(f2, "SELECT s, count(DISTINCT id) FROM @ GROUP BY s", 1)
         ex["duckdb default"] = duck(f2, "SELECT s, count(DISTINCT id) FROM @ GROUP BY s")
+        ex["duckdb -t1 ordered"] = duck(f2, "SELECT s, count(DISTINCT id) FROM @ GROUP BY s ORDER BY s", 1)
+        ex["duckdb default ordered"] = duck(f2, "SELECT s, count(DISTINCT id) FROM @ GROUP BY s ORDER BY s")
     out["I1"] = ("distinct:id (1M distinct) per s", f2, i1, common(f2, "I1", ["--group", "s", "--agg", "distinct:id", "--format", "csv", *big], ex), "pairs")
 
     # C1
@@ -408,7 +437,9 @@ def main():
     ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
     ap.add_argument("--base", default="", help="another table binary (the one before a change): every table contender is run with it too, as `base ...`")
     ap.add_argument("--gen-only", action="store_true")
+    ap.add_argument("--duck-threads", type=int, default=0, help="the threads of 'duckdb default' (0: DuckDB's own choice)")
     args = ap.parse_args()
+    DUCK_THREADS[0] = args.duck_threads or None
     generate()
     if args.gen_only:
         return
@@ -448,11 +479,10 @@ def main():
         times = {n: [] for n in names}
         for r in range(runs):
             for n in names[r % len(names):] + names[:r % len(names)]:
-                s, rc = bench.once(good[n])
-                times[n].append(s)
+                times[n].append(timed_run(n, good[n]))
         peaks = {n: bench.rss(good[n]) for n in names}
         size = os.path.getsize(path) / 1e6
-        print("\n%s  %s   (%.0f MB, min of %d)" % (cid, title, size, runs))
+        print("\n%s  %s   (%.0f MB, min of %d; load average %s at the end)" % (cid, title, size, runs, " ".join("%.1f" % x for x in os.getloadavg())))
         print("%-34s %9s %12s" % ("contender", "min s", "peak RSS MB"))
         for n in names:
             print("%-34s %9.4f %12s" % (n, min(times[n]), "%.1f" % (peaks[n] / 1024) if peaks[n] else "n/a"))

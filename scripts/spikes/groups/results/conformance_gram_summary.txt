@@ -1,0 +1,3 @@
+FAIL: test_the_schema_follows_the_flag_table_of_the_tool (test_mcp.Schema.test_the_schema_follows_the_flag_table_of_the_tool)
+Ran 356 tests in 243.172s
+FAILED (failures=1)

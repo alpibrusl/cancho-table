@@ -1,0 +1,52 @@
+B1  --group k100k
+  base -t1                     wall 0.1598  cpu 0.1593  rss   20.6 MB  failed 0/9  md5 e5dc426238
+  base -t6                     wall 0.1533  cpu 0.4174  rss   79.4 MB  failed 0/9  md5 e5dc426238
+  final -t1                    wall 0.1282  cpu 0.1278  rss   20.6 MB  failed 0/9  md5 e5dc426238
+  final -t6                    wall 0.0986  cpu 0.3430  rss  103.2 MB  failed 0/9  md5 e5dc426238
+  duckdb -t1 unsorted          wall 0.1543  cpu 0.1552  rss   76.0 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.1553  cpu 0.1568  rss   79.5 MB  failed 0/9
+  duckdb -t6 unsorted          wall 0.0901  cpu 0.2548  rss  129.0 MB  failed 0/9
+  duckdb -t6 ORDER BY          wall 0.1020  cpu 0.2708  rss  133.0 MB  failed 0/9
+  csvtk -j1                    wall 0.4418  cpu 0.4407  rss   44.5 MB  failed 0/9
+  mlr count-distinct           wall 0.4602  cpu 1.0965  rss  642.9 MB  failed 0/9
+B3  --group k1m
+  base -t1                     wall 1.1776  cpu 1.1771  rss  135.4 MB  failed 0/9  md5 bb5069c530
+  base -t6                     wall 1.2768  cpu 1.6462  rss  195.2 MB  failed 0/9  md5 bb5069c530
+  final -t1                    wall 0.4218  cpu 0.4214  rss  117.2 MB  failed 0/9  md5 bb5069c530
+  final -t6                    wall 0.2227  cpu 0.7967  rss  239.3 MB  failed 0/9  md5 bb5069c530
+  duckdb -t1 unsorted          wall 0.2924  cpu 0.2932  rss  132.6 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.5268  cpu 0.5281  rss  140.9 MB  failed 0/9
+  duckdb -t6 unsorted          wall 0.1215  cpu 0.4143  rss  135.6 MB  failed 0/9
+  duckdb -t6 ORDER BY          wall 0.2088  cpu 0.8418  rss  189.2 MB  failed 0/9
+  csvtk -j1                    wall 1.2843  cpu 1.2877  rss  275.3 MB  failed 0/9
+  mlr count-distinct           wall 1.6850  cpu 2.7408  rss 1527.1 MB  failed 0/9
+B2  --group k100k --agg sum:v
+  base -t1                     wall 0.2449  cpu 0.2446  rss   20.8 MB  failed 0/9  md5 8bee6eb707
+  base -t6                     wall 0.2211  cpu 0.5629  rss   79.4 MB  failed 0/9  md5 8bee6eb707
+  final -t1                    wall 0.1775  cpu 0.1772  rss   20.8 MB  failed 0/9  md5 8bee6eb707
+  final -t6                    wall 0.1287  cpu 0.4433  rss  102.9 MB  failed 0/9  md5 8bee6eb707
+  duckdb -t1 unsorted          wall 0.2110  cpu 0.2124  rss   77.9 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.2158  cpu 0.2172  rss   82.3 MB  failed 0/9
+  duckdb -t6 unsorted          wall 0.1201  cpu 0.3599  rss  137.6 MB  failed 0/9
+  duckdb -t6 ORDER BY          wall 0.1365  cpu 0.3860  rss  142.9 MB  failed 0/9
+  mlr stats1                   wall 1.5342  cpu 2.7705  rss  879.2 MB  failed 0/9
+B4  --group k1m --agg sum:v
+  base -t1                     wall 1.4198  cpu 1.4162  rss  135.4 MB  failed 0/9  md5 22c6f7a8a8
+  base -t6                     wall 1.5657  cpu 1.9803  rss  195.0 MB  failed 0/9  md5 22c6f7a8a8
+  final -t1                    wall 0.5020  cpu 0.5008  rss  117.2 MB  failed 0/9  md5 22c6f7a8a8
+  final -t6                    wall 0.2672  cpu 0.9612  rss  245.4 MB  failed 0/9  md5 22c6f7a8a8
+  duckdb -t1 unsorted          wall 0.3416  cpu 0.3428  rss  148.3 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.6147  cpu 0.6158  rss  151.1 MB  failed 0/9
+  duckdb -t6 unsorted          wall 0.1461  cpu 0.5037  rss  149.7 MB  failed 0/9
+  duckdb -t6 ORDER BY          wall 0.2636  cpu 1.0980  rss  207.4 MB  failed 0/9
+  mlr stats1                   wall 3.2498  cpu 5.4933  rss 2649.4 MB  failed 0/9
+I1  --group s --agg distinct:id
+  base -t1                     wall 0.3866  cpu 0.3862  rss   89.1 MB  failed 0/9  md5 96f30c5937
+  base -t6                     wall 0.4033  cpu 0.7776  rss  154.8 MB  failed 0/9  md5 96f30c5937
+  final -t1                    wall 0.3020  cpu 0.3016  rss   57.7 MB  failed 0/9  md5 96f30c5937
+  final -t6                    wall 0.1689  cpu 0.6049  rss   96.3 MB  failed 0/9  md5 96f30c5937
+  duckdb -t1 unsorted          wall 0.2759  cpu 0.2775  rss  125.9 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.2638  cpu 0.2651  rss  126.5 MB  failed 0/9
+  duckdb -t6 unsorted          wall 0.1244  cpu 0.3787  rss  128.9 MB  failed 0/9
+  duckdb -t6 ORDER BY          wall 0.1324  cpu 0.4197  rss  130.2 MB  failed 0/9
+  mlr count-distinct           wall 2.6216  cpu 4.4428  rss 1764.4 MB  failed 0/9

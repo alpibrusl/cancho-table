@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_readloop", "test_select", "test_filter", "test_limits", "test_parallel"]
+TESTS = ["test_readloop", "test_select", "test_filter", "test_limits", "test_parallel", "test_psort"]
 
 MUTANTS = [
     # the structure
@@ -31,6 +31,9 @@ MUTANTS = [
     ("the loop is called twice", "table.cho", "let (h1, r1) = readloop.run(", "let (h0, r0) = readloop.run(heap, io, file, fs, root, rel, full, tree, prm, sort);\n    let (h1, r1) = readloop.run("),
     ("the loop module reads a flag", "readloop.cho", "pub fn run[", "import cli;\n\npub fn run["),
     # the loop that moved
+    ("an order-by in csv is not handed to threads (the box does not say psortable)", "table.cho", "        if psortable {\n            u[readloop.p_psortable()] = 1;\n        }\n", ""),
+    ("a chunk size that was given is not said to the threads (the box does not say chunk_given)", "table.cho", "        if chunk_given {\n            u[readloop.p_chunk_given()] = 1;\n        }\n", ""),
+    ("the loop hands a sort to threads in the row mode of a selection", "readloop.cho", "if query.reporting(tree) || ordering {\n                                                u[scan.p_mode()] = 2;", "if query.reporting(tree) {\n                                                u[scan.p_mode()] = 2;"),
     ("the loop reads one row too many", "readloop.cho", "} else if header && !quoted && a[engine.k_records()] >= most {", "} else if header && !quoted && a[engine.k_records()] > most {"),
 ]
 

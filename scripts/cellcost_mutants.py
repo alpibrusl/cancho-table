@@ -49,7 +49,7 @@ MUTANTS = [
     ("a cached key is compared for one column only", "agg.cho", "            while j < ng && entry >= 0 {", "            while j < 1 && entry >= 0 {"),
     ("a quoted key with a quote is keyed as written", "agg.cho", "        if cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {\n            return (0 - 1, 0);", "        if false && cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {\n            return (0 - 1, 0);"),
     ("a key longer than the room is written anyway", "agg.cho", "        if len(buffer.room(g.keyb)) < need {\n            return (0 - 1, 0);", "        if false && len(buffer.room(g.keyb)) < need {\n            return (0 - 1, 0);"),
-    ("a group that is not there is counted anyway", "agg.cho", "        entry = map.find(g.index, buffer.bytes(g.keyb));\n        if entry < 0 {", "        entry = map.find(g.index, buffer.bytes(g.keyb));\n        if false && entry < 0 {"),
+    ("a group that is not there is counted anyway", "agg.cho", "        entry = gmap.find_h(g.index, buffer.bytes(g.keyb), hk);\n        if entry < 0 {", "        entry = gmap.find_h(g.index, buffer.bytes(g.keyb), hk);\n        if false && entry < 0 {"),
     ("the key is written one byte short", "agg.cho", "            copy_into(room[at + 4..at + 4 + n], record[first..first + n]);", "            copy_into(room[at + 4..at + 3 + n], record[first..first + n - 1]);"),
     ("a row counts twice in place", "agg.cho", "    vec.set(g.acc, slot, before + 1);", "    vec.set(g.acc, slot, before + 2);"),
     ("an in-place integer past 64 bits is a text", "agg.cho", "                        bad = 3 + bad2;", "                        bad = 4;"),
@@ -60,7 +60,7 @@ MUTANTS = [
     ("the second aggregate is the first in place", "agg.cho", "            let column = cols[query.agg_at(tree, k, 1)];\n            let now = vec.get(g.acc, slot + 1 + k);", "            let column = cols[query.agg_at(tree, 0, 1)];\n            let now = vec.get(g.acc, slot + 1 + k);"),
     ("a built key is not committed before `add` takes it", "agg.cho", "    buffer.filled(g.keyb, need);", "    buffer.filled(g.keyb, 0);"),
     ("the rows that wait for the fast way are dropped", "agg.cho", "        contents(g.memo)[rest_at] = waiting - 1;\n        return (0 - 1, 0);", "        contents(g.memo)[rest_at] = waiting - 1;\n        return (0, 0);"),
-    ("a new group is taken for one that is there", "agg.cho", "            return (0 - 2, 0);\n        }\n        if contents", "            return (0, 0);\n        }\n        if contents"),
+    ("a new group is taken for one that is there", "agg.cho", "                contents(g.memo)[size + 4] = hk;\n                return (0 - 2, 0);", "                contents(g.memo)[size + 4] = hk;\n                return (0, 0);"),
     # engine
     ("a refusal in place is numbered one low", "engine.cho", "    return 12 + status;\n}", "    return 11 + status;\n}"),
     ("the aggregate that refused is lost in the answer", "engine.cho", "    return 16 + 16 * k + status;", "    return 16 + status;"),
