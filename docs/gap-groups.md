@@ -259,14 +259,38 @@ the partitioned read each blob carries the pairs of its own groups, renumbered, 
   that marks the partitioned path shows it taken in a third to a half of the threaded runs (the rest are declines and runs with nothing to group). A set of hand-made cases (a bound passed by a few
   groups, sums beyond a double, keys that are prefixes of each other and that contain NUL, a group at a splitter) runs first.
 * `bigcheck`-style full-size comparisons on `f2.csv`: ten plans (distinct, floats, mean, typed keys, `--where`, `--sort -count --top 5`, pages) at 1, 2, 6, 16 and 64 threads, chunks from 100 KB to 4 MiB.
-* The conformance suite (`python3 -m unittest discover -s tests/conformance`, run from that directory): 351 of 356 pass, 2 are skipped, **5 fail, all `test_every_script_applies`**: the mutation scripts of
-  the base (`filter`, `parallel`, `cellcost`, `float_sum`, `typed_keys`) name 12 pieces of text that this branch changed (`map.put`, the unique spelling of `if agg.get_i64(sl, at) == 0 && first == cur`, and
-  indentation after `cancho fmt`). They have to be re-pointed in the change that merges this; no functional test fails. `test_memory` caught a first version (a float slot sized to the state bound was resident
-  on the Mac) and passes.
+* The conformance suite (`python3 -m unittest discover -s .` in `tests/conformance`, with the compiler on `PATH`): **Mac 356 tests OK (2 skipped)**; **Linux (gram, clean clone of the pushed
+  commit, niced, cores 0-5, scratch removed afterwards) 355 of 356, the one failure being `test_mcp...test_the_schema_follows_the_flag_table_of_the_tool`, which fails on that box's
+  non-pinned compiler without this branch too**. They include `test_memory` and the parallel differential (2, 3, 4, 8, 16 and 64 threads, ranges from 1 byte; the one-thread read is the oracle). The
+  mutation scripts of the base named 12 pieces of text this branch changed; they are re-pointed (`filter`, `parallel`, `cellcost`, `float_sum`, `typed_keys`) and the 12 are killed in a real run on
+  Linux (`results/repointed_gram.txt`). `test_memory` caught a first version (a float slot sized to the state bound was resident on the Mac).
 * `scripts/spikes/groups/partition_mutants.py`: 25 mutants of the new code (bounds not checked on the totals, a wrong-guess range taken, tables not merged, blobs cut the wrong way, pairs not renumbered,
-  keys not sorted, ties in a chunk not refined, a field of exactly six bytes sorting with a longer one, a place made in place past a bound, a key that needs quotes written plain, ...): 24 killed (one
-  by not building), 1 survives: removing the guard "a wave that read nothing is declined", which cannot be reached (a wave always reads the record at its start, `docs/parallel.md`). Two survived
-  until the hand-made cases were added (a bound passed inside the room of the first table).
+  keys not sorted, ties in a chunk not refined, a field of exactly six bytes sorting with a longer one, a place made in place past a bound, a key that needs quotes written plain, ...), run for real on
+  Linux and on the Mac (`results/mutants_gram.txt`): **24 killed** (one by not building), **1 survives**: removing the guard that declines a wave that read nothing. It cannot be reached: a wave's first
+  range starts at `cur` and ends at a line start past `cur + chunk` (or at the end of the file), so it reads at least the record at `cur` (`docs/parallel.md`: a wave always reads the record at its start); a
+  range that stopped, or whose guess was wrong, is read again by the parent from `cur`, which advances or declines. With the guard gone, ~2,500 threaded fuzz runs neither hung nor differed. Two mutants
+  survived until the hand-made cases were added (a bound passed inside the room of the first table).
+
+## 6b. The gates for the sequential changes (`scripts/gate_regress.py`)
+
+The change touches sequential paths (the radix order, `gmap`, the row writer, the in-place group), so the instruction-count gate ran: `--counter`, bound 1.01, **3 builds of the base and 3 of this branch**,
+every cell at 1 thread and at N threads (4 on the Mac, 3 on gram), the cells of the standard set plus six new ones (`--report types`, 1000 keys, 1M keys count and sum, `distinct`, a json page of 1M keys).
+Files: `results/gate_counter_{mac,gram}.txt`, `gate_clock_{mac,gram}.txt`, controls `*_control_*.txt`.
+
+* **Counter, both machines: PASS.** Non-group cells (filter, cut, text/dec/float filter): 1.001 to 1.004 at one thread, 0.994 to 0.997 at N (Mac 1.003/0.996, gram 1.002/0.994); `--order-by` 0.977 to 0.981; `--report types`
+  0.929 (Mac) and 0.949 (gram) (the report keeps its counters in the same `Groups`, so the one-hash table helps it); few-key groups 0.967 to 0.990; 1M keys: count 0.578/0.682 (Mac 1/4 threads) and 0.562/0.679
+  (gram 1/3), sum 0.324/0.419 and 0.515/0.609, `distinct` 0.866/0.827 and 0.874/0.838, json page 0.545/0.666 and 0.529/0.668.
+* **A first version failed it** (+1.7 to 1.8% on every non-group cell at one thread, Mac): the choice between the partitioned and the old read, written inside `read_file`, cost ~26 instructions a row. And the clock/cycles
+  found what the counter could not: on gram that first version was +2.2% (filter) and +4.2% (cut) in `cycles:u` with *fewer* instructions, and a second version that passed two more statements to `par.run` from `read_file`
+  was +3 to 4% in cycles; removing those statements brought it back (`perf stat`, min of 7 runs, cores 0-5: filter 326.3M cycles base, 326.9M with the statements out, 336M with them in). Appending an *unused* function
+  to `agg.cho`, `engine.cho` or `par.cho` moved the cycles by less than 0.2%, so it is not layout alone: any code in that one function costs the one-thread reads of every plan. Hence `par.run` itself chooses the
+  partitioned read (`--top` and `--from` are carried by the plan, `query.with_page`), and the call in `read_file` is the base's. Final: gram filter 327.0M, cut 320.9M cycles against 326.5M, 319.2M (+0.2%, +0.5%).
+* **Clock form, bound 1.02:** Mac passes every cell (filter 0.992/0.981, cut 0.996/0.996, text filter 0.979/0.984, 1M keys 0.50 to 0.24, distinct 0.72/0.42). **Gram: one cell does not**: the filter at 3 threads is
+  **1.047 to 1.072** (three runs; 0.994 to 1.005 at one thread), with 1.7% more user cycles, while the counter says 0.994. The cause is not isolated: a build with the base's `par.cho` and everything else of this branch
+  is +1.3% in cycles on that cell, so most of it is outside `par.cho`; I could not find the statement responsible. It is 2 ms of 46. The 3-thread rows read is the case to look at if this is merged.
+* **Controls** (6 builds of the *base* sources, 3 against 3): the counter passes except the 1M-key sum at 4 threads on the Mac (1.022), and the clock control fails `distinct` on the Mac (1.028) and the 1M-key count on gram (1.043):
+  the old threaded read of a million keys is not stable to 2% for identical sources, so those cells are reported, not gated.
+* **Corpus**: the md5, status and error of the 134 plans are identical to the base's (Mac, final build).
 
 ## 7. What a change that merges this needs
 

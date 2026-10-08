@@ -1,15 +1,18 @@
-filter status=404 and bytes>50000    1    0.0975    0.0993   1.018    0.5%    0.2%  
-filter status=404 and bytes>50000    3    0.0655    0.0672   1.026    0.6%    0.2%  <-- over 1.02
+filter status=404 and bytes>50000    1    0.0984    0.0979   0.995    1.3%    0.3%  
+filter status=404 and bytes>50000    3    0.0652    0.0699   1.072    1.3%    0.9%  <-- over 1.02
 G6: FAIL
-cut status,bytes                     1    0.0899    0.0929   1.034    1.0%    2.8%  <-- over 1.02
-cut status,bytes                     3    0.0499    0.0509   1.019    1.4%    1.8%  
-G6: FAIL
-group-count id (1M keys)             1    0.4874    0.2770   0.568    2.2%    1.2%  
-group-count id (1M keys)             3    0.5925    0.2767   0.467    0.9%    6.7%    (a build is off: spread over 4%)
+cut status,bytes                     1    0.0892    0.0907   1.017    1.2%    1.5%  
+cut status,bytes                     3    0.0490    0.0489   1.000    2.0%    1.0%  
 G6: PASS
-group-sum bytes by id (1M keys)      1    0.5890    0.3241   0.550    0.7%    1.1%  
-group-sum bytes by id (1M keys)      3    0.6657    0.2870   0.431    0.7%    9.1%    (a build is off: spread over 4%)
+text filter path contains            1    0.0943    0.0955   1.013    1.0%    1.3%  
+text filter path contains            3    0.0461    0.0464   1.008    0.8%    1.3%  
 G6: PASS
-distinct id by status                1    0.3498    0.2671   0.763    1.6%    2.8%  
-distinct id by status                3    0.4623    0.2573   0.557    0.8%    4.1%    (a build is off: spread over 4%)
+group-count id (1M keys)             1    0.4788    0.2719   0.568    0.8%    2.8%  
+group-count id (1M keys)             3    0.5936    0.2720   0.458    1.5%    7.4%    (a build is off: spread over 4%)
+G6: PASS
+group-sum bytes by id (1M keys)      1    0.5393    0.2859   0.530    2.6%    1.8%  
+group-sum bytes by id (1M keys)      3    0.6688    0.2814   0.421    1.6%    8.6%    (a build is off: spread over 4%)
+G6: PASS
+distinct id by status                1    0.3459    0.2636   0.762    1.0%    1.4%  
+distinct id by status                3    0.4633    0.2536   0.548    0.8%    4.3%    (a build is off: spread over 4%)
 G6: PASS
