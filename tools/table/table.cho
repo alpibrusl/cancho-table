@@ -1223,36 +1223,13 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             borrow mut cells as &!cw in {
                                                 borrow cols as &kr in {
                                                     borrow sel as &sr in {
-                                                        var partitioned = false;
-                                                        // The whole answer as csv rows is written by the merge threads (want 0); a page, a top or a sort is the first `want` groups
-                                                        // of each, finished here as any (one past the page, so that `more` is known).
-                                                        var want = 0;
-                                                        if !(as_csv && a[engine.k_sort_field()] < 0 && a[engine.k_sort_slot()] < 0 && from == 0 && top == 0 && limit >= 100000000) {
-                                                            if top > 0 {
-                                                                want = top;
-                                                            } else if limit < 100000000 {
-                                                                want = from + limit + 1;
-                                                            } else {
-                                                                want = 100000001;
-                                                            }
-                                                        }
-                                                        if mode == 2 && !query.reporting(tree) && want <= 100000 {
-                                                            let (r1, s1, e1, k1, g1, declined) = par.run_groups(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk, want);
-                                                            rows = r1;
-                                                            scratch = s1;
-                                                            escr = e1;
-                                                            kept = k1;
-                                                            groups = g1;
-                                                            partitioned = declined == 0;
-                                                        }
-                                                        if !partitioned {
-                                                            let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
-                                                            rows = r2;
-                                                            scratch = s2;
-                                                            escr = e2;
-                                                            kept = k2;
-                                                            groups = g2;
-                                                        }
+                                                        // (par.run_any: a function of its own, for the reason `settle_groups` is: the code inside this one cost every one-thread read ~26 instructions a row)
+                                                        let (r2, s2, e2, k2, g2) = par.run_any(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk, as_csv, from, top, limit);
+                                                        rows = r2;
+                                                        scratch = s2;
+                                                        escr = e2;
+                                                        kept = k2;
+                                                        groups = g2;
                                                     }
                                                 }
                                             }

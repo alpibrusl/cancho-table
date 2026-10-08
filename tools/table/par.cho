@@ -1417,3 +1417,36 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
     unbox_slice(heap, ta);
     return (rows2, scratch2, escr2, kept2, gfinal, 1);
 }
+
+// The rest of the file by several threads: a grouping the partitioned way when it can (`run_groups`), the old way otherwise or when that declined.
+// The whole answer as csv rows is written by the merge threads (`want` 0); a page, a top or a sort is the first `want` groups of each, finished by the
+// caller as any (one past the page, so that `more` is known); more than 100,000 of them, or a read that is not a grouping, takes `run`.
+pub fn run_any[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int, as_csv: bool, from: int, top: int, limit: int) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
+    var want = 0;
+    if !(as_csv && a[engine.k_sort_field()] < 0 && a[engine.k_sort_slot()] < 0 && from == 0 && top == 0 && limit >= 100000000) {
+        if top > 0 {
+            want = top;
+        } else if limit < 100000000 {
+            want = from + limit + 1;
+        } else {
+            want = 100000001;
+        }
+    }
+    var r = rows;
+    var sc = scratch;
+    var es = escr;
+    var ke = kept;
+    var gr = groups;
+    if pp[scan.p_mode()] == 2 && !query.reporting(tree) && want <= 100000 {
+        let (r1, s1, e1, k1, g1, declined) = run_groups(heap, io, file, fs, root, rel, full, tree, cols, sel, cells, a, pp, r, sc, es, ke, gr, start, lines0, size, threads, most_chunk, want);
+        if declined == 0 {
+            return (r1, s1, e1, k1, g1);
+        }
+        r = r1;
+        sc = s1;
+        es = e1;
+        ke = k1;
+        gr = g1;
+    }
+    return run(heap, io, file, fs, root, rel, full, tree, cols, sel, cells, a, pp, r, sc, es, ke, gr, start, lines0, size, threads, most_chunk);
+}
