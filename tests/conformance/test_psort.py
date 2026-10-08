@@ -191,6 +191,21 @@ class PSort(unittest.TestCase):
         data = b"\xef\xbb\xbf" + csv_bytes([["k", "n"]] + [[str(rng.randrange(30)), str(i)] for i in range(300)])
         self.same(data, ["--order-by", "k:int"])
 
+    def test_the_look_ahead_files_of_test_parallel_through_a_sort(self):
+        # the files that make a range start inside a quoted field, or look as if it did (E1/E2-style long fields, lookalike records, stray and bad quotes,
+        # ragged rows, an open quote), with tiny ranges and with ranges of a few records up to the default: the speculation of #34 guesses, the parent verifies
+        import test_parallel
+        plans = (["--order-by", "g,-id:int"], ["--order-by", "text"], ["--order-by", "-id:int", "--select", "g,id"], ["--order-by", "g", "--where", "id:int > 10"])
+        for rows, settings in ((40, ((2, 1), (3, 7), (5, 64), (4, 1000))), (700, ((3, 4000), (4, 30000), (4, 4 << 20)))):
+            for name, data in test_parallel.speculation_files(random.Random(5 + rows), rows).items():
+                for flags in plans:
+                    if name == "one column":
+                        flags = ["--order-by", "text"]
+                    self.same(data, flags, settings=settings, label=name)
+        data = test_parallel.speculation_files(random.Random(7), 1500)["e1"]
+        self.same(data, ["--order-by", "g,-id:int"], settings=((4, 65536), (3, 1 << 20)), label="e1 large")
+        self.same(data, ["--order-by", "text"], settings=((4, 65536),), label="e1 large")
+
     def test_a_file_of_many_ranges_and_waves(self):
         rng = random.Random(7)
         rows = [["key%07d" % rng.randrange(10 ** 7), str(rng.randrange(1000)), "x" * rng.randrange(1, 30)] for _ in range(60000)]
