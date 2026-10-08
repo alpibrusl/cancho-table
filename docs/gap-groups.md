@@ -365,7 +365,7 @@ Files in `scripts/spikes/groups/results/merged/`. The pinned compiler a4572ea (`
 * **Conformance suite from the merged tree: Mac 380 tests OK (2 skipped); Linux 380 OK (1 skipped)**, from a clean clone of the pushed commit, niced, cores 0-5, the compiler
   built from a git checkout so that `test_mcp...schema_follows_the_flag_table` (the known failure on a compiler that does not know its revision) passes. Includes `test_parallel`,
   `test_psort`, `test_memory`, `test_mcp`, `test_skill` and `test_every_script_applies`.
-* **Instruction counter** (`gate_regress.py --counter`, bound 1.01, 3 builds of main against 3 of the branch, 45 cells x 2 thread counts): **PASS on both machines.** Non-group cells
+* **Instruction counter** (`gate_regress.py --counter`, bound 1.01, 3 builds of main against 3 of the branch, 21 cells x 2 thread counts): **PASS on both machines.** Non-group cells
   (filter, cut, text/dec/float filter, float17 filter): Mac 0.990 to 0.991 at one thread and **1.008 to 1.009 at 4**; Linux 0.990 to 0.994 at one thread and 0.999 at 3. The Mac's
   4-thread figure is the one that is not "1.000 to 1.002": +14M instructions on 1,600M. It comes from `agg.cho` (a build with main's `par.cho` and `table.cho` and this branch's
   `agg.cho` has the same 1,629M; with main's `agg.cho` too it is main's 1,615M); I did not find the statement. At one thread the same file is 28M instructions *below* main. Groups
@@ -374,7 +374,7 @@ Files in `scripts/spikes/groups/results/merged/`. The pinned compiler a4572ea (`
 * **Clock form** (bound 1.02): Mac passes every cell (filter 0.976/0.998, cut 0.969/0.998, text filter 0.996/0.995, 1M keys 0.49 to 0.13, distinct 0.71/0.40); Linux passes every
   cell (filter 0.994/1.008, cut 1.001/1.017, text filter 1.003/1.006, 1M keys 0.56 to 0.43, distinct 0.74/0.64). The earlier +5% on the Linux 3-thread filter, found against
   the old base, is not there against main.
-* **Mutants of the new code** (25, `partition_mutants.py`): MUTLINE
+* **Mutants of the new code** (25, `partition_mutants.py`): run for real on Linux (`results/merged/mutants_gram.txt`): **24 killed, 1 survives**, the same one as before the merge: removing the guard that declines a wave that read nothing. It is unreachable: a wave's first range starts at `cur` and ends at a line start beyond `cur + chunk` (or at the end of the file), so it reads at least the record at `cur`; a range that stopped, or whose first record is not where the range before it ended (`k_first_at`), is read again by the parent from `cur`, which advances or declines. With the guard gone no fuzz or full-size run hung or differed. The 12 re-pointed mutants of main's scripts are 12 of 12 killed on Linux (`results/merged/repointed_mutants_gram.txt`).
 * **Memory**: `test_memory` passes on both machines; the measured peaks against the flag are in 3.4 (the flag does not bound resident memory; withdrawn claim and the table).
 * **Fuzz and full-size**: `fuzz.py` 450 files x 4 thread counts x 4 chunk sizes, and `bigcheck.py` (14 plans, csv and json, 10 thread/chunk settings each, with the default chunk so that the
   ranges grow, against main's one-thread answer): no difference.
