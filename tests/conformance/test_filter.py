@@ -147,6 +147,31 @@ class Grammar(unittest.TestCase):
         got = self.s.table("e.csv", data, "--where", "'n:int' > 5", "--select", "m")
         self.assertEqual(got.data()["rows"], [])          # text: "10" and "5" against "5"... only "5" > "5" is false
 
+    def test_agg_column_escape_hash(self):
+        # `\#3` names the header `#3` (as in --select and --group); an unescaped `#3` is the third column
+        data = "#3,b,c\n1,x,3\n4,y,6\n4,x,5\n"
+        for fn, cell in (("sum", "9"), ("min", "1"), ("max", "4"), ("distinct", "2"), ("mean", "3.0")):
+            spec = fn + ":\\#3" + ("@1" if fn == "mean" else "")
+            with self.subTest(spec):
+                got = self.s.table("h.csv", data, "--agg", spec)
+                self.assertEqual((got.status, got.data()["columns"], got.data()["rows"]), (0, [fn + ":#3"], [[cell]]), got)
+                got = self.s.table("h.csv", data, "--agg", spec.replace("\\#", "#"))      # unescaped: the third column, c
+                self.assertEqual(got.data()["columns"], [fn + ":c"])
+        got = self.s.table("h.csv", data, "--agg", "count,sum:\\#3")
+        self.assertEqual((got.data()["columns"], got.data()["rows"]), (["count", "sum:#3"], [["3", "9"]]), got)
+        # a typed suffix after an escaped name
+        got = self.s.table("h.csv", data, "--agg", "sum:\\#3:dec(2),count")
+        self.assertEqual((got.data()["columns"], got.data()["rows"]), (["sum:#3", "count"], [["9.00", "3"]]), got)
+        got = self.s.table("h.csv", data, "--agg", "sum:\\#3:int,max:\\#3:int,mean:\\#3:int@1")
+        self.assertEqual(got.data()["rows"], [["9", "4", "3.0"]], got)
+        got = self.s.table("h.csv", data, "--agg", "sum:#3:int")
+        self.assertEqual(got.data()["columns"], ["sum:c"])
+        # --sort names the output label, unescaped
+        got = self.s.table("h.csv", data, "--group", "b", "--agg", "sum:\\#3", "--sort", "-sum:#3")
+        self.assertEqual([r[1] for r in got.data()["rows"]], ["5", "4"], got)
+        got = self.s.table("h.csv", data, "--group", "\\#3", "--agg", "sum:\\#3", "--sort", "-#3")
+        self.assertEqual(got.data()["rows"], [["4", "8"], ["1", "1"]], got)
+
     def test_agg_and_sort_refusals(self):
         data = "k,v\na,1\nb,2\n"
         for agg in ("avg:v", "sum", "sum:", ":v", "count:v", "count,median:v", "SUM:v", "sum :v"):

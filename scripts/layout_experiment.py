@@ -11,6 +11,7 @@ the run-to-run wander of the count). Run it on a tree where the loop is inside `
 The tree's sources are restored whatever happens, and rebuilt. Needs the compiler (`cancho` on PATH).
 """
 import argparse
+import os
 import pathlib
 import subprocess
 import sys
@@ -49,7 +50,7 @@ def main():
         for fn in FUNCTIONS:
             for name, block in VARIANTS.items():
                 path.write_text(edit(orig, fn, block))
-                b = subprocess.run(["cancho", "build"], cwd=tree, capture_output=True, text=True)
+                b = subprocess.run(["cancho", "build", *os.environ.get("CANCHO_ARGS", "").split()], cwd=tree, capture_output=True, text=True)
                 if b.returncode:
                     print("!! %s / %s does not build: %s" % (fn, name, b.stderr.strip()[-200:]))
                     return 1
@@ -62,7 +63,7 @@ def main():
                     results.setdefault(cell, []).append(("%s: %s" % (fn, name), min(counts)))
     finally:
         path.write_text(orig)
-        subprocess.run(["cancho", "build"], cwd=tree, capture_output=True)
+        subprocess.run(["cancho", "build", *os.environ.get("CANCHO_ARGS", "").split()], cwd=tree, capture_output=True)
     worst = 0.0
     for cell, rows in results.items():
         lo, hi = min(c for _, c in rows), max(c for _, c in rows)
