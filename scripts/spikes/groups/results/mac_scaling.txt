@@ -1,0 +1,12 @@
+B3  --group k1m
+  final -t1                    wall 0.2996  cpu 0.2974  rss  172.2 MB  failed 0/9
+  final -t2                    wall 0.2206  cpu 0.4047  rss  363.9 MB  failed 0/9
+  final -t4                    wall 0.1217  cpu 0.3401  rss  400.5 MB  failed 0/9
+  final -t8                    wall 0.0780  cpu 0.3587  rss  383.3 MB  failed 0/9
+  final -t16                   wall 0.0373  cpu 0.2975  rss  318.0 MB  failed 0/9
+I1  --group s --agg distinct:id
+  final -t1                    wall 0.1807  cpu 0.1788  rss  107.7 MB  failed 0/9
+  final -t2                    wall 0.1171  cpu 0.2138  rss  136.1 MB  failed 0/9
+  final -t4                    wall 0.0780  cpu 0.2290  rss  164.5 MB  failed 0/9
+  final -t8                    wall 0.0574  cpu 0.2212  rss  208.2 MB  failed 0/9
+  final -t16                   wall 0.0413  cpu 0.2284  rss  176.0 MB  failed 0/9

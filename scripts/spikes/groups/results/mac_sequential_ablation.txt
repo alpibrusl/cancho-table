@@ -1,0 +1,50 @@
+B1  --group k100k
+  base -t1                     wall 0.1181  cpu 0.1167  rss   20.4 MB  failed 0/9  md5 e5dc426238
+  radix -t1                    wall 0.1095  cpu 0.1081  rss   20.4 MB  failed 0/9  md5 e5dc426238
+  +gmap -t1                    wall 0.0939  cpu 0.0924  rss   19.5 MB  failed 0/9  md5 e5dc426238
+  +csv -t1                     wall 0.0921  cpu 0.0909  rss   19.4 MB  failed 0/9  md5 e5dc426238
+  +inplace -t1                 wall 0.0871  cpu 0.0859  rss   21.0 MB  failed 0/9  md5 e5dc426238
+  final -t1                    wall 0.0879  cpu 0.0867  rss   19.4 MB  failed 0/9  md5 e5dc426238
+  -radix -t1                   wall 0.0996  cpu 0.0983  rss   18.5 MB  failed 0/9  md5 e5dc426238
+  -csv -t1                     wall 0.0886  cpu 0.0872  rss   19.4 MB  failed 0/9  md5 e5dc426238
+  -inplace -t1                 wall 0.0939  cpu 0.0926  rss   21.0 MB  failed 0/9  md5 e5dc426238
+B2  --group k100k --agg sum:v
+  base -t1                     wall 0.1614  cpu 0.1603  rss   20.4 MB  failed 0/9  md5 8bee6eb707
+  radix -t1                    wall 0.1475  cpu 0.1463  rss   20.5 MB  failed 0/9  md5 8bee6eb707
+  +gmap -t1                    wall 0.1368  cpu 0.1356  rss   21.0 MB  failed 0/9  md5 8bee6eb707
+  +csv -t1                     wall 0.0986  cpu 0.0975  rss   19.4 MB  failed 0/9  md5 8bee6eb707
+  +inplace -t1                 wall 0.0935  cpu 0.0924  rss   19.4 MB  failed 0/9  md5 8bee6eb707
+  final -t1                    wall 0.0972  cpu 0.0959  rss   21.0 MB  failed 0/9  md5 8bee6eb707
+  -radix -t1                   wall 0.1045  cpu 0.1033  rss   18.6 MB  failed 0/9  md5 8bee6eb707
+  -csv -t1                     wall 0.1302  cpu 0.1288  rss   19.5 MB  failed 0/9  md5 8bee6eb707
+  -inplace -t1                 wall 0.0997  cpu 0.0985  rss   19.4 MB  failed 0/9  md5 8bee6eb707
+B3  --group k1m
+  base -t1                     wall 0.7909  cpu 0.7881  rss  179.1 MB  failed 0/9  md5 bb5069c530
+  radix -t1                    wall 0.4182  cpu 0.4156  rss  186.7 MB  failed 0/9  md5 bb5069c530
+  +gmap -t1                    wall 0.3472  cpu 0.3449  rss  170.2 MB  failed 0/9  md5 bb5069c530
+  +csv -t1                     wall 0.3162  cpu 0.3135  rss  170.3 MB  failed 0/9  md5 bb5069c530
+  +inplace -t1                 wall 0.2507  cpu 0.2484  rss  170.4 MB  failed 0/9  md5 bb5069c530
+  final -t1                    wall 0.2629  cpu 0.2604  rss  170.2 MB  failed 0/9  md5 bb5069c530
+  -radix -t1                   wall 0.6069  cpu 0.6044  rss  170.2 MB  failed 0/9  md5 bb5069c530
+  -csv -t1                     wall 0.2967  cpu 0.2942  rss  170.4 MB  failed 0/9  md5 bb5069c530
+  -inplace -t1                 wall 0.3183  cpu 0.3155  rss  170.2 MB  failed 0/9  md5 bb5069c530
+B4  --group k1m --agg sum:v
+  base -t1                     wall 1.4022  cpu 1.3992  rss  180.5 MB  failed 0/9  md5 22c6f7a8a8
+  radix -t1                    wall 1.0744  cpu 1.0711  rss  186.7 MB  failed 0/9  md5 22c6f7a8a8
+  +gmap -t1                    wall 0.9539  cpu 0.9512  rss  170.7 MB  failed 0/9  md5 22c6f7a8a8
+  +csv -t1                     wall 0.3140  cpu 0.3107  rss  170.2 MB  failed 0/9  md5 22c6f7a8a8
+  +inplace -t1                 wall 0.2708  cpu 0.2676  rss  170.2 MB  failed 0/9  md5 22c6f7a8a8
+  final -t1                    wall 0.2962  cpu 0.2925  rss  170.4 MB  failed 0/9  md5 22c6f7a8a8
+  -radix -t1                   wall 0.6397  cpu 0.6369  rss  170.2 MB  failed 0/9  md5 22c6f7a8a8
+  -csv -t1                     wall 0.9346  cpu 0.9317  rss  170.2 MB  failed 0/9  md5 22c6f7a8a8
+  -inplace -t1                 wall 0.3577  cpu 0.3546  rss  170.4 MB  failed 0/9  md5 22c6f7a8a8
+I1  --group s --agg distinct:id
+  base -t1                     wall 0.2258  cpu 0.2231  rss  124.6 MB  failed 0/9  md5 96f30c5937
+  radix -t1                    wall 0.2223  cpu 0.2203  rss  124.7 MB  failed 0/9  md5 96f30c5937
+  +gmap -t1                    wall 0.1540  cpu 0.1514  rss  107.6 MB  failed 0/9  md5 96f30c5937
+  +csv -t1                     wall 0.1543  cpu 0.1517  rss  107.6 MB  failed 0/9  md5 96f30c5937
+  +inplace -t1                 wall 0.1532  cpu 0.1509  rss  107.6 MB  failed 0/9  md5 96f30c5937
+  final -t1                    wall 0.1565  cpu 0.1541  rss  107.6 MB  failed 0/9  md5 96f30c5937
+  -radix -t1                   wall 0.1538  cpu 0.1515  rss  107.6 MB  failed 0/9  md5 96f30c5937
+  -csv -t1                     wall 0.1537  cpu 0.1515  rss  107.6 MB  failed 0/9  md5 96f30c5937
+  -inplace -t1                 wall 0.1571  cpu 0.1549  rss  107.6 MB  failed 0/9  md5 96f30c5937

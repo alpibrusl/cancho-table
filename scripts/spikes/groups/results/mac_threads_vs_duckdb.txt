@@ -1,0 +1,45 @@
+B1  --group k100k
+  base -t1                     wall 0.1207  cpu 0.1194  rss   22.8 MB  failed 0/9  md5 e5dc426238
+  base -t16                    wall 0.0721  cpu 0.2743  rss  171.3 MB  failed 0/9  md5 e5dc426238
+  final -t1                    wall 0.0889  cpu 0.0875  rss   21.0 MB  failed 0/9  md5 e5dc426238
+  final -t16                   wall 0.0242  cpu 0.1974  rss  183.1 MB  failed 0/9  md5 e5dc426238
+  duckdb -t1 unsorted          wall 0.1641  cpu 0.1629  rss   70.7 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.1718  cpu 0.1707  rss   75.6 MB  failed 0/9
+  duckdb default unsorted      wall 0.0761  cpu 0.2102  rss  128.2 MB  failed 0/9
+  duckdb default ORDER BY      wall 0.0847  cpu 0.2200  rss  137.8 MB  failed 0/9
+B2  --group k100k --agg sum:v
+  base -t1                     wall 0.1636  cpu 0.1623  rss   20.4 MB  failed 0/9  md5 8bee6eb707
+  base -t16                    wall 0.1153  cpu 0.3434  rss  174.4 MB  failed 0/9  md5 8bee6eb707
+  final -t1                    wall 0.0991  cpu 0.0978  rss   19.8 MB  failed 0/9  md5 8bee6eb707
+  final -t16                   wall 0.0269  cpu 0.2158  rss  184.1 MB  failed 0/9  md5 8bee6eb707
+  duckdb -t1 unsorted          wall 0.1753  cpu 0.1730  rss   72.5 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.1829  cpu 0.1818  rss   76.0 MB  failed 0/9
+  duckdb default unsorted      wall 0.0781  cpu 0.2211  rss  142.7 MB  failed 0/9
+  duckdb default ORDER BY      wall 0.0882  cpu 0.2341  rss  151.6 MB  failed 0/9
+B3  --group k1m
+  base -t1                     wall 0.8103  cpu 0.8073  rss  179.1 MB  failed 0/9  md5 bb5069c530
+  base -t16                    wall 0.8748  cpu 1.0977  rss  336.0 MB  failed 0/9  md5 bb5069c530
+  final -t1                    wall 0.2765  cpu 0.2743  rss  170.2 MB  failed 0/9  md5 bb5069c530
+  final -t16                   wall 0.0386  cpu 0.2995  rss  317.0 MB  failed 0/9  md5 bb5069c530
+  duckdb -t1 unsorted          wall 0.2257  cpu 0.2238  rss  138.3 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.3475  cpu 0.3453  rss  153.8 MB  failed 0/9
+  duckdb default unsorted      wall 0.0809  cpu 0.2732  rss  144.5 MB  failed 0/9
+  duckdb default ORDER BY      wall 0.1079  cpu 0.4808  rss  234.9 MB  failed 0/9
+B4  --group k1m --agg sum:v
+  base -t1                     wall 1.4760  cpu 1.4726  rss  181.6 MB  failed 0/9  md5 22c6f7a8a8
+  base -t16                    wall 1.5184  cpu 1.7482  rss  335.9 MB  failed 0/9  md5 22c6f7a8a8
+  final -t1                    wall 0.3144  cpu 0.3114  rss  172.2 MB  failed 0/9  md5 22c6f7a8a8
+  final -t16                   wall 0.0419  cpu 0.3278  rss  317.5 MB  failed 0/9  md5 22c6f7a8a8
+  duckdb -t1 unsorted          wall 0.2540  cpu 0.2525  rss  154.0 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.3803  cpu 0.3787  rss  206.0 MB  failed 0/9
+  duckdb default unsorted      wall 0.0866  cpu 0.3141  rss  167.4 MB  failed 0/9
+  duckdb default ORDER BY      wall 0.1138  cpu 0.5223  rss  255.8 MB  failed 0/9
+I1  --group s --agg distinct:id
+  base -t1                     wall 0.2711  cpu 0.2683  rss  128.0 MB  failed 0/9  md5 96f30c5937
+  base -t16                    wall 0.1751  cpu 0.3996  rss  242.1 MB  failed 0/9  md5 96f30c5937
+  final -t1                    wall 0.1904  cpu 0.1879  rss  109.2 MB  failed 0/9  md5 96f30c5937
+  final -t16                   wall 0.0392  cpu 0.2393  rss  179.9 MB  failed 0/9  md5 96f30c5937
+  duckdb -t1 unsorted          wall 0.2006  cpu 0.1978  rss  130.5 MB  failed 0/9
+  duckdb -t1 ORDER BY          wall 0.2024  cpu 0.2000  rss  132.8 MB  failed 0/9
+  duckdb default unsorted      wall 0.0826  cpu 0.2399  rss  145.6 MB  failed 0/9
+  duckdb default ORDER BY      wall 0.0843  cpu 0.2408  rss  144.0 MB  failed 0/9

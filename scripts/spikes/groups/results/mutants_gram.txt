@@ -1,0 +1,27 @@
+killed  the bounds are not checked on the merged totals
+killed  the distinct bound is not checked on the merged totals
+killed  a range whose guess was wrong is taken
+killed  a range that passes --max-rows is taken
+killed  the rows of a range are not counted
+SURVIVED  a wave that makes no progress is not declined
+killed  an accepted range is not used
+killed  every wave is the last
+killed  too many tables are kept
+killed  the kept tables are not merged
+killed  the group count of a page is the candidates'
+killed  a merge thread that did not finish is trusted
+killed  the parent's own groups are not in the state
+killed  the blobs are cut the wrong way
+killed  a pair keeps the number of its group in the range
+killed  pairs all go to blob 0
+killed  a group's last integer is not written
+killed (does not build)  the rows are not sorted
+killed  keys that share a chunk are left as they came
+killed  the second field is not looked at
+killed  a field of exactly six bytes sorts with a longer one
+killed  a group is put in place past the bound of groups
+killed  a group is put in place past the bound of bytes
+killed  a key that needs quotes is written plain
+killed  the high half of a sum is not written
+survived: 1
+  a wave that makes no progress is not declined

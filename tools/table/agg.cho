@@ -33,19 +33,20 @@ module agg;
 
 import std.buffer;
 import std.bytes;
-import std.map;
 import std.vec;
 import dec;
+import gmap;
 import facc;
 import flt;
 import plan;
 import query;
 import toolbox.text;
+import writer;
 
 pub res struct Groups {
-    index: map.Map[int],
+    index: gmap.Tab,
     acc: vec.Vec[int],
-    seen: map.Map[int],
+    seen: gmap.Tab,
     keyb: buffer.Buffer,
     dkey: buffer.Buffer,
     held: int,
@@ -118,7 +119,7 @@ pub fn extend[&h](heap: &!h Heap, g: Groups, n: int) -> [heap] Groups {
 
 pub fn start[&h, &q](heap: &!h Heap, tree: &q query.Query) -> [heap] Groups {
     let stride = stride_of(tree);
-    var memo = box_slice(heap, memo_size() + 4, 0);
+    var memo = box_slice(heap, memo_size() + 7, 0);
     // A typed group column's key is the value, which `add_fast` does not build (it copies the cell's bytes): the count of rows `add_fast` stands aside for
     // (`memo[memo_size() + 2]`, see there) starts so high that every row takes `add`, and costs the other plans nothing
     if query.typed_groups(tree) != 0 {
@@ -126,14 +127,34 @@ pub fn start[&h, &q](heap: &!h Heap, tree: &q query.Query) -> [heap] Groups {
             contents(mw)[memo_size() + 2] = 1152921504606846976;
         }
     }
-    return Groups { index: map.empty(heap, 64, 0, 0x5eed), acc: vec.empty(heap, 64, 0), seen: map.empty(heap, 4, 0, 0x5eed), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: memo };
+    return Groups { index: gmap.empty(heap, 64), acc: vec.empty(heap, 64, 0), seen: gmap.empty(heap, 4), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: memo };
+}
+
+// `start` for a set that is about to hold `n` groups and `q` distinct pairs: the tables are made that large at once and do not grow (and fault their pages in twice).
+pub fn start_sized[&h, &q](heap: &!h Heap, tree: &q query.Query, n: int, pairs: int) -> [heap] Groups {
+    let stride = stride_of(tree);
+    var cap = n;
+    if cap < 64 {
+        cap = 64;
+    }
+    var pcap = pairs;
+    if pcap < 4 {
+        pcap = 4;
+    }
+    var memo = box_slice(heap, memo_size() + 7, 0);
+    if query.typed_groups(tree) != 0 {
+        borrow mut memo as &!mw in {
+            contents(mw)[memo_size() + 2] = 1152921504606846976;
+        }
+    }
+    return Groups { index: gmap.empty(heap, cap), acc: vec.empty(heap, cap * stride, 0), seen: gmap.empty(heap, pcap), keyb: buffer.empty(heap, 64), dkey: buffer.empty(heap, 64), held: 0, pairs: 0, stride: stride, memo: memo };
 }
 
 pub fn drop[&h](heap: &!h Heap, g: Groups) -> [heap] int {
     let Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
-    map.drop(heap, index);
+    gmap.drop(heap, index);
     vec.drop(heap, acc);
-    map.drop(heap, seen);
+    gmap.drop(heap, seen);
     buffer.drop(heap, keyb);
     buffer.drop(heap, dkey);
     unbox_slice(heap, memo);
@@ -141,7 +162,7 @@ pub fn drop[&h](heap: &!h Heap, g: Groups) -> [heap] int {
 }
 
 pub fn groups[&g](g: &g Groups) -> [] int {
-    return map.size(g.index);
+    return gmap.size(g.index);
 }
 
 fn put_length[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
@@ -228,6 +249,11 @@ fn set_at(acc: vec.Vec[int], at: int, value: int) -> [] vec.Vec[int] {
 // not an integer; 5 an integer of more than 64 bits; 6, 7, 8 a decimal that is not one, has too many fractional digits, is too wide.
 pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer, max_groups: int, max_distinct: int, max_state: int, keyed: bool) -> [heap] (Groups, buffer.Buffer, int, int) {
     let Groups { index, acc, seen, keyb, dkey, held, pairs, stride, memo } = g;
+    // what `add_fast` needs to know to put a new group in place
+    borrow mut memo as &!mw in {
+        contents(mw)[memo_size() + 5] = max_groups;
+        contents(mw)[memo_size() + 6] = max_state;
+    }
     var key = keyb;
     var scr = scratch;
     var m = index;
@@ -274,11 +300,19 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
     var size = 0;
     if status == 0 {
         borrow key as &kr in {
+            var hk = 0;
+            if keyed {
+                borrow memo as &mm in {
+                    hk = contents(mm)[memo_size() + 4];
+                }
+            } else {
+                hk = gmap.hash(buffer.bytes(kr));
+            }
             borrow m as &mr in {
                 if !keyed {
-                    entry = map.find(mr, buffer.bytes(kr));
+                    entry = gmap.find_h(mr, buffer.bytes(kr), hk);
                 }
-                size = map.size(mr);
+                size = gmap.size(mr);
             }
             if entry < 0 {
                 if size >= max_groups {
@@ -287,7 +321,7 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
                     status = 3;
                 } else {
                     bytes_held = bytes_held + buffer.size(kr) + float_state(tree);
-                    m = map.put(heap, m, buffer.bytes(kr), 0);
+                    m = gmap.put_new(heap, m, buffer.bytes(kr), hk);
                     entry = size;
                     var z = 0;
                     while z < stride {
@@ -343,8 +377,9 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
                     var known = false;
                     if status == 0 {
                         borrow dk as &dr in {
+                            let hd = gmap.hash(buffer.bytes(dr));
                             borrow s as &sr in {
-                                known = map.find(sr, buffer.bytes(dr)) >= 0;
+                                known = gmap.find_h(sr, buffer.bytes(dr), hd) >= 0;
                             }
                             if !known {
                                 if distinct_pairs >= max_distinct {
@@ -354,7 +389,7 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
                                 } else {
                                     bytes_held = bytes_held + buffer.size(dr);
                                     distinct_pairs = distinct_pairs + 1;
-                                    s = map.put(heap, s, buffer.bytes(dr), 0);
+                                    s = gmap.put_new(heap, s, buffer.bytes(dr), hd);
                                 }
                             }
                         }
@@ -468,7 +503,7 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
         place = (look ^ look >> 11) & size - 1;
         entry = contents(g.memo)[place] - 1;
         if entry >= 0 {
-            let key = map.key_at(g.index, entry);
+            let key = gmap.key_at(g.index, entry);
             var p = 0;
             j = 0;
             while j < ng && entry >= 0 {
@@ -515,21 +550,22 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
             j = j + 1;
         }
         buffer.filled(g.keyb, need);
-        entry = map.find(g.index, buffer.bytes(g.keyb));
+        let hk = gmap.hash(buffer.bytes(g.keyb));
+        entry = gmap.find_h(g.index, buffer.bytes(g.keyb), hk);
         if entry < 0 {
-            let run = contents(g.memo)[rest_at + 1] + 1;
-            if run >= 32 {
-                contents(g.memo)[rest_at] = 2048;
-                contents(g.memo)[rest_at + 1] = 0;
+            // A new group: put in place, with no move of the groups and no second look at the key, when the bounds allow it (`add` has
+            // left them in the memo) and the tables have room for it (they grow in `add`, by value, which then also says why a bound is passed).
+            let more = need + float_state(tree);
+            let limit_groups = contents(g.memo)[size + 5];
+            if limit_groups > 0 && gmap.size(g.index) < limit_groups && g.held + more <= contents(g.memo)[size + 6] && gmap.has_room(g.index, need) && len(contents(g.acc.held)) - g.acc.used >= g.stride {
+                entry = gmap.put_inplace(g.index, buffer.bytes(g.keyb), hk);
+                g.acc.used = g.acc.used + g.stride;
+                g.held = g.held + more;
             } else {
-                contents(g.memo)[rest_at + 1] = run;
+                contents(g.memo)[size + 4] = hk;
+                return (0 - 2, 0);
             }
-            return (0 - 2, 0);
-        }
-        if contents(g.memo)[rest_at + 1] > 0 {
-            contents(g.memo)[rest_at + 1] = 0;
-        }
-        if resting <= 0 {
+        } else if resting <= 0 {
             contents(g.memo)[place] = entry + 1;
         }
     }
@@ -612,7 +648,7 @@ fn compare_keys[&a, &b](x: &a [byte], y: &b [byte], fields: int) -> [] int {
 // Whether group `x` is before group `y`: by group column `field` (or, when
 // that is -1, by the integer at `slot` of the group's row) ascending or
 // descending, then by key; neither given orders by key alone.
-fn before[&m, &v, &r](index: &m map.Map[int], acc: &v vec.Vec[int], pre: &r [int], stride: int, na: int, fields: int, field: int, slot: int, descending: bool, x: int, y: int) -> [] bool {
+fn before[&m, &v, &r](index: &m gmap.Tab, acc: &v vec.Vec[int], pre: &r [int], stride: int, na: int, fields: int, field: int, slot: int, descending: bool, x: int, y: int) -> [] bool {
     if slot >= 1000000 {
         // A mean (the slot is the sum's, plus 1,000,000): by the exact quotient, sum over count, without dividing (`dec.compare_means`).
         let s = slot - 1000000;
@@ -627,7 +663,7 @@ fn before[&m, &v, &r](index: &m map.Map[int], acc: &v vec.Vec[int], pre: &r [int
         if fields >= 1 && pre[x] != pre[y] {
             return pre[x] < pre[y];
         }
-        return compare_keys(map.key_at(index, x), map.key_at(index, y), fields) < 0;
+        return compare_keys(gmap.key_at(index, x), gmap.key_at(index, y), fields) < 0;
     }
     if slot >= 1 {
         // A sum is (high, low), settled; the second integer of any other aggregate is 0.
@@ -656,7 +692,7 @@ fn before[&m, &v, &r](index: &m map.Map[int], acc: &v vec.Vec[int], pre: &r [int
         }
         return pre[x] < pre[y];
     } else if field >= 0 {
-        let c = compare_field(map.key_at(index, x), map.key_at(index, y), field);
+        let c = compare_field(gmap.key_at(index, x), gmap.key_at(index, y), field);
         if c != 0 {
             if descending {
                 return c > 0;
@@ -667,7 +703,7 @@ fn before[&m, &v, &r](index: &m map.Map[int], acc: &v vec.Vec[int], pre: &r [int
     if fields >= 1 && pre[x] != pre[y] {
         return pre[x] < pre[y];
     }
-    return compare_keys(map.key_at(index, x), map.key_at(index, y), fields) < 0;
+    return compare_keys(gmap.key_at(index, x), gmap.key_at(index, y), fields) < 0;
 }
 
 // The first seven bytes of a key's first column as one number, bytewise order kept
@@ -708,11 +744,11 @@ fn compare_field[&a, &b](x: &a [byte], y: &b [byte], n: int) -> [] int {
 // of groups): by group column `field` or integer `slot` (see `before`), else
 // by key; a bottom-up merge sort through `spare`, stable and O(n log n).
 pub fn sort_into[&g, &o, &s, &p](g: &g Groups, order: &!o [int], spare: &!s [int], pre: &!p [int], na: int, fields: int, field: int, slot: int, descending: bool) -> [] int {
-    let n = map.size(g.index);
+    let n = gmap.size(g.index);
     var i = 0;
     while i < n {
         order[i] = i;
-        pre[i] = prefix_of(map.key_at(g.index, i), fields);
+        pre[i] = prefix_of(gmap.key_at(g.index, i), fields);
         i = i + 1;
     }
     var width = 1;
@@ -752,6 +788,284 @@ pub fn sort_into[&g, &o, &s, &p](g: &g Groups, order: &!o [int], spare: &!s [int
     return 0;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// The key order by radix (spike gap-groups): a chunk of six bytes of the key's current field as one number whose integer
+// order is the bytes' order (the low byte says how many bytes the field has left: 0 to 5 it ends in this chunk, 6 it ends
+// exactly at the chunk's end, 7 it goes on), the groups sorted by chunk with a least-significant-digit radix sort (a digit
+// that every group shares is skipped), and the runs of equal chunks, which share everything so far, sorted again at the
+// next chunk. A key that ends in the chunk goes on at the next field. Equal keys cannot be (the keys of a map are unique).
+// ---------------------------------------------------------------------------------------------------------------------
+
+fn word_at[&k](key: &k [byte], posf: int, off: int) -> [] int {
+    let rem = length_at(key, posf) - off;
+    var take = rem;
+    var code = rem;
+    if rem > 6 {
+        take = 6;
+        code = 7;
+    }
+    let b = posf + 4 + off;
+    var w = 0;
+    var i = 0;
+    while i < 6 {
+        w = w * 256;
+        if i < take {
+            w = w + int_of(key[b + i]);
+        }
+        i = i + 1;
+    }
+    return w * 256 + code;
+}
+
+fn insertion[&a, &b](w: &!a [int], o: &!b [int], lo: int, hi: int) -> [] int {
+    var i = lo + 1;
+    while i < hi {
+        let x = w[i];
+        let y = o[i];
+        var j = i;
+        while j > lo && w[j - 1] > x {
+            w[j] = w[j - 1];
+            o[j] = o[j - 1];
+            j = j - 1;
+        }
+        w[j] = x;
+        o[j] = y;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// One pass: the elements of `sw`/`so` in [lo, hi) go to `dw`/`do_` by digit `p`, the starts of the digit's buckets being in `hist`.
+fn scatter[&a, &b, &c, &d, &e](sw: &a [int], so: &b [int], dw: &!c [int], dobj: &!d [int], hist: &!e [int], lo: int, hi: int, p: int) -> [] int {
+    let base = p * 256;
+    let shift = 8 * p;
+    var i = lo;
+    while i < hi {
+        let x = sw[i];
+        let at = base + (x >> shift & 255);
+        let to = hist[at];
+        hist[at] = to + 1;
+        dw[to] = x;
+        dobj[to] = so[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn radix[&a, &b, &c, &d, &e](w: &!a [int], o: &!b [int], w2: &!c [int], o2: &!d [int], hist: &!e [int], lo: int, hi: int) -> [] int {
+    var z = 0;
+    while z < 1792 {
+        hist[z] = 0;
+        z = z + 1;
+    }
+    var i = lo;
+    while i < hi {
+        let x = w[i];
+        hist[x & 255] = hist[x & 255] + 1;
+        hist[256 + (x >> 8 & 255)] = hist[256 + (x >> 8 & 255)] + 1;
+        hist[512 + (x >> 16 & 255)] = hist[512 + (x >> 16 & 255)] + 1;
+        hist[768 + (x >> 24 & 255)] = hist[768 + (x >> 24 & 255)] + 1;
+        hist[1024 + (x >> 32 & 255)] = hist[1024 + (x >> 32 & 255)] + 1;
+        hist[1280 + (x >> 40 & 255)] = hist[1280 + (x >> 40 & 255)] + 1;
+        hist[1536 + (x >> 48 & 255)] = hist[1536 + (x >> 48 & 255)] + 1;
+        i = i + 1;
+    }
+    let first = w[lo];
+    let n = hi - lo;
+    var in_w = true;
+    var p = 0;
+    while p < 7 {
+        if hist[p * 256 + (first >> 8 * p & 255)] != n {
+            var sum = lo;
+            var d = 0;
+            while d < 256 {
+                let c = hist[p * 256 + d];
+                hist[p * 256 + d] = sum;
+                sum = sum + c;
+                d = d + 1;
+            }
+            if in_w {
+                scatter(w, o, w2, o2, hist, lo, hi, p);
+            } else {
+                scatter(w2, o2, w, o, hist, lo, hi, p);
+            }
+            in_w = !in_w;
+        }
+        p = p + 1;
+    }
+    if !in_w {
+        i = lo;
+        while i < hi {
+            w[i] = w2[i];
+            o[i] = o2[i];
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+fn sort_run[&g, &o, &s, &w, &x, &h](g: &g Groups, order: &!o [int], spare: &!s [int], word: &!w [int], word2: &!x [int], hist: &!h [int], lo: int, hi: int, posf: int, off: int, j: int, fields: int) -> [] int {
+    var i = lo;
+    while i < hi {
+        word[i] = word_at(gmap.key_at(g.index, order[i]), posf, off);
+        i = i + 1;
+    }
+    if hi - lo <= 32 {
+        insertion(word, order, lo, hi);
+    } else {
+        radix(word, order, word2, spare, hist, lo, hi);
+    }
+    var a = lo;
+    while a < hi {
+        var b = a + 1;
+        while b < hi && word[b] == word[a] {
+            b = b + 1;
+        }
+        if b - a > 1 {
+            if word[a] & 255 == 7 {
+                sort_run(g, order, spare, word, word2, hist, a, b, posf, off + 6, j, fields);
+            } else if j + 1 < fields {
+                let next = posf + 4 + length_at(gmap.key_at(g.index, order[a]), posf);
+                sort_run(g, order, spare, word, word2, hist, a, b, next, 0, j + 1, fields);
+            }
+        }
+        a = b;
+    }
+    return 0;
+}
+
+// `order[0..n]` as the groups' numbers in key order (the default order of `sort_into`): `word` and `word2` are n integers each, `spare` n, `hist` 1792.
+pub fn sort_keys[&g, &o, &s, &w, &x, &h](g: &g Groups, order: &!o [int], spare: &!s [int], word: &!w [int], word2: &!x [int], hist: &!h [int], fields: int) -> [] int {
+    let n = gmap.size(g.index);
+    var i = 0;
+    while i < n {
+        order[i] = i;
+        i = i + 1;
+    }
+    if fields >= 1 && n > 1 {
+        sort_run(g, order, spare, word, word2, hist, 0, n, 0, 0, 0, fields);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// A group's csv row written straight into the output buffer's room (spike gap-groups): for a plan whose aggregates are all
+// integers (`rows_plain`), and a key with nothing in it that csv would quote. `put_row_csv` answers the bytes it wrote, or -1
+// when the row is not one it can write (nothing was committed) and the caller takes `csv_value` and `put_value`.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// Whether every group of this plan can be a plain row: no typed group column, and each aggregate a count, a distinct count, or an
+// integer sum, minimum or maximum.
+pub fn rows_plain[&q](tree: &q query.Query) -> [] bool {
+    if query.typed_groups(tree) != 0 {
+        return false;
+    }
+    var k = 0;
+    while k < query.agg_count(tree) {
+        let function = query.agg_at(tree, k, 0);
+        let kind = query.agg_at(tree, k, 2);
+        if function == 1 {
+            if kind != 1 || query.agg_at(tree, k, 3) != 0 {
+                return false;
+            }
+        } else if function == 2 || function == 3 {
+            if kind != 1 {
+                return false;
+            }
+        } else if function != 0 && function != 4 {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn put_digits[&r](room: &!r [byte], at: int, v: int) -> [] int {
+    var p = at;
+    var u = v;
+    if v < 0 {
+        room[p] = byte_of(45);
+        p = p + 1;
+        u = 0 - v;
+    }
+    var d = 1;
+    var t = u;
+    while t >= 10 {
+        t = t / 10;
+        d = d + 1;
+    }
+    var i = d - 1;
+    t = u;
+    while i >= 0 {
+        room[p + i] = byte_of(48 + t % 10);
+        t = t / 10;
+        i = i - 1;
+    }
+    return p + d;
+}
+
+// The room `put_row_csv` wants for group `x`.
+pub fn row_room[&g, &q](g: &g Groups, tree: &q query.Query, x: int) -> [] int {
+    return len(gmap.key_at(g.index, x)) + 24 * query.agg_count(tree) + 8;
+}
+
+pub fn put_row_csv[&o, &g, &q](out: &!o buffer.Buffer, g: &g Groups, tree: &q query.Query, x: int, delim: int, ng: int) -> [] int {
+    let na = query.agg_count(tree);
+    let key = gmap.key_at(g.index, x);
+    let room = buffer.room(out);
+    if len(room) < len(key) + 24 * na + 8 {
+        return 0 - 1;
+    }
+    var at = 0;
+    var p = 0;
+    var j = 0;
+    while j < ng {
+        if j > 0 {
+            room[at] = byte_of(delim);
+            at = at + 1;
+        }
+        let n = length_at(key, p);
+        var i = 0;
+        while i < n {
+            let c = int_of(key[p + 4 + i]);
+            if c == 34 || c == 13 || c == 10 || c == delim {
+                return 0 - 1;
+            }
+            room[at + i] = key[p + 4 + i];
+            i = i + 1;
+        }
+        at = at + n;
+        p = p + 4 + n;
+        j = j + 1;
+    }
+    var k = 0;
+    while k < na {
+        if ng + k > 0 {
+            room[at] = byte_of(delim);
+            at = at + 1;
+        }
+        let function = query.agg_at(tree, k, 0);
+        var v = vec.get(g.acc, x * g.stride);
+        if function == 1 {
+            let high = vec.get(g.acc, x * g.stride + 1 + k + na);
+            if high < 0 - 1073741824 || high > 1073741824 {
+                return 0 - 1;
+            }
+            v = high * 4294967296 + vec.get(g.acc, x * g.stride + 1 + k);
+        } else if function != 0 {
+            v = vec.get(g.acc, x * g.stride + 1 + k);
+        }
+        if v == query.int_min() {
+            return 0 - 1;
+        }
+        at = put_digits(room, at, v);
+        k = k + 1;
+    }
+    room[at] = byte_of(10);
+    buffer.filled(out, at + 1);
+    return at + 1;
+}
+
 fn append_int[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
     if v >= 0 {
         return buffer.push_nat(heap, out, v);
@@ -769,7 +1083,7 @@ fn append_int[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.B
 // own slot, where a minimum would keep its value. Answers 0, or, when an exact sum is beyond the largest double, which group and aggregate
 // as `(group * 4096 + aggregate) + 1`: of the groups that overflow the one with the smallest key (so that it is the same whatever order the rows were read in).
 pub fn settle[&g, &q](g: &!g Groups, tree: &q query.Query) -> [] int {
-    let n = map.size(g.index);
+    let n = gmap.size(g.index);
     let na = query.agg_count(tree);
     var worst = 0 - 1;
     var worst_k = 0;
@@ -790,7 +1104,7 @@ pub fn settle[&g, &q](g: &!g Groups, tree: &q query.Query) -> [] int {
                 }
                 vec.set(g.acc, x * g.stride + 1 + k, key);
                 facc_at = facc_at + facc.width();
-                if over != 0 && (worst < 0 || compare_keys(map.key_at(g.index, x), map.key_at(g.index, worst), query.count_of(tree, 2)) < 0) {
+                if over != 0 && (worst < 0 || compare_keys(gmap.key_at(g.index, x), gmap.key_at(g.index, worst), query.count_of(tree, 2)) < 0) {
                     worst = x;
                     worst_k = k;
                 }
@@ -859,7 +1173,7 @@ pub fn value_of[&g](g: &g Groups, x: int, k: int, function: int) -> [] int {
 // (an array of strings, numbers written as decimal strings).
 pub fn row_json[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, tree: &q query.Query, x: int) -> [heap] buffer.Buffer {
     var o = buffer.push(heap, out, byte_of('['));
-    let key = map.key_at(g.index, x);
+    let key = gmap.key_at(g.index, x);
     var at = 0;
     var j = 0;
     let ng = query.count_of(tree, 2);
@@ -893,7 +1207,7 @@ pub fn row_json[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, tr
 
 // The group's key fields, one at a time: field `j` of group `x`.
 pub fn key_field[&g](g: &g Groups, x: int, j: int) -> [] &g [byte] {
-    let key = map.key_at(g.index, x);
+    let key = gmap.key_at(g.index, x);
     var at = 0;
     var i = 0;
     while i < j {
@@ -1276,8 +1590,8 @@ fn put_bytes[&o, &d](out: &!o [byte], at: int, data: &d [byte]) -> [] int {
 // Write the groups into `out` (which has `len(out)` bytes). Answers the bytes used, or
 // -1 when they do not fit.
 pub fn serialize[&g, &o](g: &g Groups, out: &!o [byte]) -> [] int {
-    let ngroups = map.size(g.index);
-    let npairs = map.size(g.seen);
+    let ngroups = gmap.size(g.index);
+    let npairs = gmap.size(g.seen);
     var at = 16;
     if at > len(out) {
         return 0 - 1;
@@ -1286,7 +1600,7 @@ pub fn serialize[&g, &o](g: &g Groups, out: &!o [byte]) -> [] int {
     put_i64(out, 8, npairs);
     var e = 0;
     while e < ngroups {
-        let key = map.key_at(g.index, e);
+        let key = gmap.key_at(g.index, e);
         if at + 4 + len(key) + 8 * g.stride > len(out) {
             return 0 - 1;
         }
@@ -1301,7 +1615,7 @@ pub fn serialize[&g, &o](g: &g Groups, out: &!o [byte]) -> [] int {
     }
     var p = 0;
     while p < npairs {
-        let key = map.key_at(g.seen, p);
+        let key = gmap.key_at(g.seen, p);
         if at + 4 + len(key) > len(out) {
             return 0 - 1;
         }
@@ -1344,7 +1658,7 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
                 let acc_at = at + 4 + klen;
                 var found = -1;
                 borrow m as &mr in {
-                    found = map.find(mr, key);
+                    found = gmap.find(mr, key);
                 }
                 mp[i] = found;
                 if found < 0 {
@@ -1371,7 +1685,7 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
                     scratch = buffer.append(heap, scratch, key[4..len(key)]);
                     borrow scratch as &sr in {
                         borrow s as &seen_r in {
-                            known = map.find(seen_r, buffer.bytes(sr)) >= 0;
+                            known = gmap.find(seen_r, buffer.bytes(sr)) >= 0;
                         }
                     }
                 }
@@ -1385,7 +1699,7 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
             }
             var size = 0;
             borrow m as &mr in {
-                size = map.size(mr);
+                size = gmap.size(mr);
             }
             if size + new_groups > max_groups || pairs + new_pairs > max_distinct || held + new_bytes > max_state {
                 refuse = true;
@@ -1401,9 +1715,9 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
                     var entry = mp[i];
                     if entry < 0 {
                         borrow m as &mr in {
-                            entry = map.size(mr);
+                            entry = gmap.size(mr);
                         }
-                        m = map.put(heap, m, key, 0);
+                        m = gmap.put_new(heap, m, key, gmap.hash(key));
                         mp[i] = entry;
                         var z = 0;
                         while z < stride {
@@ -1471,11 +1785,12 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
                     scratch = buffer.append(heap, scratch, key[4..len(key)]);
                     borrow scratch as &sr in {
                         var known = false;
+                        let hs = gmap.hash(buffer.bytes(sr));
                         borrow s as &seen_r in {
-                            known = map.find(seen_r, buffer.bytes(sr)) >= 0;
+                            known = gmap.find_h(seen_r, buffer.bytes(sr), hs) >= 0;
                         }
                         if !known {
-                            s = map.put(heap, s, buffer.bytes(sr), 0);
+                            s = gmap.put_new(heap, s, buffer.bytes(sr), hs);
                         }
                     }
                     pair_at = pair_at + 4 + klen;
@@ -1491,4 +1806,322 @@ pub fn merge[&h, &b, &q](heap: &!h Heap, g: Groups, blob: &b [byte], tree: &q qu
         return (Groups { index: m, acc: a, seen: s, keyb: keyb, dkey: scratch, held: held, pairs: pairs, stride: stride, memo: memo }, 1);
     }
     return (Groups { index: m, acc: a, seen: s, keyb: keyb, dkey: scratch, held: held + new_bytes, pairs: pairs + new_pairs, stride: stride, memo: memo }, 0);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Partitioned grouping (spike gap-groups, docs/gap-groups.md). The groups of a range are written as `p` blobs, each of the
+// form `serialize` writes, the groups whose key is below splitter 0 in blob 0, from splitter j - 1 to splitter j in blob j,
+// and so on: the pairs of a distinct count go with their group, renumbered to the place of the group in its blob. Every
+// range cuts at the same splitters, so a key is in the same blob whichever range it came from, and the blobs of one
+// number from all the ranges can be merged (`merge`) by a thread of their own with no one else having the key; the groups
+// of blob j then sort before those of blob j + 1, so the sorted partitions end to end are the sorted groups.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The room `serialize_parts` needs for `p` blobs of these groups: an upper bound, exact but for the table of offsets.
+pub fn parts_size[&g](g: &g Groups, p: int) -> [] int {
+    var total = 8 * (p + 1) + 16 * p;
+    let n = gmap.size(g.index);
+    var e = 0;
+    while e < n {
+        total = total + 4 + len(gmap.key_at(g.index, e)) + 8 * g.stride;
+        e = e + 1;
+    }
+    let q = gmap.size(g.seen);
+    var i = 0;
+    while i < q {
+        total = total + 4 + len(gmap.key_at(g.seen, i));
+        i = i + 1;
+    }
+    return total;
+}
+
+// Where each of the splitters (`[u32 length][key]` records in `split`, `nsplit` of them, from `at`) starts, into `soff`.
+pub fn splitter_offsets[&s, &o](split: &s [byte], from: int, nsplit: int, soff: &!o [int]) -> [] int {
+    var at = from;
+    var j = 0;
+    while j < nsplit {
+        soff[j] = at;
+        at = at + 4 + length_at(split, at);
+        j = j + 1;
+    }
+    return at;
+}
+
+// The number of the blob of a key: how many splitters are at or below it.
+fn part_of[&k, &s, &o](key: &k [byte], split: &s [byte], soff: &o [int], nsplit: int, fields: int) -> [] int {
+    var lo = 0;
+    var hi = nsplit;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let at = soff[mid];
+        if compare_keys(key, split[at + 4..at + 4 + length_at(split, at)], fields) >= 0 {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    return lo;
+}
+
+// Write the groups into `out` as `p` blobs: the table of `p + 1` offsets (8 bytes each; blob j is `out[off[j]..off[j + 1]]`), then the blobs. `work` holds
+// `2 * groups + 6 * p` integers. Answers the bytes used, or -1 when they do not fit.
+pub fn serialize_parts[&g, &o, &s, &t, &w](g: &g Groups, out: &!o [byte], split: &s [byte], soff: &t [int], nsplit: int, p: int, fields: int, work: &!w [int]) -> [] int {
+    let n = gmap.size(g.index);
+    let q = gmap.size(g.seen);
+    let part = 0;
+    let loc = n;
+    let gcount = 2 * n;
+    let pcount = 2 * n + p;
+    let gbytes = 2 * n + 2 * p;
+    let pbytes = 2 * n + 3 * p;
+    let gcur = 2 * n + 4 * p;
+    let pcur = 2 * n + 5 * p;
+    var j = 0;
+    while j < p {
+        work[gcount + j] = 0;
+        work[pcount + j] = 0;
+        work[gbytes + j] = 0;
+        work[pbytes + j] = 0;
+        j = j + 1;
+    }
+    var e = 0;
+    while e < n {
+        let key = gmap.key_at(g.index, e);
+        var b = 0;
+        if p > 1 {
+            b = part_of(key, split, soff, nsplit, fields);
+        }
+        work[part + e] = b;
+        work[loc + e] = work[gcount + b];
+        work[gcount + b] = work[gcount + b] + 1;
+        work[gbytes + b] = work[gbytes + b] + 4 + len(key) + 8 * g.stride;
+        e = e + 1;
+    }
+    var i = 0;
+    while i < q {
+        let key = gmap.key_at(g.seen, i);
+        let b = work[part + length_at(key, 0)];
+        work[pcount + b] = work[pcount + b] + 1;
+        work[pbytes + b] = work[pbytes + b] + 4 + len(key);
+        i = i + 1;
+    }
+    var at = 8 * (p + 1);
+    j = 0;
+    while j < p {
+        put_i64(out, 8 * j, at);
+        if at + 16 + work[gbytes + j] + work[pbytes + j] > len(out) {
+            return 0 - 1;
+        }
+        put_i64(out, at, work[gcount + j]);
+        put_i64(out, at + 8, work[pcount + j]);
+        work[gcur + j] = at + 16;
+        work[pcur + j] = at + 16 + work[gbytes + j];
+        at = at + 16 + work[gbytes + j] + work[pbytes + j];
+        j = j + 1;
+    }
+    put_i64(out, 8 * p, at);
+    e = 0;
+    while e < n {
+        let key = gmap.key_at(g.index, e);
+        let b = work[part + e];
+        var w = work[gcur + b];
+        w = put_u32(out, w, len(key));
+        w = put_bytes(out, w, key);
+        var k = 0;
+        while k < g.stride {
+            w = put_i64(out, w, vec.get(g.acc, e * g.stride + k));
+            k = k + 1;
+        }
+        work[gcur + b] = w;
+        e = e + 1;
+    }
+    i = 0;
+    while i < q {
+        let key = gmap.key_at(g.seen, i);
+        let b = work[part + length_at(key, 0)];
+        var w = work[pcur + b];
+        w = put_u32(out, w, len(key));
+        w = put_u32(out, w, work[loc + length_at(key, 0)]);
+        w = put_bytes(out, w, key[4..len(key)]);
+        work[pcur + b] = w;
+        i = i + 1;
+    }
+    return at;
+}
+
+// The splitters for `p` blobs from a sample of groups: the keys at the quantiles of the sample's keys in order, as an `i64` count then `[u32 length][key]`
+// records, into `out`. Answers the bytes used, or -1.
+pub fn pick_splitters[&h, &g, &o](heap: &!h Heap, g: &g Groups, p: int, fields: int, out: &!o [byte]) -> [heap] int {
+    let n = gmap.size(g.index);
+    let order = box_slice(heap, n + 1, 0);
+    let spare = box_slice(heap, n + 1, 0);
+    let word = box_slice(heap, n + 1, 0);
+    let word2 = box_slice(heap, n + 1, 0);
+    let hist = box_slice(heap, 1792, 0);
+    var used = 8;
+    var count = 0;
+    var fits = true;
+    borrow mut order as &!ow in {
+        borrow mut spare as &!sw in {
+            borrow mut word as &!ww in {
+                borrow mut word2 as &!xw in {
+                    borrow mut hist as &!hw in {
+                        sort_keys(g, contents(ow), contents(sw), contents(ww), contents(xw), contents(hw), fields);
+                        var j = 1;
+                        while j < p && n > 0 {
+                            let key = gmap.key_at(g.index, contents(ow)[j * n / p]);
+                            if used + 4 + len(key) > len(out) {
+                                fits = false;
+                            } else {
+                                used = put_u32(out, used, len(key));
+                                used = put_bytes(out, used, key);
+                                count = count + 1;
+                            }
+                            j = j + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, order);
+    unbox_slice(heap, spare);
+    unbox_slice(heap, word);
+    unbox_slice(heap, word2);
+    unbox_slice(heap, hist);
+    if !fits {
+        return 0 - 1;
+    }
+    put_i64(out, 0, count);
+    return used;
+}
+
+// The numbers a bound is judged by: groups, distinct pairs, bytes held.
+pub fn totals[&g](g: &g Groups) -> [] (int, int, int) {
+    return (gmap.size(g.index), gmap.size(g.seen), g.held);
+}
+
+// The groups of `g` as csv rows, in key order, appended to `out`: the whole answer of a plain grouping (`finish_groups` for csv with no page and no sort).
+// `scratch` holds the sort's arrays; the rows are what `put_row_csv` writes, or the generic way.
+pub fn rows_csv[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, tree: &q query.Query, delim: int) -> [heap] buffer.Buffer {
+    let n = gmap.size(g.index);
+    let ng = query.count_of(tree, 2);
+    let na = query.agg_count(tree);
+    let order = box_slice(heap, n + 1, 0);
+    let spare = box_slice(heap, n + 1, 0);
+    let word = box_slice(heap, n + 1, 0);
+    let word2 = box_slice(heap, n + 1, 0);
+    let hist = box_slice(heap, 1792, 0);
+    let plain = rows_plain(tree);
+    var pending = out;
+    borrow mut order as &!ow in {
+        borrow mut spare as &!sw in {
+            borrow mut word as &!ww in {
+                borrow mut word2 as &!xw in {
+                    borrow mut hist as &!hw in {
+                        sort_keys(g, contents(ow), contents(sw), contents(ww), contents(xw), contents(hw), ng);
+                        var pos = 0;
+                        while pos < n {
+                            let x = contents(ow)[pos];
+                            var wrote = 0 - 1;
+                            if plain {
+                                pending = buffer.reserve(heap, pending, row_room(g, tree, x));
+                                borrow mut pending as &!pm in {
+                                    wrote = put_row_csv(pm, g, tree, x, delim, ng);
+                                }
+                            }
+                            if wrote < 0 {
+                                var j = 0;
+                                while j < ng {
+                                    if j > 0 {
+                                        pending = buffer.push(heap, pending, byte_of(delim));
+                                    }
+                                    if query.gkind_at(tree, j) != 0 {
+                                        pending = put_key(heap, pending, g, tree, x, j);
+                                    } else {
+                                        pending = writer.csv_value(heap, pending, key_field(g, x, j), delim);
+                                    }
+                                    j = j + 1;
+                                }
+                                var k = 0;
+                                while k < na {
+                                    if ng + k > 0 {
+                                        pending = buffer.push(heap, pending, byte_of(delim));
+                                    }
+                                    pending = put_value(heap, pending, g, tree, x, k);
+                                    k = k + 1;
+                                }
+                                pending = buffer.push(heap, pending, byte_of(10));
+                            }
+                            pos = pos + 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, order);
+    unbox_slice(heap, spare);
+    unbox_slice(heap, word);
+    unbox_slice(heap, word2);
+    unbox_slice(heap, hist);
+    return pending;
+}
+
+// The groups' numbers in output order, for any `--sort` (the order of `sort_into`; the key order by the radix): the box is the caller's to free.
+pub fn order_groups[&h, &g](heap: &!h Heap, g: &g Groups, na: int, fields: int, field: int, slot: int, descending: bool) -> [heap] Box[[int]] {
+    let n = gmap.size(g.index);
+    let order = box_slice(heap, n + 1, 0);
+    let spare = box_slice(heap, n + 1, 0);
+    let word = box_slice(heap, n + 1, 0);
+    let word2 = box_slice(heap, n + 1, 0);
+    let hist = box_slice(heap, 1792, 0);
+    var ord = order;
+    borrow mut ord as &!ow in {
+        borrow mut spare as &!sw in {
+            borrow mut word as &!ww in {
+                borrow mut word2 as &!xw in {
+                    borrow mut hist as &!hw in {
+                        if field < 0 && slot < 0 && !descending {
+                            sort_keys(g, contents(ow), contents(sw), contents(ww), contents(xw), contents(hw), fields);
+                        } else {
+                            sort_into(g, contents(ow), contents(sw), contents(ww), na, fields, field, slot, descending);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, spare);
+    unbox_slice(heap, word);
+    unbox_slice(heap, word2);
+    unbox_slice(heap, hist);
+    return ord;
+}
+
+// The first `k` of the groups in `order`, as `serialize` writes them (and no distinct pairs): the candidates of a page. Answers the bytes used, or -1.
+pub fn serialize_top[&g, &p, &o](g: &g Groups, order: &p [int], k: int, out: &!o [byte]) -> [] int {
+    var at = 16;
+    if at > len(out) {
+        return 0 - 1;
+    }
+    put_i64(out, 0, k);
+    put_i64(out, 8, 0);
+    var i = 0;
+    while i < k {
+        let e = order[i];
+        let key = gmap.key_at(g.index, e);
+        if at + 4 + len(key) + 8 * g.stride > len(out) {
+            return 0 - 1;
+        }
+        at = put_u32(out, at, len(key));
+        at = put_bytes(out, at, key);
+        var j = 0;
+        while j < g.stride {
+            at = put_i64(out, at, vec.get(g.acc, e * g.stride + j));
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return at;
 }

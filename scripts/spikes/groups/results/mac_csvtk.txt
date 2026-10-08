@@ -1,0 +1,12 @@
+B1  --group k100k
+  final -t1                    wall 0.0935  cpu 0.0924  rss   19.4 MB  failed 0/3
+  csvtk -j1                    wall 0.3016  cpu 0.3002  rss   46.7 MB  failed 0/3
+B3  --group k1m
+  final -t1                    wall 0.2901  cpu 0.2878  rss  170.4 MB  failed 0/3
+  csvtk -j1                    wall 0.9107  cpu 0.9078  rss  257.7 MB  failed 0/3
+B2  --group k100k --agg sum:v
+  final -t1                    wall 0.1048  cpu 0.1033  rss   19.4 MB  failed 0/3
+  csvtk -j1                    wall 4.0008  cpu 3.9318  rss 16039.9 MB  failed 0/3
+B4  --group k1m --agg sum:v
+  final -t1                    wall 0.3810  cpu 0.3769  rss  170.2 MB  failed 0/3
+  csvtk -j1                    wall 48.7844  cpu 38.1230  rss 17760.3 MB  failed 0/3

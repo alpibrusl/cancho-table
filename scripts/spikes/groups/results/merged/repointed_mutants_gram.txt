@@ -1,0 +1,22 @@
+unmutated: pass
+killed         a value is distinct every time  [test_group_order_and_sort]
+killed         the byte budget of a json page of groups is not kept  [test_the_byte_budget_ends_a_page_of_groups]
+2 of 2 killed
+unmutated: pass
+killed         a range whose first line is not where the last record ended is taken  [test_blank_lines_and_late_errors_name_the_same_line]
+killed         a range whose thread says it needs the parent is taken  [test_a_quote_left_open_and_a_bad_quote]
+killed         the lines a range read are not counted  [test_a_quote_left_open_and_a_bad_quote]
+killed         a new group is kept under an empty key  [test_a_file_smaller_than_the_chunks]
+4 of 4 killed
+unmutated: pass
+killed         a group that is not there is counted anyway  [test_a_line_longer_than_the_cap_that_fills_more_than_a_chunk]
+killed         a new group is taken for one that is there  [test_a_quoted_key_with_a_quote_and_a_new_group_take_the_other_way]
+2 of 2 killed
+unmutated: pass
+killed         the overflow named is of the largest key  [test_of_several_overflowing_groups_the_smallest_key_is_named_whatever_the_order]
+1 of 1 killed
+unmutated: pass
+killed         a typed group takes the fast path  [test_fuzzed_key_cells_never_trap_and_agree_with_the_reference]
+killed         the typed flag of a plan is never set  [test_fuzzed_key_cells_never_trap_and_agree_with_the_reference]
+killed         a typed group is written as its key bytes in csv  [test_typed_groups_and_orders_are_the_sequential_bytes_for_every_thread_count_and_chunk]
+3 of 3 killed
