@@ -121,6 +121,22 @@ P is `--threads`. Between waves nothing is merged while the kept tables are few 
 cost one round): they wait in a buffer. The splitters come from the distinct keys of the sample (not its rows), so a heavy hitter does not skew
 them. An empty or filtered sample gives no splitter and everything lands in blob 0: correct, and as slow as the sequential merge.
 
+**Range sizing (one rule, shared with `run_ranges`).** Main's parallel scan (PR #34) lengthens the ranges of a grouping when `--chunk-bytes` was not given, to at most 16 MiB, by as
+much as keeps an answer that grows with the range inside half of its slot, and goes back for good to the first size as soon as an answer did not fit, was not clean or was read
+again. The partitioned read uses **the same rule, copied, with the same inputs**: the first wave's ranges are the smaller of `--chunk-bytes` (4 MiB) and a thread's share; the
+slot is fixed by that first size (`2 x chunk + 64 KiB`, plus room for 512 float groups, see 3.6); a later wave's range is `first x (slot / 2 / largest answer of the wave)`, at most
+1024 times the first, 16 MiB and a thread's share of what is left, and the first size again once a range of a wave was not clean. The answer here is a range's table of blobs (its
+offsets and the blobs), so the "largest answer" is the largest table. The slot never moves, so the memory a wave can take (threads x slot, and the same again for each worker's
+copy) is what it was; `test_memory` holds it. With `--chunk-bytes` given (the tests, the tiny ranges) the size is that and nothing grows.
+
+**The speculation (PR #34).** A range that does not begin where the parent knows a record does guesses how it begins (`scan.guess`: the window of 64 KiB at its start read
+as records of the right number of fields, from outside or from inside a quoted field); the worker answers where its first record begins (`k_first_at`, tally slot 27) and the
+parent takes the range only if that is where the range before it ended. The partitioned read's parent checks `k_first_at` exactly as `run_ranges` does (not the start of the
+range, which was the first version's check); a range whose guess was wrong is read again by the parent into groups of its own (hint 0: it starts at a record it knows). The
+sample of the splitters reads from line starts with no guess; its groups only choose splitters.
+
+**Tally slots.** 27 `k_first_at` and 28 `k_psorted` are main's; this read's `k_done` and `k_total` are 30 and 31.
+
 **Pages, sorts, tops, json.** When the answer is not "all rows as csv in key order" (`--format json`, whose default is a page of 1000; `--limit`,
 `--from`, `--top`; `--sort` by an aggregate), each thread of the last round sorts its groups in the order asked for (`sort_into` as today,
 the radix for the default) and returns its first `want` (`want` = `--top`, or `--from + --limit + 1`, at most 100,000), the parent merges the
@@ -172,17 +188,25 @@ parent, and, last, the rows in the output buffer, flushed per thread. Counting i
   or a way to give a thread a `Groups`, would take this to ~2x);
 * **few groups** (a 1 GB file, 6 groups): 136 MB against 71 on the Mac, the slots being twice the chunk (a blob can be larger than the rows it came from).
 
-The bound the documentation should state: **about (2T + 3) x `--max-state-bytes`** at worst, T being the threads: each worker's groups are bounded by the
-bound (as in the old read), each merge thread's part is bounded by it too (it declines past it) and a read that is not declined has a merged state within it, the
-copies add the blobs (smaller than the tables), and the allocator may keep the workers' pages while the round runs (the second T). The old read's bound was T x
-the bound for the workers plus the whole merged state, and the documentation says only the per-state figure. A float aggregate makes a group 584 bytes more in every copy; see 3.6.
+**What `--max-state-bytes` bounds, and what it does not.** The flag bounds the *accounted* state (key bytes, 584 bytes a float aggregate, pair bytes: `held`), not the
+resident memory, and that was so before this branch: B3 counts 14,000,000 bytes (1M groups x 14) and the sequential read is 170 MB resident, about 12x. So no "resident <=
+k x bound" can be stated for either read, and an earlier version of this section said one; it was wrong and is withdrawn (measured below). What can be stated is in accounted
+units: each worker's local set is bounded by the flag (as in the old read), each merge thread's part is bounded by it (it declines past it), and a read that is not declined has
+a merged set within it, so at any moment the threaded read holds at most **(2T + 3) x `--max-state-bytes` accounted bytes** (T workers, T merge threads, three copies of the
+merged set at most: inputs, outputs, the parent's copy); the old read held T x the bound in the workers plus the merged set. What a user observes, B3 on the Mac,
+peak resident MB, main (92a4305) against this branch (`results/merged/memory_vs_bound_mac.txt`):
 
-**`--max-state-bytes` and the other bounds: what a user observes.** What the flags *refuse* is unchanged: the accounting is the old one (key bytes, 584 bytes a float
-aggregate, pair bytes; `agg.merge`'s and `add`'s are the same sums), a read that passes a bound is refused with the same rule, row, line and column, because the old
-read raises it (declines, 3.3), and the sequential read is untouched in what it holds. What changes is the memory a threaded grouping may use on the way: the bound is
-still a bound on one set of groups, and the memory of a threaded read is up to **(2T + 3) x `--max-state-bytes`** (T threads) where the old read's was T x the bound for
-the workers plus the merged set (documented as "the per-state figure" only). Measured peaks are far below that (3.4); the figure is what the bound and the design allow,
-not what a file did. A read that is declined has done the parallel work first, so a refusal costs ~8 ms (Mac) more than before and the old read's own time.
+| flag | answer | 1 thread | 2 threads | 6 threads | 16 threads |
+|---|---|---|---|---|---|
+| `--max-state-bytes 14000000` (the state fits) | rows | 179 / 170 | 213 / **349** | 290 / 295 | 327 / 297 |
+| `--max-state-bytes 13999999` (one byte short) | refused, rc 8, the same message | 171 / 170 | 206 / **429** | 304 / **410** | 325 / **471** |
+| `--max-state-bytes 2000000` | refused, rc 8 | 30 / 27 | 53 / **178** | 140 / **268** | 181 / **360** |
+
+The refusals are the same rule, status and bytes as main's at every thread count; the threshold is the same byte (14,000,000 accepted, 13,999,999 refused). The cost is
+memory on the way to a refusal: a read that is declined has done the parallel work first (every worker holds its range's groups up to the bound, then the merge threads their
+parts), so a refused threaded grouping peaks at up to 2.0x the old read's resident memory here (and 1.6x at two threads when the state fits, where two threads mean several
+waves of a table kept for one round). In accounted units those peaks are 360 MB of resident memory for a flag that counts 2,000,000: 180x, against 90x for main. An agent that
+relies on `--max-state-bytes` to keep a threaded grouping's *resident* memory down should not; that was already so.
 
 ### 3.5 What it measured
 
@@ -218,6 +242,47 @@ Linux, i7-1260P, `taskset -c 0-6` (three physical cores, six threads used), othe
 On the three cores that is 1.8x DuckDB's time (unsorted) and **1.07x its ordered time** for B3, 1.0x ordered for B4, and 1.1 / 0.97x for B1, 1.3x for I1; at one thread
 0.8x DuckDB ordered. The scaling is 1.9x at 6 threads (0.402 -> 0.204 s alone on the box), 2.4x at 12 on the seven logical CPUs. Minor faults are 60k at one thread and 110k
 at six: the copies, not the work, are what the extra threads cost here (sys 0.16 s of 0.74 s CPU).
+
+### 3.5b The merged result (main 92a4305, this branch merged into it)
+
+Everything above was measured against the earlier base (7d04b9f). After PRs #31 to #34 landed this branch was merged with main and measured again, by `scripts/adversarial.py` itself
+(`--cells B1,B2,B3,B4,I1 --runs 5`, the minimum of 5 interleaved runs; every contender's answer is parsed and compared with the one computed in Python before it is timed; DuckDB runs
+through the fixed `timed_run`, which retries a run that exited non-zero; two ordered DuckDB contenders were added for the reason in section 1, and `--duck-threads` for a box whose
+cores the process is pinned to; the load average is printed with each cell). Seconds; `main` is `origin/main` built with the pinned compiler; the files are in `results/merged/`.
+
+Mac (Apple silicon, 16 cores; load average 1.5 to 2.4 from other sessions during the run), `--threads 16`:
+
+| cell | main -t1 | branch -t1 | DuckDB -t1 unsorted / ordered | main -t16 | branch -t16 | DuckDB default unsorted / ordered | branch RSS MB -t1 / -t16 |
+|---|---|---|---|---|---|---|---|
+| B1 | 0.1221 | 0.0910 | 0.1678 / 0.1752 | 0.0754 | 0.0279 | 0.0775 / 0.0871 | 19.5 / 173.8 |
+| B2 | 0.1616 | 0.0988 | 0.1767 / 0.1818 | 0.1111 | 0.0279 | 0.0799 / 0.0887 | 19.5 / 172.5 |
+| B3 | 0.7947 | 0.2916 | 0.2246 / 0.3433 | 0.8156 | 0.0395 | 0.0839 / 0.1124 | 170.2 / 301.1 |
+| B4 | 1.4544 | 0.3034 | 0.2548 / 0.3732 | 1.4783 | 0.0453 | 0.0878 / 0.1160 | 170.2 / 295.4 |
+| I1 | 0.2311 | 0.1580 | 0.1951 / 0.1949 | 0.1550 | 0.0414 | 0.0800 / 0.0798 | 107.6 / 173.5 |
+
+Linux (i7-1260P, `taskset -c 0-5`, three physical cores, `--threads 6`, DuckDB `SET threads=6`; load average 1.1 to 1.4 at the cells, shared box), the pinned compiler built from a
+git checkout of a4572ea:
+
+| cell | main -t1 | branch -t1 | DuckDB -t1 unsorted / ordered | main -t6 | branch -t6 | DuckDB -t6 unsorted / ordered | branch RSS MB -t1 / -t6 |
+|---|---|---|---|---|---|---|---|
+| B1 | 0.1782 | 0.1335 | 0.1593 / 0.1721 | 0.1788 | 0.1134 | 0.1029 / 0.1174 | 14.8 / 102.2 |
+| B2 | 0.2097 | 0.1544 | 0.1877 / 0.1956 | 0.2068 | 0.1244 | 0.1165 / 0.1327 | 14.8 / 103.0 |
+| B3 | 1.1937 | 0.4170 | 0.2853 / 0.5391 | 1.3016 | 0.2349 | 0.1326 / 0.2349 | 117.3 / 239.2 |
+| B4 | 1.4798 | 0.5018 | 0.3389 / 0.6630 | 1.5814 | 0.2901 | 0.1563 / 0.2861 | 117.3 / 245.6 |
+| I1 | 0.4151 | 0.2965 | 0.2789 / 0.2866 | 0.4316 | 0.1980 | 0.1359 / 0.1424 | 57.7 / 92.8 |
+
+The ratios against DuckDB, **unsorted and ordered**, the second being the question `table` answers (its output is ordered by contract):
+
+| | Mac -t1 | Mac -t16 | Linux -t1 | Linux -t6 |
+|---|---|---|---|---|
+| B1 | 0.54x / 0.52x | 0.36x / 0.32x | 0.84x / 0.78x | 1.10x / 0.97x |
+| B2 | 0.56x / 0.54x | 0.35x / 0.31x | 0.82x / 0.79x | 1.07x / 0.94x |
+| B3 | 1.30x / 0.85x | 0.47x / 0.35x | 1.46x / 0.77x | 1.77x / 1.00x |
+| B4 | 1.19x / 0.81x | 0.52x / 0.39x | 1.48x / 0.76x | 1.86x / 1.01x |
+| I1 | 0.81x / 0.81x | 0.52x / 0.52x | 1.06x / 1.03x | 1.46x / 1.39x |
+
+On the Mac the branch is ahead of DuckDB's default at 16 threads on every cell, ordered or not; at one thread B3 and B4 are 1.2x to 1.3x its unsorted time and 0.8x its ordered
+time. On three physical cores B3 and B4 tie its ordered time and are 1.8x its unsorted time. Against main: B3 20x and B4 33x faster at 16 threads on the Mac, 5.5x on Linux at six.
 
 ### 3.6 What it does not do (yet)
 
@@ -291,6 +356,28 @@ Files: `results/gate_counter_{mac,gram}.txt`, `gate_clock_{mac,gram}.txt`, contr
 * **Controls** (6 builds of the *base* sources, 3 against 3): the counter passes except the 1M-key sum at 4 threads on the Mac (1.022), and the clock control fails `distinct` on the Mac (1.028) and the 1M-key count on gram (1.043):
   the old threaded read of a million keys is not stable to 2% for identical sources, so those cells are reported, not gated.
 * **Corpus**: the md5, status and error of the 134 plans are identical to the base's (Mac, final build).
+
+## 6c. The gates on the merged result (main 92a4305 + this branch)
+
+Files in `scripts/spikes/groups/results/merged/`. The pinned compiler a4572ea (`cancho` built from a git checkout of that revision, on the Mac and on the Linux box).
+
+* **Corpus: 166 plans, md5, status and error identical to main's** (Mac; `scripts/corpus.py` over the benchmark, adversarial and numbers files; the numbers file was generated first).
+* **Conformance suite from the merged tree: Mac 380 tests OK (2 skipped); Linux 380 OK (1 skipped)**, from a clean clone of the pushed commit, niced, cores 0-5, the compiler
+  built from a git checkout so that `test_mcp...schema_follows_the_flag_table` (the known failure on a compiler that does not know its revision) passes. Includes `test_parallel`,
+  `test_psort`, `test_memory`, `test_mcp`, `test_skill` and `test_every_script_applies`.
+* **Instruction counter** (`gate_regress.py --counter`, bound 1.01, 3 builds of main against 3 of the branch, 45 cells x 2 thread counts): **PASS on both machines.** Non-group cells
+  (filter, cut, text/dec/float filter, float17 filter): Mac 0.990 to 0.991 at one thread and **1.008 to 1.009 at 4**; Linux 0.990 to 0.994 at one thread and 0.999 at 3. The Mac's
+  4-thread figure is the one that is not "1.000 to 1.002": +14M instructions on 1,600M. It comes from `agg.cho` (a build with main's `par.cho` and `table.cho` and this branch's
+  `agg.cho` has the same 1,629M; with main's `agg.cho` too it is main's 1,615M); I did not find the statement. At one thread the same file is 28M instructions *below* main. Groups
+  fall: few keys 0.96 to 0.99, 1M keys count 0.576/0.683 (Mac), 0.56 (Linux), sum 0.327/0.422, distinct 0.860/0.828, json page 0.543/0.668, `--report types` 0.927, `--order-by`
+  0.968 to 0.970 (those two go through the same `Groups`).
+* **Clock form** (bound 1.02): Mac passes every cell (filter 0.976/0.998, cut 0.969/0.998, text filter 0.996/0.995, 1M keys 0.49 to 0.13, distinct 0.71/0.40); Linux passes every
+  cell (filter 0.994/1.008, cut 1.001/1.017, text filter 1.003/1.006, 1M keys 0.56 to 0.43, distinct 0.74/0.64). The earlier +5% on the Linux 3-thread filter, found against
+  the old base, is not there against main.
+* **Mutants of the new code** (25, `partition_mutants.py`): MUTLINE
+* **Memory**: `test_memory` passes on both machines; the measured peaks against the flag are in 3.4 (the flag does not bound resident memory; withdrawn claim and the table).
+* **Fuzz and full-size**: `fuzz.py` 450 files x 4 thread counts x 4 chunk sizes, and `bigcheck.py` (14 plans, csv and json, 10 thread/chunk settings each, with the default chunk so that the
+  ranges grow, against main's one-thread answer): no difference.
 
 ## 7. What a change that merges this needs
 
