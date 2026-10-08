@@ -1212,6 +1212,8 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             u[scan.p_picked()] = picked;
                                             u[scan.p_budget()] = budget;
                                             u[scan.p_limit()] = limit;
+                                            u[scan.p_top()] = top;
+                                            u[scan.p_page_from()] = from;
                                             u[scan.p_most()] = most;
                                             u[scan.p_from()] = row_from;
                                             u[scan.p_max_groups()] = max_groups;
@@ -1223,8 +1225,8 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             borrow mut cells as &!cw in {
                                                 borrow cols as &kr in {
                                                     borrow sel as &sr in {
-                                                        // (par.run_any: a function of its own, for the reason `settle_groups` is: the code inside this one cost every one-thread read ~26 instructions a row)
-                                                        let (r2, s2, e2, k2, g2) = par.run_any(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk, as_csv, from, top, limit);
+                                                        // (`par.run` chooses the partitioned read for a grouping itself: the call here is the base's, as any other code in this function costs the one-thread reads of every plan, see docs/gap-groups.md)
+                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
                                                         rows = r2;
                                                         scratch = s2;
                                                         escr = e2;

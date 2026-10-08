@@ -85,12 +85,22 @@ pub fn p_yield() -> [] int {
     return 13;
 }
 
+// `--top` (the partitioned grouping needs it to know how many groups a page wants)
+pub fn p_top() -> [] int {
+    return 14;
+}
+
 pub fn p_size() -> [] int {
     return 15;
 }
 
-pub fn p_count() -> [] int {
+// `--from` as the user gave it (`p_from` is the first row to keep, which for a grouping is 0: the groups are paged after all the rows are counted)
+pub fn p_page_from() -> [] int {
     return 16;
+}
+
+pub fn p_count() -> [] int {
+    return 17;
 }
 
 // `lines.fill_file` for a handle read at an offset: the same refill, from the bytes
