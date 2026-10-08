@@ -177,6 +177,13 @@ bound (as in the old read), each merge thread's part is bounded by it too (it de
 copies add the blobs (smaller than the tables), and the allocator may keep the workers' pages while the round runs (the second T). The old read's bound was T x
 the bound for the workers plus the whole merged state, and the documentation says only the per-state figure. A float aggregate makes a group 584 bytes more in every copy; see 3.6.
 
+**`--max-state-bytes` and the other bounds: what a user observes.** What the flags *refuse* is unchanged: the accounting is the old one (key bytes, 584 bytes a float
+aggregate, pair bytes; `agg.merge`'s and `add`'s are the same sums), a read that passes a bound is refused with the same rule, row, line and column, because the old
+read raises it (declines, 3.3), and the sequential read is untouched in what it holds. What changes is the memory a threaded grouping may use on the way: the bound is
+still a bound on one set of groups, and the memory of a threaded read is up to **(2T + 3) x `--max-state-bytes`** (T threads) where the old read's was T x the bound for
+the workers plus the merged set (documented as "the per-state figure" only). Measured peaks are far below that (3.4); the figure is what the bound and the design allow,
+not what a file did. A read that is declined has done the parallel work first, so a refusal costs ~8 ms (Mac) more than before and the old read's own time.
+
 ### 3.5 What it measured
 
 Mac, 16 cores, minimum of 9, seconds (`results/mac_threads_vs_duckdb.txt`, `mac_scaling.txt`). `base` is `origin/main`, `final` this branch; the md5 of each

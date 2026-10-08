@@ -1,0 +1,15 @@
+filter status=404 and bytes>50000    1    0.0936    0.0932   0.996    0.5%    1.7%  
+filter status=404 and bytes>50000    3    0.0472    0.0471   0.997    1.5%    0.4%  
+G6: PASS
+cut status,bytes                     1    0.0935    0.0934   0.999    1.8%    2.7%  
+cut status,bytes                     3    0.0511    0.0505   0.988    1.2%    3.0%  
+G6: PASS
+group-count id (1M keys)             1    0.5010    0.5227   1.043    3.5%    3.5%  <-- over 1.02
+group-count id (1M keys)             3    0.5897    0.5917   1.003    0.6%    0.9%  
+G6: FAIL
+group-sum bytes by id (1M keys)      1    0.5928    0.5941   1.002    1.4%    1.2%  
+group-sum bytes by id (1M keys)      3    0.6649    0.6661   1.002    0.9%    1.1%  
+G6: PASS
+distinct id by status                1    0.3505    0.3545   1.011    1.8%    1.8%  
+distinct id by status                3    0.4619    0.4625   1.001    0.3%    0.4%  
+G6: PASS

@@ -76,7 +76,7 @@ def main():
         orig = path.read_text()
         try:
             path.write_text(orig.replace(old, new, 1))
-            b = subprocess.run(["cancho", "build"], cwd=ROOT, capture_output=True, text=True)
+            b = subprocess.run(["cancho", "build", *os.environ.get("CANCHO_ARGS", "").split()], cwd=ROOT, capture_output=True, text=True)
             if b.returncode:
                 print("killed (does not build)  %s" % name); continue
             binpath = ROOT / "build" / "table"
@@ -90,7 +90,7 @@ def main():
                 survived.append(name)
         finally:
             path.write_text(orig)
-    subprocess.run(["cancho", "build"], cwd=ROOT, capture_output=True)
+    subprocess.run(["cancho", "build", *os.environ.get("CANCHO_ARGS", "").split()], cwd=ROOT, capture_output=True)
     print("survived: %d" % len(survived))
     for s in survived:
         print("  " + s)
