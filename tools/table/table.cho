@@ -1212,8 +1212,6 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             u[scan.p_picked()] = picked;
                                             u[scan.p_budget()] = budget;
                                             u[scan.p_limit()] = limit;
-                                            u[scan.p_top()] = top;
-                                            u[scan.p_page_from()] = from;
                                             u[scan.p_most()] = most;
                                             u[scan.p_from()] = row_from;
                                             u[scan.p_max_groups()] = max_groups;
@@ -1949,6 +1947,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
                             var file = opened;
                             borrow mut file as &!handle in {
                                 var wrote = 0;
+                                tree = query.with_page(heap, tree, top, from);
                                 borrow tree as &tq in {
                                     let (c, head, rows, names, hends, after) = read_file(heap, args, parsed, handle, path.shown(tp), io, fs, buffer.bytes(rr), path.shown(tp), path.full(tp), delim, mode, as_csv, from, limit, budget, top, tq, names_at, e);
                                     e = after;

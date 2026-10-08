@@ -1423,8 +1423,7 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
 // caller as any (one past the page, so that `more` is known); more than 100,000 of them, or a read that is not a grouping, takes `run`.
 pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
     let as_csv = pp[scan.p_csv()] == 1;
-    let from = pp[scan.p_page_from()];
-    let top = pp[scan.p_top()];
+    let (top, from) = query.page_of(tree);
     let limit = pp[scan.p_limit()];
     var want = 0;
     if !(as_csv && a[engine.k_sort_field()] < 0 && a[engine.k_sort_slot()] < 0 && from == 0 && top == 0 && limit >= 100000000) {
