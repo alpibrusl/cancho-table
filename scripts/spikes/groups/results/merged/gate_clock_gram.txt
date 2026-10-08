@@ -1,0 +1,18 @@
+filter status=404 and bytes>50000    1    0.0968    0.0963   0.994    0.6%    0.5%  
+filter status=404 and bytes>50000    3    0.0645    0.0651   1.008    0.6%    0.6%  
+G6: PASS
+cut status,bytes                     1    0.0895    0.0896   1.001    0.7%    0.9%  
+cut status,bytes                     3    0.0492    0.0500   1.017    2.0%    1.2%  
+G6: PASS
+text filter path contains            1    0.0970    0.0973   1.003    3.4%    1.7%  
+text filter path contains            3    0.0468    0.0471   1.006    1.4%    1.3%  
+G6: PASS
+group-count id (1M keys)             1    0.4851    0.2712   0.559    0.6%    0.4%  
+group-count id (1M keys)             3    0.6016    0.2743   0.456    3.5%    9.5%    (a build is off: spread over 4%)
+G6: PASS
+group-sum bytes by id (1M keys)      1    0.5888    0.3217   0.546    0.4%    0.3%  
+group-sum bytes by id (1M keys)      3    0.6686    0.2846   0.426    1.1%    8.2%    (a build is off: spread over 4%)
+G6: PASS
+distinct id by status                1    0.3573    0.2649   0.741    2.0%    1.5%  
+distinct id by status                3    0.4586    0.2929   0.639    2.5%    4.0%    (a build is off: spread over 4%)
+G6: PASS
