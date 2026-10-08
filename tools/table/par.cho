@@ -62,6 +62,11 @@ fn j_payload() -> [] int {
     return scan.p_count() + 3;
 }
 
+// 1 when the range does not begin where the parent knows a record does: it guesses how it begins.
+fn j_spec() -> [] int {
+    return scan.p_count() + 4;
+}
+
 fn j_size() -> [] int {
     return 24;
 }
@@ -97,7 +102,32 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
         borrow mut cells as &!cw in {
             let t = contents(aw);
             t[engine.k_columns()] = contents(w.par)[j_columns()];
-            let (x, l, s, r2, s2, e2, k2, g2) = scan.scan_range(w.heap, w.file, contents(w.par), w.tree, contents(w.cols), contents(w.sel), contents(cw), t, rows, scratch, escr, kept, groups, contents(w.par)[j_start()], contents(w.par)[j_until()]);
+            var hint = 0;
+            if contents(w.par)[j_spec()] == 1 {
+                var window = buffer.empty(w.heap, 65536);
+                var got = 0;
+                borrow mut window as &!ww in {
+                    match file_pread(w.file, contents(w.par)[j_start()], buffer.room(ww)) {
+                        Read::Got(n) => {
+                            buffer.filled(ww, n);
+                            got = n;
+                        }
+                        Read::End => {
+                            got = 0;
+                        }
+                        Read::Failed(reason) => {
+                            got = 0;
+                        }
+                    }
+                }
+                if got > 0 {
+                    borrow window as &wr in {
+                        hint = scan.guess(buffer.bytes(wr), contents(w.par)[scan.p_delim()], contents(w.par)[j_columns()]);
+                    }
+                }
+                buffer.drop(w.heap, window);
+            }
+            let (x, l, s, r2, s2, e2, k2, g2) = scan.scan_range(w.heap, w.file, contents(w.par), w.tree, contents(w.cols), contents(w.sel), contents(cw), t, rows, scratch, escr, kept, groups, contents(w.par)[j_start()], contents(w.par)[j_until()], hint);
             next_at = x;
             lines_read = l;
             status = s;
@@ -193,6 +223,10 @@ fn fan[&p, &f, &x, &y, &z, &t, &c, &s, &r, &l, &u](parent: &!p Heap, fs: &f Fs("
             borrow mut job as &!kj in {
                 contents(kj.par)[j_start()] = plan[k];
                 contents(kj.par)[j_until()] = plan[k + 1];
+                contents(kj.par)[j_spec()] = 0;
+                if k > 0 {
+                    contents(kj.par)[j_spec()] = 1;
+                }
             }
             var rest = 0;
             borrow mut job as &!kj in {
@@ -273,7 +307,7 @@ fn align[&h, &f](heap: &!h Heap, file: &!f File, p: int, size: int) -> [heap, fi
 // buffers and the groups its output so far; answered are the same, as the sequential read
 // would have left them. `fs`, `root`, `rel` and `full` are what a thread needs to open the
 // file again.
-pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
+pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int, explicit: bool) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
     // A range is at most `most_chunk`, and no more than a thread's share of what is left: every
     // thread has something to read, and the memory is what the ranges are, not what the limit is.
     var chunk = most_chunk;
@@ -293,6 +327,10 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     // room for the exact float accumulators of 64 groups (584 bytes each, a group per float sum or mean) on top of the chunk: more groups than that, and a range's answer
     // does not fit and the parent reads the range itself (the answer is the same, only slower)
     let payload_cap = chunk + 65536 + 64 * agg.float_state(tree);
+    // Groups and the type report: a range's answer is its groups, and the slot above is sized by the first range, so a
+    // later range may be longer as long as its answer would still fit (see `grown`). Never when --chunk-bytes was given.
+    let first_chunk = chunk;
+    var growing = mode == 2 && !explicit;
     let slot_bytes = header_bytes() + payload_cap;
     let wide = 1000000000000000;
     // What every thread is told: the parameters, except that it counts its range alone.
@@ -330,6 +368,8 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     }
     while going && cur < size && a[engine.k_stop()] == 0 && a[engine.k_abort()] == 0 {
         let wave_began = cur;
+        var wave_peak = 0;
+        var wave_bad = false;
         var n = allowed;
         if allowed < threads {
             allowed = allowed * 2;
@@ -382,9 +422,15 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
                 borrow slots as &sr in {
                     let sl = contents(sr);
                     let at = j * slot_bytes;
-                    var first = 0;
-                    borrow plan as &pr in {
-                        first = contents(pr)[j];
+                    // Where the range's first record begins: its start, or after the tail of the record it began in.
+                    var first = agg.get_i64(sl, at + 32 + 8 * engine.k_first_at());
+                    // What this wave says about the size of an answer: the largest, and whether one did not fit, was not clean or was not used (read again by the parent).
+                    if agg.get_i64(sl, at) == 0 {
+                        if agg.get_i64(sl, at + 24) > wave_peak {
+                            wave_peak = agg.get_i64(sl, at + 24);
+                        }
+                    } else {
+                        wave_bad = true;
                     }
                     if agg.get_i64(sl, at) == 0 && first == cur {
                         let r = agg.get_i64(sl, at + 32 + 8 * engine.k_records());
@@ -468,10 +514,11 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
                     }
                 } else {
                     // Read it again, here, the way the sequential read does.
+                    wave_bad = true;
                     var again = true;
                     while again {
                         pp[scan.p_base_line()] = lines_before;
-                        let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, until);
+                        let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, until, 0);
                         rows2 = r2;
                         scratch2 = s2;
                         escr2 = e2;
@@ -498,11 +545,42 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
             }
             j = j + 1;
         }
+        // The next wave's ranges (groups, --chunk-bytes not given): longer, by as much as keeps an answer that grows with the range
+        // inside half of the slot; back to the first size for good as soon as one answer did not fit, was not clean or was read again by the parent.
+        if growing {
+            if wave_bad {
+                growing = false;
+                chunk = first_chunk;
+            } else {
+                var peak = wave_peak;
+                if peak < 4096 {
+                    peak = 4096;
+                }
+                var room = payload_cap / 2 / peak;
+                if room < 1 {
+                    room = 1;
+                }
+                var longer = first_chunk * room;
+                if room > 1024 {
+                    longer = first_chunk * 1024;
+                }
+                if longer > 16777216 {
+                    longer = 16777216;
+                }
+                let left = (size - cur + threads - 1) / threads;
+                if left < longer {
+                    longer = left;
+                }
+                if longer > chunk {
+                    chunk = longer;
+                }
+            }
+        }
         // A wave always reads at least the record at its start (its first range ends after it), so
         // this does not happen; but a loop that cannot be shown to end is one more reason to say so.
         if going && cur == wave_began && cur < size {
             pp[scan.p_base_line()] = lines_before;
-            let (x3, l3, st3, r3, s3, e3, k3, g3) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, size);
+            let (x3, l3, st3, r3, s3, e3, k3, g3) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, size, 0);
             rows2 = r3;
             scratch2 = s3;
             escr2 = e3;

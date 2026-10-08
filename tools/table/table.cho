@@ -850,6 +850,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     let max_state = cli.nat(args, parsed, table, "max-state-bytes");
     let threads = cli.nat(args, parsed, table, "threads");
     let chunk = cli.nat(args, parsed, table, "chunk-bytes");
+    let chunk_given = cli.has(parsed, table, "chunk-bytes");
     let min_bytes = cli.nat(args, parsed, table, "parallel-min-bytes");
     var sort = "";
     if cli.has(parsed, table, "sort") {
@@ -1186,7 +1187,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             borrow mut cells as &!cw in {
                                                 borrow cols as &kr in {
                                                     borrow sel as &sr in {
-                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
+                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk, chunk_given);
                                                         rows = r2;
                                                         scratch = s2;
                                                         escr = e2;
