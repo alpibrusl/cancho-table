@@ -303,6 +303,38 @@ over the spike's own one thread, which is what three cores and their second thre
 **Per core**, one core (cpu 0), the integrated build with 2 threads on it: 0.82 s (A1) and 0.68 (A2) against 0.87 and 0.84 sequential; the spike's single run 0.70 and 0.52. On the x86-64 box an 8-byte integer read from a byte slice
 costs 4.5 ns and on the Mac 2.0 (`scripts/spikes/sort/i64cost.cho`; the language has no 8-byte load or store of a slice, `agg.get_i64` is eight byte loads), which is part of it.
 
+### 6.2b The merged result, measured again (after #34, #31, #32 landed)
+
+The branch merged with `origin/main` (the speculation look-ahead of #34; a sort does not use the range growth of #34, a run being as long as its range), the pinned compiler a4572ea on both machines, DuckDB through the fixed
+loop (a run that exits non-zero is run again), the md5 of every contender's output compared with the sequential `table`'s first. Minimum of 5 interleaved runs, 1M rows of 40 bytes, seconds. **Load average (1, 5, 15 minutes) at the start of each cell is in the output of
+`bench_sort.py`: Mac 6.6 to 8.4 (6.3 to 6.6 at 5 minutes), shared with other sessions; gram 0.9 to 2.3**, the cores 0 to 5 niced.
+
+Mac, 16 cores:
+
+| | `table` today | `--threads 2` | `--threads 4` | `--threads 8` | `--threads 16` | spike, 16 | DuckDB 1 thread / default |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A1 text | 0.505 | 0.196 | 0.133 | 0.103 | **0.064** | 0.042 | 0.499 / 0.139 |
+| A2 integer | 0.458 | 0.150 | 0.109 | 0.080 | **0.053** | 0.037 | 0.416 / 0.120 |
+| A4 ties | 0.490 | 0.151 | 0.108 | 0.083 | **0.053** | 0.037 | 0.416 / 0.118 |
+| B1 two keys | 0.890 | 0.240 | 0.161 | 0.123 | **0.078** | 0.049 | 0.508 / 0.147 |
+| A3 first 1000 | 0.063 | 0.065 | 0.061 | 0.063 | 0.062 (sequential) | 0.017 | 0.192 / 0.085 |
+
+Linux, cores 0 to 5 (three physical cores), DuckDB `SET threads=6`, GNU `sort`:
+
+| | `table` today | `--threads 2` | `--threads 3` | `--threads 6` | spike, 6 | DuckDB 1 thread / 6 | GNU `sort` |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A1 text | 0.614 | 0.349 | 0.288 | **0.287** | 0.204 | 0.683 / 0.293 | 0.440 |
+| A2 integer | 0.655 | 0.303 | 0.268 | **0.264** | 0.169 | 0.561 / 0.260 | 0.657 |
+| A4 ties | 0.696 | 0.306 | 0.268 | **0.265** | 0.174 | 0.574 / 0.256 | 0.631 |
+| B1 two keys | 1.446 | 0.481 | 0.417 | **0.459** | 0.255 | 0.921 / 0.385 | 2.146 |
+| A3 first 1000 | 0.085 | 0.084 | 0.082 | 0.082 (sequential) | 0.031 | 0.220 / 0.115 | 0.527 |
+
+On the Mac the integrated sort is 7.9x (A1), 8.6x (A2), 9.2x (A4) and 11x (B1) faster than today and 2.2x, 2.3x, 2.2x and 1.9x faster than DuckDB's default. On Linux at 6 threads it is 2.1x to 2.6x faster than today (3.2x for two keys), level with DuckDB at 6 threads
+(1.02x, 0.98x, 0.97x, 0.84x: DuckDB is ahead on two keys, whose cuts the first key's four values limit, section 3.3) and ahead of GNU `sort` by 1.5x (A1), 2.5x (A2), 2.4x (A4) and 4.7x (B1). With 3 threads the integrated sort is already at its 6-thread time: three physical cores.
+
+Memory, peak resident set, against the 39.55 MB file: the integrated sort at 16 threads on the Mac **11.8x to 14.8x** (466 to 585 MB; A1 525), the spike 9.9x to 11x, the sequential sort 4.4x to 6.2x (173 to 245 MB); at 6 threads on Linux the integrated sort 7.4x to 9.4x
+(291 to 370 MB), the spike 6.5x, the sequential sort 2.5x to 3.4x (98 to 133 MB). The lean entry's 6x to 7x remains an estimate.
+
 ### 6.3 Larger: 10M rows (425 MB), Mac, minimum of 3, seconds
 
 | | seconds | peak RSS |
