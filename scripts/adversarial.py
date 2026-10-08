@@ -123,7 +123,12 @@ def counts(path, col, pick=None):
 
 # ------------------------------------------------------------------------------------------------ cells
 
+DUCK_THREADS = [None]   # --duck-threads: the thread count of "duckdb default" (on a box where the process is pinned to fewer cores than DuckDB sees)
+
+
 def duck(path, sql, threads=None):
+    if threads is None:
+        threads = DUCK_THREADS[0]
     pre = "" if threads is None else "SET threads=%d; " % threads
     return ["duckdb", "-c", "%sCOPY (%s) TO '/dev/null' (FORMAT csv)" % (pre, sql.replace("@", "read_csv('%s')" % path))], \
            ["duckdb", "-c", "%sCOPY (%s) TO '/dev/stdout' (FORMAT csv)" % (pre, sql.replace("@", "read_csv('%s')" % path))]
@@ -235,6 +240,9 @@ def cells(table, nthreads):
             if shutil.which("duckdb"):
                 ex["duckdb -t1"] = duck(path, "SELECT %s, count(*) FROM @ GROUP BY %s" % (col, col), 1)
                 ex["duckdb default"] = duck(path, "SELECT %s, count(*) FROM @ GROUP BY %s" % (col, col))
+                # `table`'s groups come out in key order by contract; DuckDB's GROUP BY has no order, so the same question for it is with ORDER BY (docs/gap-groups.md)
+                ex["duckdb -t1 ordered"] = duck(path, "SELECT %s, count(*) FROM @ GROUP BY %s ORDER BY %s" % (col, col, col), 1)
+                ex["duckdb default ordered"] = duck(path, "SELECT %s, count(*) FROM @ GROUP BY %s ORDER BY %s" % (col, col, col))
         else:
             ex["csvtk -j1"] = (["csvtk", "-j", "1", "summary", "-g", col, "-f", "%s:sum" % valcol, path], None)
             if shutil.which("mlr"):
@@ -242,6 +250,8 @@ def cells(table, nthreads):
             if shutil.which("duckdb"):
                 ex["duckdb -t1"] = duck(path, "SELECT %s, sum(%s) FROM @ GROUP BY %s" % (col, valcol, col), 1)
                 ex["duckdb default"] = duck(path, "SELECT %s, sum(%s) FROM @ GROUP BY %s" % (col, valcol, col))
+                ex["duckdb -t1 ordered"] = duck(path, "SELECT %s, sum(%s) FROM @ GROUP BY %s ORDER BY %s" % (col, valcol, col, col), 1)
+                ex["duckdb default ordered"] = duck(path, "SELECT %s, sum(%s) FROM @ GROUP BY %s ORDER BY %s" % (col, valcol, col, col))
         def expected():
             header, rows = python_rows(path)
             i = header.index(col)
@@ -277,6 +287,8 @@ def cells(table, nthreads):
     if shutil.which("duckdb"):
         ex["duckdb -t1"] = duck(f2, "SELECT s, count(DISTINCT id) FROM @ GROUP BY s", 1)
         ex["duckdb default"] = duck(f2, "SELECT s, count(DISTINCT id) FROM @ GROUP BY s")
+        ex["duckdb -t1 ordered"] = duck(f2, "SELECT s, count(DISTINCT id) FROM @ GROUP BY s ORDER BY s", 1)
+        ex["duckdb default ordered"] = duck(f2, "SELECT s, count(DISTINCT id) FROM @ GROUP BY s ORDER BY s")
     out["I1"] = ("distinct:id (1M distinct) per s", f2, i1, common(f2, "I1", ["--group", "s", "--agg", "distinct:id", "--format", "csv", *big], ex), "pairs")
 
     # C1
@@ -425,7 +437,9 @@ def main():
     ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
     ap.add_argument("--base", default="", help="another table binary (the one before a change): every table contender is run with it too, as `base ...`")
     ap.add_argument("--gen-only", action="store_true")
+    ap.add_argument("--duck-threads", type=int, default=0, help="the threads of 'duckdb default' (0: DuckDB's own choice)")
     args = ap.parse_args()
+    DUCK_THREADS[0] = args.duck_threads or None
     generate()
     if args.gen_only:
         return
@@ -468,7 +482,7 @@ def main():
                 times[n].append(timed_run(n, good[n]))
         peaks = {n: bench.rss(good[n]) for n in names}
         size = os.path.getsize(path) / 1e6
-        print("\n%s  %s   (%.0f MB, min of %d)" % (cid, title, size, runs))
+        print("\n%s  %s   (%.0f MB, min of %d; load average %s at the end)" % (cid, title, size, runs, " ".join("%.1f" % x for x in os.getloadavg())))
         print("%-34s %9s %12s" % ("contender", "min s", "peak RSS MB"))
         for n in names:
             print("%-34s %9.4f %12s" % (n, min(times[n]), "%.1f" % (peaks[n] / 1024) if peaks[n] else "n/a"))
