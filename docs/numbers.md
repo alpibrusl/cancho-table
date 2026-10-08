@@ -281,7 +281,7 @@ call allocates, not the arithmetic). So the design is a scanner of its own, thre
 What buys the third tier back, in order of cost (none built; none measured beyond the baseline above):
 
 * **N3a** (the gate is correctness only, speed is reported): tier 3 as above. Needs nothing from cancho.
-* **N3b**: Eisel-Lemire (what DuckDB's reader does): one 64x64 to 128-bit multiply by an entry of a table of 650 128-bit powers of five, and a
+* **N3b** (designed, spiked and built as a patch: `docs/gap-float.md`; 33.8 million 17-digit cells a second on one core of the Mac against 0.87 million, and not slower than DuckDB at one thread on the same file): Eisel-Lemire (what DuckDB's reader does): one 64x64 to 128-bit multiply by an entry of a table of 650 128-bit powers of five, and a
   rare fallback. cancho has no multiply-high, so the multiply is four 32x32 partial products with `wrapping_mul` and carries by hand; the table is generated
   (as `std.math`'s 2/pi table was). The gate is in section 8. **Unknown**: its real cost here; the design records only that the spike was not written.
 * **Upstream** (`cancho`, section 11): a text-free entry `std.json.decimal_to_float(m, e10, digits, sticky...)` that skips the tape. If
