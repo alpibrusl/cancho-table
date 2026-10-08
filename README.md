@@ -316,8 +316,8 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## What it cannot do yet
 
-* **Numbers are mostly built.** `:int`, `:dec(S)` and `:float` work in `--where`, `--agg`, `--group` and `--order-by`. Not yet: a faster reader for columns of 15- to 17-digit numbers (`min`, `max`, `sum`, `mean` and a sort by them read those slowly: planned).
-* **One core for a sort.** `--threads` is accepted with `--order-by`, and gives the same bytes, but the sort runs on one core. There is no sort that spills to disk.
+* **Numbers are mostly built.** `:int`, `:dec(S)` and `:float` work in `--where`, `--agg`, `--group` and `--order-by`. Columns of 15- to 17-digit numbers are read by an exact reader that allocates nothing on the paths a real column takes (Clinger, then Eisel-Lemire, then an exact fallback); it matched Python's `float()` on every cell of each differential run, the largest of 101,400,000 cells, and costs 29.6 ns a cell against 1,151 ns before (one Mac core, load average 6.7 to 13.5; [conditions](https://alpibrusl.github.io/cancho-table/benchmarks.html#float-reader)).
+* **A sort uses more cores only for a whole sort written as CSV.** With `--order-by`, `--format csv` and no `--top`, `--limit` or `--from`, `--threads` above 1 sorts in parallel and gives the same bytes; pages, `--top` and JSON output run on one core. A threaded sort peaks at 11.8 to 14.8 times the size of a 39.55 MB file at 16 threads on the Mac, against 4.4 to 6.2 times for the sequential sort. There is no sort that spills to disk.
 * **No joins**, and **one input file** at a time, named on the command line (no standard input).
 * **No JSON lines**, no Parquet, no `--query` string. Only CSV and TSV (comma, tab or semicolon). Readers and a query form are designed in [docs/readers.md](docs/readers.md) and [docs/query.md](docs/query.md), not built.
 * **No guessing.** Every column is text unless you say `:int`. No mean, no computed or renamed column, no `or` in a filter.
@@ -326,7 +326,7 @@ JSON lines, joins, `mean`, decimals and standard input are on the [backlog](docs
 
 ## How fast
 
-Supporting evidence, not the point: the predictability costs little speed. A *core* is one of the independent workers inside a processor. By default `table` uses one; `--threads 16` uses sixteen. [DuckDB](https://duckdb.org) is a full database engine and a popular, fast way to query a CSV, so it is a fair yardstick. On these four questions one core of `table` is about as fast as, or faster than, DuckDB on all sixteen. With many distinct keys in a group-by, DuckDB on all cores wins.
+Supporting evidence, not the point: the predictability costs little speed. A *core* is one of the independent workers inside a processor. By default `table` uses one; `--threads 16` uses sixteen. [DuckDB](https://duckdb.org) is a full database engine and a popular, fast way to query a CSV, so it is a fair yardstick. On these four questions one core of `table` is about as fast as, or faster than, DuckDB on all sixteen. With many distinct keys in a group-by the answer depends on which DuckDB time you compare with: see "Where it is slower" below.
 
 Time to answer on the same 1,000,000-row, 32 MB CSV, in seconds (lower is better):
 
@@ -339,7 +339,15 @@ Time to answer on the same 1,000,000-row, 32 MB CSV, in seconds (lower is better
 
 Apple-silicon Mac, 16 cores. Best of five runs, output thrown away, every answer checked against a Python answer first. csvtk 0.38.0 on one core (its filter is `filter` piped to `grep`); DuckDB 1.5.6; DuckDB's 16-core times for filter and pick-2-columns are from an earlier run on the same machine. Miller is not installed on the Mac; on a different machine (Linux, 6 shared cores) it took 0.300 s to filter, 0.438 s to count and 0.649 s to sum, against `table`'s 0.074, 0.128 and 0.140 s there.
 
-**Where it is slower:** a group-by with a million distinct keys is 3.4 times slower than DuckDB on one core and 9.4 times slower than DuckDB on 16 (Mac); `distinct` over a column of unique values is 1.4 times slower on one core; and sorting 1,000,000 rows takes 0.41 s on one core (about the same as DuckDB on one core, 0.43 s) against DuckDB's 0.12 s on all 16, because the sort runs on one core. All the tables, the harder cases and how to rerun them: [docs/benchmarks.html](https://alpibrusl.github.io/cancho-table/benchmarks.html).
+**Where it is slower, and what it costs.** Four changes were merged after the table above was measured; each number below has its conditions in the [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html#changes).
+
+* **Group-by with many distinct keys.** Against DuckDB's *unsorted* time on Linux at 6 threads (three physical cores, load average 1.1 to 1.4, minimum of 5, 1,000,000 rows) `table` takes 1.77 and 1.86 times as long for a count and a sum over 1,000,000 keys and 1.46 times for `distinct` over unique values; at 100,000 keys, 1.10 and 1.07 times. Against DuckDB's *ordered* time (its groups sorted by the key, which is what `table` returns) it is level on the million-key count and sum (1.00 and 1.01 times). On the Mac at 16 threads it is ahead of DuckDB's unsorted time on all five cases (0.35 to 0.52 of its time). Before this change it was 3.4 times slower than DuckDB on one Mac core on the million-key count and 9.4 times slower than DuckDB on 16 ([table](https://alpibrusl.github.io/cancho-table/benchmarks.html#groups)).
+* **Sorting.** A whole sort written as CSV with `--threads 16` takes 0.064 s on a text key and 0.053 s on a whole number (1,000,000 rows of 40 bytes, Mac, load average 6.6 to 8.4, minimum of 5), against DuckDB's default at 0.139 s and 0.120 s. On Linux at 6 threads it is level with DuckDB on one key (0.287 s against 0.293 s) and behind it on two keys (0.459 s against 0.385 s). At 10,000,000 rows (an earlier Mac run) DuckDB's default, 0.61 s, was ahead of the integrated sort, 0.81 s. Pages, `--top` and JSON output still sort on one core ([table](https://alpibrusl.github.io/cancho-table/benchmarks.html#psort)).
+* **Quoted fields with newlines.** On a 114 MB file of 1 to 10 KB fields with newlines inside, `--threads` now helps: 0.183 s on one thread and 0.051, 0.032 and 0.024 s on 4, 8 and 16 (Mac, load average 3.8 to 6.1, minimum of 5); 0.174 s, 0.069 s and 0.060 s on 1, 3 and 6 threads on Linux. A file whose quoted lines are themselves valid records of the same width gets no speed-up. The 1 GB group-by gains little: 0.88 of the old time at 4 threads and 0.84 at 16 on the Mac, and no gain is established on Linux ([table](https://alpibrusl.github.io/cancho-table/benchmarks.html#speculation)).
+* **Memory.** A refused threaded grouping peaks higher in resident memory than before: 325 to 471 MB at one byte short of the limit and 181 to 360 MB with `--max-state-bytes` at 2,000,000 (million-key count, Mac, 16 threads). `--max-state-bytes` counts accounted bytes, not resident memory, and no multiple of it is claimed as a bound on resident memory.
+* **Instructions.** Cells that do not group retire 0.8 to 0.9 percent more instructions at 4 threads on the Mac (+14 million of 1,629 million); the two-decimal float filter retires 0.3 percent more on Linux.
+
+All the tables, the harder cases and how to rerun them: [docs/benchmarks.html](https://alpibrusl.github.io/cancho-table/benchmarks.html).
 
 ## Learn more
 
