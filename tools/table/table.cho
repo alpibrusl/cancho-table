@@ -887,6 +887,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     let max_state = cli.nat(args, parsed, table, "max-state-bytes");
     let threads = cli.nat(args, parsed, table, "threads");
     let chunk = cli.nat(args, parsed, table, "chunk-bytes");
+    let chunk_given = cli.has(parsed, table, "chunk-bytes");
     let min_bytes = cli.nat(args, parsed, table, "parallel-min-bytes");
     var sort = "";
     if cli.has(parsed, table, "sort") {
@@ -917,6 +918,9 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
             wanted = 0;
         }
     }
+    // `--order-by` read by several threads (psort.cho): a whole sort written as csv. A page, `--top` or json is the sequential sort's (the rows it
+    // wants are few, or it counts a budget in the order of the answer).
+    let psortable = ordering && !query.reporting(tree) && as_csv && wanted == 0 && top == 0 && from == 0 && limit >= 100000000;
     // `from` pages the rows of a selection; for a grouping it pages the groups, after all
     // the rows have been counted, and must not skip any.
     var row_from = from;
@@ -1180,7 +1184,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                 // The rest of the file, by several threads, when that is asked for and
                                 // worth it (par.cho): it leaves the tally, the output and the groups as
                                 // this loop would have.
-                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (!ordering || query.reporting(tree)) && (mode == 2 || row_from == 0) {
+                                if mode != 0 && a[engine.k_abort()] == 0 && threads > 1 && (!ordering || query.reporting(tree) || psortable) && (mode == 2 || row_from == 0) {
                                     var size = 0;
                                     match file_size(file) {
                                         Done::Ok(n) => {
@@ -1202,7 +1206,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             let u = contents(pw);
                                             u[scan.p_delim()] = delim;
                                             u[scan.p_mode()] = mode;
-                                            if query.reporting(tree) {
+                                            if query.reporting(tree) || ordering {
                                                 u[scan.p_mode()] = 2;
                                             }
                                             if as_csv {
@@ -1223,8 +1227,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                             borrow mut cells as &!cw in {
                                                 borrow cols as &kr in {
                                                     borrow sel as &sr in {
-                                                        // (`par.run` chooses the partitioned read for a grouping itself: the call here is the base's, as any other code in this function costs the one-thread reads of every plan, see docs/gap-groups.md)
-                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk);
+                                                        let (r2, s2, e2, k2, g2) = par.run(heap, io, file, fs, root, rel, full, tree, contents(kr), contents(sr), contents(cw), a, u, rows, scratch, escr, kept, groups, at, lines_so_far, size, threads, chunk, chunk_given);
                                                         rows = r2;
                                                         scratch = s2;
                                                         escr = e2;
@@ -1353,7 +1356,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                     }
                 }
             }
-        } else if ordering && a[engine.k_abort()] == 0 {
+        } else if ordering && a[engine.k_abort()] == 0 && a[engine.k_psorted()] == 0 {
             borrow groups as &hr in {
                 borrow mut cells as &!cw in {
                     borrow sel as &sr in {

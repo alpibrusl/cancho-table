@@ -1,0 +1,247 @@
+diff --git a/tools/table/reader.ls b/tools/table/reader.ls
+index a5b80a0..1faef9a 100644
+--- a/tools/table/reader.ls
++++ b/tools/table/reader.ls
+@@ -221,3 +221,119 @@ pub fn fields[&l, &c](line: &l [byte], delim: int, cells: &!c [int], room: int)
+     }
+     return (n, inside, bad);
+ }
++
++// One record, found in one pass over the bytes (no search for the end of the line first): the record that
++// begins at the start of `data`, when it is whole on one line inside `data` and well formed. Answers (k, n): `k` the
++// index in `data` of the newline that ends it and `n` its fields, with `cells` filled as `fields` fills them for
++// the line (a CR before the newline is not in the last field) and the first `room` fields stored; or (-1, 0)
++// when the record is anything else (the chunk ends before its newline, a quote is still open at the newline, a
++// quoted field is not followed by a delimiter or the end of the line, the line is longer than `cap`): the caller
++// then reads the line the way it always did, and names whatever is wrong with it. A quote not at the start of a
++// field is text, as in `fields`.
++//
++// Written for the instruction count (docs/gap-scan.md): a byte is tested against `hi`, the larger of the delimiter
++// and the newline, first, because the digits and letters that most fields are made of are above both and cost one
++// comparison; every index is advanced with `wrapping_add` and every store is guarded by one comparison against
++// `lim`, so that the compiler is left no overflow trap and no bounds check to keep in the loop.
++pub fn record[&d, &c](data: &d [byte], delim: int, cells: &!c [int], room: int, cap: int) -> [] (int, int) {
++    let n = len(data);
++    var hi = delim;
++    if hi < 10 {
++        hi = 10;
++    }
++    var lim = wrapping_mul(room, 3);
++    if lim < 0 || lim + 3 > len(cells) {
++        return (0 - 1, 0);
++    }
++    var p = 0;
++    var nf = 0;
++    var cp = 0;
++    var k = 0 - 1;
++    var going = true;
++    while going && p < n {
++        if int_of(data[p]) == 34 {
++            var q = wrapping_add(p, 1);
++            var closing = 0 - 1;
++            while closing < 0 && q < n {
++                let c = int_of(data[q]);
++                if c == 34 {
++                    if q + 1 < n && int_of(data[q + 1]) == 34 {
++                        q = q + 2;
++                    } else {
++                        closing = q;
++                    }
++                } else if c == 10 {
++                    q = n;
++                } else {
++                    q = wrapping_add(q, 1);
++                }
++            }
++            if closing < 0 || closing + 1 >= n {
++                going = false;
++            } else {
++                let d = int_of(data[closing + 1]);
++                if cp < lim {
++                    cells[cp] = p + 1;
++                    cells[cp + 1] = closing;
++                    cells[cp + 2] = 1;
++                    cp = wrapping_add(cp, 3);
++                }
++                nf = wrapping_add(nf, 1);
++                if d == delim {
++                    p = closing + 2;
++                } else if d == 10 {
++                    k = closing + 1;
++                    going = false;
++                } else if d == 13 && closing + 2 < n && int_of(data[closing + 2]) == 10 {
++                    k = closing + 2;
++                    going = false;
++                } else {
++                    going = false;
++                }
++            }
++        } else {
++            var i = p;
++            var c = 0;
++            var scanning = true;
++            while scanning {
++                while i < n && int_of(data[i]) > hi {
++                    i = wrapping_add(i, 1);
++                }
++                if i >= n {
++                    scanning = false;
++                    going = false;
++                } else {
++                    c = int_of(data[i]);
++                    if c == delim || c == 10 {
++                        scanning = false;
++                    } else {
++                        i = wrapping_add(i, 1);
++                    }
++                }
++            }
++            if going {
++                var e = i;
++                if c == 10 && i > p && int_of(data[i - 1]) == 13 {
++                    e = i - 1;
++                }
++                if cp < lim {
++                    cells[cp] = p;
++                    cells[cp + 1] = e;
++                    cells[cp + 2] = 0;
++                    cp = wrapping_add(cp, 3);
++                }
++                nf = wrapping_add(nf, 1);
++                if c == 10 {
++                    k = i;
++                    going = false;
++                } else {
++                    p = wrapping_add(i, 1);
++                }
++            }
++        }
++    }
++    if k < 0 || k > cap {
++        return (0 - 1, 0);
++    }
++    return (k, nf);
++}
+diff --git a/tools/table/scan.ls b/tools/table/scan.ls
+index ca43068..bca4897 100644
+--- a/tools/table/scan.ls
++++ b/tools/table/scan.ls
+@@ -161,6 +161,40 @@ pub fn next_fast[&r](r: &!r lines.Lines) -> [] int {
+     return lines.line();
+ }
+ 
++// `next_fast` that also finds the fields: the next record when it is whole on one line inside the chunk, in one
++// pass over its bytes (`reader.record`), with `cells` filled and the number of its fields in `cells[3 * room]`.
++// Answers `lines.line()` with the reader as `next_fast` leaves it, or 9 and nothing changed (past what
++// `next_fast` clears first), when the line is anything `reader.record` does not take: then the caller asks
++// `next_fast`, and `lines.next`, as before.
++pub fn next_rec[&r, &c](r: &!r lines.Lines, delim: int, cells: &!c [int], room: int) -> [] int {
++    if r.ready {
++        buffer.clear(r.held);
++        r.over = 0;
++        r.begin = r.seen;
++        r.ready = false;
++    }
++    if r.over > 0 || buffer.size(r.held) > 0 {
++        return 9;
++    }
++    let whole = buffer.bytes(r.chunk);
++    let at = r.pos;
++    let (rel, n) = reader.record(whole[at..len(whole)], delim, cells, room, r.cap);
++    if rel < 0 {
++        return 9;
++    }
++    let k = at + rel;
++    cells[3 * room] = n;
++    r.viewing = true;
++    r.view_from = at;
++    r.view_to = k;
++    r.seen = r.seen + (k + 1 - at);
++    r.pos = k + 1;
++    r.newline = true;
++    r.count = r.count + 1;
++    r.ready = true;
++    return lines.line();
++}
++
+ // Scan the data records that start in `[start, until)`. `par` carries the parameters
+ // (`p_*`), `a` the tally (it continues from what it holds), the buffers and the groups
+ // are the read's. Answers where the next record starts (the offset of the first record
+@@ -202,8 +236,17 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
+     var status = 0;
+     while going {
+         var state = 9;
+-        borrow mut r as &!rw in {
+-            state = next_fast(rw);
++        var fast = false;
++        if !quoted {
++            borrow mut r as &!rw in {
++                state = next_rec(rw, delim, cells, a[engine.k_columns()]);
++            }
++            fast = state != 9;
++        }
++        if state == 9 {
++            borrow mut r as &!rw in {
++                state = next_fast(rw);
++            }
+         }
+         if state == 9 {
+             let (stepped, answer) = lines.next(heap, r);
+@@ -256,10 +299,14 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
+                     var inside = false;
+                     var found = 0;
+                     var bad = false;
+-                    let (n, open, wrong) = reader.fields(line, delim, cells, a[engine.k_columns()]);
+-                    found = n;
+-                    inside = open;
+-                    bad = wrong;
++                    if fast {
++                        found = cells[3 * a[engine.k_columns()]];
++                    } else {
++                        let (n, open, wrong) = reader.fields(line, delim, cells, a[engine.k_columns()]);
++                        found = n;
++                        inside = open;
++                        bad = wrong;
++                    }
+                     if bad {
+                         a[engine.k_abort()] = 1;
+                         a[engine.k_abort_line()] = base_line + number;
+diff --git a/tools/table/table.ls b/tools/table/table.ls
+index 603d4fd..54021bd 100644
+--- a/tools/table/table.ls
++++ b/tools/table/table.ls
+@@ -480,8 +480,19 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
+         let a = contents(tw);
+         while going {
+             var status = 9;
+-            borrow mut r as &!rw in {
+-                status = scan.next_fast(rw);
++            var fast = false;
++            if header && !quoted && mode != 0 {
++                borrow mut cells as &!cw in {
++                    borrow mut r as &!rw in {
++                        status = scan.next_rec(rw, delim, contents(cw), a[engine.k_columns()]);
++                    }
++                }
++                fast = status != 9;
++            }
++            if status == 9 {
++                borrow mut r as &!rw in {
++                    status = scan.next_fast(rw);
++                }
+             }
+             if status == 9 {
+                 let (stepped, answer) = lines.next(heap, r);
+@@ -527,7 +538,11 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
+                         var inside = false;
+                         var found = 0;
+                         var bad = false;
+-                        if mode != 0 {
++                        if fast {
++                            borrow cells as &cw in {
++                                found = contents(cw)[3 * a[engine.k_columns()]];
++                            }
++                        } else if mode != 0 {
+                             borrow mut cells as &!cw in {
+                                 let (n, open, wrong) = reader.fields(line, delim, contents(cw), a[engine.k_columns()]);
+                                 found = n;

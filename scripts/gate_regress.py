@@ -58,6 +58,9 @@ CELLS = {
     "group-sum bytes by id (1M keys)": ["--group", "id", "--agg", "sum:bytes", "--format", "csv", "--max-groups", "1000000", "--max-state-bytes", "1073741824"],
     "distinct id by status": ["--group", "status", "--agg", "distinct:id", "--format", "csv", "--max-distinct", "10000000", "--max-state-bytes", "1073741824"],
     "group-count id json page": ["--group", "id", "--max-groups", "1000000", "--max-state-bytes", "1073741824"],
+    # the 17-digit column (stage N3b): the reader of a double that Clinger's fast path cannot decide
+    "float17 filter ratio:float>=500": ["--where", "status = 404 and ratio:float >= 500", "--select", "id", "--format", "csv"],
+    "float17 sum,min,max ratio": ["--group", "status", "--agg", "sum:ratio:float,min:ratio:float,max:ratio:float", "--format", "csv"],
 }
 
 

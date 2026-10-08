@@ -157,6 +157,65 @@ pub fn next_fast[&r](r: &!r lines.Lines) -> [] int {
     return lines.line();
 }
 
+// Whether `buf`, which begins at the start of a line, reads as records of `columns` fields from the state `inside0`
+// (a quoted field open, so that the first line is the tail of a record that began before it). Up to four records are
+// read, by lines, with the rules of the reader; the answer is true when two or more whole ones came out with exactly
+// `columns` fields each and nothing was wrong with a quote. It is a *guess*: a range that starts on it is checked
+// afterwards by the parent, and read again when the guess was wrong.
+fn plausible[&b](buf: &b [byte], delim: int, columns: int, inside0: bool) -> [] bool {
+    let n = len(buf);
+    var at = 0;
+    var inside = inside0;
+    var skip = inside0;
+    var seps = 0;
+    var good = 0;
+    var failed = false;
+    while !failed && good < 4 && at < n {
+        let found = index_of_byte(buf[at..n], byte_of(10));
+        if found < 0 {
+            at = n;
+        } else {
+            var line = buf[at..at + found];
+            if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                line = line[0..len(line) - 1];
+            }
+            at = at + found + 1;
+            if inside || len(line) > 0 {
+                let (open, m, bad) = reader.scan(line, delim, inside, seps);
+                if bad {
+                    failed = true;
+                } else {
+                    inside = open;
+                    seps = m;
+                    if !inside {
+                        if skip {
+                            skip = false;
+                        } else if seps + 1 != columns {
+                            failed = true;
+                        } else {
+                            good = good + 1;
+                        }
+                        seps = 0;
+                    }
+                }
+            }
+        }
+    }
+    return !failed && good >= 2;
+}
+
+// 1 when the range that begins with `buf` is better read as starting inside a quoted field, 0 otherwise (the usual
+// case, and whenever neither reading looks right).
+pub fn guess[&b](buf: &b [byte], delim: int, columns: int) -> [] int {
+    if plausible(buf, delim, columns, false) {
+        return 0;
+    }
+    if plausible(buf, delim, columns, true) {
+        return 1;
+    }
+    return 0;
+}
+
 // Scan the data records that start in `[start, until)`. `par` carries the parameters
 // (`p_*`), `a` the tally (it continues from what it holds), the buffers and the groups
 // are the read's. Answers where the next record starts (the offset of the first record
@@ -164,7 +223,7 @@ pub fn next_fast[&r](r: &!r lines.Lines) -> [] int {
 // number of lines before it, a status (0 the range was read, 1 a block of csv is
 // pending and the read can be resumed at the offset answered, 2 it stopped because
 // `a` says so: an abort, a full page, the row bound), and the buffers and groups.
-pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File, par: &p [int], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!a [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, until: int) -> [heap, file_read] (int, int, int, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
+pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File, par: &p [int], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!a [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, until: int, hint: int) -> [heap, file_read] (int, int, int, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
     let delim = par[p_delim()];
     let mode = par[p_mode()];
     let as_csv = par[p_csv()] == 1;
@@ -177,7 +236,7 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
     let max_distinct = par[p_max_distinct()];
     let max_state = par[p_max_state()];
     let cap = par[p_cap()];
-    let base_line = par[p_base_line()];
+    var base_line = par[p_base_line()];
     let yield_at = par[p_yield()];
     let filtering = query.count_of(tree, 1) > 0;
     let fast_ok = engine.fast_ok(tree);
@@ -187,7 +246,13 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
     var kept2 = kept;
     var groups2 = groups;
     var rec = buffer.empty(heap, 256);
-    var quoted = false;
+    // `hint` 1: the range begins inside a quoted field of a record that began before it; the rest of that record
+    // is the previous range's, and is read and dropped (`skipping`), and the first record of this range is the
+    // one after it. The lines of the skipped part are not this range's (`skipped`).
+    var quoted = hint == 1;
+    var skipping = hint == 1;
+    var skipped = 0;
+    a[engine.k_first_at()] = start;
     var seps = 0;
     var opened = 0;
     var r = lines.start(heap, cap);
@@ -310,12 +375,29 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
                     // The rest of a record that has quotes open: kept.
                     let (inside, n, bad) = reader.scan(line, delim, quoted, seps);
                     seps = n;
-                    rec = buffer.append(heap, rec, whole);
+                    if !skipping {
+                        rec = buffer.append(heap, rec, whole);
+                    }
                     var held = 0;
                     borrow rec as &rw in {
                         held = buffer.size(rw);
                     }
-                    if bad {
+                    if skipping {
+                        // The tail of the record before this range: not kept, not counted.
+                        if bad {
+                            a[engine.k_abort()] = 1;
+                            a[engine.k_abort_line()] = base_line + number;
+                            status = 2;
+                            going = false;
+                        } else if !inside {
+                            skipping = false;
+                            quoted = false;
+                            seps = 0;
+                            skipped = number;
+                            base_line = base_line - number;
+                            a[engine.k_first_at()] = start + lines.consumed(rr);
+                        }
+                    } else if bad {
                         a[engine.k_abort()] = 1;
                         a[engine.k_abort_line()] = base_line + number;
                         status = 2;
@@ -417,5 +499,5 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
     }
     buffer.drop(heap, rec);
     lines.drop(heap, r);
-    return (next_at, consumed, status, rows2, scratch2, escr2, kept2, groups2);
+    return (next_at, consumed - skipped, status, rows2, scratch2, escr2, kept2, groups2);
 }

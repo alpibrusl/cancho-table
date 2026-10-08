@@ -31,9 +31,11 @@ import std.buffer;
 import std.vec;
 import agg;
 import engine;
+import psort;
 import query;
 import report;
 import scan;
+import sorter;
 import toolbox.out;
 import toolbox.path;
 import toolbox.place;
@@ -62,17 +64,22 @@ fn j_payload() -> [] int {
     return scan.p_count() + 3;
 }
 
-// the partitioned grouping's: how many blobs a range's groups are cut into (0: one, the old way), how many splitters, how many group fields
-fn j_parts() -> [] int {
+// 1 when the range does not begin where the parent knows a record does: it guesses how it begins.
+fn j_spec() -> [] int {
     return scan.p_count() + 4;
 }
 
-fn j_nsplit() -> [] int {
+// the partitioned grouping's: how many blobs a range's groups are cut into (0: one, the old way), how many splitters, how many group fields
+fn j_parts() -> [] int {
     return scan.p_count() + 5;
 }
 
-fn j_fields() -> [] int {
+fn j_nsplit() -> [] int {
     return scan.p_count() + 6;
+}
+
+fn j_fields() -> [] int {
+    return scan.p_count() + 7;
 }
 
 fn j_size() -> [] int {
@@ -102,6 +109,15 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
     var escr = buffer.empty(w.heap, 16);
     var kept = buffer.empty(w.heap, 64);
     var groups = agg.start(w.heap, w.tree);
+    let ordering = query.count_of(w.tree, 4) > 0 && !query.reporting(w.tree);
+    if ordering {
+        // `--order-by` (psort.cho): the rows are held by a sorter that has the sequential bounds, and the answer of a range is a sorted run
+        let okeys = sorter.keys_of(w.heap, w.tree, contents(w.cols));
+        borrow okeys as &okr in {
+            groups = sorter.configure(groups, query.order_count(w.tree), 0, contents(w.par)[scan.p_max_groups()], contents(w.par)[scan.p_max_state()], contents(okr));
+        }
+        unbox_slice(w.heap, okeys);
+    }
     var next_at = 0;
     var lines_read = 0;
     var status = 0;
@@ -112,7 +128,32 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
         borrow mut cells as &!cw in {
             let t = contents(aw);
             t[engine.k_columns()] = contents(w.par)[j_columns()];
-            let (x, l, s, r2, s2, e2, k2, g2) = scan.scan_range(w.heap, w.file, contents(w.par), w.tree, contents(w.cols), contents(w.sel), contents(cw), t, rows, scratch, escr, kept, groups, contents(w.par)[j_start()], contents(w.par)[j_until()]);
+            var hint = 0;
+            if contents(w.par)[j_spec()] == 1 {
+                var window = buffer.empty(w.heap, 65536);
+                var got = 0;
+                borrow mut window as &!ww in {
+                    match file_pread(w.file, contents(w.par)[j_start()], buffer.room(ww)) {
+                        Read::Got(n) => {
+                            buffer.filled(ww, n);
+                            got = n;
+                        }
+                        Read::End => {
+                            got = 0;
+                        }
+                        Read::Failed(reason) => {
+                            got = 0;
+                        }
+                    }
+                }
+                if got > 0 {
+                    borrow window as &wr in {
+                        hint = scan.guess(buffer.bytes(wr), contents(w.par)[scan.p_delim()], contents(w.par)[j_columns()]);
+                    }
+                }
+                buffer.drop(w.heap, window);
+            }
+            let (x, l, s, r2, s2, e2, k2, g2) = scan.scan_range(w.heap, w.file, contents(w.par), w.tree, contents(w.cols), contents(w.sel), contents(cw), t, rows, scratch, escr, kept, groups, contents(w.par)[j_start()], contents(w.par)[j_until()], hint);
             next_at = x;
             lines_read = l;
             status = s;
@@ -140,7 +181,9 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
             } else if clean == 1 {
                 borrow groups as &gr in {
                     var n = 0;
-                    if query.reporting(w.tree) {
+                    if ordering {
+                        n = psort.make_run(w.heap, gr, contents(cw), contents(w.sel), contents(w.par)[scan.p_picked()], contents(w.par)[scan.p_delim()], contents(w.par)[j_columns()], o[header_bytes()..len(o)]);
+                    } else if query.reporting(w.tree) {
                         n = report.serialize(gr, o[header_bytes()..len(o)]);
                     } else if contents(w.par)[j_parts()] > 0 {
                         let np = contents(w.par)[j_parts()];
@@ -224,6 +267,10 @@ fn fan[&p, &f, &x, &y, &z, &t, &c, &s, &r, &l, &u, &m, &e](parent: &!p Heap, fs:
             borrow mut job as &!kj in {
                 contents(kj.par)[j_start()] = plan[k];
                 contents(kj.par)[j_until()] = plan[k + 1];
+                contents(kj.par)[j_spec()] = 0;
+                if k > 0 {
+                    contents(kj.par)[j_spec()] = 1;
+                }
             }
             var rest = 0;
             borrow mut job as &!kj in {
@@ -306,7 +353,7 @@ fn align[&h, &f](heap: &!h Heap, file: &!f File, p: int, size: int) -> [heap, fi
 // buffers and the groups its output so far; answered are the same, as the sequential read
 // would have left them. `fs`, `root`, `rel` and `full` are what a thread needs to open the
 // file again.
-pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
+pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int, explicit: bool) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
     // A range is at most `most_chunk`, and no more than a thread's share of what is left: every
     // thread has something to read, and the memory is what the ranges are, not what the limit is.
     var chunk = most_chunk;
@@ -325,7 +372,17 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
     let filtering = query.count_of(tree, 1) > 0;
     // room for the exact float accumulators of 64 groups (584 bytes each, a group per float sum or mean) on top of the chunk: more groups than that, and a range's answer
     // does not fit and the parent reads the range itself (the answer is the same, only slower)
-    let payload_cap = chunk + 65536 + 64 * agg.float_state(tree);
+    let ordering = query.count_of(tree, 4) > 0 && !query.reporting(tree);
+    var payload_cap = chunk + 65536 + 64 * agg.float_state(tree);
+    if ordering {
+        // a range's answer is its sorted run: the rows, formatted, and the words that order them (psort.cho); a range whose run does not fit is read again
+        payload_cap = 3 * chunk + 65536;
+    }
+    // Groups and the type report: a range's answer is its groups, and the slot above is sized by the first range, so a
+    // later range may be longer as long as its answer would still fit (see `grown`). Never when --chunk-bytes was given,
+    // and never for a sort: a run is as long as its range, so it does not stay inside the slot of a longer one.
+    let first_chunk = chunk;
+    var growing = mode == 2 && !explicit && !ordering;
     let slot_bytes = header_bytes() + payload_cap;
     let wide = 1000000000000000;
     // What every thread is told: the parameters, except that it counts its range alone.
@@ -349,6 +406,19 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
     var plan = box_slice(heap, threads + 2, 0);
     let no_split = box_slice(heap, 1, byte_of(0));
     let no_soff = box_slice(heap, 1, 0);
+    // `--order-by`: the runs taken so far, the keys, and the bounds of the sort whole (what is left of them is the open sorter's)
+    let okeys = sorter.keys_of(heap, tree, cols);
+    let nkeys = query.order_count(tree);
+    let sort_rows = pp[scan.p_max_groups()];
+    let sort_state = pp[scan.p_max_state()];
+    let sort_width = sorter.stride_of(nkeys);
+    // room for the runs: a run is about two and a half times the bytes of its rows; address space the file does not fill costs nothing (nothing writes it), and
+    // a sort that holds more than `--max-state-bytes` of rows is refused, so that is the most there can be
+    var reserve = 3 * (size - start) + 65536;
+    if reserve > 4 * sort_state + 65536 {
+        reserve = 4 * sort_state + 65536;
+    }
+    var runs = psort.start(heap, reserve);
     var rows2 = rows;
     var scratch2 = scratch;
     var escr2 = escr;
@@ -365,6 +435,8 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
     }
     while going && cur < size && a[engine.k_stop()] == 0 && a[engine.k_abort()] == 0 {
         let wave_began = cur;
+        var wave_peak = 0;
+        var wave_bad = false;
         var n = allowed;
         if allowed < threads {
             allowed = allowed * 2;
@@ -421,9 +493,15 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                 borrow slots as &sr in {
                     let sl = contents(sr);
                     let at = j * slot_bytes;
-                    var first = 0;
-                    borrow plan as &pr in {
-                        first = contents(pr)[j];
+                    // Where the range's first record begins: its start, or after the tail of the record it began in.
+                    var first = agg.get_i64(sl, at + 32 + 8 * engine.k_first_at());
+                    // What this wave says about the size of an answer: the largest, and whether one did not fit, was not clean or was not used (read again by the parent).
+                    if agg.get_i64(sl, at) == 0 {
+                        if agg.get_i64(sl, at + 24) > wave_peak {
+                            wave_peak = agg.get_i64(sl, at + 24);
+                        }
+                    } else {
+                        wave_bad = true;
                     }
                     if agg.get_i64(sl, at) == 0 && first == cur {
                         let r = agg.get_i64(sl, at + 32 + 8 * engine.k_records());
@@ -452,7 +530,38 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                                 }
                             }
                         }
-                        if mode == 2 && fits {
+                        if mode == 2 && fits && ordering {
+                            // the range's answer is a run: it is taken if the sort's bounds hold at its last row, else it is read again
+                            var open_rows = 0;
+                            var open_size = 0;
+                            borrow groups2 as &gr in {
+                                open_rows = gr.pairs;
+                                open_size = buffer.size(gr.keyb) + buffer.size(gr.dkey);
+                            }
+                            let body = sl[at + header_bytes()..at + header_bytes() + payload_len];
+                            var okfit = false;
+                            borrow runs as &rr in {
+                                okfit = psort.fits(rr, open_rows, open_size, agg.get_i64(body, 0), agg.get_i64(body, 16), agg.get_i64(body, 24), sort_width, sort_rows, sort_state);
+                            }
+                            if !okfit {
+                                fits = false;
+                            } else {
+                                borrow okeys as &okr in {
+                                    let (r5, g5) = psort.close_open(heap, runs, groups2, tree, contents(okr), cells, sel, pp[scan.p_picked()], pp[scan.p_delim()], a[engine.k_columns()], sort_rows, sort_state);
+                                    runs = psort.take(heap, r5, body);
+                                    groups2 = g5;
+                                }
+                                borrow runs as &rr in {
+                                    let lr = psort.left_rows(rr, sort_rows);
+                                    let ls = psort.left_state(rr, sort_state, sort_width);
+                                    pp[scan.p_max_groups()] = lr;
+                                    pp[scan.p_max_state()] = ls;
+                                    borrow mut groups2 as &!gw in {
+                                        sorter.set_bounds(gw, lr, ls);
+                                    }
+                                }
+                            }
+                        } else if mode == 2 && fits {
                             var refused = 0;
                             if query.reporting(tree) {
                                 let (g2, r2) = report.merge(heap, groups2, sl[at + header_bytes()..at + header_bytes() + payload_len], before, lines_before, pp[scan.p_max_state()]);
@@ -507,10 +616,11 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                     }
                 } else {
                     // Read it again, here, the way the sequential read does.
+                    wave_bad = true;
                     var again = true;
                     while again {
                         pp[scan.p_base_line()] = lines_before;
-                        let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, until);
+                        let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, until, 0);
                         rows2 = r2;
                         scratch2 = s2;
                         escr2 = e2;
@@ -537,11 +647,42 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
             }
             j = j + 1;
         }
+        // The next wave's ranges (groups, --chunk-bytes not given): longer, by as much as keeps an answer that grows with the range
+        // inside half of the slot; back to the first size for good as soon as one answer did not fit, was not clean or was read again by the parent.
+        if growing {
+            if wave_bad {
+                growing = false;
+                chunk = first_chunk;
+            } else {
+                var peak = wave_peak;
+                if peak < 4096 {
+                    peak = 4096;
+                }
+                var room = payload_cap / 2 / peak;
+                if room < 1 {
+                    room = 1;
+                }
+                var longer = first_chunk * room;
+                if room > 1024 {
+                    longer = first_chunk * 1024;
+                }
+                if longer > 16777216 {
+                    longer = 16777216;
+                }
+                let left = (size - cur + threads - 1) / threads;
+                if left < longer {
+                    longer = left;
+                }
+                if longer > chunk {
+                    chunk = longer;
+                }
+            }
+        }
         // A wave always reads at least the record at its start (its first range ends after it), so
         // this does not happen; but a loop that cannot be shown to end is one more reason to say so.
         if going && cur == wave_began && cur < size {
             pp[scan.p_base_line()] = lines_before;
-            let (x3, l3, st3, r3, s3, e3, k3, g3) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, size);
+            let (x3, l3, st3, r3, s3, e3, k3, g3) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, size, 0);
             rows2 = r3;
             scratch2 = s3;
             escr2 = e3;
@@ -561,6 +702,32 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
             }
         }
     }
+    if ordering {
+        if a[engine.k_abort()] == 0 && a[engine.k_stop()] == 0 {
+            // every range is read: the rest of the sorter is a last run, and the runs are merged and written
+            borrow okeys as &okr in {
+                let (r6, g6) = psort.close_open(heap, runs, groups2, tree, contents(okr), cells, sel, pp[scan.p_picked()], pp[scan.p_delim()], a[engine.k_columns()], sort_rows, sort_state);
+                groups2 = g6;
+                var total = 0;
+                borrow r6 as &rr in {
+                    total = psort.rows_of(rr);
+                }
+                let (pend, ok) = psort.finish(heap, io, r6, rows2, contents(okr), nkeys, threads);
+                rows2 = pend;
+                if !ok {
+                    a[engine.k_abort()] = 9;
+                    a[engine.k_stop()] = 1;
+                }
+                a[engine.k_emitted()] = total;
+                a[engine.k_psorted()] = 1;
+            }
+        } else {
+            psort.drop(heap, runs);
+        }
+    } else {
+        psort.drop(heap, runs);
+    }
+    unbox_slice(heap, okeys);
     unbox_slice(heap, wpar);
     unbox_slice(heap, slots);
     unbox_slice(heap, plan);
@@ -807,7 +974,7 @@ fn fan2[&p, &t, &r, &l, &u, &v, &x, &m, &z](parent: &!p Heap, tree: &t query.Que
 // Read everything from `start` to the end of the file in the partitioned way, writing the answer's rows into `rows` (and to the output, as they fill). Answers the
 // buffers and the groups as `run` does, and 0, or 1 when the read was declined (nothing was changed: `a`, `rows`, the groups and the output are as they were) and
 // the caller reads as before. `a[k_done]` is 1 when the answer is complete.
-pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int, want: int) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups, int) {
+pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int, want: int, explicit: bool) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups, int) {
     if threads < 2 {
         return (rows, scratch, escr, kept, groups, 1);
     }
@@ -835,6 +1002,8 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
         allowance = 512 * agg.float_state(tree);
     }
     let payload_cap = 2 * chunk + 65536 + allowance;
+    let first_chunk = chunk;
+    var growing = !explicit;
     let slot_bytes = header_bytes() + payload_cap;
     var declined = 0;
     var ta = box_slice(heap, engine.k_size(), 0);
@@ -886,7 +1055,7 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                 }
                 contents(saw)[engine.k_columns()] = a[engine.k_columns()];
                 borrow sp as &spr in {
-                    let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, contents(spr), tree, cols, sel, cells, contents(saw), srows, sscr, sesc, skept, sg, edge, until);
+                    let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, contents(spr), tree, cols, sel, cells, contents(saw), srows, sscr, sesc, skept, sg, edge, until, 0);
                     srows = r2;
                     sscr = s2;
                     sesc = e2;
@@ -1034,6 +1203,8 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                 }
             }
         }
+        var wave_peak = 0;
+        var wave_bad = false;
         // The ranges, in file order: each is taken as it is or read again here into groups of its own, or the read is declined.
         borrow mut ta as &!tw in {
             var j = 0;
@@ -1042,7 +1213,10 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                 var first = 0;
                 borrow plan as &pr in {
                     until = contents(pr)[j + 1];
-                    first = contents(pr)[j];
+                }
+                // where the range's first record begins: its start, or after the tail of the record it began in (the speculation of docs/parallel.md, `scan.guess`)
+                borrow slots as &sr in {
+                    first = agg.get_i64(contents(sr), j * slot_bytes + 32 + 8 * engine.k_first_at());
                 }
                 borrow mut used as &!uw in {
                     contents(uw)[j] = 0;
@@ -1052,6 +1226,14 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                     borrow slots as &sr in {
                         let sl = contents(sr);
                         let at = j * slot_bytes;
+                        // what this wave says about the size of an answer (as `run_ranges` reads it): the largest, and whether one did not fit or was not clean
+                        if agg.get_i64(sl, at) == 0 {
+                            if agg.get_i64(sl, at + 24) > wave_peak {
+                                wave_peak = agg.get_i64(sl, at + 24);
+                            }
+                        } else {
+                            wave_bad = true;
+                        }
                         if agg.get_i64(sl, at) == 0 && first == cur {
                             let r = agg.get_i64(sl, at + 32 + 8 * engine.k_records());
                             let g1 = agg.get_i64(sl, at + 32 + 8 * engine.k_ragged());
@@ -1098,7 +1280,7 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                             pp[scan.p_max_groups()] = wide;
                             pp[scan.p_max_distinct()] = wide;
                             pp[scan.p_max_state()] = wide;
-                            let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, contents(tw), rows2, rscr, resc, rkept, rg, cur, until);
+                            let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, contents(tw), rows2, rscr, resc, rkept, rg, cur, until, 0);
                             rows2 = r2;
                             rscr = s2;
                             resc = e2;
@@ -1146,6 +1328,38 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                     }
                 }
                 j = j + 1;
+            }
+        }
+        // The next wave's ranges (--chunk-bytes not given): the rule of `run_ranges`, for the same reason and the same slot. Longer by as much as keeps an answer that grows
+        // with the range inside half of the slot (whose size was fixed by the first range, so the bound on memory does not move); back to the first size for good as
+        // soon as one answer did not fit, was not clean or was read again by the parent. At most 16 MiB and a thread's share of what is left.
+        if growing {
+            if wave_bad {
+                growing = false;
+                chunk = first_chunk;
+            } else {
+                var peak = wave_peak;
+                if peak < 4096 {
+                    peak = 4096;
+                }
+                var room = payload_cap / 2 / peak;
+                if room < 1 {
+                    room = 1;
+                }
+                var longer = first_chunk * room;
+                if room > 1024 {
+                    longer = first_chunk * 1024;
+                }
+                if longer > 16777216 {
+                    longer = 16777216;
+                }
+                let left = (size - cur + threads - 1) / threads;
+                if left < longer {
+                    longer = left;
+                }
+                if longer > chunk {
+                    chunk = longer;
+                }
             }
         }
         if declined == 0 && cur == wave_began {
@@ -1421,7 +1635,7 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
 // The rest of the file by several threads (the entry of table.cho): a grouping the partitioned way when it can (`run_groups`), the old way otherwise or when that declined.
 // The whole answer as csv rows is written by the merge threads (`want` 0); a page, a top or a sort is the first `want` groups of each, finished by the
 // caller as any (one past the page, so that `more` is known); more than 100,000 of them, or a read that is not a grouping, takes `run`.
-pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
+pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, io: &!i Io, file: &!f File, fs: &g Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!t [int], pp: &!v [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, lines0: int, size: int, threads: int, most_chunk: int, explicit: bool) -> [heap, io_write, conc, file_read, fs_read(""), dir_read] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
     let as_csv = pp[scan.p_csv()] == 1;
     let (top, from) = query.page_of(tree);
     let limit = pp[scan.p_limit()];
@@ -1440,8 +1654,8 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     var es = escr;
     var ke = kept;
     var gr = groups;
-    if pp[scan.p_mode()] == 2 && !query.reporting(tree) && want <= 100000 {
-        let (r1, s1, e1, k1, g1, declined) = run_groups(heap, io, file, fs, root, rel, full, tree, cols, sel, cells, a, pp, r, sc, es, ke, gr, start, lines0, size, threads, most_chunk, want);
+    if pp[scan.p_mode()] == 2 && !query.reporting(tree) && query.count_of(tree, 4) == 0 && want <= 100000 {
+        let (r1, s1, e1, k1, g1, declined) = run_groups(heap, io, file, fs, root, rel, full, tree, cols, sel, cells, a, pp, r, sc, es, ke, gr, start, lines0, size, threads, most_chunk, want, explicit);
         if declined == 0 {
             return (r1, s1, e1, k1, g1);
         }
@@ -1451,5 +1665,5 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
         ke = k1;
         gr = g1;
     }
-    return run_ranges(heap, io, file, fs, root, rel, full, tree, cols, sel, cells, a, pp, r, sc, es, ke, gr, start, lines0, size, threads, most_chunk);
+    return run_ranges(heap, io, file, fs, root, rel, full, tree, cols, sel, cells, a, pp, r, sc, es, ke, gr, start, lines0, size, threads, most_chunk, explicit);
 }

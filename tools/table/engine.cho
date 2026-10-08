@@ -124,14 +124,25 @@ pub fn k_err_digits() -> [] int {
     return 26;
 }
 
+// 1 once `--order-by` was sorted and written by several threads (psort.cho): the sorted rows are out, there is nothing left to write.
+pub fn k_psorted() -> [] int {
+    return 28;
+}
+
+// Where the first record of a range begins (a worker's answer to the parent: the speculation held when this is where
+// the range before it ended). Not part of a sequential read's tally.
+pub fn k_first_at() -> [] int {
+    return 27;
+}
+
 // 1 when the partitioned grouping (par.run_groups) has written the whole answer: nothing is left for `finish_groups`.
 pub fn k_done() -> [] int {
-    return 27;
+    return 30;
 }
 
 // The number of groups of the whole answer when the groups held are only the candidates of a page (par.run_groups): `group_count` says it.
 pub fn k_total() -> [] int {
-    return 29;
+    return 31;
 }
 
 pub fn k_size() -> [] int {

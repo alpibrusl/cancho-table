@@ -63,11 +63,34 @@ pub fn configure[&k](g: agg.Groups, nk: int, cap: int, max_rows: int, max_state:
     return agg.Groups { index: index, acc: acc, seen: seen, keyb: keyb, dkey: dkey, held: held, pairs: 0, stride: nk, memo: memo };
 }
 
+// The keys of a plan as `configure` takes them: for each, the column, 1 if descending, the type (0 bytes, 1 `:int`, 2 + S `:dec(S)`, 21 `:float`).
+pub fn keys_of[&h, &q, &c](heap: &!h Heap, tree: &q query.Query, cols: &c [int]) -> [heap] Box[[int]] {
+    let nk = query.order_count(tree);
+    var okeys = box_slice(heap, 3 * nk + 1, 0);
+    borrow mut okeys as &!ow in {
+        var j = 0;
+        while j < nk {
+            contents(ow)[3 * j] = cols[query.order_name(tree, j)];
+            contents(ow)[3 * j + 1] = query.order_flags(tree, j) % 2;
+            contents(ow)[3 * j + 2] = query.order_flags(tree, j) / 2;
+            j = j + 1;
+        }
+    }
+    return okeys;
+}
+
+// The bounds of a sorter: the most rows and the most bytes it may hold (docs/gap-sort.md: a state that continues after runs already taken has what is left).
+pub fn set_bounds[&g](g: &!g agg.Groups, max_rows: int, max_state: int) -> [] int {
+    contents(g.memo)[2] = max_rows;
+    contents(g.memo)[3] = max_state;
+    return 0;
+}
+
 pub fn held[&s](s: &s agg.Groups) -> [] int {
     return s.pairs;
 }
 
-fn stride_of(nk: int) -> [] int {
+pub fn stride_of(nk: int) -> [] int {
     return 2 + 2 * nk;
 }
 
@@ -79,7 +102,7 @@ pub fn record_of[&s](s: &s agg.Groups, row: int) -> [] &s [byte] {
 }
 
 // The bytes of key `j` of a held row.
-fn key_bytes[&s](s: &s agg.Groups, row: int, j: int) -> [] &s [byte] {
+pub fn key_bytes[&s](s: &s agg.Groups, row: int, j: int) -> [] &s [byte] {
     let at = row * stride_of(s.stride) + 2 + 2 * j;
     let off = vec.get(s.acc, at);
     let n = vec.get(s.acc, at + 1);
@@ -260,7 +283,7 @@ pub fn add[&h, &d, &c](heap: &!h Heap, s: agg.Groups, record: &d [byte], cells: 
 
 // Whether held row `x` is before held row `y` by the keys (equal keys: neither is before the other). `pre` is the first
 // key's integer, or the first seven bytes of its text as one number, which settle most pairs.
-fn before[&s, &k, &p, &q](s: &s agg.Groups, keys: &k [int], pre: &p [int], pre2: &q [int], x: int, y: int) -> [] bool {
+pub fn before[&s, &k, &p, &q](s: &s agg.Groups, keys: &k [int], pre: &p [int], pre2: &q [int], x: int, y: int) -> [] bool {
     if pre[x] != pre[y] {
         if keys[1] == 1 {
             return pre[x] > pre[y];
@@ -299,7 +322,7 @@ fn before[&s, &k, &p, &q](s: &s agg.Groups, keys: &k [int], pre: &p [int], pre2:
     return false;
 }
 
-fn prefix_of[&k](key: &k [byte], from: int) -> [] int {
+pub fn prefix_of[&k](key: &k [byte], from: int) -> [] int {
     var v = 0;
     var i = from;
     while i < from + 7 {
