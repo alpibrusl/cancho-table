@@ -388,6 +388,7 @@
     "prefix_of",
     "prefix_of",
     "put_info",
+    "query_place",
     "rec_base_for",
     "record_of",
     "reject",
@@ -518,5 +519,5 @@
   ],
   "folded_operators": 169,
   "folded_calls": 0,
-  "functions": 803
+  "functions": 804
 }

@@ -1274,7 +1274,7 @@ fn settle[&h, &g, &p, &s, &rt, &fu, &i, &fs, &q](heap: &!h Heap, args: &g Args, 
 fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors, inp: inputs.Inputs, select_t: &s1 [byte], where_t: &s2 [byte], group_t: &s3 [byte], agg_t: &s4 [byte], order_t: &s5 [byte], sort_t: &s6 [byte], source_t: &s7 [byte]) -> [heap, args, fs_read(""), dir_read, io_read, io_write, err_write, conc] int {
     let table = flag_table();
     var e = errs;
-    let form = cli.text(args, parsed, table, "format");
+    let form = inp.format_text;
     let text_mode = bytes.equal(form, "text");
     let as_csv = bytes.equal(form, "csv");
     let has_select = inp.has_select;
@@ -1591,7 +1591,7 @@ fn refused_with[&h, &i](heap: &!h Heap, io: &!i Io, e: fail.Errors, as_csv: bool
 fn query_body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors, inp: inputs.Inputs) -> [heap, args, fs_read(""), dir_read, io_read, io_write, err_write, conc] int {
     let table = flag_table();
     var e = errs;
-    let form = cli.text(args, parsed, table, "format");
+    let form = inp.format_text;
     let text_mode = bytes.equal(form, "text");
     let as_csv = bytes.equal(form, "csv");
     let tr = qtrans.translate(heap, inp.query_text, false);
@@ -1607,7 +1607,8 @@ fn query_body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.
     }
     if translated != 0 {
         borrow tr as &t in {
-            e = qrefuse.refuse(heap, e, inp.query_text, t, args, inp.query_at, inp.query_whole, inp.operands);
+            let (query_at, query_whole) = inputs.query_place(parsed, table);
+            e = qrefuse.refuse(heap, e, inp.query_text, t, args, query_at, query_whole, inp.operands);
         }
         qtrans.drop(heap, tr);
         return refused_with(heap, io, e, as_csv, text_mode);
