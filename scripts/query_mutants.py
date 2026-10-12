@@ -127,7 +127,6 @@ MUTANTS = [
     ("source: a query's from path is the operand's", "table.cho", "} else if inp.src_file {", "} else if inp.src_file && false {"),
     ("source: a path is not confined (dotdot)", "qpath.cho", "if path.has_dotdot(given) {", "if path.has_dotdot(given) && len(root) == 77 {"),
     ("source: a path is not confined (absolute)", "qpath.cho", "    if absolute {\n        var below", "    if absolute && len(root) == 77 {\n        var below"),
-    ("source: the root is not joined", "qpath.cho", "    full = buffer.append(heap, full, root);", "    full = buffer.append(heap, full, given);"),
     ("source: an empty path is a path", "qpath.cho", "    if len(given) == 0 {\n        e = refuse(heap, e, \"path.empty\"", "    if len(given) == 77 {\n        e = refuse(heap, e, \"path.empty\""),
     ("conflict: --select does not conflict", "table.cho", "    if inp.has_select {\n        clash = buffer.append(heap, clash, \" --select\");", "    if inp.has_select && false {\n        clash = buffer.append(heap, clash, \" --select\");"),
     ("conflict: --where does not conflict", "table.cho", "    if inp.has_where {\n        clash", "    if inp.has_where && false {\n        clash"),
@@ -156,7 +155,6 @@ MUTANTS = [
     ("refusal: a group-mismatch has no group by", "qrefuse.cho", "if qtrans.info_at(t, qtrans.i_group_end()) > 0 {", "if qtrans.info_at(t, qtrans.i_group_end()) > 99999 {"),
     ("refusal: too-long says a wrong limit", "qrefuse.cho", "w = fail.detail_int(heap, w, \"limit\", qtrans.largest());", "w = fail.detail_int(heap, w, \"limit\", 4095);"),
     # ---- the repairs
-    ("repair: a keyword typo of three edits is repaired", "qrepair.cho", "    while d <= 2 {", "    while d <= 3 {"),
     ("repair: a keyword typo of one edit is not repaired", "qrepair.cho", "    while d <= 2 {", "    while d <= 0 {"),
     ("repair: the query is not replaced where it was", "qrepair.cho", "        if i == flag_at {\n            if qtrans.info_at(t, qtrans.i_rows()) == 1 {", "        if i == 0 {\n            if qtrans.info_at(t, qtrans.i_rows()) == 1 {"),
     ("repair: the source is not the operand", "qrepair.cho", "    if qtrans.info_at(t, qtrans.i_source()) == 1 {\n        o = fail.choose_arg(heap, o, qtrans.section(t, 6));", "    if qtrans.info_at(t, qtrans.i_source()) == 7 {\n        o = fail.choose_arg(heap, o, qtrans.section(t, 6));"),
@@ -193,6 +191,10 @@ EQUIVALENT = [
      "`from stdin` is refused beside an operand, so there is none: the standard input that `Inputs.stdin` already has when there is no operand is the same one"),
     ("source: a long path is a path", "qpath.cho", "if len(given) > path.longest() {", "if len(given) > 99999 {",
      "a path of over 4,096 bytes does not fit in a query of at most 4,096 (the check is the operand's, kept for the day the limits differ)"),
+    ("source: the root is not joined", "qpath.cho", "    full = buffer.append(heap, full, root);", "    full = buffer.append(heap, full, given);",
+     "with a root, `place.open_operand` opens the path as `shown` spells it beneath the root and reads `full` only for `.` (the root itself, a directory either way, refused as one with the same words), so the root in `full` is not observable; without a root `full` is the path itself, and that is tested"),
+    ("repair: a keyword typo of three edits is repaired", "qrepair.cho", "    while d <= 2 {", "    while d <= 3 {",
+     "`distance` answers 3 for 'more than two' and the loop's bound only changes whether it takes the third turn to learn it: every caller asks for at most 2"),
 ]
 
 if __name__ == "__main__":
