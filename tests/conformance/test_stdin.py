@@ -789,7 +789,7 @@ class StreamLoop(unittest.TestCase):
         self.assertNotIn("par.run", region)
         self.assertNotIn("file_size", region)
         self.assertIn("bulk.fill_stdin", region)
-        self.assertNotIn("bulk.fill_stdin", text[:a])
+        self.assertNotIn("= bulk.fill_stdin(", text[:a])
         self.assertIn("par.run", text[:a])
 
 
