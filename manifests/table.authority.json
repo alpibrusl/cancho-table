@@ -355,6 +355,7 @@
     "seek",
     "sentences",
     "set_at",
+    "shell_builtin",
     "short_form",
     "short_of",
     "shown",
@@ -401,5 +402,5 @@
   ],
   "folded_operators": 123,
   "folded_calls": 0,
-  "functions": 638
+  "functions": 639
 }

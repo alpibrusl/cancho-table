@@ -201,7 +201,7 @@ and `poll` are the deadline.)
 
 **Copied**, with its source revision recorded: `server/mcp.cho` is cancho-tools' `server/mcp.cho`
 at `74411ee43c74a2741ed1bb37404844fcbb031753` (the head of `main` when this was written; the contract
-package this repository consumes is pinned at `8dab9176`, and the server is not in it), and `scripts/mcp.py`
+package this repository consumes is pinned at `25acde07`, and the server is not in it), and `scripts/mcp.py`
 is that revision's generator, both adapted. **Why not shared:** the contract package is a set of library
 modules (`toolbox.cli`, `.describe`, `.fail`, ...), and a library cannot carry the server: its `main` must hold
 `Exec` narrowed to a *literal* directory (`narrow` takes a literal, cancho `processes.md` §7.1), which is
