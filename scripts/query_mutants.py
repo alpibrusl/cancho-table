@@ -118,7 +118,10 @@ MUTANTS = [
     ("write: limit is off by one", "inputs.cho", "limit_n = qtrans.info_at(t, qtrans.i_limit());", "limit_n = qtrans.info_at(t, qtrans.i_limit()) + 1;"),
     ("write: the offset is lost", "inputs.cho", "    if qtrans.info_at(t, qtrans.i_from_given()) == 1 {\n        has_from = true;", "    if qtrans.info_at(t, qtrans.i_from_given()) == 7 {\n        has_from = true;"),
     ("write: --agg is not given to a grouping", "qtrans.cho", "        info = put_info(info, i_agg(), 1);", "        info = put_info(info, i_agg(), 0);"),
-    ("write: a sort is not given to the plan", "table.cho", "    if inp.has_sort {\n        tree = query.set_sort(heap, tree, sort_t);", "    if inp.has_sort && sort_t == \"?\" {\n        tree = query.set_sort(heap, tree, sort_t);"),
+    ("write: a sort is not given to the plan", "table.cho", "    if inp.has_sort && inp.has_query {\n        tree = query.set_sort(heap, tree, sort_t);", "    if inp.has_sort && sort_t == \"?\" {\n        tree = query.set_sort(heap, tree, sort_t);"),
+    ("write: the plan's sort label is not read", "frame.cho", "    var sort = query.sort_label(tree);", "    var sort = sort_flag;"),
+    ("write: the sort flag does not win over the plan's", "frame.cho", "    if len(sort_flag) > 0 {\n        sort = sort_flag;", "    if len(sort_flag) > 77 {\n        sort = sort_flag;"),
+    ("write: a refused sort shows no label", "finish.cho", "    var shown = query.sort_label(tree);", "    var shown = flagged;"),
     ("write: select * alone is not --rows", "qtrans.cho", "if star && n_conds == 0 && n_orders == 0 && !grouped {", "if star && n_orders == 0 && !grouped {"),
     ("write: select * with an order is --rows", "qtrans.cho", "if star && n_conds == 0 && n_orders == 0 && !grouped {", "if star && n_conds == 0 && !grouped {"),
     # ---- the plan: --rows, the source, the conflicts

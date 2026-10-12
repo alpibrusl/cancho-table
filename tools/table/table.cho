@@ -126,6 +126,10 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
     let chunk = cli.nat(args, parsed, table, "chunk-bytes");
     let chunk_given = cli.has(parsed, table, "chunk-bytes");
     let min_bytes = cli.nat(args, parsed, table, "parallel-min-bytes");
+    var sort = "";
+    if cli.has(parsed, table, "sort") {
+        sort = cli.text(args, parsed, table, "sort");
+    }
     let filtering = query.count_of(tree, 1) > 0;
     let fast_ok = engine.fast_ok(tree);
     let ordering = query.count_of(tree, 4) > 0;
@@ -364,7 +368,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                     frame.drop(heap, made);
                                     borrow names as &nr in {
                                         borrow hends as &er in {
-                                            made = frame.prepare(heap, tree, nr, er, a[engine.k_columns()], mode, delim);
+                                            made = frame.prepare(heap, tree, nr, er, a[engine.k_columns()], mode, delim, sort);
                                         }
                                     }
                                     let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
@@ -658,6 +662,10 @@ fn read_stream[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
     let chunk = cli.nat(args, parsed, table, "chunk-bytes");
     let chunk_given = cli.has(parsed, table, "chunk-bytes");
     let min_bytes = cli.nat(args, parsed, table, "parallel-min-bytes");
+    var sort = "";
+    if cli.has(parsed, table, "sort") {
+        sort = cli.text(args, parsed, table, "sort");
+    }
     let filtering = query.count_of(tree, 1) > 0;
     let fast_ok = engine.fast_ok(tree);
     let ordering = query.count_of(tree, 4) > 0;
@@ -904,7 +912,7 @@ fn read_stream[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
                                     frame.drop(heap, made);
                                     borrow names as &nr in {
                                         borrow hends as &er in {
-                                            made = frame.prepare(heap, tree, nr, er, a[engine.k_columns()], mode, delim);
+                                            made = frame.prepare(heap, tree, nr, er, a[engine.k_columns()], mode, delim, sort);
                                         }
                                     }
                                     let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
@@ -1430,7 +1438,7 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7](heap: &!h He
         tree = t2;
         e = e2;
     }
-    if inp.has_sort {
+    if inp.has_sort && inp.has_query {
         tree = query.set_sort(heap, tree, sort_t);
     }
     let (root, after_root) = path.root(heap, args, inp.root_text, inp.root_at, e);

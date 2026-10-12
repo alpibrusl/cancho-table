@@ -87,8 +87,12 @@ fn put_label[&h, &d](heap: &!h Heap, head: buffer.Buffer, lead: buffer.Buffer, m
 
 // Resolve the plan against the header. `mode` is 1 for rows (a selection, a
 // filter or both), 2 for a grouping. The `--sort` value is the plan's (`query.sort_label`), or empty.
-pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n buffer.Buffer, ends: &e vec.Vec[int], columns: int, mode: int, delim: int) -> [heap] Frame {
-    let sort = query.sort_label(tree);
+pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n buffer.Buffer, ends: &e vec.Vec[int], columns: int, mode: int, delim: int, sort_flag: &static [byte]) -> [heap] Frame {
+    // the label of `--sort`: the flag's, or the plan's (a query's)
+    var sort = query.sort_label(tree);
+    if len(sort_flag) > 0 {
+        sort = sort_flag;
+    }
     var cols = box_slice(heap, query.name_count(tree) + 1, 0);
     var status = 0;
     var bad = 0;

@@ -65,7 +65,22 @@ pub fn from_flags[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [
     if source_at >= 0 && bytes.equal(arg(args, source_at), "-") {
         stdin = true;
     }
-    return Inputs { has_select: has_select, has_where: cli.has(parsed, table, "where"), has_group: cli.has(parsed, table, "group"), has_agg: cli.has(parsed, table, "agg"), has_order: cli.has(parsed, table, "order-by"), has_report: cli.has(parsed, table, "report"), has_sort: cli.has(parsed, table, "sort"), has_top: cli.has(parsed, table, "top"), has_limit: cli.has(parsed, table, "limit"), has_from: cli.has(parsed, table, "from"), has_query: cli.has(parsed, table, "query"), query_at: cli.value_index(parsed, table, "query"), query_whole: cli.value_is_whole(parsed, table, "query"), has_rows: cli.has(parsed, table, "rows"), src_file: false, select_text: cli.text(args, parsed, table, "select"), where_text: cli.text(args, parsed, table, "where"), group_text: cli.text(args, parsed, table, "group"), agg_text: cli.text(args, parsed, table, "agg"), order_text: cli.text(args, parsed, table, "order-by"), report_text: cli.text(args, parsed, table, "report"), sort_text: cli.text(args, parsed, table, "sort"), query_text: cli.text(args, parsed, table, "query"), root_text: cli.text(args, parsed, table, "root"), top_n: cli.nat(args, parsed, table, "top"), limit_n: cli.nat(args, parsed, table, "limit"), from_n: cli.nat(args, parsed, table, "from"), rows_n: cli.nat(args, parsed, table, "max-rows"), select_whole: select_at >= 0, select_at: select_at, root_at: cli.value_index(parsed, table, "root"), operands: cli.operand_count(parsed), source_at: source_at, stdin: stdin };
+    // Each lookup of a flag by name reads the table up to it, so what only a query or a sort needs is looked up when it was given, and the flags of a query are the last of the table.
+    let has_query = cli.has(parsed, table, "query");
+    var query_text = "";
+    var query_at = -1;
+    var query_whole = false;
+    if has_query {
+        query_text = cli.text(args, parsed, table, "query");
+        query_at = cli.value_index(parsed, table, "query");
+        query_whole = cli.value_is_whole(parsed, table, "query");
+    }
+    let has_sort = cli.has(parsed, table, "sort");
+    var sort_text = "";
+    if has_sort {
+        sort_text = cli.text(args, parsed, table, "sort");
+    }
+    return Inputs { has_select: has_select, has_where: cli.has(parsed, table, "where"), has_group: cli.has(parsed, table, "group"), has_agg: cli.has(parsed, table, "agg"), has_order: cli.has(parsed, table, "order-by"), has_report: cli.has(parsed, table, "report"), has_sort: has_sort, has_top: cli.has(parsed, table, "top"), has_limit: cli.has(parsed, table, "limit"), has_from: cli.has(parsed, table, "from"), has_query: has_query, query_at: query_at, query_whole: query_whole, has_rows: cli.has(parsed, table, "rows"), src_file: false, select_text: cli.text(args, parsed, table, "select"), where_text: cli.text(args, parsed, table, "where"), group_text: cli.text(args, parsed, table, "group"), agg_text: cli.text(args, parsed, table, "agg"), order_text: cli.text(args, parsed, table, "order-by"), report_text: cli.text(args, parsed, table, "report"), sort_text: sort_text, query_text: query_text, root_text: cli.text(args, parsed, table, "root"), top_n: cli.nat(args, parsed, table, "top"), limit_n: cli.nat(args, parsed, table, "limit"), from_n: cli.nat(args, parsed, table, "from"), rows_n: cli.nat(args, parsed, table, "max-rows"), select_whole: select_at >= 0, select_at: select_at, root_at: cli.value_index(parsed, table, "root"), operands: cli.operand_count(parsed), source_at: source_at, stdin: stdin };
 }
 
 // The plan's values as a query's translation gives them: what the query says replaces what the flags did not (a flag the query has no form for, `--top`, `--limit` or `--from` when the

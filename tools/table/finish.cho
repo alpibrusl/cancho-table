@@ -710,7 +710,12 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
         var w = fail.open_in(heap, extra(), "sort.unknown-key", "--sort names no output column of the grouping", "pick from detail.available, with a - before it to sort descending");
         w = fail.repair_none(heap, w, "which column was meant is not known");
         w = fail.detail_open(heap, w);
-        w = fail.detail_str(heap, w, "sort", query.sort_label(tree));
+        let flagged = cli.text(args, parsed, table, "sort");
+        var shown = query.sort_label(tree);
+        if len(flagged) > 0 {
+            shown = flagged;
+        }
+        w = fail.detail_str(heap, w, "sort", shown);
         w = json.put_key(heap, w, "available");
         w = json.begin_array(heap, w);
         var i = 0;
