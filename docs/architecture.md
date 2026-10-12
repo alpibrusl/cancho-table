@@ -30,7 +30,8 @@ How `table` is put together, and what its authority row says. Short on purpose: 
 | piece | what it does |
 |---|---|
 | contract package (`cancho-tools`, modules `cli`, `describe`, `fail`, `limit`, `lines`, `out`, `path`, `place`, `text`) | the parts every tool of the family shares: the flag table, `introspect` and `skill`, the `table.v2` envelope, rules and repairs, limits, the line reader, paths confined beneath `--root`. Pinned by commit in `cancho.toml`, installed by `cancho build` |
-| `tools/table/table.cho` | the flags, the sequential read loop, the answers |
+| `tools/table/table.cho` | the flags, the sequential read loop, the answers. `body` reads the plan only through one `Inputs` value (`inputs.cho`) |
+| `tools/table/inputs.cho` | the `Inputs` value: what the plan is made from (the columns, the condition, the grouping, the aggregates, the order, the cut and the page, the rows to read, the source), filled once from the flags; a later `--query` or a standard-input source fills the same value (`docs/query.md` Q0) |
 | `query.cho`, `plan.cho`, `expr.cho`, `frame.cho` | the plan: `--select`, `--where`, `--group` and `--agg` fill one `Query`; it is resolved against the header before any row is read, so a wrong column is refused at the cost of one line |
 | `reader.cho` | the RFC 4180 reader of its own: quotes, doubled quotes, newlines inside quotes, a byte order mark |
 | `engine.cho` | what is done with one row: counted, ragged (never used), kept by `--where`, then written or added to its group. Both reads call the same functions |
