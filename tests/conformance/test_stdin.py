@@ -14,6 +14,7 @@ Each of these is able to fail: scripts/stdin_mutants.py breaks the source in the
 """
 
 import csv
+import errno
 import io
 import json
 import os
@@ -212,7 +213,7 @@ class OneByteAtATime(Source):
 
 
 def edge_case(feature, inside, edge, rows_after=3):
-    """CSV text in which `feature` (whole rows) starts `inside` bytes before the byte offset `edge`, so that the 64 KiB reads cut it there."""
+    """CSV text in which `feature` (whole rows) starts `inside` bytes before the byte offset `edge`, so that the reads of the reader (bulk.ask) cut it there."""
     head = b"a,b,c\n"
     start = edge - inside
     pad = start - len(head)
@@ -234,9 +235,10 @@ FEATURES = {
 
 
 class ChunkEdge(Source):
-    def test_every_cut_of_every_feature_at_both_edges(self):
+    def test_every_cut_of_every_feature_at_every_edge(self):
+        # the reads of a pipe are 512, 512, 1,024, 2,048 ... 65,536 bytes and then 65,536 each (bulk.ask): the edges are the sums of those
         for name, feature in FEATURES.items():
-            for edge in (CHUNK, 2 * CHUNK):
+            for edge in (512, 1024, 4096, 32768, CHUNK, 2 * CHUNK, 3 * CHUNK):
                 for inside in range(1, len(feature)):
                     data = edge_case(feature, inside, edge)
                     for plan in (PLANS[0], PLANS[3], PLANS[7]):
@@ -637,34 +639,98 @@ class Bulk(Source):
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
-    def refusal(self, pre, plan=()):
-        p = subprocess.run([binary(), *plan], stdin=None, preexec_fn=pre, capture_output=True, timeout=60)
+    def test_a_page_is_answered_soon_after_its_last_row_from_a_producer_that_trickles(self):
+        # `read_bytes` waits until its buffer is full or the input ends, so a buffer of 64 KiB makes a page of three rows from a producer at 8 KB/s wait for
+        # the producer to have written 64 KiB (8 seconds), or for it to end. The reads start small and double (bulk.ask), so the answer waits for about twice the
+        # bytes the page needs. The producer here stops after 6 seconds: a reader that waits for 64 KiB answers when the producer ends.
+        p = subprocess.Popen([binary(), "--select", "a", "--limit", "3", "--format", "csv"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        line = lambda i: ("%d,%s,%d\n" % (i, "x" * 30, i)).encode()
+        p.stdin.write(b"a,b,c\n")
+        p.stdin.flush()
+        wrote = None
+        t0 = time.perf_counter()
+        try:
+            for i in range(1200):
+                p.stdin.write(line(i))
+                p.stdin.flush()
+                if i == 4:
+                    wrote = time.perf_counter()        # the header, three rows and the one past the page are written
+                time.sleep(0.005)
+                if p.poll() is not None:
+                    break
+        except BrokenPipeError:
+            pass
+        answered = p.poll() is not None
+        waited = time.perf_counter() - wrote
+        try:
+            p.stdin.close()
+        except BrokenPipeError:
+            pass
+        out = p.stdout.read()
+        p.wait()
+        self.assertEqual(out, b"a\n0\n1\n2\n")
+        print("\nstdin trickle: a page of 3 rows answered %.2f s after its last row was written" % waited, file=sys.stderr)
+        self.assertTrue(answered, "not answered while the producer was still writing")
+        self.assertLess(waited, 2.0)
+
+    def refusal(self, pre, plan=(), keep=()):
+        p = subprocess.run([binary(), *plan], stdin=None, preexec_fn=pre, capture_output=True, timeout=60, pass_fds=keep)
         self.assertNotIn(p.returncode, TRAPS)
         return p
 
     def test_a_descriptor_that_cannot_be_read_is_a_refusal_with_its_errno(self):
         os.makedirs(self.s.dir / "adir", exist_ok=True)
-        cases = {
-            "closed": (lambda: os.close(0), "io.read-failed", 9),
-            "write only": (lambda: os.dup2(os.open(str(self.s.dir / "wo"), os.O_WRONLY | os.O_CREAT), 0), "io.read-failed", 9),
-            "directory": (lambda: os.dup2(os.open(str(self.s.dir / "adir"), os.O_RDONLY), 0), "io.is-a-directory", 21),
-        }
-        codes = {c["code"]: c for c in introspect()["exit_codes"]}
-        for label, (pre, rule, errno) in cases.items():
-            p = self.refusal(pre)
-            self.assertNotEqual(p.returncode, 0, (label, p.stdout[:200]))
-            self.assertIn(p.returncode, codes, label)
-            doc = json.loads(p.stdout)
-            self.assertEqual((doc["ok"], doc["error"]["rule"], doc["error"]["detail"]["path"], doc["error"]["detail"]["errno"]), (False, rule, "-", errno), label)
-            # csv: the refusal is on standard error, as a file's is
-            q = self.refusal(pre, ["--select", "a", "--format", "csv"])
-            self.assertEqual(q.stdout, b"", label)
-            self.assertIn(b"table: " + rule.encode(), q.stderr, label)
-        # the controls: nothing to read is not a failure to read
-        for label, pre in (("/dev/null", lambda: os.dup2(os.open("/dev/null", os.O_RDONLY), 0)),):
+        codes = {c["code"] for c in introspect()["exit_codes"]}
+        pipe_r, pipe_w = os.pipe()
+        os.set_blocking(pipe_r, False)
+        full_r, full_w = os.pipe()
+        os.set_blocking(full_r, False)
+        os.write(full_w, b"a,b\n1,2\n")
+        try:
+            cases = {
+                "write only": (lambda: os.dup2(os.open(str(self.s.dir / "wo"), os.O_WRONLY | os.O_CREAT), 0), "io.read-failed", 9, (), False),
+                "directory": (lambda: os.dup2(os.open(str(self.s.dir / "adir"), os.O_RDONLY), 0), "io.is-a-directory", 21, (), False),
+                # nothing there yet on a pipe that does not wait: the read fails with EAGAIN (EWOULDBLOCK), which getchar could not tell from the end
+                "a pipe that does not wait, empty": (lambda: os.dup2(pipe_r, 0), "io.read-failed", errno.EAGAIN, (pipe_r,), False),
+                # the rows that arrived before the failure were read, and the failure is the answer
+                "a pipe that does not wait, with a record and no end": (lambda: os.dup2(full_r, 0), "io.read-failed", errno.EAGAIN, (full_r,), True),
+            }
+            for label, (pre, rule, number, keep, rows_first) in cases.items():
+                p = self.refusal(pre, keep=keep)
+                self.assertNotEqual(p.returncode, 0, (label, p.stdout[:200]))
+                self.assertIn(p.returncode, codes, label)
+                doc = json.loads(p.stdout)
+                self.assertEqual((doc["ok"], doc["error"]["rule"], doc["error"]["detail"]["path"], doc["error"]["detail"]["errno"]), (False, rule, "-", number), label)
+                if rows_first:
+                    self.assertEqual(doc["data"]["headers"], ["a", "b"], label)
+                # csv: the refusal is on standard error, as a file's is
+                q = self.refusal(pre, ["--select", "a", "--format", "csv"], keep=keep)
+                self.assertNotEqual(q.returncode, 0, label)
+                self.assertIn(b"table: " + rule.encode(), q.stderr, label)
+        finally:
+            for fd in (pipe_r, pipe_w, full_r, full_w):
+                os.close(fd)
+
+    def test_nothing_to_read_is_not_a_failure_to_read(self):
+        for label, pre in (("/dev/null", lambda: os.dup2(os.open("/dev/null", os.O_RDONLY), 0)),
+                           ("a closed descriptor", lambda: os.close(0))):
+            # A closed descriptor 0 is the empty input, as before the bulk read and not as `read_bytes` alone would say (`Failed(9)`): the empty file that
+            # `read_file` is typed with is opened before standard input is read, and an open takes the lowest free descriptor, which is 0. The program reads
+            # /dev/null and cannot know. (docs/readers.md 11.7; the fix is upstream, a `File` for descriptor 0.)
             p = self.refusal(pre)
             self.assertEqual(p.returncode, 0, label)
-            self.assertEqual(json.loads(p.stdout)["data"]["column_count"], 0)
+            self.assertEqual(json.loads(p.stdout)["data"]["column_count"], 0, label)
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("strace"), "needs Linux and strace")
+    def test_strace_a_closed_descriptor_is_the_stand_in_that_is_read(self):
+        d = tempfile.mkdtemp(prefix="table-")
+        try:
+            log = os.path.join(d, "trace")
+            subprocess.run(["strace", "-o", log, "-e", "trace=openat,read", binary()], stdin=None, preexec_fn=lambda: os.close(0), capture_output=True, timeout=60)
+            text = open(log).read()
+            self.assertRegex(text, r'openat\(AT_FDCWD, "/dev/null", O_RDONLY[^)]*\) = 0')
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
 
 class StreamLoop(unittest.TestCase):
@@ -704,8 +770,8 @@ class StreamLoop(unittest.TestCase):
         region = text[a:text.index("// END read_stream")]
         self.assertNotIn("par.run", region)
         self.assertNotIn("file_size", region)
-        self.assertIn("lines.fill_stdin", region)
-        self.assertNotIn("lines.fill_stdin", text[:a])
+        self.assertIn("bulk.fill_stdin", region)
+        self.assertNotIn("bulk.fill_stdin", text[:a])
         self.assertIn("par.run", text[:a])
 
 

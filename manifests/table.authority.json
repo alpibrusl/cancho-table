@@ -72,6 +72,8 @@
     "agg_count",
     "alphabet",
     "any_nul",
+    "any_nul",
+    "ask",
     "authority",
     "bare_tail",
     "base",
@@ -399,5 +401,5 @@
   ],
   "folded_operators": 123,
   "folded_calls": 0,
-  "functions": 636
+  "functions": 638
 }

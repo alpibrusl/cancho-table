@@ -11,7 +11,7 @@ each cost every one-thread read 9 to 37 instructions a row on x86-64 (`scripts/g
 the same loop with its text unchanged costs exactly the same as before. So `read_file` stays what it was, and the loop for a pipe is made from it mechanically:
 
   1. the name, and the row (it reads standard input, and starts no thread: `io_read` instead of `conc`, `fs_read` and `dir_read`);
-  2. where the loop refills its chunk it fills it from standard input (`lines.fill_stdin`, one `getchar` a byte) -- and, when the line being read is already longer than
+  2. where the loop refills its chunk it fills it from standard input (`bulk.fill_stdin`: `read_bytes`, 512 bytes first and doubling to 64 KiB) -- and, when the line being read is already longer than
      the largest `--max-line-bytes` there is and has no end in sight, from the empty file that stands in for the input, which says the input has ended: `lines` then answers
      the line as too long, with the length so far (a producer with no newline would otherwise be read forever);
   3. the partitioned read (several threads over byte ranges) is cut out: a pipe has no ranges. `--threads` is read and not used.
@@ -36,7 +36,7 @@ FILL_STDIN = """                var length = 0;
                 if length > finish.line_ceiling() {
                     r = lines.fill_file(r, file);
                 } else {
-                    r = lines.fill_stdin(heap, r, io);
+                    r = bulk.fill_stdin(r, io);
                 }
 """
 PAR_FROM = "                                // The rest of the file, by several threads, when that is asked for and\n"
@@ -64,7 +64,7 @@ def make(source):
     a = once(body, PAR_FROM)
     b = once(body, PAR_TO)
     body = body[:a] + body[b:]
-    note = ("// The read loop for standard input: `read_file` (above) with the refill from `getchar`, the partitioned read cut out and the row of a pipe. Called for the input `-`\n"
+    note = ("// The read loop for standard input: `read_file` (above) with the refill from `bulk.fill_stdin`, the partitioned read cut out and the row of a pipe. Called for the input `-`\n"
             "// or none (`read_any`); `file` is the empty file that stands in for the input, and is read only to say that the input has ended.\n")
     return BEGIN + note + body + "\n" + END
 

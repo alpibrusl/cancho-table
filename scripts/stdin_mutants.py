@@ -28,12 +28,20 @@ MUTANTS = [
     ("two inputs are not refused", "table.cho", "if inp.operands > 1 {", "if inp.operands > 2 {"),
     ("the file path reads standard input", "inputs.cho", "    var stdin = cli.operand_count(parsed) == 0;", "    var stdin = true;"),
     # how it is read
-    ("standard input is read and then the empty file's filler is called", "table.cho#stream", "r = lines.fill_stdin(heap, r, io);", "r = lines.fill_file(lines.fill_stdin(heap, r, io), file);"),
+    ("standard input is read and then the empty file's filler is called", "table.cho#stream", "r = bulk.fill_stdin(r, io);", "r = lines.fill_file(bulk.fill_stdin(r, io), file);"),
     ("standard input is told it is a file", "table.cho", 'opened, true, "-", "", "-", io, fs, delim', 'opened, false, "-", "", "-", io, fs, delim'),
     ("the file is told it is standard input", "table.cho", "opened, false, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim", "opened, true, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim"),
     ("the loop for standard input is not chosen", "table.cho", "    if stdin {\n        return read_stream(", "    if false {\n        return read_stream("),
     ("the empty file that stands in is not opened for standard input", "table.cho", 'match open_read(fs, "/dev/null") {', 'match open_read(fs, "/dev/zero") {'),
     ("an open failure of the stand-in is ignored", "table.cho", 'Opened::Failed(reason) => {\n                    e = fail.io_error(heap, e, reason, false, "-");\n                }', "Opened::Failed(reason) => {\n                }"),
+    # the bulk read (tools/table/bulk.cho: read_bytes of cancho #363)
+    ("the first read asks for the whole chunk", "bulk.cho", "if n < 512 {\n        n = 512;", "if n < 65536 {\n        n = 65536;"),
+    ("the reads never grow", "bulk.cho", "    var n = read;\n", "    var n = 512;\n"),
+    ("a read may ask for one byte more than the room", "bulk.cho", "if n > room {\n        n = room;", "if n > room + 1 {\n        n = room + 1;"),
+    ("the bytes of a short read are committed one short", "bulk.cho", "buffer.filled(cw, n);", "buffer.filled(cw, n - 1);"),
+    ("the errno of a failed read is lost", "bulk.cho", "                bad = reason;\n", "                bad = 0;\n"),
+    ("a failed read is the end of the input", "bulk.cho", "Read::Failed(reason) => {\n                e = true;\n                bad = reason;\n                if bad == 0 {\n                    bad = 5;\n                }\n            }", "Read::Failed(reason) => {\n                e = true;\n            }"),
+    ("the refill keeps the view of the last chunk", "bulk.cho", "viewing: false, view_from: 0, view_to: 0 }", "viewing: viewing, view_from: view_from, view_to: view_to }"),
     # how it is named
     ("a refusal names standard input as stdin", "table.cho", 'opened, true, "-", "", "-", io, fs, delim', 'opened, true, "stdin", "", "-", io, fs, delim'),
     ("a refusal names no path", "table.cho", 'opened, true, "-", "", "-", io, fs, delim', 'opened, true, "", "", "-", io, fs, delim'),
