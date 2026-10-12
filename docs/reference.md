@@ -16,9 +16,9 @@ outside that repository, on its `contract/` taken as a package.
 
 ```console
 $ table --root data orders.csv                       # the shape
-{"ok":true,"command":"table","schema":"table.v2","data":{"headers":["id","status","bytes","path","note"],"column_count":5,"row_count":1000000,"truncated":false},"meta":{"version":"0.2.0"}}
+{"ok":true,"command":"table","schema":"table.v2","data":{"headers":["id","status","bytes","path","note"],"column_count":5,"row_count":1000000,"truncated":false},"meta":{"version":"0.3.0"}}
 $ table --root data --select status,bytes --limit 2 orders.csv
-{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["status","bytes"],"rows":[["200","74606"],["200","33432"]],"row_count":2,"truncated":true,"next":{"from":2}},"meta":{"version":"0.2.0"}}
+{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["status","bytes"],"rows":[["200","74606"],["200","33432"]],"row_count":2,"truncated":true,"next":{"from":2}},"meta":{"version":"0.3.0"}}
 $ table --root data --select note,id --format csv orders.csv | head -3
 note,id
 "a,b 0",0
@@ -102,12 +102,13 @@ status,count,sum:bytes
   keeps these tools bounded.
 * **not yet all of the declarative core** the
   [design](https://github.com/alpibrusl/cancho-tools/blob/next-tools-design/docs/next-tools.md)
-  (section 5) plans. **Not built:** `mean` (an exact fixed-point mean needs a stated
-  rounding rule and a scale), `describe`, a second sort key, `or`, expressions and
-  functions in `--where` (the design excludes them from v1), decimals (a decimal in an
-  `:int` column is a refusal), and the same plan as one `--query` string. There is no
-  stdin, no type inference (a column is text unless `:int` says otherwise), no NDJSON
-  output, no join, no way to rename or compute a column.
+  (section 5) plans. **Not built:** `describe` (per-column count, distinct, min and max; `--report types`
+  counts what the cells are and nothing else), `or`, expressions and functions in `--where` (the design
+  excludes them from v1), and the same plan as one `--query` string. There is no stdin, no type inference
+  (a column is text unless `:int`, `:dec(S)` or `:float` says otherwise; `--report types` only suggests a
+  declaration), no NDJSON output, no JSON lines, no join, no way to rename or compute a column. `mean`,
+  exact decimals and floats, a sort by several keys and `--report types` are built (`docs/numbers.md`,
+  `docs/sort.md`).
 * not a validator of every CSV dialect: the delimiter is one of comma, tab or
   semicolon; a lone CR is a byte of a field, not a line break (Python's `csv`
   ends a record there; the two can differ on a file that is already damaged); a
@@ -146,8 +147,8 @@ sources **and the installed dependency sources** in `build/deps`, and with
 `--against DIR` checks that it is the same report the package's origin sources
 (`cancho-tools/contract`) give.
 
-The contract revision is `a636daa7` (which adds `extra_rules`). The compiler pin is
-`f8ebe98e6867e1b7af3a5636b180b56eb3dd3cc1`.
+The contract revision and the compiler pin are the ones in [`cancho.toml`](../cancho.toml)
+(`8dab9176e521` and `a4572ea3b506`).
 
 ## Gates
 
@@ -234,9 +235,9 @@ operations; one round was needed for a regression it introduced in the old ones,
 in [`docs/history.md`](history.md).
 
 What these numbers are not: a claim about every question. Everything here is one
-file, two integer columns and one low-cardinality group column; `table` does less than
-the incumbents (no types, one sort key, integers only: `csvtk summary` computes floats
-and `mlr` is a whole language). The `awk` and `uniq` rows are floors where CSV quoting
+file, two integer columns and one low-cardinality group column; `table` did less than
+the incumbents when this was measured (no types, one sort key, integers only: `csvtk summary` computes floats
+and `mlr` is a whole language); decimals, floats and several sort keys have been built since. The `awk` and `uniq` rows are floors where CSV quoting
 does not matter and are not equivalent on the quoted column; the `uniq` pipeline is
 three processes running in parallel on the Linux box's other cores, which is why it
 matches `table` there.
@@ -263,11 +264,15 @@ measured in the same document.
 ## Layout
 
 ```
-tools/table/        the program: table.cho (flags, the read, the answers), engine.cho (what is done
-                    with a row), scan.cho (a byte range), par.cho (threads), reader.cho
-                    (RFC 4180), writer.cho (csv and json fields), plan.cho (name lists),
-                    query.cho (the plan), expr.cho (--where), agg.cho (groups), frame.cho
-                    (the plan against the header)
+tools/table/        the program: table.cho (flags, the sequential read, the answers), inputs.cho (the plan's
+                    values, filled from the flags), plan.cho (name lists), query.cho (the plan), expr.cho
+                    (--where), frame.cho (the plan against the header), reader.cho (RFC 4180), engine.cho
+                    (what is done with a row), agg.cho and gmap.cho (groups), sorter.cho and psort.cho
+                    (--order-by, sequential and threaded), scan.cho and par.cho (--threads), dec.cho,
+                    flt.cho, facc.cho and pow5.cho (decimals, doubles, the exact float sum, the power
+                    table of the float reader), report.cho (--report types), writer.cho (csv and json
+                    fields)
+server/             mcp.cho, the MCP server (docs/mcp.md)
 docs/               select.md, filter.md, parallel.md (the designs), history.md (the measurements)
 generated/table/    the embedded manifest (written by scripts/manifest.py)
 manifests/          the authority, as the compiler reports it

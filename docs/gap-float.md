@@ -1,6 +1,6 @@
 # `table` and the 15 to 17 digit float column: an exact reader that does not go through a bignum (design, spike and patch; stage N3b)
 
-**Status: designed, spiked, and built as a patch on this branch (`tools/table/flt.cho`, `tools/table/pow5.cho`); not merged.** The gap is `docs/numbers.md` section 4.2 and
+**Status: designed, spiked, and built (`tools/table/flt.cho`, `tools/table/pow5.cho`); merged as #32.** (Below, "this branch" and "not merged" are as it was written.) The gap is `docs/numbers.md` section 4.2 and
 the "Floats" table of `docs/benchmarks.html`: a column of 17-digit doubles took 1.09 s to read with `min`/`max` (DuckDB: 0.208 s), and on macOS it got *slower* with threads.
 Everything here that is called *measured* was measured by the files in `scripts/spikes/float/` (listed in section 11) with the compiler the tool is pinned to
 (`a4572ea`, no change to `cancho` was needed or made). Numbers are the Apple M4 Max (16 cores, a shared machine: the load average was 6 to 15 in the per-cell runs and 16 to 26 in the final end-to-end run, and each table says which) 

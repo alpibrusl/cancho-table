@@ -29,7 +29,7 @@ rows (a `--where` alone returns every column). `--group` and/or `--agg`: groups
 EXPR   := COND { "and" COND }
 COND   := COLUMN OP VALUE | COLUMN "contains" VALUE | COLUMN "in" "(" VALUE { "," VALUE } ")"
 OP     := "=" | "!=" | "<" | "<=" | ">" | ">="
-COLUMN := WORD [":int" | ":dec(" N ")"]     a header name, or #N the Nth column; N is a scale, 0 to 18 (1-based)
+COLUMN := WORD [":int" | ":dec(" N ")" | ":float"]     a header name, or #N the Nth column (1-based); N is a scale, 0 to 18
 VALUE  := WORD
 WORD   := bare | 'quoted'
 ```
@@ -83,8 +83,8 @@ expression at the literal, not of a row. **Equal as numbers**: `1.5` and `1.50` 
 (`price:dec(2) = 1.5` matches both), while the same column without a suffix is text and they differ.
 `contains` on a typed column is a syntax error. **One numeric type per column in one plan**:
 `x:dec(2)` beside `x:int` or `x:dec(3)`, or beside `sum:x`, is `column.type-conflict` (exit 2) before a
-row is read; an unmarked mention is text and mixes freely. Not built yet (the stages after N1): typed
-aggregates, group keys and sort keys of a decimal, `:float`, the type report.
+row is read; an unmarked mention is text and mixes freely. The stages after N1 are built: typed
+aggregates, group keys and sort keys of a decimal, `:float` and the type report (below, and `docs/numbers.md`).
 
 **Empty cells.** In a text comparison an empty cell is the empty string (`name = ''`
 works). In an `:int` condition an empty cell **is not an integer: it is refused**, not
@@ -106,7 +106,7 @@ the offset of each.
 ## Groups
 
 `--group NAMES` (a list like `--select`'s) and `--agg LIST`, items `count`, `sum:COL`,
-`min:COL`, `max:COL`, `distinct:COL` separated by commas (default `count`). `COL` is a
+`min:COL`, `max:COL`, `mean:COL[@N]`, `distinct:COL` separated by commas (default `count`). `COL` is a
 name or `#N`; a name with a comma is written `\,` as in a list. `sum`, `min` and `max`
 read their cell as an exact integer (same refusals, with `context` naming the
 function). **A sum is exact whatever its width: it is a pair of integers** (the low 32 bits of every cell in

@@ -6,7 +6,7 @@ Two trees were measured, and **every number in this document says which**:
   `lex-sys-static-sig` compiler, db7d5bc), branch `gap-scan-design` of that clone. The design study: the reproduction, the profile, the
   kernels, the block scan, the speculation first written, the rejected variants. Those numbers are valid for that tree and compiler.
 * **tree B**, section 11: `alpibrusl/cancho-table` `origin/main` at 7d04b9f (sources `.cho`, compiler cancho a4572ea, the pin of
-  `cancho.toml`) with this PR on top. The speculation and the production-safe range sizing were **ported** to it and gated there; the
+  `cancho.toml`) with this PR on top (merged as #34). The speculation and the production-safe range sizing were **ported** to it and gated there; the
   numbers of the PR are the ones of section 11. The block scan (section 4.4) is **not** in this PR: it needs two compiler builtins that do
   not exist (the patches stay in `scripts/spikes/scan/`, written against tree A, and do not apply to tree B as they are).
 

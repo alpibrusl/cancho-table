@@ -1,6 +1,6 @@
 # `table --order-by` on several threads: the gap, the design, two spikes, and where Amdahl stops it
 
-`--order-by` reads and sorts on one core: `--threads N` was accepted and gave the same bytes sequentially (`docs/sort.md`).
+`--order-by` read and sorted on one core: `--threads N` was accepted and gave the same bytes sequentially (`docs/sort.md`). (A whole sort written as CSV is threaded since this was merged as #33, `psort.cho`; a page, `--top` and JSON output are still sequential.)
 Against DuckDB on 16 cores that is the one loss of the sort benchmark (`docs/benchmarks.html`, "Sorting rows"): 1M rows by a
 text key in 0.483 s against 0.143 s, an integer key 0.413 against 0.123, an integer key with ties 0.487 against 0.125; and
 on Linux `sort` is 1.04x to 1.45x faster. This document is the design that closes most of it, and two spikes that measure it:
