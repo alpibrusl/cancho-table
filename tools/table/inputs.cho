@@ -1,0 +1,51 @@
+edition 5;
+
+module inputs;
+
+import toolbox.cli;
+
+// The plan's values as the flags give them (docs/query.md, Q0): the columns, the condition, the grouping, the aggregates, the sort, the order, the cut and the page,
+// the rows to read and the source, which `body` reads through this one value and not flag by flag. A later `--query` fills the same value from a query's translation, so
+// what `body` checks and builds from does not depend on where the values came from. The text fields are the flags' own (empty when the flag is not given), and `has_*` says
+// whether it was given.
+pub struct Inputs {
+    has_select: bool,
+    has_where: bool,
+    has_group: bool,
+    has_agg: bool,
+    has_order: bool,
+    has_report: bool,
+    has_sort: bool,
+    has_top: bool,
+    has_limit: bool,
+    has_from: bool,
+    select_text: &static [byte],
+    where_text: &static [byte],
+    group_text: &static [byte],
+    agg_text: &static [byte],
+    order_text: &static [byte],
+    report_text: &static [byte],
+    root_text: &static [byte],
+    top_n: int,
+    limit_n: int,
+    from_n: int,
+    rows_n: int,
+    select_whole: bool,
+    select_at: int,
+    root_at: int,
+    operands: int,
+    source_at: int,
+}
+
+pub fn from_flags[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [byte]) -> [args] Inputs {
+    var source_at = -1;
+    if cli.operand_count(parsed) > 0 {
+        source_at = cli.operand_index(parsed, 0);
+    }
+    let has_select = cli.has(parsed, table, "select");
+    var select_at = -1;
+    if has_select && cli.value_is_whole(parsed, table, "select") {
+        select_at = cli.value_index(parsed, table, "select");
+    }
+    return Inputs { has_select: has_select, has_where: cli.has(parsed, table, "where"), has_group: cli.has(parsed, table, "group"), has_agg: cli.has(parsed, table, "agg"), has_order: cli.has(parsed, table, "order-by"), has_report: cli.has(parsed, table, "report"), has_sort: cli.has(parsed, table, "sort"), has_top: cli.has(parsed, table, "top"), has_limit: cli.has(parsed, table, "limit"), has_from: cli.has(parsed, table, "from"), select_text: cli.text(args, parsed, table, "select"), where_text: cli.text(args, parsed, table, "where"), group_text: cli.text(args, parsed, table, "group"), agg_text: cli.text(args, parsed, table, "agg"), order_text: cli.text(args, parsed, table, "order-by"), report_text: cli.text(args, parsed, table, "report"), root_text: cli.text(args, parsed, table, "root"), top_n: cli.nat(args, parsed, table, "top"), limit_n: cli.nat(args, parsed, table, "limit"), from_n: cli.nat(args, parsed, table, "from"), rows_n: cli.nat(args, parsed, table, "max-rows"), select_whole: select_at >= 0, select_at: select_at, root_at: cli.value_index(parsed, table, "root"), operands: cli.operand_count(parsed), source_at: source_at };
+}
