@@ -20,7 +20,7 @@ MUTANTS = [
     ("body reads --group again", "table.cho", "let has_group = inp.has_group;", 'let has_group = cli.has(parsed, table, "group");'),
     ("body reads --agg again", "table.cho", "let has_agg = inp.has_agg;", 'let has_agg = cli.has(parsed, table, "agg");'),
     ("body reads --order-by again", "table.cho", "let has_order = inp.has_order;", 'let has_order = cli.has(parsed, table, "order-by");'),
-    ("body reads the operands again", "table.cho", "if inp.operands == 0 {", "if cli.operand_count(parsed) == 0 {"),
+    ("body reads the operands again", "table.cho", "if inp.operands > 1 {", "if cli.operand_count(parsed) > 1 {"),
     ("body reads --limit again", "table.cho", "limit = inp.limit_n;", 'limit = cli.nat(args, parsed, table, "limit");'),
     ("body reads the root again", "table.cho", "path.root(heap, args, inp.root_text, inp.root_at, e)", 'path.root(heap, args, cli.text(args, parsed, table, "root"), inp.root_at, e)'),
     ("the inputs do not read --top", "inputs.cho", 'top_n: cli.nat(args, parsed, table, "top")', "top_n: 0"),

@@ -108,7 +108,6 @@ class Rules(unittest.TestCase):
             ("args.duplicate-flag", root + ["--max-rows", "1", "--max-rows", "2", "ok.csv"], None),
             ("args.conflict", root + ["--select", "a", "--format", "text", "ok.csv"], None),
             ("args.required-flag", root + ["--limit", "3", "ok.csv"], None),
-            ("args.missing-operand", root, None),
             ("args.too-many-operands", root + ["ok.csv", "ok.csv"], None),
             ("path.empty", root + [""], None),
             ("path.dotdot", root + ["sub/../ok.csv"], None),
@@ -169,7 +168,7 @@ class Rules(unittest.TestCase):
         try:
             for rule, argv, preexec in self.fixtures(s):
                 import subprocess
-                p = subprocess.run([binary(), *[str(a) for a in argv]], capture_output=True, preexec_fn=preexec)
+                p = subprocess.run([binary(), *[str(a) for a in argv]], capture_output=True, preexec_fn=preexec, input=b"")
                 import json
                 try:
                     errs = json.loads(p.stdout).get("errors", [])

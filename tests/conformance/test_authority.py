@@ -1,5 +1,5 @@
 """M6 -- the authority the binary carries is the compiler's report, within the
-ceiling in tools.toml, with nothing a reader of one file has no use for; and
+ceiling in tools.toml, with nothing a reader of one file or of standard input has no use for; and
 on Linux the process does what the report says under strace."""
 
 import json
@@ -15,9 +15,9 @@ import unittest
 from harness import ROOT, binary, introspect
 
 FORBIDDEN = {"ffi", "net_out", "net_in", "clock"}
-# What a tool that reads one file and writes one document may hold; a label
+# What a tool that reads one file or standard input and writes one document may hold; a label
 # beyond these has to be argued for in tools.toml, and not by this test.
-NEEDS = {"args", "conc", "dir_read", "err_write", "file_read", "fs_read", "heap", "io_write"}
+NEEDS = {"args", "conc", "dir_read", "err_write", "file_read", "fs_read", "heap", "io_read", "io_write"}
 
 
 def label_text(label):
@@ -55,7 +55,7 @@ class Authority(unittest.TestCase):
             with open(os.path.join(d, "f.csv"), "w") as f:
                 f.write('a,b\n1,"x\ny"\n')
             log = os.path.join(d, "trace")
-            subprocess.run(["strace", "-f", "-o", log, binary(), "--root", d, "f.csv"], capture_output=True, check=True)
+            subprocess.run(["strace", "-f", "-o", log, binary(), "--root", d, "f.csv"], capture_output=True, check=True, input=b"")
             text = open(log).read()
             for call in ("socket(", "connect(", "bind(", "sendto(", "clock_gettime(CLOCK_REALTIME", "unlink", "rename", "mkdir", "ftruncate"):
                 self.assertNotIn(call, text, call)

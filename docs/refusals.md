@@ -84,7 +84,6 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `args.duplicate-flag` | 2 | never | the same flag was given twice |
 | `args.conflict` | 2 | never | two flags that exclude each other were both given |
 | `args.required-flag` | 2 | never | a flag the tool needs was not given |
-| `args.missing-operand` | 2 | never | an operand the tool needs was not given |
 | `args.too-many-operands` | 2 | never | more operands than the tool takes |
 | `path.empty` | 2 | never | an empty path |
 | `path.dotdot` | 2 | sometimes | a path with a `..` component |

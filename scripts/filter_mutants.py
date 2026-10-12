@@ -64,14 +64,14 @@ MUTANTS = [
     ("a full page holds one row more with --where", "engine.cho", "    if a[k_emitted()] >= limit {\n        // The page is full and this row matches: there is more.", "    if a[k_emitted()] > limit {\n        // The page is full and this row matches: there is more."),
     ("the next of a filtered page is one past", "engine.cho", "        a[k_next()] = a[k_records()] - 1;\n        a[k_stop()] = 1;\n        return (rows, scratch, e2, k2);", "        a[k_next()] = a[k_records()];\n        a[k_stop()] = 1;\n        return (rows, scratch, e2, k2);"),
     ("a page is declared full at a row that does not match", "table.cho", "mode == 1 && !filtering && a[engine.k_records()] >= from", "mode == 1 && a[engine.k_records()] >= from"),
-    ("--top is ignored", "table.cho", "            if top > 0 && top < n {", "            if top > n {"),
-    ("the byte budget of a json page of groups is not kept", "table.cho", "                                if have + need + 1 > budget {\n                                    going = false;", "                                if have + need + 1 > budget + 1000000 {\n                                    going = false;"),
-    ("the number of groups is not reported", "table.cho", "    a[engine.k_groups()] = n;", "    a[engine.k_groups()] = 0;"),
+    ("--top is ignored", "finish.cho", "            if top > 0 && top < n {", "            if top > n {"),
+    ("the byte budget of a json page of groups is not kept", "finish.cho", "                                if have + need + 1 > budget {\n                                    going = false;", "                                if have + need + 1 > budget + 1000000 {\n                                    going = false;"),
+    ("the number of groups is not reported", "finish.cho", "    a[engine.k_groups()] = n;", "    a[engine.k_groups()] = 0;"),
     ("--select and --group do not conflict", "table.cho", "    if grouped && has_select {", "    if false && grouped && has_select {"),
     ("the row of a refused cell is one low", "engine.cho", "    a[k_err_fn()] = -1;\n    a[k_err_row()] = a[k_records()];", "    a[k_err_fn()] = -1;\n    a[k_err_row()] = a[k_records()] - 1;"),
     ("the row of a refused aggregate cell is one low", "engine.cho", "    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return column;", "    a[k_err_row()] = a[k_records()] - 1;\n    a[k_err_line()] = opened;\n    return column;"),
     ("a refused value is kept whole", "engine.cho", "    if last - first > 64 {", "    if last - first > 6400 {"),
-    ("every unknown name is in --select", "table.cho", "            } else if c.bad_name >= ns + nw + ng {", "            } else if c.bad_name >= ns + nw + ng + 5 {"),
+    ("every unknown name is in --select", "finish.cho", "            } else if c.bad_name >= ns + nw + ng {", "            } else if c.bad_name >= ns + nw + ng + 5 {"),
     ("a grouping with no --agg counts nothing", "table.cho", "            tree = query.add_agg(heap, tree, 0, -1, 0, 0);", "            tree = query.add_agg(heap, tree, 1, 0, 1, 0);"),
 ]
 

@@ -40,9 +40,13 @@ tools/call {"name": "table", "arguments": {"file": "data.csv", "select": "id,byt
   and the tool's is the one with a test suite (M8): what the server guarantees is that the root it
   passes is its own and that the path reaches the tool as one argument. `test_dotdot_absolute_and_links_are_refused_with_their_rules`
   sends 14 forms and checks the answer is the CLI's and that the secret file's content is nowhere in it.
-* **Standard input is empty.** `table` reads a file; the server gives the child an empty input, so a
-  tool that read standard input unasked would see its end at once. (The input schema has no `stdin`:
-  the generator refuses a tool whose authority has `io_read`.)
+* **Standard input is empty.** The server gives the child an empty input, and the input schema has no `stdin`.
+  `table` reads standard input when its operand is `-` or absent (docs/readers.md section 3), so its authority has
+  `io_read`; the generator accepts that for a tool whose one operand is optional, and requires the operand of every
+  call (`file`, in `required`, `file|1|1` in the generated table): a call that names no file does not reach the tool.
+  A call that names the file `-` reaches the tool's standard input, which is empty, and gets the empty table's answer
+  (`headers: []`); the property's description says that the input is always a file. A generator still refuses a tool
+  that reads standard input and has no optional operand.
 
 ## 2. What comes back
 
@@ -370,9 +374,10 @@ one-off, and what it found is below):
   `[[bin]]` and a second directory entry, but `Exec` is narrowed to one directory, so both binaries live in it.
 * **Constraints between flags** (§3) would let the server refuse a bad combination before the process starts and
   document the forms in the schema; they need `introspect` to carry them, and the parser to read the same table.
-* **A tool that reads standard input** is refused by the generator today. cancho-tools' server handles `stdin` as a
-  property (and `--stdin`); the code is there in the copy and removed from the generated table. A reader of
-  standard input (`table -` or a pipe) would put it back.
+* **A `stdin` property for a tool that reads standard input.** cancho-tools' server handles `stdin` as a property (and
+  `--stdin`); the code is there in the copy and the generated table leaves it empty. `table` now reads standard
+  input (docs/readers.md, R1), and the server still offers it a file only: giving an agent a way to send the bytes of
+  a table in the call is a change of what the server offers, not of what `table` does, and is not part of R1.
 * **A result that is not UTF-8** is lossy in `csv`/`text` mode (§2). If the query design adds raw output modes,
   the answer for MCP is base64 in the JSON document or a refusal, not text.
 

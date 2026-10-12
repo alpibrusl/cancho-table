@@ -403,7 +403,7 @@ class Threads(Base):
         self.s.write("t.csv", data)
         log = str(self.s.dir / "strace.log")
         for flags, want_threads in (([], False), (["--threads", "4", "--chunk-bytes", "4096", "--parallel-min-bytes", "0"], True)):
-            subprocess.run(["strace", "-f", "-e", "trace=clone,clone3", "-o", log, binary(), "--root", str(self.s.dir), "--report", "types", "--format", "csv", *flags, "t.csv"], capture_output=True, check=True)
+            subprocess.run(["strace", "-f", "-e", "trace=clone,clone3", "-o", log, binary(), "--root", str(self.s.dir), "--report", "types", "--format", "csv", *flags, "t.csv"], capture_output=True, check=True, input=b"")
             text = open(log).read()
             started = len([l for l in text.splitlines() if "CLONE_THREAD" in l and "= " in l and "= -1" not in l])
             self.assertEqual(started > 0, want_threads, (flags, started))

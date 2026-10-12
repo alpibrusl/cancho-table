@@ -122,24 +122,32 @@ def definition(d):
         prop = f["name"][2:]
         props[prop] = schema_of_flag(f, ceiling)
         flags.append((prop, f["name"], "bool" if f["kind"] == "bool" else "nat" if f["kind"] == "nat" else "text"))
+    # A tool that reads standard input when its operand is absent or `-` (table, docs/readers.md section 3): the server gives the child an empty input and
+    # offers no `stdin` property (docs/mcp.md section 1), so for the server that operand is required, as it was before the tool read standard input, and the
+    # property says so. A tool that reads standard input and has no such operand is still refused: nothing here would tell a caller what its input is.
+    reads_stdin = "io_read" in d["authority"]["effects"]
+    if reads_stdin and not any(o["min"] == 0 and o["max"] == 1 for o in d["operands"]):
+        sys.exit("mcp: %s reads standard input, which this generator does not offer" % name)
     for o in d["operands"]:
         prop = property_of_operand(o["name"])
         if prop in props:
             sys.exit("mcp: %s's operand %s and a flag are both `%s`" % (name, o["name"], prop))
+        least = 1 if reads_stdin and o["min"] == 0 and o["max"] == 1 else o["min"]
+        helptext = o["help"]
+        if least != o["min"]:
+            helptext += " Through this server the input is always a file (its standard input is empty), so name one."
         if o["max"] == 1:
-            s = {"type": "string", "description": o["help"]}
+            s = {"type": "string", "description": helptext}
         else:
-            s = {"type": "array", "items": {"type": "string"}, "description": o["help"]}
-            if o["min"] > 0:
-                s["minItems"] = o["min"]
+            s = {"type": "array", "items": {"type": "string"}, "description": helptext}
+            if least > 0:
+                s["minItems"] = least
             if o["max"] is not None:
                 s["maxItems"] = o["max"]
         props[prop] = s
-        if o["min"] > 0:
+        if least > 0:
             required.append(prop)
-        operands.append((prop, o["min"], "" if o["max"] is None else o["max"]))
-    if "io_read" in d["authority"]["effects"]:
-        sys.exit("mcp: %s reads standard input, which this generator does not offer" % name)
+        operands.append((prop, least, "" if o["max"] is None else o["max"]))
     for table in (flags, operands):
         for row in table:
             for field in row:

@@ -147,7 +147,7 @@ otherwise said to be inferred.
 5. ~~**Decimals and floats**~~ (done, `docs/numbers.md` stages N0p to N6: `:dec(S)` and `:float` in `--where`, `--agg`, `--group` and `--order-by`; exact `sum` and `mean` of both; `agg.float-overflow`; the exact float reader, #32).
 6. ~~**A second sort key**~~ (done: `--order-by a,-b:int`, `docs/sort.md`), and **`or` in `--where`** (not built; the grammar is the thing to keep unambiguous).
 7. ~~**Type inference** as a *report*~~ never as a silent coercion (done: `--report types`, `docs/numbers.md` 5.2 and N6).
-8. **stdin** as an input.
+8. ~~**stdin** as an input.~~ **Built** (stage R1 of `docs/readers.md`, section 11): `table -` and `table` with no file, one pass on one core, read with `read_bytes` (cancho #363, merged), a pipe within a few percent of the file's time on one core.
 9. **Joins**, a hash join with the build side bounded by `--max-state-bytes` and a refusal past it. This is the first
    feature where DuckDB's shape is the model; it needs its own design, the memory bound is the whole difficulty.
 10. **Parquet, a read-only subset**: plain, dictionary and run-length encodings, uncompressed and snappy only; every

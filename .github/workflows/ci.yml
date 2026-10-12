@@ -65,6 +65,12 @@ jobs:
         working-directory: table
         run: cancho build
 
+      # The loop that reads standard input is the loop that reads a file, made mechanically (scripts/stream.py): the file loop is the one whose cost is held to
+      # main's, so it is not edited to serve a pipe.
+      - name: The read loop for standard input is the file loop's copy
+        working-directory: table
+        run: python3 scripts/stream.py --check
+
       - name: Schemas are generated, not edited
         working-directory: table
         run: python3 scripts/schemas.py --check
@@ -90,7 +96,7 @@ jobs:
       - name: The mutants still apply
         working-directory: table
         run: |
-          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs; do python3 scripts/${m}_mutants.py --check; done
+          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin; do python3 scripts/${m}_mutants.py --check; done
 
       - name: Conformance gates (differential against Python's csv, rules, limits, memory, authority)
         working-directory: table
@@ -107,3 +113,8 @@ jobs:
       - name: The benchmark script runs
         working-directory: table
         run: python3 scripts/bench.py --rows 20000 --runs 1
+
+      # The same, for standard input: no csvtk, duckdb or floor binary here, so only the pipelines of `table` run.
+      - name: The standard-input benchmark script runs
+        working-directory: table
+        run: python3 scripts/bench_stdin.py --rows 20000 --runs 1 --file build/bench/data_stdin.csv

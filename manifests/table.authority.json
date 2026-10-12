@@ -9,6 +9,7 @@
     "file_read",
     "fs_read",
     "heap",
+    "io_read",
     "io_write"
   ],
   "labels": [
@@ -48,10 +49,21 @@
       "bounded": true
     },
     {
+      "name": "io_read",
+      "argument": null,
+      "bounded": true
+    },
+    {
       "name": "io_write",
       "argument": null,
       "bounded": true
     }
+  ],
+  "never_touches": [
+    "the network",
+    "signals",
+    "other programs",
+    "foreign code"
   ],
   "foreign_symbols": [],
   "pure": [
@@ -60,6 +72,8 @@
     "agg_count",
     "alphabet",
     "any_nul",
+    "any_nul",
+    "ask",
     "authority",
     "bare_tail",
     "base",
@@ -151,6 +165,7 @@
     "finish",
     "first",
     "fits",
+    "flag_table",
     "flag_table",
     "float_add",
     "float_of_key",
@@ -386,5 +401,5 @@
   ],
   "folded_operators": 123,
   "folded_calls": 0,
-  "functions": 631
+  "functions": 638
 }

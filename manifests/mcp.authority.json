@@ -71,6 +71,12 @@
       "bounded": true
     }
   ],
+  "never_touches": [
+    "the filesystem",
+    "the network",
+    "signals",
+    "foreign code"
+  ],
   "foreign_symbols": [],
   "pure": [
     "a_or_an",

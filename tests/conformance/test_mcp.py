@@ -347,10 +347,10 @@ class Schema(unittest.TestCase):
             else:
                 self.fail("a flag kind this test does not know: %s" % f["kind"])
         self.assertEqual(kinds_seen, {"nat", "text", "choice"})
-        # The operand: one FILE, required.
+        # The operand: one FILE, required of a caller of the server (the tool's own is optional, for standard input, which the server does not offer: its description says so).
         [operand] = d["operands"]
-        self.assertEqual((operand["name"], operand["min"], operand["max"]), ("FILE", 1, 1))
-        self.assertEqual(props["file"], {"type": "string", "description": operand["help"]})
+        self.assertEqual((operand["name"], operand["min"], operand["max"]), ("FILE", 0, 1))
+        self.assertEqual(props["file"], {"type": "string", "description": operand["help"] + " Through this server the input is always a file (its standard input is empty), so name one."})
         self.assertEqual(s["required"], ["file"])
         # The strings the model has to write are documented from introspect's help, in the schema.
         for name in ("where", "select", "agg", "sort", "order-by", "group"):
@@ -383,7 +383,7 @@ class Schema(unittest.TestCase):
             if (ROOT / "build" / "deps").is_dir():
                 (scratch / "build").mkdir()
                 shutil.copytree(ROOT / "build" / "deps", scratch / "build" / "deps")
-            src = scratch / "tools" / "table" / "table.cho"
+            src = scratch / "tools" / "table" / "spec.cho"
             text = src.read_text()
             edits = [
                 ("top||nat|none||", "top||bool|none||"),                                                   # nat -> bool
@@ -1031,8 +1031,19 @@ class Own(unittest.TestCase):
         # A tool that reads standard input, or an operand named like a flag, is not offered silently.
         d = json.loads(json.dumps(introspect()))
         d["authority"]["effects"].append("io_read")
+        d["operands"][0]["min"] = 1
         with self.assertRaises(SystemExit):
             mcp.definition(d)
+        # A tool that reads standard input only when its one operand is absent or `-` (table, docs/readers.md section 3) is offered as it was: the server gives it
+        # an empty input and offers no `stdin`, so the operand is required of a caller, whatever the tool's own minimum.
+        d = json.loads(json.dumps(introspect()))
+        self.assertIn("io_read", d["authority"]["effects"])
+        self.assertEqual(d["operands"][0]["min"], 0)
+        entry, tables, props = mcp.definition(d)
+        self.assertEqual(entry["inputSchema"]["required"], ["file"])
+        self.assertEqual(tables["operands"], "file|1|1")
+        self.assertEqual(tables["stdin"], "")
+        self.assertNotIn("stdin", props)
         d = json.loads(json.dumps(introspect()))
         d["operands"][0]["name"] = "LIMIT"
         with self.assertRaises(SystemExit):

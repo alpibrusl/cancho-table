@@ -1,0 +1,72 @@
+edition 9;
+
+module bulk;
+
+// The refill of the reader from standard input, in bulk (docs/readers.md 11.7): `read_bytes` of cancho PR #363 (edition 9, label `io_read`), which is `fread` on the
+// stream `getchar` reads, answering `file_read`'s three ways: `Got(n)` (the buffer is full unless the input ended inside it), `End`, and `Failed(errno)`.
+//
+// The contract's `lines.fill_stdin` is this refill one byte at a time (`getchar`: a libc call per byte, 12.7 ns on the Mac), and `lines` belongs to cancho-tools, whose
+// modules are all edition 5. A reader's refill needs the reader's fields and nothing else, so this is a copy of `lines.fill_file` with the call of the file replaced, as
+// `scan.fill_at` is one with a read at an offset. `Failed(errno)` is kept (the reader's `failed`, which `finish.explain` turns into an `io.*` rule naming `-`):
+// `getchar` could not tell a read error from the end.
+
+import std.buffer;
+import toolbox.lines;
+
+// How much to ask for. `read_bytes` answers when its buffer is full or the input has ended, so a producer that writes a little and waits is waited for until the
+// buffer fills, and a buffer of 64 KiB makes a page of three rows from a producer at 8 KB/s wait eight seconds (the gate `Bulk.test_a_page_is_answered_soon...`).
+// The first read asks for 512 bytes and each asks for as many as have been read so far (512, 512, 1,024, 2,048, ... 65,536), the room of the chunk at most: the wait for
+// bytes the page does not need is at most the bytes it did, and a steady reader reaches 64 KiB reads after 64 KiB, with the 9 reads of the first 64 KiB as the whole cost
+// (docs/readers.md 11.7). It cannot help a producer that stops: that is waited for until it writes again or ends, as `getchar` waited (it filled 64 KiB a time).
+fn ask(read: int, room: int) -> [] int {
+    var n = read;
+    if n < 512 {
+        n = 512;
+    }
+    if n > room {
+        n = room;
+    }
+    return n;
+}
+
+fn any_nul[&d](data: &d [byte]) -> [] bool {
+    return index_of_byte(data, byte_of(0)) >= 0;
+}
+
+// Refill from standard input. Call only after `lines.next` answered `need`.
+pub fn fill_stdin[&i](r: lines.Lines, io: &!i Io) -> [io_read] lines.Lines {
+    let lines.Lines { chunk, pos, held, cap, seen, begin, count, over, ended, newline, ready, read, nul, failed, viewing, view_from, view_to } = r;
+    var c = chunk;
+    var e = ended;
+    var got = 0;
+    var bad = failed;
+    var z = nul;
+    borrow mut c as &!cw in {
+        buffer.clear(cw);
+        let room = buffer.room(cw);
+        match read_bytes(io, room[0..ask(read, len(room))]) {
+            Read::Got(n) => {
+                buffer.filled(cw, n);
+                got = n;
+            }
+            Read::End => {
+                e = true;
+            }
+            Read::Failed(reason) => {
+                e = true;
+                bad = reason;
+                if bad == 0 {
+                    bad = 5;
+                }
+            }
+        }
+    }
+    if got > 0 {
+        borrow c as &cr in {
+            if any_nul(buffer.bytes(cr)) {
+                z = true;
+            }
+        }
+    }
+    return lines.Lines { chunk: c, pos: 0, held: held, cap: cap, seen: seen, begin: begin, count: count, over: over, ended: e, newline: newline, ready: ready, read: read + got, nul: z, failed: bad, viewing: false, view_from: 0, view_to: 0 };
+}
