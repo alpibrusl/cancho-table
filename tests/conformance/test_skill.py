@@ -42,6 +42,7 @@ HELP_EXAMPLES = {
     "from": [("--from 1000", ["--select", "host"]), ("--from 2000", ["--select", "host"])],
     "report": [("--report types", []), ("--report types --select price,bytes --where 'status = 404'", [])],
     "order-by": [("--order-by -bytes:int", []), ("--order-by status,-bytes:int", []), ("--order-by '-price:dec(2)'", [])],
+    "query": [("--query \"select host, count(*) group by host order by count(*) desc\"", []), ("--query \"select host, bytes where status = 404 order by bytes::int desc limit 5\"", [])],
 }
 
 # One value per flag, valid for sales.csv, to put a flag into an invocation.
@@ -51,6 +52,7 @@ SAMPLE = {
     "--top": "1", "--limit": "1", "--from": "0", "--max-bytes": "100000", "--max-sort-rows": "100",
     "--max-groups": "100", "--max-distinct": "100", "--max-state-bytes": "100000", "--threads": "1",
     "--report": "types", "--chunk-bytes": "100000", "--parallel-min-bytes": "100000", "--format": "json",
+    "--query": "select host, count(*) group by host",
 }
 REFUSALS = {"args.conflict", "args.required-flag"}
 # What each form's line in the usage lists: the flags the code takes for the form and does something with
@@ -62,8 +64,10 @@ FORM_FLAGS = {
     "rows": COMMON | PAGED | {"--select", "--where", "--order-by", "--max-sort-rows"},
     "groups": COMMON | PAGED | {"--group", "--agg", "--where", "--sort", "--max-groups", "--max-distinct"},
     "report": (COMMON | PAGED | {"--report", "--select", "--where"}) - {"--top"},
+    "all": COMMON | (PAGED - {"--top", "--max-state-bytes"}) | {"--rows"},
+    "query": COMMON | PAGED | {"--query", "--max-sort-rows", "--max-groups", "--max-distinct"},
 }
-FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"]}
+FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"], "all": ["--rows"], "query": ["--query", "select host, count(*) group by host"]}
 
 
 def usage_lines():
@@ -71,7 +75,7 @@ def usage_lines():
     text = introspect()["usage"]
     forms = {}
     for line in text.splitlines():
-        m = re.match(r"(shape|rows|groups|report): ", line)
+        m = re.match(r"(shape|rows|groups|report|all|query): ", line)
         if m:
             forms[m.group(1)] = set(re.findall(r"--[a-z][a-z-]*", line))
     return forms, set(re.findall(r"--[a-z][a-z-]*", text))
@@ -104,7 +108,7 @@ class Usage(unittest.TestCase):
     def test_usage_names_every_flag_and_only_flags(self):
         forms, named = usage_lines()
         table = {f["name"] for f in introspect()["flags"]}
-        self.assertEqual(set(forms), {"shape", "rows", "groups", "report"})
+        self.assertEqual(set(forms), {"shape", "rows", "groups", "report", "all", "query"})
         self.assertEqual(named, table, "usage and the flag table disagree: missing %s, extra %s" % (sorted(table - named), sorted(named - table)))
 
     def test_each_line_lists_what_its_form_takes(self):
@@ -152,6 +156,14 @@ class Usage(unittest.TestCase):
             for flag in ("--limit", "--from", "--top", "--sort"):
                 self.assertTrue(refusals(s, [flag, SAMPLE[flag]]), flag + " is accepted with the shape")
             self.assertTrue(refusals(s, ["--format", "csv"]), "--format csv is accepted with the shape")
+            # a query says the plan: the flags that say it too are refused beside it, and --rows takes none of them
+            for flag in ("--select", "--where", "--order-by", "--group", "--agg", "--sort", "--report"):
+                self.assertNotIn(flag, forms["query"])
+                self.assertNotIn(flag, forms["all"])
+                self.assertTrue(refusals(s, FORM_BASE["query"] + [flag, SAMPLE[flag]]), flag + " is accepted with a query")
+            for flag in ("--select", "--where", "--order-by", "--group", "--agg", "--report"):
+                self.assertTrue(refusals(s, FORM_BASE["all"] + [flag, SAMPLE[flag]]), flag + " is accepted with --rows")
+            self.assertTrue(refusals(s, FORM_BASE["query"] + ["--rows"]), "--rows is accepted with a query")
         finally:
             s.cleanup()
 
@@ -235,9 +247,10 @@ class Examples(unittest.TestCase):
         file, _ = self.examples()
         self.assertEqual(file, SALES)
 
-    def test_between_three_and_five_examples(self):
+    def test_between_three_and_six_examples(self):
         _, pairs = self.examples()
-        self.assertTrue(3 <= len(pairs) <= 5, len(pairs))
+        self.assertTrue(3 <= len(pairs) <= 6, len(pairs))
+        self.assertTrue(any("--query" in command for command, _ in pairs), "no example of a query")
 
     def test_every_example_prints_what_the_skill_says(self):
         file, pairs = self.examples()

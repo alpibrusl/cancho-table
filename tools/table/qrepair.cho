@@ -1,0 +1,402 @@
+edition 5;
+
+module qrepair;
+
+// The repair of a refusal of `--query` (docs/query.md section 5): a choice of one invocation when the corrected query is certain, else why there is none.
+//
+// The corrected query is made from the text of the refused one by the mechanical corrections of the document, and only these:
+//
+//   * a keyword misspelt within two edits of the one that can stand there (`selct`, `form`, `wher`, `ordr`),
+//   * a type named as SQL names it (`integer` for int, `decimal(2)` for dec(2), `double` for float),
+//   * `==` for `=`,
+//   * a double-quoted word where a value stands (`b = "x"` for `b = 'x'`),
+//   * `like '%x%'` for `contains 'x'`,
+//   * a select list that is not the grouping rewritten as the group by columns then the aggregates (`count(*)` when it had none, and the aggregate an order by names).
+//
+// and it is offered only when it translates: the option is the invocation as it was given, with the `--query` and its text replaced by the flags the corrected query stands for (and its
+// `from 'file'` as the operand, last), runnable as it is written. A client that joins an argv into a shell string must quote it (docs/refusals.md).
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import qarena;
+import qlex;
+import qparse;
+import qtrans;
+import toolbox.fail;
+
+fn lc[&q](q: &q [byte], i: int) -> [] int {
+    return bytes.to_lower(int_of(q[i]));
+}
+
+// Whether the span a..b of `q` is `word` within `k` edits (a letter changed, left out or added), ignoring case.
+fn within[&q](q: &q [byte], b: int, i: int, word: &static [byte], j: int, k: int) -> [] bool {
+    if k < 0 {
+        return false;
+    }
+    if i == b {
+        return len(word) - j <= k;
+    }
+    if j == len(word) {
+        return b - i <= k;
+    }
+    if lc(q, i) == int_of(word[j]) {
+        return within(q, b, i + 1, word, j + 1, k);
+    }
+    if k == 0 {
+        return false;
+    }
+    return within(q, b, i + 1, word, j + 1, k - 1) || within(q, b, i + 1, word, j, k - 1) || within(q, b, i, word, j + 1, k - 1);
+}
+
+fn distance[&q](q: &q [byte], a: int, b: int, word: &static [byte]) -> [] int {
+    var d = 0;
+    while d <= 2 {
+        if within(q, b, a, word, 0, d) {
+            return d;
+        }
+        d = d + 1;
+    }
+    return 3;
+}
+
+fn spelled[&q](q: &q [byte], a: int, b: int, word: &static [byte]) -> [] bool {
+    return distance(q, a, b, word) == 0;
+}
+
+// The keyword of `list` (lower case, spaces between) nearest to the span, within two edits, the first of them on a tie: written into `out`'s cell as its index in the list, or -1.
+fn nearest[&q](q: &q [byte], a: int, b: int, list: &static [byte]) -> [] (int, int) {
+    var best = 3;
+    var at = 0 - 1;
+    var from = 0;
+    var k = 0;
+    while from < len(list) {
+        var to = from;
+        while to < len(list) && int_of(list[to]) != 32 {
+            to = to + 1;
+        }
+        let d = distance(q, a, b, list[from..to]);
+        if d < best && d > 0 {
+            best = d;
+            at = from;
+        }
+        from = to + 1;
+        k = k + 1;
+    }
+    if at < 0 {
+        return (0 - 1, 0);
+    }
+    var end = at;
+    while end < len(list) && int_of(list[end]) != 32 {
+        end = end + 1;
+    }
+    return (at, end);
+}
+
+fn token_at[&m](m: &m [int], offset: int) -> [] int {
+    var i = 0;
+    while i < m[qarena.s_tokens()] {
+        if qarena.tok_start(m, i) == offset {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// The text with the bytes a..b replaced by `with`.
+fn replaced[&h, &q, &w](heap: &!h Heap, q: &q [byte], a: int, b: int, with: &w [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(q) + len(with) + 1);
+    out = buffer.append(heap, out, q[0..a]);
+    out = buffer.append(heap, out, with);
+    out = buffer.append(heap, out, q[b..len(q)]);
+    return out;
+}
+
+fn after_clause(clause: int) -> [] &static [byte] {
+    if clause <= 1 {
+        return "from where group order limit offset";
+    }
+    if clause == 2 {
+        return "where group order limit offset";
+    }
+    if clause == 3 {
+        return "group order limit offset";
+    }
+    if clause == 4 {
+        return "order limit offset";
+    }
+    if clause == 5 {
+        return "limit offset";
+    }
+    return "offset";
+}
+
+// The select list of a grouping that is not one, rewritten: the group by columns as written, then the aggregates it had in the order it had them (`count(*)` when it had none), then
+// the aggregate an order by names that the list does not hold. Answers the corrected query, and whether there is one.
+fn regrouped[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], code: int) -> [heap] (buffer.Buffer, bool) {
+    let none = buffer.empty(heap, 1);
+    if m[qarena.s_group_count()] == 0 {
+        return (none, false);
+    }
+    var clean = buffer.append(heap, buffer.empty(heap, 64), bytes.trim(q[m[qarena.s_group_at()]..m[qarena.s_group_end()]]));
+    var aggs = 0;
+    var i = 0;
+    let items = m[qarena.s_items()];
+    while i < m[qarena.s_item_count()] && m[qarena.s_star()] == 0 {
+        if m[items + 8 * i] == 1 {
+            clean = buffer.append(heap, clean, ", ");
+            clean = buffer.append(heap, clean, q[m[items + 8 * i + 5]..m[items + 8 * i + 6]]);
+            aggs = aggs + 1;
+        }
+        i = i + 1;
+    }
+    if code == 43 {
+        let r = m[qarena.s_orders()];
+        clean = buffer.append(heap, clean, ", ");
+        clean = buffer.append(heap, clean, q[m[r + 6]..m[r + 7]]);
+        aggs = aggs + 1;
+    }
+    if aggs == 0 {
+        clean = buffer.append(heap, clean, ", count(*)");
+    }
+    var corrected = buffer.empty(heap, len(q) + 32);
+    corrected = buffer.append(heap, corrected, q[0..m[qarena.s_items_at()]]);
+    borrow clean as &cr in {
+        corrected = buffer.append(heap, corrected, buffer.bytes(cr));
+    }
+    buffer.drop(heap, clean);
+    if m[qarena.s_items_end()] < len(q) {
+        corrected = buffer.push(heap, corrected, byte_of(32));
+        corrected = buffer.append(heap, corrected, q[m[qarena.s_items_end()]..len(q)]);
+    }
+    buffer.drop(heap, none);
+    return (corrected, true);
+}
+
+// The corrected query for the refusal (kind, code, offset), if the document has a correction for it.
+fn corrected[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], kind: int, code: int, offset: int) -> [heap] (buffer.Buffer, bool) {
+    let none = buffer.empty(heap, 1);
+    if kind == 3 {
+        if code == 40 || code == 41 || code == 42 || code == 43 {
+            buffer.drop(heap, none);
+            return regrouped(heap, q, m, code);
+        }
+        return (none, false);
+    }
+    if kind == 1 && code == 14 {
+        if offset > 0 && offset < len(q) && int_of(q[offset]) == '=' && int_of(q[offset - 1]) == '=' {
+            buffer.drop(heap, none);
+            return (replaced(heap, q, offset, offset + 1, q[0..0]), true);
+        }
+        return (none, false);
+    }
+    let ti = token_at(m, offset);
+    if ti < 0 {
+        return (none, false);
+    }
+    let a = qarena.tok_start(m, ti);
+    let b = qarena.tok_end(m, ti);
+    let word = qarena.tok_kind(m, ti) == qlex.t_id();
+    if kind == 1 && code == 1 && word && distance(q, a, b, "select") <= 2 {
+        buffer.drop(heap, none);
+        return (replaced(heap, q, a, b, "select"), true);
+    }
+    if kind == 1 && code == 7 && word {
+        let (from, to) = nearest(q, a, b, after_clause(m[qarena.s_clause()]));
+        if from >= 0 {
+            buffer.drop(heap, none);
+            return (replaced(heap, q, a, b, after_clause(m[qarena.s_clause()])[from..to]), true);
+        }
+        return (none, false);
+    }
+    if kind == 1 && code == 16 && word {
+        if spelled(q, a, b, "integer") {
+            buffer.drop(heap, none);
+            return (replaced(heap, q, a, b, "int"), true);
+        }
+        if spelled(q, a, b, "decimal") {
+            buffer.drop(heap, none);
+            return (replaced(heap, q, a, b, "dec"), true);
+        }
+        if spelled(q, a, b, "double") {
+            buffer.drop(heap, none);
+            return (replaced(heap, q, a, b, "float"), true);
+        }
+        return (none, false);
+    }
+    if kind == 2 && code == 68 && qarena.tok_kind(m, ti) == qlex.t_qid() {
+        var text = buffer.push(heap, buffer.empty(heap, b - a + 2), byte_of(39));
+        var j = a + 1;
+        while j < b - 1 {
+            text = buffer.push(heap, text, q[j]);
+            if int_of(q[j]) == 34 {
+                j = j + 1;
+            }
+            if int_of(q[j]) == 39 {
+                text = buffer.push(heap, text, byte_of(39));
+            }
+            j = j + 1;
+        }
+        text = buffer.push(heap, text, byte_of(39));
+        var out = buffer.empty(heap, 1);
+        borrow text as &tr in {
+            buffer.drop(heap, out);
+            out = replaced(heap, q, a, b, buffer.bytes(tr));
+        }
+        buffer.drop(heap, text);
+        buffer.drop(heap, none);
+        return (out, true);
+    }
+    if kind == 2 && code == 73 && word && ti + 1 < m[qarena.s_tokens()] && spelled(q, a, b, "like") && qarena.tok_kind(m, ti + 1) == qlex.t_str() {
+        let sa = qarena.tok_start(m, ti + 1);
+        let sb = qarena.tok_end(m, ti + 1);
+        // '%x%': a percent at each end and no pattern inside
+        if sb - sa >= 5 && int_of(q[sa + 1]) == '%' && int_of(q[sb - 2]) == '%' {
+            var plain = true;
+            var j = sa + 2;
+            while j < sb - 2 {
+                if int_of(q[j]) == '%' || int_of(q[j]) == '_' {
+                    plain = false;
+                }
+                j = j + 1;
+            }
+            if plain {
+                var text = buffer.append(heap, buffer.empty(heap, sb - sa + 12), "contains '");
+                text = buffer.append(heap, text, q[sa + 2..sb - 2]);
+                text = buffer.push(heap, text, byte_of(39));
+                var out = buffer.empty(heap, 1);
+                borrow text as &tr in {
+                    buffer.drop(heap, out);
+                    out = replaced(heap, q, a, sb, buffer.bytes(tr));
+                }
+                buffer.drop(heap, text);
+                buffer.drop(heap, none);
+                return (out, true);
+            }
+        }
+    }
+    return (none, false);
+}
+
+// The invocation as it was given, with the query replaced by the flags of its correction. `flag_at` is the argument that begins what is replaced (the `--query`, or the whole
+// `--query=text`) and `value_at` the one that ends it.
+fn put_option[&h, &t, &g](heap: &!h Heap, w: json.Writer, t: &t qtrans.Translated, args: &g Args, flag_at: int, value_at: int) -> [heap, args] json.Writer {
+    var o = fail.choose_open(heap, w);
+    o = fail.choose_option_open(heap, o);
+    var i = 0;
+    while i < arg_count(args) {
+        if i == flag_at {
+            if qtrans.info_at(t, qtrans.i_rows()) == 1 {
+                o = fail.choose_arg(heap, o, "--rows");
+            }
+            if qtrans.info_at(t, qtrans.i_group()) == 1 {
+                o = fail.choose_arg(heap, o, "--group");
+                o = fail.choose_arg(heap, o, qtrans.section(t, 2));
+            }
+            if qtrans.info_at(t, qtrans.i_agg()) == 1 {
+                o = fail.choose_arg(heap, o, "--agg");
+                o = fail.choose_arg(heap, o, qtrans.section(t, 3));
+            }
+            if qtrans.info_at(t, qtrans.i_select()) == 1 {
+                o = fail.choose_arg(heap, o, "--select");
+                o = fail.choose_arg(heap, o, qtrans.section(t, 0));
+            }
+            if qtrans.info_at(t, qtrans.i_where()) == 1 {
+                o = fail.choose_arg(heap, o, "--where");
+                o = fail.choose_arg(heap, o, qtrans.section(t, 1));
+            }
+            if qtrans.info_at(t, qtrans.i_order()) == 1 {
+                o = fail.choose_arg(heap, o, "--order-by");
+                o = fail.choose_arg(heap, o, qtrans.section(t, 4));
+            }
+            if qtrans.info_at(t, qtrans.i_sort()) == 1 {
+                o = fail.choose_arg(heap, o, "--sort");
+                o = fail.choose_arg(heap, o, qtrans.section(t, 5));
+            }
+            if qtrans.info_at(t, qtrans.i_limit_given()) == 1 {
+                o = fail.choose_arg(heap, o, "--limit");
+                var n = buffer.push_nat(heap, buffer.empty(heap, 20), qtrans.info_at(t, qtrans.i_limit()));
+                borrow n as &nr in {
+                    o = fail.choose_arg(heap, o, buffer.bytes(nr));
+                }
+                buffer.drop(heap, n);
+            }
+            if qtrans.info_at(t, qtrans.i_from_given()) == 1 {
+                o = fail.choose_arg(heap, o, "--from");
+                var n = buffer.push_nat(heap, buffer.empty(heap, 20), qtrans.info_at(t, qtrans.i_from()));
+                borrow n as &nr in {
+                    o = fail.choose_arg(heap, o, buffer.bytes(nr));
+                }
+                buffer.drop(heap, n);
+            }
+        }
+        if i < flag_at || i > value_at {
+            o = fail.choose_arg(heap, o, arg(args, i));
+        }
+        i = i + 1;
+    }
+    if qtrans.info_at(t, qtrans.i_source()) == 1 {
+        o = fail.choose_arg(heap, o, qtrans.section(t, 6));
+    }
+    o = fail.choose_option_close(heap, o);
+    return fail.choose_close(heap, o);
+}
+
+// The `"repair"` of a refusal of the query `q` (`t`, its failed translation): a choice of the one invocation its correction stands for, or none and why. `query_at` is the argument
+// that holds the query, `whole` whether it is an argument of its own (and not `--query=text`), `operands` how many operands the call had.
+pub fn repair[&h, &q, &t, &g](heap: &!h Heap, w: json.Writer, q: &q [byte], t: &t qtrans.Translated, args: &g Args, query_at: int, whole: bool, operands: int) -> [heap, args] json.Writer {
+    let kind = qtrans.status(t);
+    let code = qtrans.info_at(t, qtrans.i_code());
+    let offset = qtrans.info_at(t, qtrans.i_offset());
+    if kind == 4 || kind == 0 {
+        return fail.repair_none(heap, w, "a shorter query is a different question: what to leave out is not known");
+    }
+    var arena = box_slice(heap, qarena.size_for(len(q)), 0);
+    var fixed = buffer.empty(heap, 1);
+    var found = false;
+    borrow mut arena as &!aw in {
+        let m = contents(aw);
+        m[qarena.s_rec_base()] = qarena.rec_base_for(len(q));
+        m[qarena.s_length()] = len(q);
+        if qlex.lex(q, m) == 0 {
+            qparse.statement(q, m);
+            m[qarena.s_code()] = 0;
+            let (c2, ok) = corrected(heap, q, m, kind, code, offset);
+            buffer.drop(heap, fixed);
+            fixed = c2;
+            found = ok;
+        }
+    }
+    unbox_slice(heap, arena);
+    var out = w;
+    var offered = false;
+    if found {
+        borrow fixed as &fr in {
+            let t2 = qtrans.translate(heap, buffer.bytes(fr), false);
+            borrow t2 as &tr in {
+                // a `from 'file'` is the operand, and an operand the call already has would make two
+                if qtrans.status(tr) == 0 && !(qtrans.info_at(tr, qtrans.i_source()) == 1 && operands > 0) && query_at > 0 {
+                    var flag_at = query_at;
+                    if whole {
+                        flag_at = query_at - 1;
+                    }
+                    out = put_option(heap, out, tr, args, flag_at, query_at);
+                    offered = true;
+                }
+            }
+            qtrans.drop(heap, t2);
+        }
+    }
+    buffer.drop(heap, fixed);
+    if offered {
+        return out;
+    }
+    if kind == 3 {
+        return fail.repair_none(heap, out, "the select list and the group by do not say the same grouping: whether to group by the column or to leave it out is not known");
+    }
+    if kind == 2 {
+        return fail.repair_none(heap, out, "the feature has no spelling in this language; the hint says what to write instead");
+    }
+    return fail.repair_none(heap, out, "what the query was meant to say is not known: detail.expected says what the language takes at detail.offset");
+}

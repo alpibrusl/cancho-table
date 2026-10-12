@@ -1,0 +1,166 @@
+edition 5;
+
+module qarena;
+
+// The working memory of the front end of `--query` (docs/query.md): one block of integers, sized from the length of the query, in which the lexer writes the tokens, the
+// parser the records of the clauses it has read, and both the one error there may be. Nothing here is a plan: the plan is the flags the translation writes, and the existing
+// parsers read those (`qparse.translate`). One block, indexed through the functions below, because the language passes a mutable slice and not a growing vector through a
+// recursive descent.
+//
+//     0 .. 63        state: the slots below
+//     64 ..          tokens, four integers each: kind, start, end, aux (see qlex)
+//     records ..     the clauses, after the tokens: eight integers per select item, per condition (and its values after it), per order key; one per group column
+//
+// An error is a kind (1 syntax, 2 unsupported, 3 group-mismatch, 4 too-long), a code (qtext says it in words) and a byte offset in the query; the first one is kept.
+
+pub fn s_k() -> [] int {
+    return 0;
+}
+
+pub fn s_code() -> [] int {
+    return 1;
+}
+
+pub fn s_offset() -> [] int {
+    return 2;
+}
+
+pub fn s_kind() -> [] int {
+    return 3;
+}
+
+pub fn s_tokens() -> [] int {
+    return 4;
+}
+
+pub fn s_items() -> [] int {
+    return 5;
+}
+
+pub fn s_item_count() -> [] int {
+    return 6;
+}
+
+pub fn s_source() -> [] int {
+    return 7;
+}
+
+pub fn s_source_tok() -> [] int {
+    return 8;
+}
+
+pub fn s_conds() -> [] int {
+    return 9;
+}
+
+pub fn s_cond_count() -> [] int {
+    return 10;
+}
+
+pub fn s_groups() -> [] int {
+    return 11;
+}
+
+pub fn s_group_count() -> [] int {
+    return 12;
+}
+
+pub fn s_orders() -> [] int {
+    return 13;
+}
+
+pub fn s_order_count() -> [] int {
+    return 14;
+}
+
+pub fn s_limit() -> [] int {
+    return 15;
+}
+
+pub fn s_offset_value() -> [] int {
+    return 16;
+}
+
+pub fn s_top() -> [] int {
+    return 17;
+}
+
+pub fn s_items_at() -> [] int {
+    return 18;
+}
+
+pub fn s_items_end() -> [] int {
+    return 19;
+}
+
+pub fn s_group_at() -> [] int {
+    return 20;
+}
+
+pub fn s_group_end() -> [] int {
+    return 21;
+}
+
+pub fn s_star() -> [] int {
+    return 22;
+}
+
+pub fn s_clause() -> [] int {
+    return 23;
+}
+
+pub fn s_length() -> [] int {
+    return 24;
+}
+
+pub fn s_rec_base() -> [] int {
+    return 25;
+}
+
+// where the unit that went wrong is, for a repair: the start of the token and the one before it
+pub fn s_bad_tok() -> [] int {
+    return 26;
+}
+
+pub fn tokens_at() -> [] int {
+    return 64;
+}
+
+// Slots for a query of `n` bytes: the state, the tokens (at most n + 1, with the end), and room for the records (at most one per token, nine integers with a value).
+pub fn size_for(n: int) -> [] int {
+    return 64 + 4 * (n + 2) + 10 * (n + 2) + 16;
+}
+
+pub fn rec_base_for(n: int) -> [] int {
+    return 64 + 4 * (n + 2);
+}
+
+// The first error is the one kept. Answers 1 (an error is set).
+pub fn fail[&m](m: &!m [int], kind: int, code: int, at: int) -> [] int {
+    if m[s_code()] == 0 {
+        m[s_kind()] = kind;
+        m[s_code()] = code;
+        m[s_offset()] = at;
+    }
+    return 1;
+}
+
+pub fn failed[&m](m: &m [int]) -> [] bool {
+    return m[s_code()] != 0;
+}
+
+pub fn tok_kind[&m](m: &m [int], i: int) -> [] int {
+    return m[64 + 4 * i];
+}
+
+pub fn tok_start[&m](m: &m [int], i: int) -> [] int {
+    return m[64 + 4 * i + 1];
+}
+
+pub fn tok_end[&m](m: &m [int], i: int) -> [] int {
+    return m[64 + 4 * i + 2];
+}
+
+pub fn tok_aux[&m](m: &m [int], i: int) -> [] int {
+    return m[64 + 4 * i + 3];
+}

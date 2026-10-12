@@ -96,7 +96,7 @@ jobs:
       - name: The mutants still apply
         working-directory: table
         run: |
-          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin; do python3 scripts/${m}_mutants.py --check; done
+          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin query; do python3 scripts/${m}_mutants.py --check; done
 
       - name: Conformance gates (differential against Python's csv, rules, limits, memory, authority)
         working-directory: table
@@ -118,3 +118,9 @@ jobs:
       - name: The standard-input benchmark script runs
         working-directory: table
         run: python3 scripts/bench_stdin.py --rows 20000 --runs 1 --file build/bench/data_stdin.csv
+
+      # --query is the flags it is translated to (docs/query.md, Q1-EQ): every plan of the corpus on the benchmark file this job has, written both ways. The corpus's other files
+      # (adversarial, numbers) are the maintainer's machines'; a missing one is reported and skipped here, and required there (--require f1,f2,q,long,wide,num).
+      - name: The query form gives the bytes of the flag form on the corpus
+        working-directory: table
+        run: python3 scripts/query_corpus.py --require f1

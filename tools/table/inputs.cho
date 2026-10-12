@@ -3,6 +3,7 @@ edition 5;
 module inputs;
 
 import std.bytes;
+import qtrans;
 import toolbox.cli;
 
 // The plan's values as the flags give them (docs/query.md, Q0): the columns, the condition, the grouping, the aggregates, the sort, the order, the cut and the page,
@@ -20,12 +21,22 @@ pub struct Inputs {
     has_top: bool,
     has_limit: bool,
     has_from: bool,
+    // `--query TEXT` was given, and its text (the query is translated, and `for_query` replaces the plan's values with the translation's); `--rows` was given
+    has_query: bool,
+    // where the query's value is in the arguments, and whether it is a whole argument (a repair that offers the invocation rewrites it)
+    query_at: int,
+    query_whole: bool,
+    has_rows: bool,
+    // a query's `from 'path'`: the source is a path that is not an operand
+    src_file: bool,
     select_text: &static [byte],
     where_text: &static [byte],
     group_text: &static [byte],
     agg_text: &static [byte],
     order_text: &static [byte],
     report_text: &static [byte],
+    sort_text: &static [byte],
+    query_text: &static [byte],
     root_text: &static [byte],
     top_n: int,
     limit_n: int,
@@ -54,5 +65,29 @@ pub fn from_flags[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [
     if source_at >= 0 && bytes.equal(arg(args, source_at), "-") {
         stdin = true;
     }
-    return Inputs { has_select: has_select, has_where: cli.has(parsed, table, "where"), has_group: cli.has(parsed, table, "group"), has_agg: cli.has(parsed, table, "agg"), has_order: cli.has(parsed, table, "order-by"), has_report: cli.has(parsed, table, "report"), has_sort: cli.has(parsed, table, "sort"), has_top: cli.has(parsed, table, "top"), has_limit: cli.has(parsed, table, "limit"), has_from: cli.has(parsed, table, "from"), select_text: cli.text(args, parsed, table, "select"), where_text: cli.text(args, parsed, table, "where"), group_text: cli.text(args, parsed, table, "group"), agg_text: cli.text(args, parsed, table, "agg"), order_text: cli.text(args, parsed, table, "order-by"), report_text: cli.text(args, parsed, table, "report"), root_text: cli.text(args, parsed, table, "root"), top_n: cli.nat(args, parsed, table, "top"), limit_n: cli.nat(args, parsed, table, "limit"), from_n: cli.nat(args, parsed, table, "from"), rows_n: cli.nat(args, parsed, table, "max-rows"), select_whole: select_at >= 0, select_at: select_at, root_at: cli.value_index(parsed, table, "root"), operands: cli.operand_count(parsed), source_at: source_at, stdin: stdin };
+    return Inputs { has_select: has_select, has_where: cli.has(parsed, table, "where"), has_group: cli.has(parsed, table, "group"), has_agg: cli.has(parsed, table, "agg"), has_order: cli.has(parsed, table, "order-by"), has_report: cli.has(parsed, table, "report"), has_sort: cli.has(parsed, table, "sort"), has_top: cli.has(parsed, table, "top"), has_limit: cli.has(parsed, table, "limit"), has_from: cli.has(parsed, table, "from"), has_query: cli.has(parsed, table, "query"), query_at: cli.value_index(parsed, table, "query"), query_whole: cli.value_is_whole(parsed, table, "query"), has_rows: cli.has(parsed, table, "rows"), src_file: false, select_text: cli.text(args, parsed, table, "select"), where_text: cli.text(args, parsed, table, "where"), group_text: cli.text(args, parsed, table, "group"), agg_text: cli.text(args, parsed, table, "agg"), order_text: cli.text(args, parsed, table, "order-by"), report_text: cli.text(args, parsed, table, "report"), sort_text: cli.text(args, parsed, table, "sort"), query_text: cli.text(args, parsed, table, "query"), root_text: cli.text(args, parsed, table, "root"), top_n: cli.nat(args, parsed, table, "top"), limit_n: cli.nat(args, parsed, table, "limit"), from_n: cli.nat(args, parsed, table, "from"), rows_n: cli.nat(args, parsed, table, "max-rows"), select_whole: select_at >= 0, select_at: select_at, root_at: cli.value_index(parsed, table, "root"), operands: cli.operand_count(parsed), source_at: source_at, stdin: stdin };
+}
+
+// The plan's values as a query's translation gives them: what the query says replaces what the flags did not (a flag the query has no form for, `--top`, `--limit` or `--from` when the
+// query has no page of its own, stays the flag's). The texts of the lists are the translation's (`plan_body` is given them); a source is a path, standard input, or nothing (the operand).
+pub fn for_query[&t](inp: Inputs, t: &t qtrans.Translated) -> [] Inputs {
+    var limit_n = inp.limit_n;
+    var has_limit = inp.has_limit;
+    if qtrans.info_at(t, qtrans.i_limit_given()) == 1 {
+        has_limit = true;
+        limit_n = qtrans.info_at(t, qtrans.i_limit());
+    }
+    var from_n = inp.from_n;
+    var has_from = inp.has_from;
+    if qtrans.info_at(t, qtrans.i_from_given()) == 1 {
+        has_from = true;
+        from_n = qtrans.info_at(t, qtrans.i_from());
+    }
+    var stdin = inp.stdin;
+    if qtrans.info_at(t, qtrans.i_source()) == 2 {
+        stdin = true;
+    } else if qtrans.info_at(t, qtrans.i_source()) == 1 {
+        stdin = false;
+    }
+    return Inputs { has_select: qtrans.info_at(t, qtrans.i_select()) == 1, has_where: qtrans.info_at(t, qtrans.i_where()) == 1, has_group: qtrans.info_at(t, qtrans.i_group()) == 1, has_agg: qtrans.info_at(t, qtrans.i_agg()) == 1, has_order: qtrans.info_at(t, qtrans.i_order()) == 1, has_report: false, has_sort: qtrans.info_at(t, qtrans.i_sort()) == 1, has_top: inp.has_top, has_limit: has_limit, has_from: has_from, has_query: inp.has_query, query_at: inp.query_at, query_whole: inp.query_whole, has_rows: qtrans.info_at(t, qtrans.i_rows()) == 1, src_file: qtrans.info_at(t, qtrans.i_source()) == 1, select_text: inp.select_text, where_text: inp.where_text, group_text: inp.group_text, agg_text: inp.agg_text, order_text: inp.order_text, report_text: inp.report_text, sort_text: inp.sort_text, query_text: inp.query_text, root_text: inp.root_text, top_n: inp.top_n, limit_n: limit_n, from_n: from_n, rows_n: inp.rows_n, select_whole: false, select_at: 0 - 1, root_at: inp.root_at, operands: inp.operands, source_at: inp.source_at, stdin: stdin };
 }

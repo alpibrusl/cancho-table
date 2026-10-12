@@ -45,7 +45,13 @@ LOCAL = {
     "value.float-range": (8, "never", "double"),
     "limit.number-too-long": (8, "never", "1,100"),
     "agg.float-overflow": (8, "never", "largest double"),
+    "query.syntax": (2, "sometimes", "byte offset"),
+    "query.unsupported": (2, "sometimes", "leaves out"),
+    "query.group-mismatch": (2, "sometimes", "group by columns"),
+    "query.too-long": (2, "never", "4096"),
 }
+# rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
+VARIABLE_HINT = {"query.unsupported"}
 LINUX_ONLY = {"io.read-failed", "io.write-failed"}
 
 
@@ -148,6 +154,10 @@ class Rules(unittest.TestCase):
             ("value.float-range", root + ["--where", "a:float > 0", "ovf.csv"], None),
             ("limit.number-too-long", root + ["--where", "a:float > 0", "long.csv"], None),
             ("agg.float-overflow", root + ["--agg", "sum:a:float", "ovfsum.csv"], None),
+            ("query.syntax", root + ["--query", "selct a from 'ok.csv'"], None),
+            ("query.unsupported", root + ["--query", "select a from 'ok.csv' where b like '%x%'"], None),
+            ("query.group-mismatch", root + ["--query", "select a from 'ok.csv' group by a"], None),
+            ("query.too-long", root + ["--query", "select a from 'ok.csv' where b = '" + "x" * 4100 + "'"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")
@@ -182,7 +192,7 @@ class Rules(unittest.TestCase):
                 if p.returncode != want:
                     failures.append("%s: exit %d, expected %d" % (rule, p.returncode, want))
                 reached.add(rule)
-                if rule in LOCAL and "hint" in errs[0]:
+                if rule in LOCAL and "hint" in errs[0] and rule not in VARIABLE_HINT:
                     failures += summary_says(rule, summaries[rule], errs[0])
                 repair = errs[0]["repair"]
                 if rule in cat and cat[rule][1] == "never" and repair and repair["kind"] == "retry":
