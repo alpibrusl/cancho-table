@@ -54,15 +54,79 @@ class Result:
         return "<table %r -> %d %r>" % (self.argv[1:], self.status, self.stdout[:300])
 
 
-def run(*args, cwd=None, timeout=120):
+def run(*args, cwd=None, timeout=120, stdin=None):
+    """One run of the tool. Standard input is empty unless `stdin` (bytes) is given: a test never inherits the runner's, since a run with no
+    operand reads it (docs/readers.md section 3).
+
+    TABLE_STDIN_DIFF=1 makes every run of a regular file under `--root` also a differential: the same bytes through standard input (named `-`, and with no
+    operand) must give the same answer but for the file's name where the answer says it (`detail.path` is `-`). Nothing else about a test changes."""
     argv = [binary(), *[str(a) for a in args]]
-    p = subprocess.run(argv, capture_output=True, cwd=cwd, timeout=timeout)
-    return Result(argv, p.returncode, p.stdout, p.stderr)
+    p = subprocess.run(argv, capture_output=True, cwd=cwd, timeout=timeout, input=stdin if stdin is not None else b"")
+    result = Result(argv, p.returncode, p.stdout, p.stderr)
+    if stdin is None and os.environ.get("TABLE_STDIN_DIFF"):
+        via_stdin(args, result, cwd, timeout)
+    return result
 
 
 def run_argv(argv, cwd=None, timeout=120):
-    p = subprocess.run(argv, capture_output=True, cwd=cwd, timeout=timeout)
-    return Result(argv, p.returncode, p.stdout, p.stderr)
+    p = subprocess.run(argv, capture_output=True, cwd=cwd, input=b"", timeout=timeout)
+    result = Result(argv, p.returncode, p.stdout, p.stderr)
+    if os.environ.get("TABLE_STDIN_DIFF") and str(argv[0]) == binary():
+        via_stdin(argv[1:], result, cwd, timeout)
+    return result
+
+
+STDIN_COMPARED = [0, 0]
+
+
+def _report_stdin_compared():
+    if os.environ.get("TABLE_STDIN_DIFF"):
+        import sys
+        print("\nTABLE_STDIN_DIFF: %d runs of a file also run through standard input (named -, and with no operand): %d comparisons, all equal" % (STDIN_COMPARED[0], STDIN_COMPARED[1]), file=sys.stderr)
+
+
+import atexit  # noqa: E402
+
+atexit.register(_report_stdin_compared)
+
+
+def operand_file(args, cwd):
+    """(root, name, index) when `args` is `--root DIR ... NAME` with NAME a plain relative regular file under DIR and nothing else an operand, else None."""
+    strs = [str(a) for a in args]
+    if "--root" not in strs or not strs:
+        return None
+    root = strs[strs.index("--root") + 1]
+    name = strs[-1]
+    if strs[-2] == "--root" or name.startswith("-") or name == "" or name.startswith("/") or ".." in name.split("/"):
+        return None
+    path = os.path.join(root, name)
+    if os.path.islink(path) or not os.path.isfile(path):
+        return None
+    return root, name, len(strs) - 1
+
+
+def normalised(data, name, operand=True):
+    """The answer with the file's name where it says the path (`detail.path`) and where a repair repeats the invocation (its last element): `-` for standard
+    input, or nothing when the invocation had no operand."""
+    data = data.replace(b'"path":%s' % json.dumps(name).encode(), b'"path":"-"')
+    return data.replace(b',%s]' % json.dumps(name).encode(), b',"-"]' if operand else b"]")
+
+
+def via_stdin(args, result, cwd, timeout):
+    found = operand_file(args, cwd)
+    if found is None:
+        return
+    root, name, at = found
+    STDIN_COMPARED[0] += 1
+    strs = [str(a) for a in args]
+    data = open(os.path.join(root, name), "rb").read()
+    for form in (strs[:at] + ["-"], strs[:at]):
+        operand = form[-1:] == ["-"]
+        want = (result.status, normalised(result.stdout, name, operand), normalised(result.stderr, name, operand))
+        p = subprocess.run([binary(), *form], capture_output=True, cwd=cwd, timeout=timeout, input=data)
+        got = (p.returncode, p.stdout, p.stderr)
+        STDIN_COMPARED[1] += 1
+        assert got == want, "standard input (%s) answers differently from the file %r:\n  file : %r\n  stdin: %r" % (" ".join(form[-1:] or ["no operand"]), name, want[1][:600], got[1][:600])
 
 
 def schema():
