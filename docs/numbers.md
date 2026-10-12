@@ -932,6 +932,19 @@ No feature and no change of output (`docs/query.md` Q0). The N6 proposal above (
 * **Gate** `tests/conformance/test_inputs.py` (3 tests): `body` calls `cli.has`, `cli.text`, `cli.nat`, `cli.value_index`, `cli.value_is_whole` and `cli.operand_*` on no plan flag; `body` uses the fields of `inputs.from_flags`; `Inputs` names every plan flag.
 * **What the page agent must write:** nothing; no output, no count of the user's reads changes beyond the fixed few million instructions a call. `site.py --check` and `seo_check.py` are green.
 
+### What was built: R1, standard input (measured; the full text and conditions are `docs/readers.md` 11.5 and 11.7)
+
+`table -` and `table` with no operand, first on `getchar` and then on cancho #363's `read_bytes` (reads of 512 bytes doubling to 64 KiB; compiler pin `e47d647`). The file path is untouched: the same corpus md5 (`fccb01b66dd7518d74611219a6c5aa29`, 166 plans) and `gate_regress.py --counter` against `main` `60f8ef1`, 42 cells, 3 builds a side, bound 1.01: Mac 0.999 to 1.001, gram 1.000 (+0.4 to +0.6 M instructions of 1.5 to 5.5 G), for the compiler pin alone and for the final build.
+
+| 1,000,000 rows, 31,667,311 bytes, minimum of 7 | Mac (load 4.4 to 6.8) | gram (cores 0-5, load 1.6 to 2.3) |
+|---|---:|---:|
+| row count, `table FILE` | 0.0301 s | 0.0291 s |
+| row count, `cat \| table -` | 0.0320 s | 0.0294 s |
+| the same, `getchar` build (first measurement of the PR, other load) | 0.4293 s | 0.0944 s |
+| `cat \| csvtk -j 1 nrow` | 0.1897 s | 0.3053 s |
+| `cat \| duckdb` (COPY into a table first) | 0.2177 s | 0.2340 s |
+| instructions, `--select status,bytes --format csv`, stdin redirected: file / stdin / stdin on the `getchar` build | 1,220.5 M / 1,215.0 M / 10,821.2 M | 1,192.8 M / 1,197.0 M / 2,600.3 M |
+
 ## 11. Open questions, assumptions, what the language lacks
 
 **Decided by the maintainer** (the six questions of the first version of this document, answered as recommended):

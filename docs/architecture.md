@@ -54,7 +54,7 @@ cancho programs get their capabilities (files, directories, standard streams, th
 |---|---|
 | `args` | the flags and the file name |
 | `file_read` | reading the input file |
-| `io_read` | standard input, when the input is `-` or there is no file: read a byte at a time (`getchar`), in one pass on one core. Approved for the standard-input stage (R1, `docs/readers.md` section 10) and in no other place; the ceiling in `tools.toml` names it |
+| `io_read` | standard input, when the input is `-` or there is no file: read in blocks with `read_bytes` (`bulk.cho`), in one pass on one core. Approved for the standard-input stage (R1, `docs/readers.md` section 10) and in no other place; the ceiling in `tools.toml` names it |
 | `fs_read("")` | the path is only known at run time, so the row cannot name it; `table introspect` lists this under `not_narrowable` |
 | `dir_read` | read through a directory handle: a label that names no path, because the handle is the authority (cancho `docs/directory-handles.md`); a row with `dir_read` and not `fs_read` can reach only what handles it was given |
 | `heap` | memory for the record, the page and the groups |

@@ -41,7 +41,8 @@ MUTANTS = [
     ("the bytes of a short read are committed one short", "bulk.cho", "buffer.filled(cw, n);", "buffer.filled(cw, n - 1);"),
     ("the errno of a failed read is lost", "bulk.cho", "                bad = reason;\n", "                bad = 0;\n"),
     ("a failed read is the end of the input", "bulk.cho", "Read::Failed(reason) => {\n                e = true;\n                bad = reason;\n                if bad == 0 {\n                    bad = 5;\n                }\n            }", "Read::Failed(reason) => {\n                e = true;\n            }"),
-    ("the refill keeps the view of the last chunk", "bulk.cho", "viewing: false, view_from: 0, view_to: 0 }", "viewing: viewing, view_from: view_from, view_to: view_to }"),
+    # (Not here: "the refill keeps the view of the last chunk", `viewing: viewing, ...` for `viewing: false, ...`. It survives and is equivalent: the refill is only called
+    # after `lines.next` answered `need`, and `lines.next` starts every answer with the view off, so the fields it would keep are already false and 0.)
     # how it is named
     ("a refusal names standard input as stdin", "table.cho", 'opened, true, "-", "", "-", io, fs, delim', 'opened, true, "stdin", "", "-", io, fs, delim'),
     ("a refusal names no path", "table.cho", 'opened, true, "-", "", "-", io, fs, delim', 'opened, true, "", "", "-", io, fs, delim'),
