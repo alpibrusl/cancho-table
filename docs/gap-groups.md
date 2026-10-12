@@ -192,8 +192,7 @@ parent, and, last, the rows in the output buffer, flushed per thread. Counting i
 resident memory, and that was so before this branch: B3 counts 14,000,000 bytes (1M groups x 14) and the sequential read is 170 MB resident, about 12x. So no "resident <=
 k x bound" can be stated for either read, and an earlier version of this section said one; it was wrong and is withdrawn (measured below). What can be stated is in accounted
 units: each worker's local set is bounded by the flag (as in the old read), each merge thread's part is bounded by it (it declines past it), and a read that is not declined has
-a merged set within it, so at any moment the threaded read holds at most **(2T + 3) x `--max-state-bytes` accounted bytes** (T workers, T merge threads, three copies of the
-merged set at most: inputs, outputs, the parent's copy); the old read held T x the bound in the workers plus the merged set. What a user observes, B3 on the Mac,
+a merged set within it. No total across the workers, the merge threads and the copies of the merged set is claimed: an earlier version stated one, as (2T + 3) x the flag, and it is withdrawn. What a user observes, B3 on the Mac,
 peak resident MB, main (92a4305) against this branch (`results/merged/memory_vs_bound_mac.txt`):
 
 | flag | answer | 1 thread | 2 threads | 6 threads | 16 threads |
