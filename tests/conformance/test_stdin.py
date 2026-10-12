@@ -576,6 +576,97 @@ class Authority(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class Bulk(Source):
+    """Standard input is read in bulk (docs/readers.md 11.7; cancho PR #363's `read_bytes`), not a byte at a time, and a read that fails is a refusal and not an end.
+
+    Written before the code that makes them pass (they fail on `getchar`): a pipe costs about what a file does in instructions, the reads on descriptor 0 are few and
+    large, and a closed descriptor, a directory or a descriptor that cannot be read from are refused with the rule of their errno and the input named as `-`."""
+
+    ROWS = 150_000
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from test_memory import make
+        make(cls.s.dir / "bulk.csv", cls.ROWS)
+        cls.size = (cls.s.dir / "bulk.csv").stat().st_size
+
+    @staticmethod
+    def instructions(argv, stdin=None, cwd=None):
+        """User-space instructions retired by one run (the count does not depend on the load), or None where this machine cannot count them: macOS `/usr/bin/time -l`,
+        Linux `perf stat -e instructions:u` (when perf_event_paranoid allows it)."""
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import gate_regress
+        if sys.platform == "darwin":
+            p = subprocess.run(["/usr/bin/time", "-l", *argv], stdin=stdin, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, cwd=cwd)
+            m = re.search(r"(\d+)\s+instructions retired", p.stderr)
+            return int(m.group(1)) if m else None
+        if shutil.which("perf"):
+            p = subprocess.run(["perf", "stat", "-x,", "-e", "instructions:u", "--", *argv], stdin=stdin, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, cwd=cwd)
+            return gate_regress.parse_perf(p.stderr) or None
+        return None
+
+    def test_a_pipe_costs_about_what_a_file_costs_in_instructions(self):
+        plan = ["--select", "status,bytes", "--format", "csv"]
+        d = str(self.s.dir)
+        # a file by name and the same bytes redirected into standard input: the work on the rows is the same, the reading is what differs
+        by_name = self.instructions([binary(), "--root", d, *plan, "bulk.csv"])
+        with open(self.s.dir / "bulk.csv", "rb") as f:
+            through_stdin = self.instructions([binary(), *plan], stdin=f)
+        if by_name is None or through_stdin is None:
+            self.skipTest("no instruction counter here")
+        ratio = through_stdin / by_name
+        print("\nstdin instructions: file %.1f M, standard input %.1f M, ratio %.3f (%d bytes)" % (by_name / 1e6, through_stdin / 1e6, ratio, self.size), file=sys.stderr)
+        # a byte at a time (getchar) costs 2.2 times the file on x86-64 and 1.5 on arm64; the bound is a little over what bulk reads cost
+        self.assertLess(ratio, 1.15, "standard input costs %.2f times the instructions of the same file" % ratio)
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("strace"), "needs Linux and strace")
+    def test_strace_the_reads_of_descriptor_zero_are_few_and_large(self):
+        d = tempfile.mkdtemp(prefix="table-")
+        try:
+            log = os.path.join(d, "trace")
+            with open(self.s.dir / "bulk.csv", "rb") as f:
+                p = subprocess.run(["strace", "-f", "-e", "trace=read", "-o", log, binary(), "--select", "status", "--format", "csv"], stdin=f, capture_output=True)
+            self.assertEqual(p.returncode, 0, p.stderr[:300])
+            sizes = [int(m.group(1)) for m in re.finditer(r"read\(0, .*?, (\d+)\) = ", open(log).read())]
+            self.assertTrue(sizes, "no read of descriptor 0")
+            print("\nstdin reads of descriptor 0 over %d bytes: %d, largest request %d" % (self.size, len(sizes), max(sizes)), file=sys.stderr)
+            # getchar asks for 4096 at a time (stdio's buffer): one read per 4 KiB of input
+            self.assertLess(len(sizes), self.size // 4096 // 4, "reads of descriptor 0: %d for %d bytes" % (len(sizes), self.size))
+            self.assertGreaterEqual(max(sizes), CHUNK)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def refusal(self, pre, plan=()):
+        p = subprocess.run([binary(), *plan], stdin=None, preexec_fn=pre, capture_output=True, timeout=60)
+        self.assertNotIn(p.returncode, TRAPS)
+        return p
+
+    def test_a_descriptor_that_cannot_be_read_is_a_refusal_with_its_errno(self):
+        os.makedirs(self.s.dir / "adir", exist_ok=True)
+        cases = {
+            "closed": (lambda: os.close(0), "io.read-failed", 9),
+            "write only": (lambda: os.dup2(os.open(str(self.s.dir / "wo"), os.O_WRONLY | os.O_CREAT), 0), "io.read-failed", 9),
+            "directory": (lambda: os.dup2(os.open(str(self.s.dir / "adir"), os.O_RDONLY), 0), "io.is-a-directory", 21),
+        }
+        codes = {c["code"]: c for c in introspect()["exit_codes"]}
+        for label, (pre, rule, errno) in cases.items():
+            p = self.refusal(pre)
+            self.assertNotEqual(p.returncode, 0, (label, p.stdout[:200]))
+            self.assertIn(p.returncode, codes, label)
+            doc = json.loads(p.stdout)
+            self.assertEqual((doc["ok"], doc["error"]["rule"], doc["error"]["detail"]["path"], doc["error"]["detail"]["errno"]), (False, rule, "-", errno), label)
+            # csv: the refusal is on standard error, as a file's is
+            q = self.refusal(pre, ["--select", "a", "--format", "csv"])
+            self.assertEqual(q.stdout, b"", label)
+            self.assertIn(b"table: " + rule.encode(), q.stderr, label)
+        # the controls: nothing to read is not a failure to read
+        for label, pre in (("/dev/null", lambda: os.dup2(os.open("/dev/null", os.O_RDONLY), 0)),):
+            p = self.refusal(pre)
+            self.assertEqual(p.returncode, 0, label)
+            self.assertEqual(json.loads(p.stdout)["data"]["column_count"], 0)
+
+
 class StreamLoop(unittest.TestCase):
     """`read_stream` is `read_file` made mechanically (scripts/stream.py): the loop of a file is not edited to serve a pipe, and the loop of a pipe is not edited by hand."""
 
