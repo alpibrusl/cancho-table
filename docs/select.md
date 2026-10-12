@@ -40,8 +40,8 @@ that guesses which `id` is meant is wrong the day the file gets a second one.
 exist"), with `detail.available` (the first 50 header names, and the count) and, when
 the name differs from a header only in case, a repair of kind `choose` whose options
 are whole invocations (the same argv with that one name corrected; at most 5). The
-repair is built by hand in `plan.cho`: the contract's `fail` has `retry` and `none`
-helpers and no `choose` one. With no near name the repair is `none` and says to read
+repair is built in `plan.cho` with the contract's `fail.choose_open`, `choose_option_replacing` and
+`choose_close` (the first version built it by hand, before `fail` had a `choose` helper). With no near name the repair is `none` and says to read
 `detail.available`.
 
 **JSON, `table.v2`.** `{columns, rows, row_count, truncated, next}`. A field is a
@@ -142,4 +142,4 @@ benchmark was not.
   they work on a platform whose arguments are bytes, but no test covers it).
 * Pages are not cheap to resume (above). An index would need a second file or a
   seekable record format, and neither belongs in a tool that holds no state.
-* The filter, sort, group and `--query` of the design.
+* The `--query` of the design. (The filter, the sort and the groups are built: `docs/filter.md`, `docs/sort.md`.)

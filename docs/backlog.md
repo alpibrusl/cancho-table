@@ -79,7 +79,9 @@ otherwise said to be inferred.
   callee behind a case the loop already has, as the sort does. The cost of the by-value call for the groups is the other
   half of the same fact: the in-place paths (`group_plain`, `group_fast`) exist because moving the 40-word `Groups` per row
   cost a quarter of a group-count.
-* **The row sort is sequential.** `--threads` with `--order-by` runs the sequential read and gives the same bytes. DuckDB's
+* **The row sort is sequential.** (Since #33 a whole sort written as CSV, `--order-by` with `--format csv` and no `--top`, `--limit` or
+  `--from`, is sorted by `--threads` in parallel with the same bytes, `psort.cho`, `docs/gap-sort.md`; pages, `--top` and JSON output are still the
+  sequential sort. The figures in this item are from before #33.) `--threads` with the other forms runs the sequential read and gives the same bytes. DuckDB's
   default is 3.4x to 3.9x ahead of it on 1M rows (the shell's `sort` on Linux uses its cores too). The design that fits:
   each range keeps its rows sorted (the bounded top-N already does that for a page), the parent merges the runs in file
   order (equal keys: the earlier range first, which is the stable order), the way the groups are merged now. It needs a
@@ -99,7 +101,7 @@ otherwise said to be inferred.
   (skip the shared leading bytes of the whole key set, which is one pass); store the key hash-map in insertion order
   and sort only the output when `--sort`/the key order is wanted (it is always wanted today, as bytewise order is the
   documented output order, so this is a change of contract, not an optimisation).
-* **High cardinality does not parallelise: B3/B4/I1 at `--threads 8` are 0 to 14 percent slower than at 1** and use
+* **High cardinality does not parallelise** (before #35, which partitions the group-by by key range; the figures in this item are from before it and are superseded by the benchmarks page, "A range-partitioned group-by"): B3/B4/I1 at `--threads 8` are 0 to 14 percent slower than at 1 and use
   8 times the state (327 MB against 183). Cause (read from the code and the 8-thread RSS; not profiled): each thread
   builds its own map of up to a million keys and the parent merges them one by one. Options: a hash-partitioned
   merge (threads own key ranges); or a pre-sample that declines threads when the first wave's groups are more than
@@ -117,7 +119,7 @@ otherwise said to be inferred.
   hashed twice (`find`, then `put`). A 1M-key grouping is 3x DuckDB at one thread and the cell-cost round did not touch
   it (B3 1.0x of `main`). A `std.map` with an `insert` that reports whether the key was new, working through `&!`, would
   take both; that is cancho's, not this tool's.
-* **Long fields (1-10 KB) do not scale with threads, and the cause is now known (E1/E2).** With no newline inside the
+* **Long fields (1-10 KB) do not scale with threads, and the cause is now known (E1/E2)** (before #34, which looks ahead to guess whether a range starts inside a quoted field; the figures in this item are from before it, and the benchmarks page, "Newlines inside quoted fields scale with cores", has the newer ones). With no newline inside the
   quoted fields the same file scales 2x at eight threads (0.017 to 0.0086 s); with newlines every 17 bytes it does not
   (0.172 to 0.170 s), because the speculation "this range starts outside quotes" is wrong about as often as a boundary
   is inside a quoted field, and a wrong guess is a re-read by the parent; and each embedded newline is a line the
@@ -128,8 +130,9 @@ otherwise said to be inferred.
   after the in-place add and the cache of hot groups (it was 1.07-1.17x slower).
 * ~~**`select_mutants.py` and `filter_mutants.py` are stale**~~ (done, `docs/history.md` "The mutation scripts"): 24 sites
   re-pointed, a mutant that cannot apply now fails the script, and CI checks that every mutant still applies.
-* **Peak memory of grouping is N threads x groups.** Bounded by `--max-state-bytes` per state, so the true bound is
-  N times it; the documentation says the per-state bound, and should say this.
+* **Peak memory of a threaded grouping has no stated total bound.** `--max-state-bytes` counts accounted bytes of each state, not
+  resident memory, and no multiple of it is claimed as a bound on resident memory (a `(2T + 3) x` statement was withdrawn in #38 and not
+  replaced); the measured peaks are on the benchmarks page, under "What changed: four merged pull requests" (a range-partitioned group-by, #35: "What it costs: memory when a grouping is refused").
 
 ## Ideas, roughly in order
 
@@ -139,13 +142,11 @@ otherwise said to be inferred.
    JSON array is refused with a pointer to `jsonq`.
 3. **`--query`**, the string front end to the same `Query` plan (the typed-flags form must equal it byte for byte:
    the gate is written in the design, not yet in code).
-4. **`mean` and `describe`** with the design's exact fixed-point rule (half to even), per-column
-   count/empty/distinct/min/max. `mean` is specified in `docs/numbers.md` (3.6: `mean:COL[@N]`, exact, no float).
-5. **Decimals and floats**, designed in `docs/numbers.md` (not built): `:dec(S)` declared per column, read as exact scaled integers, a cell
-   with more digits than the scale refused, never rounded; and `:float`, correctly rounded, with `sum` and `mean` from an exact accumulator so
-   that `--threads` cannot change a digit. Stages N1 to N6 and the gates that must be fixed first are in that document; **N0p (the pair sum for `:int`), N1 (`:dec(S)` in `--where`) N2 (typed `sum`, `min`, `max`, `mean[@N]`, `distinct` of a decimal) N3a (`:float` in `--where`, min, max, count, distinct of a float column) and N4 (the exact `sum` and `mean` of a float column, `agg.float-overflow`) are built** (what they measured is at the end of its stage table).
-6. **A second sort key**, and `or` in `--where` (the grammar is the thing to keep unambiguous).
-7. **Type inference** as a *report* (`describe`), never as a silent coercion (designed: `--report types`, `docs/numbers.md` 5.2).
+4. ~~**`mean`**~~ (done: `mean:COL[@N]`, exact, rounded half to even, `docs/numbers.md` 3.6) and **`describe`**: per-column
+   count/empty/distinct/min/max. Not built; `--report types` (item 7) counts what the cells are and nothing else.
+5. ~~**Decimals and floats**~~ (done, `docs/numbers.md` stages N0p to N6: `:dec(S)` and `:float` in `--where`, `--agg`, `--group` and `--order-by`; exact `sum` and `mean` of both; `agg.float-overflow`; the exact float reader, #32).
+6. ~~**A second sort key**~~ (done: `--order-by a,-b:int`, `docs/sort.md`), and **`or` in `--where`** (not built; the grammar is the thing to keep unambiguous).
+7. ~~**Type inference** as a *report*~~ never as a silent coercion (done: `--report types`, `docs/numbers.md` 5.2 and N6).
 8. **stdin** as an input.
 9. **Joins**, a hash join with the build side bounded by `--max-state-bytes` and a refusal past it. This is the first
    feature where DuckDB's shape is the model; it needs its own design, the memory bound is the whole difficulty.

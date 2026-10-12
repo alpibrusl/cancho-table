@@ -35,9 +35,12 @@ How `table` is put together, and what its authority row says. Short on purpose: 
 | `query.cho`, `plan.cho`, `expr.cho`, `frame.cho` | the plan: `--select`, `--where`, `--group` and `--agg` fill one `Query`; it is resolved against the header before any row is read, so a wrong column is refused at the cost of one line |
 | `reader.cho` | the RFC 4180 reader of its own: quotes, doubled quotes, newlines inside quotes, a byte order mark |
 | `engine.cho` | what is done with one row: counted, ragged (never used), kept by `--where`, then written or added to its group. Both reads call the same functions |
-| `agg.cho` | groups and their sums, in bounded memory; the output order is the key order or `--sort` |
+| `agg.cho`, `gmap.cho` | groups and their sums, in bounded memory (`gmap.cho` is the hash table from key bytes to group); the output order is the key order or `--sort` |
+| `dec.cho`, `flt.cho`, `facc.cho`, `pow5.cho` | the numbers: `:dec(S)` as scaled integers and the exact mean, `:float` read as the nearest double and written as the shortest decimal, the exact float sum (a 72-limb accumulator), and the generated table of powers of five for the float reader |
+| `report.cho` | `--report types`: what each column's cells are, counted, and the declaration that would read them |
 | `scan.cho`, `par.cho` | `--threads`: ranges of the file read by threads, each assuming it starts at a record; the parent takes them in file order and reads again any it cannot trust, so the answer is the one-core answer |
-| `sorter.cho` | `--order-by`: the rows held, their keys and an index sorted by a stable merge; with `--top` or a page it keeps only the best rows, and past `--max-sort-rows` it refuses. Its state is the grouping's value, used for rows; it reads on one core |
+| `sorter.cho` | `--order-by`: the rows held, their keys and an index sorted by a stable merge; with `--top` or a page it keeps only the best rows, and past `--max-sort-rows` it refuses. Its state is the grouping's value, used for rows; on its own it reads on one core (`psort.cho` below) |
+| `psort.cho` | `--order-by` with `--threads`, for a whole sort written as CSV (no `--top`, `--limit` or `--from`): each range sorted into a run by a `sorter.cho` state, the runs merged in partitions by as many threads, the sequential bytes. A page, `--top` and JSON output stay on `sorter.cho` alone |
 | `writer.cho` | the fields as CSV (minimal quoting) or JSON |
 | `generated/table/built.cho` | the authority, the schema and the compiler pin, embedded in the binary; written by `scripts/manifest.py` |
 

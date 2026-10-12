@@ -1,6 +1,6 @@
 # High-cardinality grouping: the gap, the cheaper sequential path, and a partitioned parallel read
 
-Branch `gap-groups-design` (a spike on `origin/main` 7d04b9f, not merged). The gap is the one `docs/adversarial.md` registered and
+Branch `gap-groups-design` (a spike on `origin/main` 7d04b9f; merged as #35). The gap is the one `docs/adversarial.md` registered and
 `docs/backlog.md` left open: a grouping with many distinct keys (cells B1 to B4, I1) is 3x behind DuckDB on one core, `--threads` does
 not help it, and on 16 cores it is 8 to 11x behind. This file says where the time went, what was changed, what the parallel design is and
 why it returns the sequential answer, what each part measured, and what is still not done. Everything below was run on this branch; the
