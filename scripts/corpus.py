@@ -70,4 +70,5 @@ def main():
                     print(h, r.returncode, key, " ".join(plan + fmt + extra + var))
 
 
-main()
+if __name__ == "__main__":
+    main()
