@@ -6,9 +6,10 @@
 //     stdin_read dev    < file      open the path /dev/stdin through `Fs` and `file_read` it (bulk `read(2)`; NOT proposed:
 //                                   it reaches standard input through the file system, so the authority row would say
 //                                   fs_read, not io_read, and a path is a name the confinement of `--root` knows nothing of)
+//     stdin_read bulk   < file      `read_bytes` (cancho PR #363, edition 9) into the 64 KiB chunk's room: what bulk.fill_stdin does, without the first small reads
 //     stdin_read file PATH          `file_read` of an ordinary path (what `table FILE` does): the floor
 // Prints "bytes newlines".
-edition 5;
+edition 9;
 
 import std.buffer;
 import std.bytes;
@@ -106,6 +107,39 @@ fn drain_getchar_room[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] (in
     return (total, lines);
 }
 
+fn drain_bulk[&h, &i](heap: &!h Heap, io: &!i Io) -> [heap, io_read] (int, int) {
+    var chunk = buffer.empty(heap, 65536);
+    var total = 0;
+    var lines = 0;
+    var going = true;
+    while going {
+        var got = 0;
+        borrow mut chunk as &!cw in {
+            buffer.clear(cw);
+            match read_bytes(io, buffer.room(cw)) {
+                Read::Got(n) => {
+                    buffer.filled(cw, n);
+                    got = n;
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+        total = total + got;
+        if got > 0 {
+            borrow chunk as &cr in {
+                lines = lines + bytes.count_byte(buffer.bytes(cr), 10);
+            }
+        }
+    }
+    buffer.drop(heap, chunk);
+    return (total, lines);
+}
+
 fn through_path[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [heap, file_read, fs_read("")] (int, int) {
     match open_read(fs, path) {
         Opened::Ok(file) => {
@@ -127,14 +161,19 @@ fn through_path[&h, &f, &p](heap: &!h Heap, fs: &f Fs(""), path: &p [byte]) -> [
 }
 
 fn main(world: World) -> [] int {
-    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    let Split { io, ffi, fs, heap, args, net, clock, signals, exec, tty } = split(world);
     release(ffi);
     release(net);
     release(clock);
+    release(signals);
+    release(exec);
+    release(tty);
     var how = 0;
     borrow args as &g in {
         let a1 = arg(g, 1);
-        if int_of(a1[0]) == 'g' {
+        if int_of(a1[0]) == 'b' {
+            how = 4;
+        } else if int_of(a1[0]) == 'g' {
             how = 0;
         } else if int_of(a1[0]) == 'r' {
             how = 3;
@@ -148,7 +187,11 @@ fn main(world: World) -> [] int {
     var lines = 0;
     borrow mut heap as &!h in {
         borrow mut io as &!i in {
-            if how == 3 {
+            if how == 4 {
+                let (t, l) = drain_bulk(h, i);
+                total = t;
+                lines = l;
+            } else if how == 3 {
                 let (t, l) = drain_getchar_room(h, i);
                 total = t;
                 lines = l;

@@ -53,7 +53,9 @@ def pipelines(table, data, rows, expected, floor=None):
              "cat | wc -l (floor)": ("cat %s | wc -l" % f, lambda s: s.split()[0] == str(rows + 1))}
     if floor:
         # the spike of docs/readers.md section 3.4, built with the pinned compiler: `getchar` into 64 KiB chunks, counting bytes and newlines, keeping nothing
-        shape["stdin_read getchar < FILE (the floor)"] = ("%s getchar < %s" % (floor, f), lambda s: s.split()[0] == str(data.stat().st_size) and s.split()[1] == str(rows + 1))
+        # `getchar` is the floor the byte-at-a-time reader had; `bulk` (read_bytes, 64 KiB at a time) is the floor of the reader that is built
+        for mode in ("getchar", "bulk"):
+            shape["stdin_read %s < FILE (the floor)" % mode] = ("%s %s < %s" % (floor, mode, f), lambda s: s.split()[0] == str(data.stat().st_size) and s.split()[1] == str(rows + 1))
     if have["csvtk"]:
         shape["cat | csvtk -j 1 nrow"] = ("cat %s | csvtk -j 1 nrow" % f, lambda s: s.split()[-1] == str(rows))
     if have["duckdb"]:
@@ -99,7 +101,7 @@ def main():
     ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
     ap.add_argument("--file", default=str(ROOT / "build" / "bench" / "data.csv"))
     ap.add_argument("--only", default="")
-    ap.add_argument("--floor", default="", help="the built scripts/spikes/stdin_read.cho (cancho build scripts/spikes/stdin_read.cho -o PATH): the getchar floor, and gate S5 of docs/readers.md")
+    ap.add_argument("--floor", default="", help="the built scripts/spikes/stdin_read.cho (cancho build --std scripts/spikes/stdin_read.cho -o PATH): the getchar floor, and gate S5 of docs/readers.md")
     a = ap.parse_args()
     data = pathlib.Path(a.file).resolve()
     rows = a.rows
@@ -136,10 +138,11 @@ def main():
         for n in names:
             lo = min(times[n])
             print("%-34s %9.4f %9.4f %9.0f" % (n, lo, statistics.median(times[n]), size / 1e6 / lo))
-        floor_name = "stdin_read getchar < FILE (the floor)"
-        if floor_name in times:
-            print("S5 (bound 1.10): table < FILE / the getchar floor = %.3f (minimum of %d); the file path, table FILE / the floor = %.3f" % (
-                min(times["table < FILE"]) / min(times[floor_name]), a.runs, min(times["table FILE"]) / min(times[floor_name])))
+        for mode in ("getchar", "bulk"):
+            floor_name = "stdin_read %s < FILE (the floor)" % mode
+            if floor_name in times:
+                print("S5 (bound 1.10): table < FILE / the %s floor = %.3f (minimum of %d); the file path, table FILE / the floor = %.3f" % (
+                    mode, min(times["table < FILE"]) / min(times[floor_name]), a.runs, min(times["table FILE"]) / min(times[floor_name])))
         print()
     print("load average after %s" % "/".join("%.2f" % x for x in os.getloadavg()))
 

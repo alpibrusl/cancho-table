@@ -673,6 +673,24 @@ class Bulk(Source):
         self.assertTrue(answered, "not answered while the producer was still writing")
         self.assertLess(waited, 2.0)
 
+    def test_the_big_file_gives_the_files_answer_however_it_arrives(self):
+        # 5.6 MB through a pipe all at once, redirected from the file, and in pieces 2 ms apart that end at, before and after the edges of the reads (512, 1,024,
+        # 4,096, 65,536 bytes) and at random places: the same bytes as the file, on the plans that touch every part of the reader
+        data = (self.s.dir / "bulk.csv").read_bytes()
+        rng = random.Random(20261012)
+        edges = [511, 512, 513, 1023, 1024, 1025, 4095, 4096, 4097, 65535, 65536, 65537, 131071, 131072, 131073]
+        cut = sorted(set(edges + [rng.randrange(1, len(data)) for _ in range(30)]))
+        plans = [[], ["--select", "id,note", "--where", "bytes:int>99000", "--format", "csv"], ["--group", "status", "--agg", "count,sum:bytes"],
+                 ["--order-by", "-bytes:int", "--select", "id", "--top", "20"], ["--report", "types", "--limit", "3"]]
+        for plan in plans:
+            want = self.file(data, plan)
+            want = (want[0], named(want[1]), named(want[2]))
+            self.assertEqual(want[0], 0, plan)
+            self.assertEqual(self.stdin(data, plan), want, ("all at once", plan))
+            with open(self.s.dir / "t.csv", "rb") as f:
+                self.assertEqual(self.stdin(data, plan, stdin=f), want, ("redirected", plan))
+            self.assertEqual(self.stdin(data, plan, cut=cut, pause=0.002), want, ("pieces 2 ms apart", plan))
+
     def refusal(self, pre, plan=(), keep=()):
         p = subprocess.run([binary(), *plan], stdin=None, preexec_fn=pre, capture_output=True, timeout=60, pass_fds=keep)
         self.assertNotIn(p.returncode, TRAPS)
