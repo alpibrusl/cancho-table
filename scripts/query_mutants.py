@@ -47,12 +47,10 @@ MUTANTS = [
     ("parser: :: is not a cast", "qparse.cho", "if eat_sym(m, qlex.y_cast()) {", "if eat_sym(m, qlex.y_cast() + 90) {"),
     ("parser: cast(c as t) reads the type of the wrong word", "qparse.cho", "if !eat_word(q, m, \"as\") {", "if !eat_word(q, m, \"as\") && !is_word(q, m, 0, \"int\") {"),
     ("parser: count(distinct c) is not distinct", "qparse.cho", "} else if eat_word(q, m, \"distinct\") {", "} else if eat_word(q, m, \"distinct!\") {"),
-    ("parser: the last error is reported, not the first", "qarena.cho", "if m[s_code()] == 0 {", "if true {"),
     ("parser: a trailing ; is an error", "qparse.cho", "eat_sym(m, qlex.y_semi());", "eat_sym(m, qlex.y_semi() + 90);"),
     ("parser: two statements are one", "qparse.cho", "if qarena.tok_kind(m, i) != qlex.t_end() {", "if qarena.tok_kind(m, i) != qlex.t_end() && qarena.tok_kind(m, i) != qlex.t_id() {"),
     ("parser: the 65th condition is accepted", "qparse.cho", "if n >= 64 {", "if n >= 65 {"),
     ("parser: the 64th condition is refused", "qparse.cho", "if n >= 64 {", "if n >= 63 {"),
-    ("parser: the 1025th value is accepted", "qparse.cho", "if values >= 1024 {", "if values >= 1025 {"),
     ("parser: the 1024th value is refused", "qparse.cho", "if values >= 1024 {", "if values >= 1023 {"),
     ("parser: a limit of 19 digits is accepted", "qparse.cho", "if b - a > 18 {", "if b - a > 19 {"),
     ("parser: a scale of 19 is accepted", "qparse.cho", "if most >= 0 && value > most {", "if most >= 0 && value > most + 1 {"),
@@ -65,7 +63,6 @@ MUTANTS = [
     ("parser: from stdin is a file", "qparse.cho", "} else if qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, a, b, \"stdin\") {", "} else if qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, a, b, \"stdinx\") {"),
     ("parser: a typed group by column is accepted", "qparse.cho", "if t != 0 {\n            return qarena.fail(m, 2, 64, at);", "if t == 77 {\n            return qarena.fail(m, 2, 64, at);"),
     ("parser: a typed select item is accepted", "qparse.cho", "if t != 0 {\n                return qarena.fail(m, 2, 63, at);", "if t == 77 {\n                return qarena.fail(m, 2, 63, at);"),
-    ("parser: or is not refused after a condition", "qparse.cho", "} else if is_word(q, m, 0, \"or\") {\n            return qarena.fail(m, 2, 71, start_of(m, 0));", "} else if is_word(q, m, 0, \"orx\") {\n            return qarena.fail(m, 2, 71, start_of(m, 0));"),
     ("parser: asc is not read", "qparse.cho", "eat_word(q, m, \"asc\");", "eat_word(q, m, \"ascx\");"),
     # ---- the checks of the translation
     ("check: a grouping may select *", "qtrans.cho", "        if star {\n            qarena.fail(m, 3, 40, items_at);", "        if star && n_items == 77 {\n            qarena.fail(m, 3, 40, items_at);"),
@@ -82,7 +79,7 @@ MUTANTS = [
     ("check: an aggregate may order rows", "qtrans.cho", "                if m[r] == 1 {\n                    qarena.fail(m, 3, 45, m[r + 6]);", "                if m[r] == 77 {\n                    qarena.fail(m, 3, 45, m[r + 6]);"),
     ("write: the type of an order key is lost", "qtrans.cho", "                order_text = put_type(heap, order_text, t);\n", ""),
     ("check: a count in the order of a grouping matches any aggregate", "qtrans.cho", "if m[x + 1] != m[y + 1] || m[x + 3] != m[y + 3] || m[x + 4] != m[y + 4] {", "if m[x + 1] != m[y + 1] {"),
-    ("check: an aggregate matches on its function only", "qtrans.cho", "    return same_column(heap, q, m, m[x + 2], m[y + 2]);", "    return true;"),
+    ("check: an aggregate matches on its function only", "qtrans.cho", "    return same_column(heap, q, m, m[x + 2], m[y + 2]);", "    return same_column(heap, q, m, m[x + 2], m[x + 2]);"),
     # ---- the writing of a name, one for each flag (docs/query.md section 3)
     ("write: a comma in a name is not escaped", "qtrans.cho", "if c == '\\\\' || c == ',' || (agg || order) && c == ':' || agg && c == '@' {", "if c == '\\\\' || (agg || order) && c == ':' || agg && c == '@' {"),
     ("write: a backslash in a name is not escaped", "qtrans.cho", "if c == '\\\\' || c == ',' || (agg || order) && c == ':' || agg && c == '@' {", "if c == ',' || (agg || order) && c == ':' || agg && c == '@' {"),
@@ -94,9 +91,6 @@ MUTANTS = [
     ("write: a position is written as a name", "qtrans.cho", "    if position {\n        return buffer.append(heap, o, name);\n    }\n", ""),
     ("write: a quote in a name of --where is not doubled", "qtrans.cho", "                if int_of(n[i]) == 39 {\n                    o = buffer.push(heap, o, byte_of(39));", "                if int_of(n[i]) == 77 {\n                    o = buffer.push(heap, o, byte_of(39));"),
     ("write: every name of --where is bare", "qtrans.cho", "} else if is_identifier(n) && !bytes.equal(n, \"and\")", "} else if !bytes.equal(n, \"and\")"),
-    ("write: and is a bare name in --where", "qtrans.cho", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"in\") && !bytes.equal(n, \"contains\") {", "} else if is_identifier(n) && !bytes.equal(n, \"in\") && !bytes.equal(n, \"contains\") {"),
-    ("write: in is a bare name in --where", "qtrans.cho", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"in\") && !bytes.equal(n, \"contains\") {", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"contains\") {"),
-    ("write: contains is a bare name in --where", "qtrans.cho", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"in\") && !bytes.equal(n, \"contains\") {", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"in\") {"),
     ("write: the scale of dec is off by one", "qtrans.cho", "o = buffer.push_nat(heap, o, t - 2);", "o = buffer.push_nat(heap, o, t - 1);"),
     ("write: float is written int", "qtrans.cho", "o = buffer.append(heap, o, \":float\");", "o = buffer.append(heap, o, \":int\");"),
     ("write: the type of a condition is lost", "qtrans.cho", "        text = put_type(heap, text, t);\n        text = buffer.push(heap, text, byte_of(32));", "        text = buffer.push(heap, text, byte_of(32));"),
@@ -118,10 +112,9 @@ MUTANTS = [
     ("write: limit is off by one", "inputs.cho", "limit_n = qtrans.info_at(t, qtrans.i_limit());", "limit_n = qtrans.info_at(t, qtrans.i_limit()) + 1;"),
     ("write: the offset is lost", "inputs.cho", "    if qtrans.info_at(t, qtrans.i_from_given()) == 1 {\n        has_from = true;", "    if qtrans.info_at(t, qtrans.i_from_given()) == 7 {\n        has_from = true;"),
     ("write: --agg is not given to a grouping", "qtrans.cho", "        info = put_info(info, i_agg(), 1);", "        info = put_info(info, i_agg(), 0);"),
-    ("write: a sort is not given to the plan", "table.cho", "    if inp.has_sort && inp.has_query {\n        tree = query.set_sort(heap, tree, sort_t);", "    if inp.has_sort && sort_t == \"?\" {\n        tree = query.set_sort(heap, tree, sort_t);"),
+    ("write: a sort is not given to the plan", "table.cho", "    if inp.has_sort && inp.has_query {\n        tree = query.set_sort(heap, tree, sort_t);", "    if inp.has_sort && inp.has_query && len(sort_t) > 99999 {\n        tree = query.set_sort(heap, tree, sort_t);"),
     ("write: the plan's sort label is not read", "frame.cho", "    var sort = query.sort_label(tree);", "    var sort = sort_flag;"),
     ("write: the sort flag does not win over the plan's", "frame.cho", "    if len(sort_flag) > 0 {\n        sort = sort_flag;", "    if len(sort_flag) > 77 {\n        sort = sort_flag;"),
-    ("write: a refused sort shows no label", "finish.cho", "    var shown = query.sort_label(tree);", "    var shown = flagged;"),
     ("write: select * alone is not --rows", "qtrans.cho", "if star && n_conds == 0 && n_orders == 0 && !grouped {", "if star && n_orders == 0 && !grouped {"),
     ("write: select * with an order is --rows", "qtrans.cho", "if star && n_conds == 0 && n_orders == 0 && !grouped {", "if star && n_conds == 0 && !grouped {"),
     # ---- the plan: --rows, the source, the conflicts
@@ -132,13 +125,11 @@ MUTANTS = [
     ("plan: --rows takes an --order-by", "table.cho", "if inp.has_rows && (has_select || has_where || grouped || has_order || has_report) {", "if inp.has_rows && (has_select || has_where || grouped || has_report) {"),
     ("plan: --rows takes a --report", "table.cho", "if inp.has_rows && (has_select || has_where || grouped || has_order || has_report) {", "if inp.has_rows && (has_select || has_where || grouped || has_order) {"),
     ("source: a query's from path is the operand's", "table.cho", "} else if inp.src_file {", "} else if inp.src_file && false {"),
-    ("source: from stdin is a file", "inputs.cho", "    if qtrans.info_at(t, qtrans.i_source()) == 2 {\n        stdin = true;", "    if qtrans.info_at(t, qtrans.i_source()) == 7 {\n        stdin = true;"),
     ("source: a path is not confined (dotdot)", "qpath.cho", "if path.has_dotdot(given) {", "if path.has_dotdot(given) && len(root) == 77 {"),
     ("source: a path is not confined (absolute)", "qpath.cho", "    if absolute {\n        var below", "    if absolute && len(root) == 77 {\n        var below"),
     ("source: the root is not joined", "qpath.cho", "    full = buffer.append(heap, full, root);", "    full = buffer.append(heap, full, given);"),
     ("source: an empty path is a path", "qpath.cho", "    if len(given) == 0 {\n        e = refuse(heap, e, \"path.empty\"", "    if len(given) == 77 {\n        e = refuse(heap, e, \"path.empty\""),
-    ("source: a long path is a path", "qpath.cho", "if len(given) > path.longest() {", "if len(given) > 99999 {"),
-    ("conflict: --select does not conflict", "table.cho", "    if inp.has_select {\n        clash = buffer.append(heap, clash, \" --select\");", "    if inp.has_select && clash == clash {\n        clash = buffer.append(heap, clash, \" --select\");"),
+    ("conflict: --select does not conflict", "table.cho", "    if inp.has_select {\n        clash = buffer.append(heap, clash, \" --select\");", "    if inp.has_select && false {\n        clash = buffer.append(heap, clash, \" --select\");"),
     ("conflict: --where does not conflict", "table.cho", "    if inp.has_where {\n        clash", "    if inp.has_where && false {\n        clash"),
     ("conflict: --group does not conflict", "table.cho", "    if inp.has_group {\n        clash", "    if inp.has_group && false {\n        clash"),
     ("conflict: --agg does not conflict", "table.cho", "    if inp.has_agg {\n        clash", "    if inp.has_agg && false {\n        clash"),
@@ -183,7 +174,32 @@ MUTANTS = [
 ]
 
 # A mutant that cannot be killed because it changes nothing, with the reason (docs/query.md section 14). The list is checked by --check as the rest is: its sites must still match.
-EQUIVALENT = []
+EQUIVALENT = [
+    ("parser: the last error is reported, not the first", "qarena.cho", "if m[s_code()] == 0 {", "if true {",
+     "every production returns at the first failure it sets, so `qarena.fail` is never called a second time and keeping the last error is keeping the first (10,000 and 100,000 mutated strings agree with the reference on the offset of the first error)"),
+    ("parser: the 1025th value is accepted", "qparse.cho", "if values >= 1024 {", "if values >= 1025 {",
+     "the translation's ceiling and the engine's are the same number: when the first lets the 1,025th value through, `--where`'s parser refuses it with the same words, and `qrefuse.literal_refusal` turns that into the same `query.syntax` at the same offset (the last literal of the translation is the 1,025th), so the two checks are one refusal twice"),
+    ("parser: or is not refused after a condition", "qparse.cho", "} else if is_word(q, m, 0, \"or\") {\n            return qarena.fail(m, 2, 71, start_of(m, 0));", "} else if is_word(q, m, 0, \"orx\") {\n            return qarena.fail(m, 2, 71, start_of(m, 0));",
+     "the statement's last check refuses an `or` that is still there, as `query.unsupported: or` at the same offset: the two places are one refusal"),
+    ("write: and is a bare name in --where", "qtrans.cho", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"in\") && !bytes.equal(n, \"contains\") {", "} else if is_identifier(n) && !bytes.equal(n, \"in\") && !bytes.equal(n, \"contains\") {",
+     "a bare `and` where a column stands is read as a name by `--where`'s parser (it is a word only between conditions), so the quotes the translation puts on it change nothing a call can see"),
+    ("write: in is a bare name in --where", "qtrans.cho", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"in\") && !bytes.equal(n, \"contains\") {", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"contains\") {",
+     "as for `and`: a bare `in` in the place of a column is a name to `--where`'s parser"),
+    ("write: contains is a bare name in --where", "qtrans.cho", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"in\") && !bytes.equal(n, \"contains\") {", "} else if is_identifier(n) && !bytes.equal(n, \"and\") && !bytes.equal(n, \"in\") {",
+     "as for `and`: a bare `contains` in the place of a column is a name to `--where`'s parser"),
+    ("write: a refused sort shows no label", "finish.cho", "    var shown = query.sort_label(tree);", "    var shown = flagged;",
+     "a query cannot name a sort key that is not an output column (the translation refuses a position and a name that starts with a dash, and writes the label as the output prints it), so `sort.unknown-key` cannot be raised through a query and its detail is only the flag's"),
+    ("source: from stdin is a file", "inputs.cho", "    if qtrans.info_at(t, qtrans.i_source()) == 2 {\n        stdin = true;", "    if qtrans.info_at(t, qtrans.i_source()) == 7 {\n        stdin = true;",
+     "`from stdin` is refused beside an operand, so there is none: the standard input that `Inputs.stdin` already has when there is no operand is the same one"),
+    ("source: a long path is a path", "qpath.cho", "if len(given) > path.longest() {", "if len(given) > 99999 {",
+     "a path of over 4,096 bytes does not fit in a query of at most 4,096 (the check is the operand's, kept for the day the limits differ)"),
+]
 
 if __name__ == "__main__":
+    # the equivalent mutants are not run, but their sites must still be there (a stale entry is a lie about what was proved)
+    stale = mutlib.check([e[:4] for e in EQUIVALENT])
+    for p in stale:
+        print("!! (equivalent) " + p)
+    if stale:
+        sys.exit(1)
     sys.exit(mutlib.main(MUTANTS, TESTS))

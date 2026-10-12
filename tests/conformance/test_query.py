@@ -14,7 +14,8 @@ The gates, each of them able to fail (scripts/query_mutants.py breaks the tool i
 * **Q1-LIMITS** 4,096 bytes accepted and 4,097 refused; 64 conditions and 1,024 values at and past the ceiling. **Q1-CONFLICT** `--query` with each plan flag. **Q1-KEYWORDS**
   every reserved word refused bare and accepted quoted, end to end. **Q1-DOC** the worked examples of docs/query.md.
 
-TABLE_QUERY_CASES (default 150) sets the random plans of Q1-EQ, TABLE_QUERY_FUZZ (default 1500) the strings of Q1-FUZZ; the numbers of a run that is quoted are in the pull request.
+TABLE_QUERY_CASES (default 150) sets the random plans of Q1-EQ (TABLE_QUERY_THREADS=all runs every one with one thread and with four), TABLE_QUERY_FUZZ (default 1500) the strings of
+Q1-FUZZ, TABLE_QUERY_SEED their seed, TABLE_QUERY_REPORT=1 prints what the equivalence saw; the numbers of a run that is quoted are in the pull request.
 """
 
 import concurrent.futures
@@ -36,14 +37,17 @@ from harness import ROOT, TRAPS, Scratch, binary, introspect, run, validate
 
 CASES = int(os.environ.get("TABLE_QUERY_CASES", "150"))
 FUZZ = int(os.environ.get("TABLE_QUERY_FUZZ", "1500"))
+ALL_THREADS = os.environ.get("TABLE_QUERY_THREADS") == "all"
 THREADS = ["--threads", "4", "--parallel-min-bytes", "0", "--chunk-bytes", "65536"]
 
 
 def doc(result):
+    """The answer as a JSON object, or None (a csv answer is not one, and may be a JSON string or number by chance: a single cell)."""
     try:
-        return json.loads(result.stdout.decode("utf-8"))
+        d = json.loads(result.stdout.decode("utf-8"))
     except ValueError:
         return None
+    return d if isinstance(d, dict) else None
 
 
 def rule_of(result):
@@ -103,17 +107,21 @@ class Equivalence(unittest.TestCase):
                 flags = query_gen.flag_form(plan)
                 from_clause = "'f.csv'" if rnd.random() < 0.5 else None
                 query = query_gen.query_form(rnd, plan, from_clause)
-                extra = THREADS if case % 5 == 0 else []
-                for fmt in ("json", "csv"):
-                    a = run(*flags, "--format", fmt, *extra, "f.csv", cwd=d)
-                    b = run("--query", query, "--format", fmt, *extra, *([] if from_clause else ["f.csv"]), cwd=d)
-                    seen["ran"] += 1
-                    if a.status != 0:
-                        seen["refusals"] += 1
-                        seen["rules"][rule_of(a)] = seen["rules"].get(rule_of(a), 0) + 1
-                    self.assertEqual(comparable(a), comparable(b), "case %d\n  flags: %r\n  query: %r\n  table: %r" % (case, flags, query, names))
+                # one thread, and four threads on tiny ranges for every fifth case (for every case with TABLE_QUERY_THREADS=all)
+                extras = [[], THREADS] if ALL_THREADS else [THREADS if case % 5 == 0 else []]
+                for extra in extras:
+                    for fmt in ("json", "csv"):
+                        a = run(*flags, "--format", fmt, *extra, "f.csv", cwd=d)
+                        b = run("--query", query, "--format", fmt, *extra, *([] if from_clause else ["f.csv"]), cwd=d)
+                        seen["ran"] += 1
+                        if a.status != 0:
+                            seen["refusals"] += 1
+                            seen["rules"][rule_of(a)] = seen["rules"].get(rule_of(a), 0) + 1
+                        self.assertEqual(comparable(a), comparable(b), "case %d\n  flags: %r\n  query: %r\n  table: %r" % (case, flags, query, names))
         # a gate that never saw a refusal, or that never ran, has gated nothing
-        self.assertEqual(seen["ran"], 2 * CASES)
+        self.assertEqual(seen["ran"], 2 * CASES * (2 if ALL_THREADS else 1))
+        if os.environ.get("TABLE_QUERY_REPORT"):
+            print("\nQ1-EQ: %d plans, %d runs, %d refusals: %s" % (CASES, seen["ran"], seen["refusals"], json.dumps(seen["rules"], sort_keys=True)))
         self.assertGreater(seen["refusals"], CASES // 10, seen)
 
 
@@ -160,6 +168,21 @@ class Refusals(Base):
         for feature in ("subquery", "join", "alias", "count-column", "cast-in-select", "cast-in-group", "column-comparison", "null", "boolean", "or", "like", "between", "is-null",
                         "not", "having", "union", "expression", "empty-name", "order-by-two-keys", "order-by-position", "order-by-dash-name"):
             self.assertIn(feature, features)
+
+    def test_a_literal_that_does_not_fit_its_column_is_told_at_the_literal(self):
+        for query, value, column, type_, expected in query_cases.LITERALS:
+            with self.subTest(query=query):
+                r = self.q(query)
+                self.assertEqual((r.status, rule_of(r)), (2, "query.syntax"), r)
+                self.assertEqual(validate(r), [], r)
+                detail = doc(r)["error"]["detail"]
+                self.assertEqual(detail, {"offset": query.rindex(value), "expected": expected, "query": query, "column": column, "type": type_, "value": value})
+                self.assertEqual(doc(r)["error"]["repair"]["kind"], "none")
+                # the flags' own refusal of the same literal is --where's, at its own offset in the translated expression: one refusal, written for two front ends
+                argv, _ = query_ref.translate(query)
+                flags = self.flags(*argv, "f.csv")
+                self.assertEqual((flags.status, rule_of(flags)), (2, "where.syntax"))
+                self.assertEqual(doc(flags)["error"]["detail"]["expected"], expected)
 
     def test_a_refusal_reads_nothing(self):
         # the query is refused before the file is opened: a file that does not exist is not what is reported
@@ -498,6 +521,27 @@ class Source(Base):
         self.assertEqual((a.status, rule_of(a)), (b.status, rule_of(b)))
         self.assertEqual(rule_of(b), "path.symlink")
 
+    def test_a_doubled_quote_in_the_path_is_one_quote(self):
+        self.s.write("it's.csv", "a\n42\n")
+        r = self.q("select a from 'it''s.csv'", "--format", "csv")
+        self.assertEqual((r.status, r.stdout), (0, b"a\n42\n"), r)
+        r = self.q("select a from 'it''''s.csv'", "--format", "csv")
+        self.assertEqual(rule_of(r), "io.not-found")
+
+    def test_the_path_opens_in_every_thread(self):
+        # the threads of --threads open the file again by its whole path: a source that is only right for the first open is found out here
+        rows = "".join("%d,%s,%d.5\n" % (i, "x" if i % 3 else "y", i) for i in range(400))
+        self.s.write("many.csv", "a,b,c\n" + rows)
+        for query, flags in (("select a, b from 'many.csv' where c::float > 100", ["--select", "a,b", "--where", "c:float > 100"]),
+                             ("select b, count(*), sum(a) from 'many.csv' group by b", ["--group", "b", "--agg", "count,sum:a"])):
+            for threads in (["--threads", "1"], ["--threads", "4", "--parallel-min-bytes", "0", "--chunk-bytes", "64"]):
+                for root in ([], ["--root", self.cwd]):
+                    with self.subTest(query=query, threads=threads, root=bool(root)):
+                        a = self.flags(*root, *flags, *threads, "--format", "csv", "many.csv")
+                        b = self.q(query, *root, *threads, "--format", "csv")
+                        self.assertEqual((a.status, a.stdout, a.stderr), (b.status, b.stdout, b.stderr))
+                        self.assertEqual(b.status, 0, b)
+
     def test_the_path_is_data_and_never_a_flag(self):
         # a path that looks like a flag, or like a second statement, is a path
         self.s.write("--select", "a\n5\n")
@@ -553,6 +597,28 @@ class Repairs(Base):
         r = self.q('select a from \'f.csv\' where b = "x"')
         self.assertEqual(rule_of(r), "query.unsupported")
         self.assertEqual(self.options(r), [["--select", "a", "--where", "b = 'x'", "f.csv"]])
+
+    def test_a_typo_of_three_edits_is_not_a_repair(self):
+        r = self.q("select a from 'f.csv' ordering by a")
+        self.assertEqual((rule_of(r), doc(r)["error"]["repair"]["kind"]), ("query.syntax", "none"))
+        r = self.q("select a from 'f.csv' orderr by a")
+        self.assertEqual(self.options(r), [["--select", "a", "--order-by", "a", "f.csv"]])
+
+    def test_a_repair_that_would_give_the_call_two_files_is_not_offered(self):
+        # the corrected query has a from, and the call has an operand already: running it would be an args.conflict
+        r = run("--query", "select a form 'f.csv'", "f.csv", cwd=self.cwd)
+        self.assertEqual((rule_of(r), doc(r)["error"]["repair"]["kind"]), ("query.syntax", "none"))
+        # a from-less correction takes the operand it was given
+        r = run("--query", "selct a", "f.csv", cwd=self.cwd)
+        self.assertEqual([o["argv"][1:] for o in doc(r)["error"]["repair"]["options"]], [["--select", "a", "f.csv"]])
+
+    def test_only_a_pattern_that_is_contains_is_repaired(self):
+        for pattern in ("%a%b%", "%x_y%", "%xy", "x%", "%", "%%", "_x_"):
+            with self.subTest(pattern=pattern):
+                r = self.q("select a from 'f.csv' where b like '%s'" % pattern)
+                self.assertEqual((rule_of(r), doc(r)["error"]["repair"]["kind"]), ("query.unsupported", "none"), pattern)
+        r = self.q("select a from 'f.csv' where b like '%it''s%'")
+        self.assertEqual(self.options(r), [["--select", "a", "--where", "b contains 'it''s'", "f.csv"]])
 
     def test_like(self):
         r = self.q("select a from 'f.csv' where b like '%x%'")
@@ -693,6 +759,8 @@ class Fuzz(Base):
                 else:
                     counts["refused-by-engine"] += 1
                     self.assertIsNone(ref, ("the reference refuses what the engine saw", b, ref and (ref.kind, ref.offset), e["rule"]))
+        if os.environ.get("TABLE_QUERY_REPORT"):
+            print("\nQ1-FUZZ: %d strings, %s" % (FUZZ, json.dumps(counts, sort_keys=True)))
         # a fuzz that reached only one kind of answer has fuzzed one path
         self.assertGreater(counts["refused-by-query"], FUZZ // 10, counts)
         self.assertGreater(counts["accepted"] + counts["refused-by-engine"], FUZZ // 12, counts)

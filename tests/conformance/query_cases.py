@@ -158,6 +158,14 @@ REFUSALS = [
     ("select 1 from 'f'", 'syntax', 7, 'a column, *, or an aggregate: count(*), sum(x), min(x), max(x), mean(x), count(distinct x)'),
     ("select 'a' from 'f'", 'syntax', 7, 'a column, *, or an aggregate: count(*), sum(x), min(x), max(x), mean(x), count(distinct x)'),
     ("select a from 'f' where b = 1 limit 5 where c = 2", 'syntax', 38, 'the end of the query (one statement)'),
+    ("select min(a), a from 'f' group by a", 'group-mismatch', 15, 'the select list is the group by columns in the same order, then the aggregates', 'min(a), a', 'a'),
+    ('select "#1", count(*) from \'f\' group by #1', 'group-mismatch', 7, 'the select list is the group by columns in the same order, then the aggregates', '"#1", count(*)', '#1'),
+    ("select a, sum(b::int) from 'f' group by a order by sum(b)", 'group-mismatch', 51, 'an aggregate that is in the select list', 'a, sum(b::int)', 'a'),
+    ("select a, sum(b) from 'f' group by a order by sum(b::int)", 'group-mismatch', 46, 'an aggregate that is in the select list', 'a, sum(b)', 'a'),
+    ("select a, mean(b, 2) from 'f' group by a order by mean(b, 3)", 'group-mismatch', 50, 'an aggregate that is in the select list', 'a, mean(b, 2)', 'a'),
+    ("select a, sum(b) from 'f' group by a order by min(b)", 'group-mismatch', 46, 'an aggregate that is in the select list', 'a, sum(b)', 'a'),
+    ("select a, sum(b) from 'f' group by a order by sum(c)", 'group-mismatch', 46, 'an aggregate that is in the select list', 'a, sum(b)', 'a'),
+    ("select a, count(distinct b) from 'f' group by a order by sum(b)", 'group-mismatch', 57, 'an aggregate that is in the select list', 'a, count(distinct b)', 'a'),
 ]
 
 # (query, the flags it translates to, the source)
@@ -167,6 +175,8 @@ ACCEPTED = [
     ("select a from 'f';", ['--select', 'a'], ('file', 'f')),
     ("select a from 'f' order by a::float", ['--select', 'a', '--order-by', 'a:float'], ('file', 'f')),
     ("select a from 'f' order by a::dec(2) desc, b::int", ['--select', 'a', '--order-by', '-a:dec(2),b:int'], ('file', 'f')),
+    ("select a from 'f.csv' where c::float > 1E-1 and c::float < 2.5e+3 and b != .5 and b != 5. and b != -5.5e-1 and b != +5", ['--select', 'a', '--where', 'c:float > 1E-1 and c:float < 2.5e+3 and b != .5 and b != 5. and b != -5.5e-1 and b != +5'], ('file', 'f.csv')),
+    ("select a from 'f.csv' where c::float >= 0.5E0 and c::float <= 1e2 and b in (1e3, 1E3, 1e-3, 1e+3, 0.5, .5, 5., -1, +1)", ['--select', 'a', '--where', 'c:float >= 0.5E0 and c:float <= 1e2 and b in (1e3, 1E3, 1e-3, 1e+3, 0.5, .5, 5., -1, +1)'], ('file', 'f.csv')),
 ]
 
 # The worked examples of docs/query.md section 4: the fixtures they run on, and for each (query, the flags as a shell would write them, the file operand or None,
@@ -211,4 +221,18 @@ EXAMPLES = [
      "--rows", "orders.csv", 0),
     ("SELECT Customer FROM 'orders.csv' WHERE Status = '200' ORDER BY Customer ASC",
      "--select Customer --where \"Status = '200'\" --order-by Customer", "orders.csv", 3),
+]
+
+
+# A literal that does not fit the type its column is read as is refused by --where's own parser and told as query.syntax at the literal of the query:
+# (the query, the literal as written (the last occurrence is meant), the column, the type, what --where's parser expected of it)
+LITERALS = [
+    ("select a from 'f.csv' where b = 'x' and a::int = 1.5", "1.5", "a", "int", "an integer, because the column is :int"),
+    ("select a from 'f.csv' where c::dec(1) = 1.25", "1.25", "c", "dec(1)", "a decimal with no more fractional digits than the column's scale (write :dec(N) with a larger N to compare finer values)"),
+    ("select a from 'f.csv' where a::int in (1, 2, 99999999999999999999)", "99999999999999999999", "a", "int", "an integer that fits 64 bits, because the column is :int"),
+    ("select a from 'f.csv' where c::float = 'nan'", "'nan'", "c", "float", "a finite number: inf and nan are not numbers here"),
+    ("select a from 'f.csv' where a::int in (1, 'z', 3)", "'z'", "a", "int", "an integer, because the column is :int"),
+    ("select a from 'f.csv' where c::dec(2) > 1e5 and a != 3", "1e5", "c", "dec(2)", "a decimal number: digits and at most one point, no exponent, no spaces, because the column is :dec"),
+    ("select a from 'f.csv' where \"a\"::int = 'q' order by b", "'q'", "a", "int", "an integer, because the column is :int"),
+    ("select a from 'f.csv' where cast(\"x y\" as int) = 1.5", "1.5", "x y", "int", "an integer, because the column is :int"),
 ]
