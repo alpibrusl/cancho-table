@@ -29,6 +29,29 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC = ROOT / "tools" / "table"
 
 
+STREAM_BEGIN = "// BEGIN read_stream:"
+STREAM_END = "// END read_stream\n"
+
+
+def region(text):
+    """The region of table.cho that scripts/stream.py makes (the loop for standard input), or None."""
+    a = text.find(STREAM_BEGIN)
+    if a < 0:
+        return None
+    return a, text.index(STREAM_END, a) + len(STREAM_END)
+
+
+def counted_text(text):
+    """The source as a pattern is counted in it: without the region of table.cho that scripts/stream.py makes from `read_file` (the loop for standard input is a copy
+    of the loop for a file, so each of the loop's patterns occurs in both; a mutant is applied to the first occurrence, which is `read_file`'s, and the copy is the
+    business of scripts/stdin_mutants.py and of the differential of tests/conformance/test_stdin.py)."""
+    a = text.find(STREAM_BEGIN)
+    if a < 0:
+        return text
+    b = text.index(STREAM_END, a) + len(STREAM_END)
+    return text[:a] + text[b:]
+
+
 def check(mutants, src=None):
     """Problems (a list of strings): a pattern missing, occurring more than once, or a mutant that changes nothing."""
     src = SRC if src is None else src
@@ -36,10 +59,11 @@ def check(mutants, src=None):
     problems = []
     names = set()
     for name, file, old, new, *more in mutants:
+        file, _, part = file.partition("#")
         for mfile, mold, mnew in (more[0] if more else []):
             mpath = src / mfile
             mtext = mpath.read_text() if mpath.exists() else None
-            if mtext is None or mtext.count(mold) != 1:
+            if mtext is None or counted_text(mtext).count(mold) != 1:
                 problems.append("mutant %s: its extra edit in %s does not match exactly once" % (name, mfile))
         if name in names:
             problems.append("mutant %s: named twice" % name)
@@ -51,7 +75,12 @@ def check(mutants, src=None):
         if text is None:
             problems.append("mutant %s: no such file %s" % (name, file))
             continue
-        n = text.count(old)
+        if part == "stream":
+            # a mutant of the loop for standard input: its pattern is counted in that region only
+            r = region(text)
+            n = text[r[0]:r[1]].count(old) if r else 0
+        else:
+            n = counted_text(text).count(old)
         if n == 0:
             problems.append("mutant %s: pattern not found in %s" % (name, file))
         elif n > 1:
@@ -59,6 +88,14 @@ def check(mutants, src=None):
         if old == new:
             problems.append("mutant %s: replacement equals the pattern" % name)
     return problems
+
+
+def apply(text, part, old, new):
+    """`text` with the first `old` replaced: in the region of the loop for standard input when `part` is "stream", else outside it (the first occurrence is read_file's)."""
+    if part == "stream":
+        a, b = region(text)
+        return text[:a] + text[a:b].replace(old, new, 1) + text[b:]
+    return text.replace(old, new, 1)
 
 
 def build_and_test(tests, compiler, extra):
@@ -89,7 +126,7 @@ def main(mutants, tests, argv=None):
         return 1
     compiler = os.environ.get("CANCHO", "cancho")
     extra = os.environ.get("CANCHO_ARGS", "").split()
-    files = {n: (SRC / n).read_text() for n in {m[1] for m in mutants} | {e[0] for m in mutants for e in (m[4] if len(m) > 4 else [])}}
+    files = {n: (SRC / n).read_text() for n in {m[1].partition("#")[0] for m in mutants} | {e[0] for m in mutants for e in (m[4] if len(m) > 4 else [])}}
 
     def restore(*_):
         for n, text in files.items():
@@ -103,7 +140,7 @@ def main(mutants, tests, argv=None):
     survivors = []
     for name, file, old, new, *more in chosen:
         try:
-            (SRC / file).write_text(files[file].replace(old, new, 1))
+            (SRC / file.partition("#")[0]).write_text(apply(files[file.partition("#")[0]], file.partition("#")[2], old, new))
             for mfile, mold, mnew in (more[0] if more else []):
                 (SRC / mfile).write_text((SRC / mfile).read_text().replace(mold, mnew, 1))
             verdict, why = build_and_test(tests, compiler, extra)

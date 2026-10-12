@@ -1,0 +1,296 @@
+edition 5;
+
+module flags;
+
+// What `table` does with the lists its flags take (`--select`, `--group`, `--order-by`: names separated by commas, each perhaps ending in a type) and with the
+// refusal of a flag: the names and keys go into the plan (`query.cho`), and every way they can be wrong is a rule with the flag in its detail. Moved out of
+// `table.cho` unchanged (docs/readers.md section 8: a file stays under 2000 lines); nothing in it reads input.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import agg;
+import plan;
+import query;
+import toolbox.fail;
+
+pub fn problem[&h](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message: &static [byte], hint: &static [byte], flags: &static [byte]) -> [heap] fail.Errors {
+    var w = fail.open(heap, rule, message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flags", flags);
+    return fail.add(heap, e, w);
+}
+
+// A comma-separated list whose items may end in a type (`:int`, `:dec(S)`, `:float`; `agg.bare_tail`): what is left of each item, the items joined by
+// commas again, and the type of each in order; and the number of the first item whose scale is not 0 to 18, or -1. With `unescape` an escaped colon
+// (`\:`) is written as a colon, as `--agg` does (`--group` lists), and without it every backslash stays (the list is parsed again by `--order-by`).
+fn split_types[&h, &g](heap: &!h Heap, given: &g [byte], unescape: bool) -> [heap] (buffer.Buffer, vec.Vec[int], int) {
+    var cleaned = buffer.empty(heap, len(given) + 1);
+    var kinds = vec.empty(heap, 8, 0);
+    var bad = -1;
+    let n = len(given);
+    var start = 0;
+    var index = 0;
+    var more = true;
+    while more {
+        var j = start;
+        while j < n && int_of(given[j]) != ',' {
+            if int_of(given[j]) == '\\' && j + 1 < n {
+                j = j + 2;
+            } else {
+                j = j + 1;
+            }
+        }
+        if j > n {
+            j = n;
+        }
+        let item = given[start..j];
+        let (e, kind0) = agg.bare_tail(item);
+        var kind = kind0;
+        if kind == 99 {
+            if bad < 0 {
+                bad = index;
+            }
+            kind = 0;
+        }
+        kinds = vec.push(heap, kinds, kind);
+        var p = 0;
+        while p < e {
+            let c = int_of(item[p]);
+            if c == '\\' && p + 1 < len(item) {
+                let d = int_of(item[p + 1]);
+                if unescape && d == ':' {
+                    cleaned = buffer.push(heap, cleaned, byte_of(d));
+                } else {
+                    cleaned = buffer.push(heap, cleaned, byte_of(c));
+                    cleaned = buffer.push(heap, cleaned, byte_of(d));
+                }
+                p = p + 2;
+            } else {
+                cleaned = buffer.push(heap, cleaned, byte_of(c));
+                p = p + 1;
+            }
+        }
+        if j < n {
+            cleaned = buffer.push(heap, cleaned, byte_of(','));
+            start = j + 1;
+        } else {
+            more = false;
+        }
+        index = index + 1;
+    }
+    return (cleaned, kinds, bad);
+}
+
+// A list of names read with `plan.parse`, in the plan: slot 0 for --select,
+// slot 2 for --group. Refusals are added to `errs`.
+pub fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given: &g [byte], slot: int, flag: &static [byte]) -> [heap] (query.Query, fail.Errors) {
+    var e = errs;
+    // `--group` takes a type after each name (`x:dec(2)`, `x:float`, `x:int`): split off first, what is left is a list of names as `--select`'s is
+    var typed = vec.empty(heap, 4, 0);
+    var cleaned = buffer.empty(heap, len(given) + 1);
+    var bad_item = -1;
+    if slot == 2 {
+        let (c2, t2, b2) = split_types(heap, given, true);
+        buffer.drop(heap, cleaned);
+        vec.drop(heap, typed);
+        cleaned = c2;
+        typed = t2;
+        bad_item = b2;
+    } else {
+        cleaned = buffer.append(heap, cleaned, given);
+    }
+    var toks = buffer.empty(heap, 1);
+    var ends = vec.empty(heap, 1, 0);
+    var kinds = vec.empty(heap, 1, 0);
+    var listed = true;
+    buffer.drop(heap, toks);
+    vec.drop(heap, ends);
+    vec.drop(heap, kinds);
+    borrow cleaned as &cr in {
+        let (t2, e2, k2, l2) = plan.parse(heap, buffer.bytes(cr));
+        toks = t2;
+        ends = e2;
+        kinds = k2;
+        listed = l2;
+    }
+    buffer.drop(heap, cleaned);
+    var named = 0;
+    borrow ends as &ter in {
+        named = vec.size(ter);
+    }
+    if !listed {
+        e = problem(heap, e, "args.bad-value", "a list of names is names separated by commas, and a backslash escapes only a comma, a backslash or a #", "--select 'a,b\\,c'", flag);
+    } else if named > plan.most_names() {
+        e = problem(heap, e, "args.bad-value", "a list names more columns than the ceiling", "4096 is the most one flag names", flag);
+    }
+    if bad_item >= 0 && listed {
+        e = problem(heap, e, "args.bad-value", "a :dec(N) takes N from 0 to 18", "--group 'price:dec(2)'", flag);
+    }
+    var q = tree;
+    if listed {
+        borrow toks as &tr in {
+            borrow ends as &er in {
+                borrow kinds as &kr in {
+                    q = plan.fill(heap, q, tr, er, kr);
+                }
+            }
+        }
+        q = query.bump(q, slot, named);
+        if slot == 2 {
+            var i = 0;
+            while i < named {
+                var t = 0;
+                borrow typed as &yr in {
+                    if i < vec.size(yr) {
+                        t = vec.get(yr, i);
+                    }
+                }
+                q = query.add_gkind(heap, q, t);
+                i = i + 1;
+            }
+        }
+    }
+    vec.drop(heap, typed);
+    buffer.drop(heap, toks);
+    vec.drop(heap, ends);
+    vec.drop(heap, kinds);
+    return (q, e);
+}
+
+// `--order-by KEYS` as names (added to the plan after the aggregates') and flags: each key is `[-]NAME[:int]`. A leading
+// `-` is descending, a trailing `:int` is exact integers; `\-` at the start and `\:` anywhere write a minus and a colon
+// that are part of a name. What is left is a list of names as `--select`'s is, and goes through the same parser.
+pub fn add_order_keys[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given: &g [byte]) -> [heap] (query.Query, fail.Errors) {
+    var e = errs;
+    // the types first (`-bytes:int`, `price:dec(2)`, `x:float`): what is left of each key is `[-]NAME`, its type goes to its flags (2 x the type)
+    let (stripped, key_types, bad_scale) = split_types(heap, given, false);
+    var cleaned = buffer.empty(heap, len(given) + 1);
+    var flags = vec.empty(heap, 4, 0);
+    var n = 0;
+    borrow stripped as &sr0 in {
+        n = buffer.size(sr0);
+    }
+    borrow stripped as &str in {
+        let sb = buffer.bytes(str);
+        var i = 0;
+        var at_start = true;
+        var minus_done = false;
+        var flag = 0;
+        while i <= n {
+            var c = -1;
+            if i < n {
+                c = int_of(sb[i]);
+            }
+            let was_start = at_start;
+            at_start = false;
+            if c == ',' || c < 0 {
+                flags = vec.push(heap, flags, flag);
+                flag = 0;
+                at_start = true;
+                minus_done = false;
+                if c == ',' {
+                    cleaned = buffer.push(heap, cleaned, byte_of(','));
+                }
+                i = i + 1;
+            } else if was_start && c == '-' && !minus_done {
+                flag = 1;
+                minus_done = true;
+                at_start = true;
+                i = i + 1;
+            } else if c == '\\' && i + 1 < n {
+                let d = int_of(sb[i + 1]);
+                if d == '-' && was_start || d == ':' {
+                    cleaned = buffer.push(heap, cleaned, byte_of(d));
+                } else {
+                    cleaned = buffer.push(heap, cleaned, byte_of(c));
+                    cleaned = buffer.push(heap, cleaned, byte_of(d));
+                }
+                i = i + 2;
+            } else {
+                cleaned = buffer.push(heap, cleaned, byte_of(c));
+                i = i + 1;
+            }
+        }
+    }
+    buffer.drop(heap, stripped);
+    // each key's type goes into its flags (the flags are 1 for descending plus 2 x the type)
+    var typed_flags = vec.empty(heap, 4, 0);
+    var t = 0;
+    var nf = 0;
+    borrow flags as &fr in {
+        nf = vec.size(fr);
+    }
+    while t < nf {
+        var kt = 0;
+        var fv = 0;
+        borrow flags as &fr in {
+            fv = vec.get(fr, t);
+        }
+        borrow key_types as &kr in {
+            if t < vec.size(kr) {
+                kt = vec.get(kr, t);
+            }
+        }
+        typed_flags = vec.push(heap, typed_flags, fv + 2 * kt);
+        t = t + 1;
+    }
+    vec.drop(heap, flags);
+    vec.drop(heap, key_types);
+    flags = typed_flags;
+    var toks = buffer.empty(heap, 1);
+    var ends = vec.empty(heap, 1, 0);
+    var kinds = vec.empty(heap, 1, 0);
+    var listed = true;
+    buffer.drop(heap, toks);
+    vec.drop(heap, ends);
+    vec.drop(heap, kinds);
+    borrow cleaned as &cr in {
+        let (t2, e2, k2, l2) = plan.parse(heap, buffer.bytes(cr));
+        toks = t2;
+        ends = e2;
+        kinds = k2;
+        listed = l2;
+    }
+    var named = 0;
+    borrow ends as &ter in {
+        named = vec.size(ter);
+    }
+    var q = tree;
+    if bad_scale >= 0 {
+        e = problem(heap, e, "args.bad-value", "a :dec(N) takes N from 0 to 18", "--order-by 'price:dec(2)'", "--order-by");
+    }
+    if !listed {
+        e = problem(heap, e, "args.bad-value", "a list of keys is names separated by commas, each with - before it for descending and :int, :dec(N) or :float after it to order by value, and a backslash escapes only a comma, a backslash, a #, a leading - or a :", "--order-by '-bytes:int,price:dec(2),status'", "--order-by");
+    } else if named > plan.most_names() {
+        e = problem(heap, e, "args.bad-value", "a list names more columns than the ceiling", "4096 is the most one flag names", "--order-by");
+    } else {
+        var first = 0;
+        borrow q as &qr in {
+            first = query.name_count(qr);
+        }
+        borrow toks as &tr in {
+            borrow ends as &er in {
+                borrow kinds as &kr in {
+                    q = plan.fill(heap, q, tr, er, kr);
+                }
+            }
+        }
+        var k = 0;
+        while k < named {
+            var f = 0;
+            borrow flags as &fr in {
+                f = vec.get(fr, k);
+            }
+            q = query.add_order(heap, q, first + k, f);
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, cleaned);
+    buffer.drop(heap, toks);
+    vec.drop(heap, ends);
+    vec.drop(heap, kinds);
+    vec.drop(heap, flags);
+    return (q, e);
+}

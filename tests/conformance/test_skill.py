@@ -247,7 +247,7 @@ class Examples(unittest.TestCase):
             skill = subprocess.run([binary(), "skill"], capture_output=True, check=True).stdout.decode()
             for command, printed in pairs:
                 self.assertIn("$ table " + command + "\n" + printed, skill)
-                p = subprocess.run([binary(), *shlex.split(command)], capture_output=True, cwd=str(s.dir))
+                p = subprocess.run([binary(), *shlex.split(command)], capture_output=True, cwd=str(s.dir), input=b"")
                 out = p.stdout.decode().rstrip("\n")
                 m = re.match(r'refused: exit (\d+), rule (\S+), hint "(.*)", repair (\w+)$', printed)
                 if m:
@@ -287,8 +287,8 @@ class HelpExamples(unittest.TestCase):
 
     def test_the_operand_says_what_a_file_is(self):
         (op,) = introspect()["operands"]
-        self.assertEqual((op["name"], op["min"], op["max"]), ("FILE", 1, 1))
-        for word in ("--root", "header", "relative"):
+        self.assertEqual((op["name"], op["min"], op["max"]), ("FILE", 0, 1))
+        for word in ("--root", "header", "relative", "standard input"):
             self.assertIn(word, op["help"])
 
 
@@ -431,7 +431,7 @@ class Claims(unittest.TestCase):
         help_ = {f["name"]: f["help"] for f in introspect()["flags"]}["--format"]
         self.assertIn("not a json document", help_)
         self.s.write("late.csv", "a\n1\nx\n")
-        p = subprocess.run([binary(), "--root", str(self.s.dir), "--where", "a:int > 0", "--format", "csv", "late.csv"], capture_output=True)
+        p = subprocess.run([binary(), "--root", str(self.s.dir), "--where", "a:int > 0", "--format", "csv", "late.csv"], capture_output=True, input=b"")
         # the rows before the refusal stand, the verdict is one line on standard error, and the status says it
         self.assertEqual(p.stdout.decode(), "a\n1\n")
         self.assertTrue(p.stderr.decode().startswith("table: value.not-integer: "), p.stderr)

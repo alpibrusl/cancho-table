@@ -21,6 +21,8 @@ For every [[bin]] in cancho.toml:
 
     python3 scripts/manifest.py            # regenerate, then check
     python3 scripts/manifest.py --check    # change nothing; exit 1 on drift
+    python3 scripts/manifest.py --ceiling FILE
+        read the ceilings from FILE and not from tools.toml (a gate's mutant: a ceiling without a label the source needs must be refused)
     python3 scripts/manifest.py --against DIR
         also derive the authority with DIR (a cancho-tools `contract/`
         directory at the pinned revision) in place of the installed package,
@@ -173,7 +175,8 @@ def main():
         against = pathlib.Path(argv[argv.index("--against") + 1])
     proj = project()
     pin = proj["package"]["cancho"]
-    with open(ROOT / "tools.toml", "rb") as f:
+    ceiling_file = pathlib.Path(argv[argv.index("--ceiling") + 1]) if "--ceiling" in argv else ROOT / "tools.toml"
+    with open(ceiling_file, "rb") as f:
         ceilings = tomllib.load(f)
     bins = proj.get("bin", [])
     problems = []

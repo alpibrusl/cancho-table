@@ -318,11 +318,11 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 * **Numbers are mostly built.** `:int`, `:dec(S)` and `:float` work in `--where`, `--agg`, `--group` and `--order-by`. Columns of 15- to 17-digit numbers are read by an exact reader that allocates nothing on the paths a real column takes (Clinger, then Eisel-Lemire, then an exact fallback); it matched Python's `float()` on every cell of each differential run, the largest of 101,400,000 cells, and costs 29.6 ns a cell against 1,151 ns before (one Mac core, load average 6.7 to 13.5; [conditions](https://alpibrusl.github.io/cancho-table/benchmarks.html#float-reader)).
 * **A sort uses more cores only for a whole sort written as CSV.** With `--order-by`, `--format csv` and no `--top`, `--limit` or `--from`, `--threads` above 1 sorts in parallel and gives the same bytes; pages, `--top` and JSON output run on one core. A threaded sort peaks at 11.8 to 14.8 times the size of a 39.55 MB file at 16 threads on the Mac, against 4.4 to 6.2 times for the sequential sort. There is no sort that spills to disk.
-* **No joins**, and **one input file** at a time, named on the command line (no standard input).
+* **No joins**, and **one input** at a time: a file named on the command line, or standard input (`-`, or no file), read in one pass on one core and a byte at a time, so slower than a named file ([docs/readers.md](docs/readers.md), section "R1 as built").
 * **No JSON lines**, no Parquet, no `--query` string. Only CSV and TSV (comma, tab or semicolon). Readers and a query form are designed in [docs/readers.md](docs/readers.md) and [docs/query.md](docs/query.md), not built.
 * **No guessing.** Every column is text unless you say `:int`. No mean, no computed or renamed column, no `or` in a filter.
 
-JSON lines, joins, `mean`, decimals and standard input are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
+JSON lines, joins, `mean` and decimals are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
 
 ## How fast
 

@@ -90,7 +90,7 @@ status,count,sum:bytes
   `select.unknown-column`, `select.ambiguous-column`, and the `args.*`, `path.*` and
   `io.*` rules of the contract. The tool's own rules are in `extra_rules`;
 * an authority of `args, conc, dir_read, err_write, file_read, fs_read(""), heap,
-  io_write` (`conc` is `--threads`): no network, no foreign code, no clock, nothing written to disk,
+  io_read, io_write` (`conc` is `--threads`, `io_read` is standard input): no network, no foreign code, no clock, nothing written to disk,
   enforced by the ceiling in [`tools.toml`](../tools.toml) and
   `python3 scripts/manifest.py --check`;
 * `table introspect` and `table skill`, generated from the tables the parser

@@ -9,6 +9,7 @@
     "file_read",
     "fs_read",
     "heap",
+    "io_read",
     "io_write"
   ],
   "labels": [
@@ -44,6 +45,11 @@
     },
     {
       "name": "heap",
+      "argument": null,
+      "bounded": true
+    },
+    {
+      "name": "io_read",
       "argument": null,
       "bounded": true
     },
@@ -151,6 +157,7 @@
     "finish",
     "first",
     "fits",
+    "flag_table",
     "flag_table",
     "float_add",
     "float_of_key",
@@ -386,5 +393,5 @@
   ],
   "folded_operators": 123,
   "folded_calls": 0,
-  "functions": 631
+  "functions": 636
 }

@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Mutation check of the standard-input stage (docs/readers.md, R1; tests/conformance/test_stdin.py): `table -` and `table` with no operand.
+
+Each mutant is one defect in how the input is chosen, read, bounded or named, or in the ceiling that lets the tool read standard input; the tool is rebuilt from it
+and run against the tests. A mutant is killed when the build refuses it or a test fails.
+
+    python3 scripts/stdin_mutants.py [name-substring ...]
+
+`--check` only verifies that every site still matches (no build; CI runs it). See mutlib.py.
+
+A pattern in `table.cho#stream` is in the loop for standard input (the region scripts/stream.py makes from `read_file`; mutlib.py), the others are where they say.
+Not here: a mutant of the guard that keeps a pipe from the partitioned read, because there is none to mutate. The loop for a pipe has no partitioned read in it (scripts/stream.py
+cuts it out), so `--threads` cannot start a thread there: test_stdin.Threads counts the clone calls under strace on Linux, and scripts/stream.py --check keeps the cut.
+"""
+import sys
+
+sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
+import mutlib  # noqa: E402
+
+TESTS = ["test_stdin", "test_authority", "test_inputs", "test_rules"]
+
+MUTANTS = [
+    # which input it is
+    ("no operand is not standard input", "inputs.cho", "var stdin = cli.operand_count(parsed) == 0;", "var stdin = false;"),
+    ("the dash is not standard input", "inputs.cho", 'bytes.equal(arg(args, source_at), "-")', 'bytes.equal(arg(args, source_at), "--")'),
+    ("a file called ./- is standard input", "inputs.cho", 'bytes.equal(arg(args, source_at), "-")', 'bytes.ends_with(arg(args, source_at), "-")'),
+    ("a name that starts with a dash is standard input", "inputs.cho", 'bytes.equal(arg(args, source_at), "-")', 'bytes.starts_with(arg(args, source_at), "-")'),
+    ("two inputs are not refused", "table.cho", "if inp.operands > 1 {", "if inp.operands > 2 {"),
+    ("the file path reads standard input", "inputs.cho", "    var stdin = cli.operand_count(parsed) == 0;", "    var stdin = true;"),
+    # how it is read
+    ("standard input is read and then the empty file's filler is called", "table.cho#stream", "r = lines.fill_stdin(heap, r, io);", "r = lines.fill_file(lines.fill_stdin(heap, r, io), file);"),
+    ("standard input is told it is a file", "table.cho", 'opened, true, "-", "", "-", io, fs, delim', 'opened, false, "-", "", "-", io, fs, delim'),
+    ("the file is told it is standard input", "table.cho", "opened, false, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim", "opened, true, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim"),
+    ("the loop for standard input is not chosen", "table.cho", "    if stdin {\n        return read_stream(", "    if false {\n        return read_stream("),
+    ("the empty file that stands in is not opened for standard input", "table.cho", 'match open_read(fs, "/dev/null") {', 'match open_read(fs, "/dev/zero") {'),
+    ("an open failure of the stand-in is ignored", "table.cho", 'Opened::Failed(reason) => {\n                    e = fail.io_error(heap, e, reason, false, "-");\n                }', "Opened::Failed(reason) => {\n                }"),
+    # how it is named
+    ("a refusal names standard input as stdin", "table.cho", 'opened, true, "-", "", "-", io, fs, delim', 'opened, true, "stdin", "", "-", io, fs, delim'),
+    ("a refusal names no path", "table.cho", 'opened, true, "-", "", "-", io, fs, delim', 'opened, true, "", "", "-", io, fs, delim'),
+    # how it is bounded
+    ("a line with no end is read to its end", "table.cho#stream", "if length > finish.line_ceiling() {", "if length > 1000000000000 {"),
+    ("a line with no end is cut at the cap, not the ceiling", "table.cho#stream", "if length > finish.line_ceiling() {", "if length > 1000 {"),
+    # the ceiling that lets the tool read it (a mutant of tools.toml, not of the source): the tests that read it must notice
+    ("the ceiling forgets io_read", "../../tools.toml", '"heap", "io_read", "io_write"]', '"heap", "io_write"]'),
+]
+
+if __name__ == "__main__":
+    sys.exit(mutlib.main(MUTANTS, TESTS))

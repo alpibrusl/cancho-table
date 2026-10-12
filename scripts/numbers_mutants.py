@@ -49,9 +49,9 @@ MUTANTS = [
     # what a refusal says
     ("a decimal refusal takes the code of a limit", "engine.cho", "        code = 18 + verdict;", "        code = 17 + verdict;"),
     ("the digits of a too-fine cell are one too many", "engine.cho", "        a[k_err_digits()] = n;", "        a[k_err_digits()] = n + 1;"),
-    ("the repair rewrites the first condition, not the one that refused", "table.cho", "query.cond_at(tree, c.err_cond, 6), digits);", "0, digits);"),
-    ("the repair drops what follows the scale", "table.cho", "    return buffer.append(heap, out, given[end..len(given)]);", "    return out;"),
-    ("the scale of a refusal is the type code", "table.cho", "            scale = query.cond_at(tree, c.err_cond, 1) - 2;", "            scale = query.cond_at(tree, c.err_cond, 1) - 1;"),
+    ("the repair rewrites the first condition, not the one that refused", "finish.cho", "query.cond_at(tree, c.err_cond, 6), digits);", "0, digits);"),
+    ("the repair drops what follows the scale", "finish.cho", "    return buffer.append(heap, out, given[end..len(given)]);", "    return out;"),
+    ("the scale of a refusal is the type code", "finish.cho", "            scale = query.cond_at(tree, c.err_cond, 1) - 2;", "            scale = query.cond_at(tree, c.err_cond, 1) - 1;"),
     # stage N2: the aggregates of a decimal column (dec.cho, agg.cho)
     ("a mean rounds half up", "dec.cho", "            if inexact || limbs[0] & 1 == 1 {", "            if true {"),
     ("an exact half rounds up only when something was left over", "dec.cho", "            if inexact || limbs[0] & 1 == 1 {", "            if inexact {"),
@@ -90,7 +90,7 @@ MUTANTS = [
     ("the refusal an in-place aggregate answered is decoded in eights", "engine.cho", "    let status = (answer - 16) % 16;", "    let status = (answer - 16) % 8;"),
     ("the digits are counted for the wrong refusal", "engine.cho", "    if status == 7 {\n        a[k_err_digits()] = digits_after_point(record, cells[3 * column], cells[3 * column + 1]);\n    }\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return column;", "    if status == 6 {\n        a[k_err_digits()] = digits_after_point(record, cells[3 * column], cells[3 * column + 1]);\n    }\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return column;"),
     ("a mean refusal says sum", "engine.cho", "        function = 5;", "        function = 1;"),
-    ("the scale of an aggregate refusal is the type code", "table.cho", "            scale = query.agg_at(tree, c.err_cond, 2) - 2;", "            scale = query.agg_at(tree, c.err_cond, 2) - 1;"),
+    ("the scale of an aggregate refusal is the type code", "finish.cho", "            scale = query.agg_at(tree, c.err_cond, 2) - 2;", "            scale = query.agg_at(tree, c.err_cond, 2) - 1;"),
 ]
 
 if __name__ == "__main__":

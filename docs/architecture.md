@@ -51,6 +51,7 @@ cancho programs get their capabilities (files, directories, standard streams, th
 |---|---|
 | `args` | the flags and the file name |
 | `file_read` | reading the input file |
+| `io_read` | standard input, when the input is `-` or there is no file: read a byte at a time (`getchar`), in one pass on one core. Approved for the standard-input stage (R1, `docs/readers.md` section 10) and in no other place; the ceiling in `tools.toml` names it |
 | `fs_read("")` | the path is only known at run time, so the row cannot name it; `table introspect` lists this under `not_narrowable` |
 | `dir_read` | read through a directory handle: a label that names no path, because the handle is the authority (cancho `docs/directory-handles.md`); a row with `dir_read` and not `fs_read` can reach only what handles it was given |
 | `heap` | memory for the record, the page and the groups |
@@ -58,7 +59,7 @@ cancho programs get their capabilities (files, directories, standard streams, th
 | `err_write` | standard error |
 | `conc` | `--threads`: spawn and join. The threads hold nothing the process did not already have: a file opened by the same path and a heap forked from the parent's |
 
-Not in the row, and so not possible for this program: `net_out`, `net_in`, `ffi` (foreign code), `clock`, writing a file or directory (`file_write`, `dir_write`), reading standard input (`io_read`). Not that the program has no bugs: the row says what it may reach, not that it is correct. The list of what a row cannot say is also in `introspect`: the extent of a path, what a symbolic link reaches, what standard output carries, and resource use beyond the tool's caps.
+Not in the row, and so not possible for this program: `net_out`, `net_in`, `ffi` (foreign code), `clock`, writing a file or directory (`file_write`, `dir_write`). Not that the program has no bugs: the row says what it may reach, not that it is correct. The list of what a row cannot say is also in `introspect`: the extent of a path, what a symbolic link reaches, what standard output carries, and resource use beyond the tool's caps.
 
 ### What CI checks
 

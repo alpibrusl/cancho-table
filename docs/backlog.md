@@ -146,7 +146,7 @@ otherwise said to be inferred.
    that `--threads` cannot change a digit. Stages N1 to N6 and the gates that must be fixed first are in that document; **N0p (the pair sum for `:int`), N1 (`:dec(S)` in `--where`) N2 (typed `sum`, `min`, `max`, `mean[@N]`, `distinct` of a decimal) N3a (`:float` in `--where`, min, max, count, distinct of a float column) and N4 (the exact `sum` and `mean` of a float column, `agg.float-overflow`) are built** (what they measured is at the end of its stage table).
 6. **A second sort key**, and `or` in `--where` (the grammar is the thing to keep unambiguous).
 7. **Type inference** as a *report* (`describe`), never as a silent coercion (designed: `--report types`, `docs/numbers.md` 5.2).
-8. **stdin** as an input.
+8. ~~**stdin** as an input.~~ **Built** (stage R1 of `docs/readers.md`, section 11): `table -` and `table` with no file, one pass on one core, a byte at a time; a bulk read of standard input is a draft upstream (cancho PR #363, `read_bytes`) and nothing here depends on it.
 9. **Joins**, a hash join with the build side bounded by `--max-state-bytes` and a refusal past it. This is the first
    feature where DuckDB's shape is the model; it needs its own design, the memory bound is the whole difficulty.
 10. **Parquet, a read-only subset**: plain, dictionary and run-length encodings, uncompressed and snappy only; every
