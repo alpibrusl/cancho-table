@@ -104,7 +104,7 @@ status,count,sum:bytes
   [design](https://github.com/alpibrusl/cancho-tools/blob/next-tools-design/docs/next-tools.md)
   (section 5) plans. **Not built:** `describe` (per-column count, distinct, min and max; `--report types`
   counts what the cells are and nothing else), `or`, expressions and functions in `--where` (the design
-  excludes them from v1), and the same plan as one `--query` string. There is no stdin, no type inference
+  excludes them from v1). The same plan as one `--query` string is built (a small subset of SQL, `docs/query.md`). There is no type inference
   (a column is text unless `:int`, `:dec(S)` or `:float` says otherwise; `--report types` only suggests a
   declaration), no NDJSON output, no JSON lines, no join, no way to rename or compute a column. `mean`,
   exact decimals and floats, a sort by several keys and `--report types` are built (`docs/numbers.md`,

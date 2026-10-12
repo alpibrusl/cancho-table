@@ -369,6 +369,9 @@ one-off, and what it found is below):
   and a flag of a *new kind* is a `sys.exit` in the generator (it lists the kinds it knows) rather than a silent hole.
   The query design's additions (`--order-by` keys, `:dec`, `:float`, anything `introspect` gains) arrive as help
   text: they need an accurate `--agg`/`--where` help (§10) because that text is the model's grammar.
+  **Built (Q1):** `query` (a string, with the grammar in words as its description) and `rows` (a boolean) are two more properties of the one tool, from the flag table; a call
+  `{"file": ..., "query": ...}` is the CLI's `--query=TEXT -- FILE`, and `tests/conformance/test_mcp.py`'s corpus holds it to the CLI's bytes, a refusal of the query
+  front end and its repair (the invocation offered back, with the `--query=TEXT` argument replaced) included. The query's own `from 'file'` goes through the same confinement as `file`.
 * **Several tools or a second tool** (a reader as its own binary): the generator and the server are written over a
   table of tools (`count()`, `name(i)`, `path(i)`), and this one fills it with one row; a second row is a second
   `[[bin]]` and a second directory entry, but `Exec` is narrowed to one directory, so both binaries live in it.
