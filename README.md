@@ -320,9 +320,9 @@ $ table --where "bytes:int > 100" --select id orders.csv
 * **A sort uses more cores only for a whole sort written as CSV.** With `--order-by`, `--format csv` and no `--top`, `--limit` or `--from`, `--threads` above 1 sorts in parallel and gives the same bytes; pages, `--top` and JSON output run on one core. A threaded sort peaks at 11.8 to 14.8 times the size of a 39.55 MB file at 16 threads on the Mac, against 4.4 to 6.2 times for the sequential sort. There is no sort that spills to disk.
 * **No joins**, and **one input** at a time: a file named on the command line, or standard input (`-`, or no file), read in one pass on one core and a byte at a time, so slower than a named file ([docs/readers.md](docs/readers.md), section "R1 as built").
 * **No JSON lines**, no Parquet, no `--query` string. Only CSV and TSV (comma, tab or semicolon). Readers and a query form are designed in [docs/readers.md](docs/readers.md) and [docs/query.md](docs/query.md), not built.
-* **No guessing.** Every column is text unless you say `:int`. No mean, no computed or renamed column, no `or` in a filter.
+* **No guessing.** Every column is text unless you declare `:int`, `:dec(S)` or `:float`; `--report types` suggests a declaration and applies none. No computed or renamed column, no `or` in a filter.
 
-JSON lines, joins, `mean` and decimals are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
+JSON lines, `--query`, `or` in a filter and joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
 
 ## How fast
 
@@ -365,7 +365,7 @@ All the tables, the harder cases and how to rerun them: [docs/benchmarks.html](h
 
 ## Contributing
 
-Every change goes through what CI runs: `cancho fmt --check tools generated`, `cancho build`, `scripts/schemas.py --check`, `scripts/manifest.py --check`, the conformance tests, and `scripts/site.py --check`. Design before code, in `docs/`; the gates are fixed before the build; new code gets mutants (`scripts/*_mutants.py`, not run in CI); claims are measured, with the conditions next to the number, and a false claim is corrected in place. After a change to the program, `python3 scripts/site.py` rewrites the generated parts of this file and of the pages.
+Every change goes through what CI runs: `cancho fmt --check tools generated`, `cancho build`, `scripts/schemas.py --check`, `scripts/manifest.py --check` (also `--against` the contract sources), `scripts/mcp.py --check`, `--check` of every mutation script (that each mutant still applies), the conformance tests, `scripts/site.py --check`, and a small run of `scripts/bench.py`. Design before code, in `docs/`; the gates are fixed before the build; new code gets mutants (`scripts/*_mutants.py`, not run in CI); claims are measured, with the conditions next to the number, and a false claim is corrected in place. After a change to the program, `python3 scripts/site.py` rewrites the generated parts of this file and of the pages.
 
 ## Licence
 

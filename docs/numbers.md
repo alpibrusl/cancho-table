@@ -1,6 +1,6 @@
 # `table` and numbers: exact decimals and floats (design)
 
-**Status: design, accepted by the maintainer (the six open questions are answered, section 11); built stage by stage.** It decides what `:dec(S)` and `:float` mean
+**Status: design, accepted by the maintainer (the six open questions are answered, section 11); built: stages N0 to N6 are on `main` (each has its "What was built" section in 10), which is the state `table introspect` describes.** It decides what `:dec(S)` and `:float` mean
 in `--where`, `--group`, `--agg`, the row sort and a type report; what they refuse and how; how they stay
 byte-identical for every `--threads`; and which gates are fixed before any code is written. The spikes behind it are in
 `scripts/spikes/` (throwaway; `README.md` there). Every number in this document that is called *measured* was measured
@@ -35,6 +35,8 @@ not one is refused, naming the row, the line and the column.**
 | E | exact accumulators merge in any order: no `peak` for dec or float, and (decided, stage N0p) none for `:int`, whose sum becomes the pair sum too; `agg.sum-overflow` is removed | section 7 |
 
 ## 1. What exists today
+
+*(This section is the state before N0: `mean`, `:dec(S)`, `:float`, `--report types` and the typed keys are built since, and `agg.sum-overflow` is gone.)*
 
 **In `table`** (`docs/filter.md`): `:int` in `--where` and implicit in `sum`, `min`, `max`; an exact integer or a
 refusal (`value.not-integer`, `value.integer-overflow`, `agg.sum-overflow`); empty cell refused; text keys and text
@@ -485,7 +487,7 @@ read of the input are not in it.
 
 ## 10. G. Stages
 
-Each stage has a pass line and ends with every earlier gate still green (G6 above all). Nothing merges with a red gate; none of this is in the tool yet.
+Each stage has a pass line and ends with every earlier gate still green (G6 above all). Nothing merges with a red gate. (When this was written none of it was in the tool; all of N0 to N6 is now.)
 
 | stage | scope | pass line |
 |---|---|---|

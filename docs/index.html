@@ -534,9 +534,9 @@ report: table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-byte
     <li><strong>A sort uses more cores only for a whole sort written as CSV.</strong> With <code>--order-by</code>, <code>--format csv</code> and no <code>--top</code>, <code>--limit</code> or <code>--from</code>, <code>--threads</code> above 1 sorts in parallel and gives the same bytes; pages, <code>--top</code> and JSON output run on one core. A threaded sort needs several times the memory of the sequential one. There is no sort that spills to disk.</li>
     <li><strong>No joins,</strong> and <strong>one input</strong> at a time: a file named on the command line, or standard input (<code>-</code>, or no file), read in one pass on one core and a byte at a time, so slower than a named file.</li>
     <li><strong>No JSON lines,</strong> no Parquet, no <code>--query</code> string. Only CSV and TSV (comma, tab or semicolon). Readers and a query form are designed in <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a> and <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a>, not built.</li>
-    <li><strong>No guessing.</strong> Every column is text unless you say <code>:int</code>. There is no mean, no computed or renamed column, no <code>or</code> in a filter.</li>
+    <li><strong>No guessing.</strong> Every column is text unless you declare <code>:int</code>, <code>:dec(S)</code> or <code>:float</code>; <code>--report types</code> suggests a declaration and applies none. No computed or renamed column, no <code>or</code> in a filter.</li>
   </ul>
-  <p class="note">JSON lines, joins, <code>mean</code> and decimals are on the <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
+  <p class="note">JSON lines, <code>--query</code>, <code>or</code> in a filter and joins are on the <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
 </section>
 
 <section id="start">

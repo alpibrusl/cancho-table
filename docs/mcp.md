@@ -229,7 +229,7 @@ revision it was copied from.
 
 ## 8. How it is checked
 
-`tests/conformance/test_mcp.py` (42 tests, 10 s with the server built):
+`tests/conformance/test_mcp.py` (43 tests, 10 s with the server built):
 
 * **Differential.** A corpus of 71 plans over the benchmark generator's file, quoted and multi-line fields,
   a TSV, a `;` file, numbers (`:int`, `:dec(2)`, `:float`), an empty file, a header-only file, a file with a space
@@ -310,6 +310,14 @@ in answered "Not logged in", so there was no model to choose the call. The same 
 is a copy of, with a different tool table).
 
 ## 10. Gaps found in `table skill` and `table introspect`
+
+> **Status on `main` (after #24, the skill-text change).** This section is the record of what was found when the server was
+> written, against 22 flags and 48 rules. `table introspect` now has 23 flags, 11 limits and 50 rules. The first two gaps below are
+> closed (`usage` names every flag, and `tests/conformance/test_skill.py` checks it; `--agg`'s help names `mean` and the `:int`,
+> `:dec(S)` and `@N` modifiers); the third is half closed (the summary now says in prose which flags exclude or require each other, and
+> there is still no machine-readable form); `io.write-failed` is in the rules; `skill` has examples, and the tool's own rules carry their hint and repair kind
+> (the contract's `args.*`, `path.*` and `io.*` do not, and there is no operand section). Still open: `args.unexpected-value`, a row for `top` and `from` in `limits`,
+> `output: "document"` for the csv and text modes, and a version for the flag table.
 
 Both exist and are complete as far as they go: `skill` is `introspect`'s tables printed as a `SKILL.md` (the same
 `describe.Tool`), the flags are the parser's own table (`flag_table()` in `tools/table/table.cho`, the one the

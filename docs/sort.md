@@ -10,7 +10,7 @@ What was built, and what it measured, is below the line at the end.
 table [--select NAMES] [--where EXPR] --order-by KEYS [--top N] [--limit N] [--from N] [--max-sort-rows N] [--max-state-bytes N] FILE
 ```
 
-`KEYS` is a list separated by commas, as `--select`'s names are, each key `[-]NAME[:int]`:
+`KEYS` is a list separated by commas, as `--select`'s names are, each key `[-]NAME[:int]` as first designed (`:dec(S)` and `:float` came with `docs/numbers.md` N5: `[-]NAME[:int|:dec(S)|:float]`, and a name that ends in one is written `NAME\:dec(2)`; `table introspect` has the grammar):
 
 | | |
 |---|---|
