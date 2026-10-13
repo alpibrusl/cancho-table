@@ -40,13 +40,12 @@ tools/call {"name": "table", "arguments": {"file": "data.csv", "select": "id,byt
   and the tool's is the one with a test suite (M8): what the server guarantees is that the root it
   passes is its own and that the path reaches the tool as one argument. `test_dotdot_absolute_and_links_are_refused_with_their_rules`
   sends 14 forms and checks the answer is the CLI's and that the secret file's content is nowhere in it.
-* **Standard input is empty.** The server gives the child an empty input, and the input schema has no `stdin`.
-  `table` reads standard input when its operand is `-` or absent (docs/readers.md section 3), so its authority has
-  `io_read`; the generator accepts that for a tool whose one operand is optional, and requires the operand of every
-  call (`file`, in `required`, `file|1|1` in the generated table): a call that names no file does not reach the tool.
-  A call that names the file `-` reaches the tool's standard input, which is empty, and gets the empty table's answer
-  (`headers: []`); the property's description says that the input is always a file. A generator still refuses a tool
-  that reads standard input and has no optional operand.
+* **Standard input is the call's `stdin`, or empty** (§12). With the `stdin` property the server writes its bytes to the pipe that is the
+  child's standard input; without it the child gets an empty input, as it always did. `table` reads standard input when its operand is `-` or
+  absent (docs/readers.md section 3), so its authority has `io_read`; the generator accepts that for a tool whose one operand is optional, and
+  the server requires the call to give **exactly one** of `file` and `stdin` (`mcp.input-conflict`, `mcp.input-missing`). A call that names the
+  file `-` still reaches an empty standard input and gets the empty table's answer (`headers: []`): `file` is always a file. A generator still
+  refuses a tool that reads standard input and has no optional operand.
 
 ## 2. What comes back
 
@@ -175,7 +174,7 @@ An MCP response goes into a model's context. The server bounds it and says what 
 The server holds `Exec` narrowed to the directory of the binary, and no `Fs`, `Net` or `Ffi`. It reads nothing
 itself. `cancho authority` says (measured, `manifests/mcp.authority.json`): bounded, no foreign symbols, and
 `args`, `child_signal`, `clock`, `err_write`, `exec("<bin>")`, `heap`, `io_read`, `io_write`, `pipe_read`,
-`pipe_write`, `poll`. (`pipe_*` and `child_signal` are what it does with the child and channels it owns; `clock`
+`pipe_write`, `poll`. (`pipe_*` and `child_signal` are what it does with the child and channels it owns, `pipe_write` among them the child's standard input, which carries the call's `stdin` text (§12) and nothing else; `clock`
 and `poll` are the deadline.)
 
 * **The ceiling** is `server/ceiling.toml`, as `tools.toml` is the ceiling of the tool: a person writes and
@@ -378,9 +377,96 @@ one-off, and what it found is below):
 * **Constraints between flags** (§3) would let the server refuse a bad combination before the process starts and
   document the forms in the schema; they need `introspect` to carry them, and the parser to read the same table.
 * **A `stdin` property for a tool that reads standard input.** cancho-tools' server handles `stdin` as a property (and
-  `--stdin`); the code is there in the copy and the generated table leaves it empty. `table` now reads standard
-  input (docs/readers.md, R1), and the server still offers it a file only: giving an agent a way to send the bytes of
-  a table in the call is a change of what the server offers, not of what `table` does, and is not part of R1.
+  `--stdin`); the code is there in the copy. `table` reads standard input (docs/readers.md, R1), and the server offered it a file
+  only until §12, which designs and records the property (built there).
 * **A result that is not UTF-8** is lossy in `csv`/`text` mode (§2). If the query design adds raw output modes,
   the answer for MCP is base64 in the JSON document or a refusal, not text.
+
+## 12. The `stdin` property (design, recorded before the code)
+
+> **Status: built on branch `mcp-stdin`** (the numbers are in §12.6). The design below was written first and the gates of §12.5 were written
+> to fail against `main` before any code.
+
+An MCP client that holds a table in its context (a model that was handed rows, a query result, a pasted CSV) has no way to give `table` those bytes:
+`file` names a file under the server's `--root`, and the server can write none (§6: no `fs_*`). `table -` reads standard input, and the server cannot
+use its own: **its standard input is the JSON-RPC channel**, so it must never read it for the tool, and a call cannot be allowed to pass it through.
+What it can do is what it already does: it owns a pipe to the child's standard input (`process.channels_with_errors`, written by `capture_both`
+on the same poller as the child's output and error), and today writes nothing to it.
+
+### 12.1 The decision
+
+A new property of the one tool, **`stdin`** (a string): *the table as text, instead of `file`; give exactly one of the two.*
+
+* **The mechanism is the pipe the server already owns.** The decoded string is `capture_both`'s `input`. No file is made, no temporary directory,
+  no new label: **the authority row is unchanged** (`pipe_write` and `poll` are in it for this very pipe): every label, `bounded` and the foreign symbols of
+  `manifests/mcp.authority.json` are `main`'s, and a gate says so (§12.5). The *file* differs from `main`'s only in its list of the functions the server
+  has (`default_input`, `hint_input` are two new pure names; 184 functions, 182 before). Had building this changed a label, the work would have stopped
+  there and been reported for review.
+* **The argv is `table --root=ROOT FLAGS -- -`**: the operand is `-`, the tool's own name for standard input. A call with `stdin` is therefore the
+  command `printf %s TEXT | table --root=ROOT FLAGS -- -`, and the same bytes of standard output, standard error and exit code. `--root` is ignored by
+  the tool for standard input (docs/readers.md section 3.2) and is still passed first and once.
+* **Exactly one of `file` and `stdin`.** Both: `mcp.input-conflict`. Neither: `mcp.input-missing`. Both are JSON-RPC `-32602` with
+  `data.rule` and `data.properties`, before any process is started. (`main` did not enforce `required`: `{}` reached the tool and got the empty table's
+  answer. That was the generated `required: ["file"]` promising what the server did not check; now the schema says neither is required and the
+  server checks the pair.) An **empty string is an input** (the empty table's answer, as `table - < /dev/null`), not a missing one.
+* **A bound: `--max-input N`, default 1 MiB (1,048,576 bytes), of the decoded text.** Past it the call is refused before the tool starts, as
+  `mcp.input-too-large`: an `isError` result in the shape of the tool's own errors (like `mcp.timeout`), `detail.limit` the bound, and a `hint` that says
+  what to send instead (the header and the rows needed, not the whole table). The bound is exact: N bytes pass, N + 1 do not. The request line
+  (4 MiB, `mcp.line-too-long`) bounds it from above whatever the flag says. *1 MiB* is the tool's own page size (`--max-bytes`) and half of the
+  output bound: a judgement, an operator's knob, not a measurement of any client.
+* **Text only, and it is the JSON parser's rule.** A JSON string is Unicode. Bytes that are not UTF-8 in the request line, and a lone surrogate
+  escape (`\ud800`), do not parse: the whole line is `mcp.parse-error` (`-32700`, `id: null`) and **no tool is started** (measured, §12.6). So what
+  `table` receives is always valid UTF-8; a NUL (`\u0000`) is allowed, because a pipe carries it and the tool treats its input as bytes, as `table -` does
+  (the argv refuses NUL, `mcp.nul-in-argument`, only because an argument cannot hold one). Data that is not text cannot be sent in a call; there is no
+  `stdin_b64` (below).
+* **`--query` with `from`.** The operand is `-`, so `--query` text that names a source (`from stdin` or `from 'x'`) with a `stdin` call is the
+  tool's `args.conflict` (docs/query.md section 5: a source and an operand), exactly as `table --query ... -`. A query with no `from` reads the
+  input. The property's description says so. This is a refusal rather than a silent choice: with no operand a `from 'x'` would read a file and
+  ignore the bytes the caller sent.
+* **A tool that fails before it reads** (a bad flag is refused before the first byte of input is read) must not hang or kill the server: the
+  server writes into a pipe the child has closed. This is the case most likely to be wrong, and has a gate of its own (§12.5).
+
+### 12.2 What was considered
+
+| alternative | verdict |
+|---|---|
+| **Keep MCP file-only, and say so** (the property stays out; the description tells the caller to put the data in a file under the root) | Rejected. The server cannot write a file and the caller (a model) usually cannot either, so the sentence would be a dead end for the case the property exists for. It stays the answer for data that is not text or exceeds the bound. |
+| **The server passes its own standard input through** | Impossible and unsafe: it is the JSON-RPC channel. The server reads nothing for the tool and the tests check the tool cannot read the channel. |
+| **Write the text to a temporary file under `--root`, give `table` its name** | Rejected, and the stop condition of this work: it needs `fs_write`/`dir_write` and a place to write, a widening of the authority row (and a cleanup, a race, a quota). Reviewed as authority growth, not built. |
+| **Inline text through the child's pipe** | **Chosen.** Zero authority growth, no copy to disk, and the equivalence with `table -` is the argv. |
+| `stdin_b64` (base64) for data that is not text | Not built: a second property and a decoder in the server for a case no one asked for; the JSON format already carries cells that are not text (§2), and a client that has bytes has a file. |
+| No operand (`table FLAGS --`) instead of `-` | Rejected: `--query ... from 'x'` would read a file and drop the caller's text silently. `-` makes every mismatch a refusal of the tool. |
+| Both `file` and `stdin` given: prefer one | Rejected: choosing silently drops data the caller meant to be read. |
+| `file: "-"` to mean the call's `stdin` | Rejected: it overloads a name that is a file called `-` for every other reader, and `main`'s answer to `file: "-"` (the empty table) stays what it was. |
+| The bound as the request line only (4 MiB) | Rejected: no operator knob, and a bound that is a framing limit is an accident. `--max-input` is the operator's, like `--max-output`. |
+
+### 12.3 Where it lands
+
+`scripts/mcp.py` (the generator: the `stdin` property from the tool's optional operand, `file` leaves `required`, the rules and `--max-input` in
+`mcp introspect`, `default_input`), `generated/mcp/tools.cho` and `server/mcp.cho` (the pair check, the `-` operand, the bound, the flag),
+`tests/conformance/test_mcp_stdin.py` (new), `scripts/mcp_mutants.py` (new mutants), and docs. `tools/table` and `generated/table` are untouched:
+the binary is the same bytes as `main`'s.
+
+### 12.4 What stays true
+
+The tool's refusals, rules, hints and repairs are the tool's (the server adds three rules of its own: `mcp.input-conflict`, `mcp.input-missing`, `mcp.input-too-large`);
+a call with `file` is the call of `main`, argv for argv; the server's authority and ceiling are `main`'s.
+
+### 12.5 The gates, written before the code
+
+`tests/conformance/test_mcp_stdin.py` (26 tests) was written and run against `main`'s server before any server code; 23 of the 26 failed there (the other
+three hold what `main` already did and the design keeps: that bytes that are not UTF-8 or a lone surrogate do not parse, that a call with `file` gives the
+tool an empty input, and a fuzz that is vacuous until the property exists, so it is also held by mutants, §12.6).
+
+| gate | what fails it |
+|---|---|
+| conformance of the property | valid (`stdin` as text, an empty string, a NUL, CRLF, a byte order mark, astral characters, a table of exactly the bound); too large (exact bound, in decoded bytes not characters nor escapes, no process started); not text (seven forms of invalid UTF-8 and six of a lone surrogate: `mcp.parse-error`, no process started, the server answers the next line); both `file` and `stdin`; neither; the wrong type of `stdin` (five types); the order of refusals |
+| equivalence with `table -` | each call's `content`, `isError`, exit code and `structuredContent` against `table --root=R FLAGS -- -` run with the same bytes on standard input: a corpus of the benchmark table under 33 plans and 15 small tables under 10 plans each (refusals included), and 300 seeded random plans over seeded random tables (ragged rows, CRLF, quoted newlines, astral characters); and `stdin` against `file` over the same bytes (the documents are equal) |
+| a child that does not read | exits before it reads (40 calls of 900 KiB in one session), refuses a flag before it reads (30 calls of 960 KB with the real tool), never reads (the deadline ends it, killed and gone), reads late (all 900 KB arrive) |
+| no panic | 400 seeded damaged requests around the property (bytes, truncation, junk, escapes, 4,000-escape strings, wrong types): each answered with a rule or ignored, no trap, a ping answered after; and 300 calls of 8 KB in a row |
+| the tests of `test_mcp.py` | 43 tests; four of them held the old surface (`file` required, no `stdin`, three flags, the rules list) and were edited for it, §12.6 |
+| the tool is the same | `tools/table` and `generated/table` untouched; the binary is the same bytes as `main`'s; the corpus of 166 plans (`scripts/corpus.py`) has the same md5; the instruction-count gate (`gate_regress.py --counter`, bound 1.01) against `main` |
+| authority | every label, `bounded` and the foreign symbols of the row are `main`'s (compared by a script, §12.6); `scripts/mcp.py --check` (the ceiling) passes |
+| mutants | 24 new in `scripts/mcp_mutants.py` (and one retargeted), real run on `gram` |
+| generated files | `scripts/mcp.py --check`, `schemas.py --check`, `manifest.py --check`, `site.py --check`, `seo_check.py`, `stream.py --check`, every `*_mutants.py --check`, `cancho fmt --check` |
 

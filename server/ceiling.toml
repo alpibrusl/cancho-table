@@ -7,7 +7,7 @@
 # may be smaller than the ceiling, never larger.
 #
 # What the server is: it starts one binary (`exec`, narrowed to the directory it is built with), feeds it
-# nothing and reads what it writes through two pipes (`pipe_read`, `pipe_write`, `poll`) under a
+# the call's `stdin` text, if it has one (docs/mcp.md section 12), and reads what it writes through its pipes (`pipe_read`, `pipe_write`, `poll`) under a
 # deadline (`clock`), kills it (`child_signal`), reads its own standard input and writes its standard
 # output and error. It holds no `fs_*`, `file_*` or `dir_*` (it reads no file; the tool reads, beneath
 # `--root`), and nothing that reaches the network, a foreign function, or the environment.

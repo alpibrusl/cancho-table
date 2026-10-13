@@ -95,6 +95,7 @@
     "count",
     "count_byte",
     "decode",
+    "default_input",
     "default_output",
     "default_timeout",
     "digit_of",
@@ -124,6 +125,7 @@
     "hex4",
     "hex_digit",
     "hex_value",
+    "hint_input",
     "hint_timeout",
     "hint_too_large",
     "in_range",
@@ -189,5 +191,5 @@
   ],
   "folded_operators": 49,
   "folded_calls": 0,
-  "functions": 182
+  "functions": 184
 }

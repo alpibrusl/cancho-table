@@ -10,7 +10,7 @@ import mcp.tools;
 // The MCP server for `table` (docs/mcp.md): one stdio connection,
 // newline-delimited JSON-RPC 2.0, and the one tool `table` as an MCP tool.
 //
-//     mcp --root DIR [--timeout-ms N] [--max-output N]
+//     mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N]
 //     mcp introspect
 //
 // Copied from cancho-tools' server/mcp.cho (rev 74411ee43c74a2741ed1bb37404844fcbb031753) and
@@ -21,7 +21,9 @@ import mcp.tools;
 // What it may do is what its row says: start the binary in the one directory
 // its `Exec` is narrowed to, read its input, write its output and error, and
 // keep a clock for the deadline. It holds no `Fs` and no `Net`, and reads no
-// file itself; `table` reads, beneath the `--root` the server hands it.
+// file itself; `table` reads, beneath the `--root` the server hands it. A call's
+// `stdin` text is written to the pipe that is the child's standard input and to
+// no other place: the server's own standard input is the JSON-RPC channel.
 //
 // A call is checked against the tables `scripts/mcp.py` generates from the
 // tool's `introspect` (generated/mcp/tools.cho), and becomes a fixed argv: the
@@ -54,6 +56,7 @@ pub struct Config {
     root: &static [byte],
     timeout: int,
     most: int,
+    input: int,
 }
 
 // The configuration, or a reason it is not one. `--root` is required, an
@@ -62,7 +65,8 @@ fn configure[&g](g: &g Args) -> [args] (Config, &static [byte]) {
     var root: &static [byte] = "";
     var timeout = tools.default_timeout();
     var most = tools.default_output();
-    let refused = Config { root: "", timeout: 0, most: 0 };
+    var input = tools.default_input();
+    let refused = Config { root: "", timeout: 0, most: 0, input: 0 };
     var k = 1;
     while k < arg_count(g) {
         let flag = arg(g, k);
@@ -85,15 +89,20 @@ fn configure[&g](g: &g Args) -> [args] (Config, &static [byte]) {
             if most <= 0 {
                 return (refused, "--max-output must be a positive number of bytes");
             }
+        } else if bytes.equal(flag, "--max-input") {
+            input = nat_of(value);
+            if input <= 0 {
+                return (refused, "--max-input must be a positive number of bytes");
+            }
         } else {
-            return (refused, "the flags are --root, --timeout-ms and --max-output");
+            return (refused, "the flags are --root, --timeout-ms, --max-output and --max-input");
         }
         k = k + 2;
     }
     if len(root) == 0 {
         return (refused, "--root DIR is required");
     }
-    return (Config { root: root, timeout: timeout, most: most }, "");
+    return (Config { root: root, timeout: timeout, most: most, input: input }, "");
 }
 
 // ---- reading and answering --------------------------------------------------
@@ -262,7 +271,8 @@ fn refuse_bare[&h, &i](heap: &!h Heap, io: &!i Io, code: int, rule: &static [byt
 // Why a call's arguments were refused, as JSON-RPC's invalid params: what, which
 // property, what the schema wants, and the node of the value (or key) at fault, so the
 // answer can say what was received. `code`: 0 none, 1 not an object, 2 an unknown
-// property, 3 the wrong type, 4 a NUL byte.
+// property, 3 the wrong type, 4 a NUL byte, 5 both the operand and `stdin`, 6 neither
+// (`name` is the operand's).
 struct Problem {
     code: int,
     name: &static [byte],
@@ -287,6 +297,12 @@ fn rule_of(code: int) -> [] &static [byte] {
     }
     if code == 3 {
         return "mcp.wrong-type";
+    }
+    if code == 5 {
+        return "mcp.input-conflict";
+    }
+    if code == 6 {
+        return "mcp.input-missing";
     }
     return "mcp.nul-in-argument";
 }
@@ -346,6 +362,12 @@ fn explain[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], tool: int
     }
     b = buffer.append(heap, b, "`");
     b = buffer.append(heap, b, p.name);
+    if p.code == 5 {
+        return buffer.append(heap, b, "` and `stdin` are both given: a call has one input, so give exactly one of them");
+    }
+    if p.code == 6 {
+        return buffer.append(heap, b, "` or `stdin` is required: give exactly one of them (`stdin` is the table as text)");
+    }
     if p.code == 4 {
         return buffer.append(heap, b, "` contains a NUL byte, which would arrive as two arguments");
     }
@@ -542,6 +564,12 @@ fn about[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], p: Problem)
             w = json.put_string(heap, w, contents(kr));
         }
         unbox_slice(heap, key);
+    } else if p.code == 5 || p.code == 6 {
+        w = json.put_key(heap, w, "properties");
+        w = json.begin_array(heap, w);
+        w = json.put_string(heap, w, p.name);
+        w = json.put_string(heap, w, "stdin");
+        w = json.end_array(heap, w);
     } else if p.code >= 3 {
         w = json.put_key(heap, w, "property");
         w = json.put_string(heap, w, p.name);
@@ -619,6 +647,26 @@ fn argv_for[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], tool: in
             left = left - 1;
         }
     }
+    // One input: the operand or `stdin`, exactly one of the two (docs/mcp.md section 12).
+    if bytes.equal(tools.stdin(tool), "text") {
+        let operands = tools.operands(tool);
+        var with_operand = false;
+        var o = 0;
+        while len(operands) > 0 && o < bytes.count_byte(operands, ';') + 1 {
+            if json.get(src, tape, given, bytes.field(bytes.field(operands, ';', o + 1), '|', 1)) >= 0 {
+                with_operand = true;
+            }
+            o = o + 1;
+        }
+        let with_stdin = json.get(src, tape, given, "stdin") >= 0;
+        let which = bytes.field(bytes.field(operands, ';', 1), '|', 1);
+        if with_operand && with_stdin {
+            return (entries, Problem { code: 5, name: which, expected: "", at: given });
+        }
+        if !with_operand && !with_stdin {
+            return (entries, Problem { code: 6, name: which, expected: "", at: given });
+        }
+    }
     // The server's root, first and once.
     var with_root = buffer.empty(heap, len(root) + 8);
     with_root = buffer.append(heap, with_root, "--root=");
@@ -692,6 +740,12 @@ fn argv_for[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], tool: in
     // Operands after `--`: none of them can be taken for a flag.
     let (fenced, refused) = process.add(heap, entries, "--");
     entries = fenced;
+    // The call's `stdin` text is the tool's standard input, named by the operand `-`: a `--query` that names a source, or a file, is then the tool's own
+    // conflict, and the text is never set aside for a file.
+    if bytes.equal(tools.stdin(tool), "text") && json.get(src, tape, given, "stdin") >= 0 {
+        let (added, refused) = process.add(heap, entries, "-");
+        entries = added;
+    }
     let operands = tools.operands(tool);
     k = 0;
     while len(operands) > 0 && k < bytes.count_byte(operands, ';') + 1 {
@@ -901,6 +955,11 @@ fn call[&h, &x, &c, &i, &s, &t](heap: &!h Heap, exec: &x Exec("/opt/cancho-table
     let given = json.get(src, tape, json.get(src, tape, params, "arguments"), "stdin");
     var input = box_slice(heap, 0, byte_of(0));
     if given >= 0 {
+        if json.is_string(tape, given) && json.string_length(src, tape, given) > config.input {
+            process.drop(heap, entries);
+            unbox_slice(heap, input);
+            return ended(heap, io, src, tape, id, "PRECONDITION_FAILED", "mcp.input-too-large", "the `stdin` text is larger than the server's bound (--max-input) and the tool was not started", tools.hint_input(), 0, config.input);
+        }
         if !json.is_string(tape, given) {
             process.drop(heap, entries);
             unbox_slice(heap, input);
