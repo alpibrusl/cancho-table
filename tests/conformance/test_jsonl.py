@@ -71,6 +71,11 @@ class Failures:
         self.count += 1
         try:
             yield
+        except OSError as e:
+            if e.errno != 7:      # E2BIG: Linux caps one argument at 128 KiB, and a case whose plan quotes a 100 KB line cannot be spelled; it is not run
+                self.items.append("%s: OSError: %s" % (label, e))
+            else:
+                self.count -= 1
         except Exception as e:  # noqa: BLE001 - a case that raises is a case that fails
             where = "" if isinstance(e, AssertionError) else " at " + " | ".join(traceback.format_exc().splitlines()[-5:-1])
             self.items.append("%s: %s: %s%s" % (label, type(e).__name__, str(e)[:1200], where))
