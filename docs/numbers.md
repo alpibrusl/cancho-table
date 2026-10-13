@@ -945,6 +945,10 @@ No feature and no change of output (`docs/query.md` Q0). The N6 proposal above (
 | `cat \| duckdb` (COPY into a table first) | 0.2177 s | 0.2340 s |
 | instructions, `--select status,bytes --format csv`, stdin redirected: file / stdin / stdin on the `getchar` build | 1,220.5 M / 1,215.0 M / 10,821.2 M | 1,192.8 M / 1,197.0 M / 2,600.3 M |
 
+### What was built: Q1, `--query` and `--rows` (measured; the full text and conditions are `docs/query.md` section 14)
+
+A front end that writes the flags a query stands for, so that the one plan runs. **G6 failed first and was fixed**: the first build removed a local from `read_file` and `read_stream` (the `--sort` label) and `gate_regress.py --counter` found 14 of 42 cells over 1.01 (worst 1.015, +20 M instructions of 1,520 M on every one-thread cell, none in the loop's text); bisected by building `main` with one file replaced at a time, the Query field, the flag table, `frame.cho` and `finish.cho` alone cost nothing and the edit of the prologue of `read_file` cost 15 M. With `read_file` and `read_stream` character for character `main`'s, the Mac counters are 1.000 to 1.001 at both thread counts (42 cells, the three Mac builds of a source byte-identical), and the corpus md5 of the 166 plans is identical to `main`'s on the Mac and on gram. A second finding, from a five-row file (a tiny run, minimum of 5, `/usr/bin/time -l`): looking up the last two flags of the table on every run cost +2.2 M instructions of 31.4 M, because `cli.index_of` reads the table entry by entry from its start; the flags path looks at the arguments first now (31,425,093 for `main`, 31,449,758 here). See `docs/query.md` 14.4 for the clock form on gram with its identical-sources control, and for the parse cost of a query.
+
 ## 11. Open questions, assumptions, what the language lacks
 
 **Decided by the maintainer** (the six questions of the first version of this document, answered as recommended):

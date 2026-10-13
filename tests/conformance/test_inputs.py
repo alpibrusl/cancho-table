@@ -13,7 +13,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / "tools" / "table"
-PLAN_FLAGS = ("select", "where", "group", "agg", "order-by", "report", "sort", "top", "limit", "from", "max-rows", "root")
+PLAN_FLAGS = ("select", "where", "group", "agg", "order-by", "report", "sort", "top", "limit", "from", "max-rows", "root", "query", "rows")
 
 
 def code(path):
@@ -33,7 +33,8 @@ class Inputs(unittest.TestCase):
     def setUp(self):
         self.table = code(SRC / "table.cho")
         self.inputs = code(SRC / "inputs.cho")
-        self.body = function(self.table, "body")
+        # `body` hands the flags' values to `plan_body`, or a query's translation to it through `query_body`: none of the three reads a plan flag itself
+        self.body = function(self.table, "body") + function(self.table, "query_body") + function(self.table, "plan_body")
 
     def test_body_reads_no_plan_flag_itself(self):
         for flag in PLAN_FLAGS:
@@ -46,7 +47,7 @@ class Inputs(unittest.TestCase):
     def test_body_reads_the_inputs(self):
         self.assertIn("let inp = inputs.from_flags(args, parsed, table);", self.body)
         for field in ("has_select", "has_where", "has_group", "has_agg", "has_order", "select_text", "where_text", "group_text", "agg_text", "order_text", "top_n", "limit_n", "from_n",
-                      "rows_n", "operands", "source_at", "root_text"):
+                      "rows_n", "operands", "source_at", "root_text", "sort_text", "query_text", "has_query", "has_rows"):
             with self.subTest(field):
                 self.assertIn("inp.%s" % field, self.body)
 

@@ -1,0 +1,54 @@
+// SPIKE (docs/query.md, stage Q1): what translating a query costs, in a loop of its own: the front end of tools/table (qarena, qlex, qparse, qtrans) called ROUNDS times on one
+// query, nothing else (no flags, no file, no output of a plan). The cost of a run of `table --query` is this and the existing parsers of the flags it stands for.
+//
+//     qbench QUERY ROUNDS         prints a checksum of the translations (so that nothing is optimised away)
+//
+// scripts/query_cost.py builds it and times it: the time of ROUNDS rounds less the time of 0 rounds, over ROUNDS, is the cost of one translation.
+edition 5;
+
+import std.buffer;
+import std.bytes;
+import std.io;
+import std.vec;
+import qtrans;
+
+fn number_of[&s](text: &s [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + (int_of(text[i]) - '0');
+        i = i + 1;
+    }
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(clock);
+    release(fs);
+    var check = 0;
+    borrow args as &g in {
+        let query = arg(g, 1);
+        let rounds = number_of(arg(g, 2));
+        borrow mut heap as &!h in {
+            var r = 0;
+            while r < rounds {
+                let t = qtrans.translate(h, query, false);
+                borrow t as &tr in {
+                    check = check + qtrans.status(tr) + qtrans.info_at(tr, qtrans.i_select()) + len(qtrans.section(tr, 0)) + len(qtrans.section(tr, 1));
+                }
+                qtrans.drop(h, t);
+                r = r + 1;
+            }
+        }
+    }
+    borrow mut io as &!i in {
+        io.print_int(i, check);
+    }
+    release(args);
+    release(heap);
+    release(io);
+    return 0;
+}

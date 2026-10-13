@@ -13,10 +13,9 @@ every column the plan names is resolved together (`plan.resolve`: one name, one
 column, a repeated header name is `column.ambiguous`), and the read is a loop over
 rows that asks the plan three things in order: is it ragged (counted, never
 used), does `--where` want it, and then either emit it or add it to its group.
-A later `--query` string would compile to the same `Query`; none is built, and
-there is nothing in the engine that knows which front end made the plan. The design
-asked for a gate that a typed form and a `--query` form give the same bytes; with one
-front end there is nothing yet to compare, and the gate is not written.
+A `--query` string compiles to the same `Query` (it is translated to these flags, `docs/query.md`), and
+there is nothing in the engine that knows which front end made the plan. The gate that a typed form and a
+`--query` form give the same bytes is written and run (`tests/conformance/test_query.py`, `scripts/query_corpus.py`).
 
 Modes: no `--select`, `--where` or `--group`: the shape. `--select` and/or `--where`:
 rows (a `--where` alone returns every column). `--group` and/or `--agg`: groups

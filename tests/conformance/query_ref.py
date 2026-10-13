@@ -1,20 +1,25 @@
-"""SPIKE (throwaway, docs/query.md): a prototype of the `--query` front end in Python, to find out whether the grammar of docs/query.md
-is unambiguous and implementable, and to be the executable oracle of the examples. NOT the tool's parser (that is cancho, stage Q1);
-nothing here is imported by the tool.
+"""The reference front end of `--query` (docs/query.md): the grammar of section 2 made executable, in Python, independent of the cancho parser.
 
-    python3 query_proto.py 'select a, count(*) from "x.csv" group by a'      prints the flag form as JSON
-    (query_examples.py checks every worked example of docs/query.md; query_gate.py is the equivalence gate)
+It is the oracle of tests/conformance/test_query.py: for any query it says whether `table --query` must accept it, and if so the flags it translates to
+(`translate`), and if not the refusal (`QueryError`: kind, byte offset, what was expected or the feature). It shares no code with `tools/table/qparse.cho`;
+two parsers that disagree are the alarm. It was the spike `scripts/spikes/query_proto.py` of the design, kept in step with the decisions recorded in
+docs/query.md section 14 (the build's readings of what the design left open).
 
-A query is TRANSLATED to the argv of flags that the tool already has (`--select`, `--where`, `--group`, `--agg`, `--sort`, `--order-by`,
-`--limit`, `--from`, and the operand), never to a second plan: the existing parsers then fill the one `Query`, so the two forms cannot
-differ in what they mean, only in how it was written. The gate (query_gate.py) is what checks the translation."""
+A query is TRANSLATED to the argv of flags the tool already has (`--select`, `--where`, `--group`, `--agg`, `--sort`, `--order-by`, `--limit`, `--from`,
+`--rows`, and the source), never to a second plan. Offsets are bytes of the query: the text is handled as Latin-1 so that one character is one byte.
+
+    python3 query_ref.py 'select a, count(*) from "x.csv" group by a'      prints the translation as JSON
+"""
 import json
 import re
 import sys
 
 MAX_QUERY = 4096
+MAX_CONDITIONS = 64
+MAX_VALUES = 1024
+MAX_DIGITS = 18
 
-# The one table the lexer and the documentation read (in the tool: a static string table of the module, also printed by `introspect`).
+# The one table the lexer and the documentation read (in the tool: a static string of the module).
 CLAUSE_WORDS = ["select", "from", "where", "group", "order", "limit", "offset", "by"]
 OPERATOR_WORDS = ["and", "in", "contains", "asc", "desc", "as", "cast"]
 RESERVED = set(CLAUSE_WORDS + OPERATOR_WORDS)     # a bare identifier may not be one of these: write it "like this"
@@ -25,31 +30,37 @@ FUTURE = {"join", "inner", "left", "right", "full", "cross", "on", "using", "hav
 AGG_FUNCS = ["count", "sum", "min", "max", "mean"]  # reserved only before "("; `count(distinct x)` has the word distinct inside
 TYPES = ["int", "dec", "float"]                     # only after `as` or `::`
 SOURCE_WORDS = ["stdin"]                            # `from stdin`; a file is `from 'name'`
-KEYWORDS = sorted(RESERVED | FUTURE | set(AGG_FUNCS) | set(TYPES) | set(SOURCE_WORDS))
+
+IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+DIGITS = re.compile(r"[0-9]+")
+
+WHAT_COLUMN = "a column"
+WHAT_ITEM = "a column, *, or an aggregate: count(*), sum(x), min(x), max(x), mean(x), count(distinct x)"
+WHAT_KEYWORD = ' (a name that is a keyword is written "like this")'
+WHAT_CEILING = "fewer conditions or values: the ceiling is 64 conditions and 1024 values"
 
 
 class QueryError(Exception):
     """kind: syntax | unsupported | group-mismatch | too-long. offset: byte offset in the query."""
 
-    def __init__(self, kind, offset, expected=None, feature=None, hint=None, repair=None):
-        super().__init__(f"{kind} at {offset}: {expected or feature}")
-        self.kind, self.offset, self.expected, self.feature, self.hint, self.repair = kind, offset, expected, feature, hint, repair
+    def __init__(self, kind, offset, expected=None, feature=None, hint=None):
+        super().__init__("%s at %s: %s" % (kind, offset, expected or feature))
+        self.kind, self.offset, self.expected, self.feature, self.hint = kind, offset, expected, feature, hint
 
 
 # ---- lexer -------------------------------------------------------------------------------------------------------------------
 
-IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-NUMBER = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
-
-
 def lex(q):
-    if len(q.encode()) > MAX_QUERY:
-        raise QueryError("too-long", MAX_QUERY, expected=f"a query of at most {MAX_QUERY} bytes")
+    if len(q) > MAX_QUERY:
+        raise QueryError("too-long", MAX_QUERY, expected="a query of at most %d bytes" % MAX_QUERY)
     toks, i, n = [], 0, len(q)
     while i < n:
         c = q[i]
         if c in " \t\r\n":
             i += 1
+        elif q.startswith("--", i) or q.startswith("/*", i):
+            raise QueryError("syntax", i, expected="no comments: a query is one statement of words, names and values")
         elif c == "'":
             j, out = i + 1, []
             while True:
@@ -57,10 +68,14 @@ def lex(q):
                     raise QueryError("syntax", i, expected="the closing ' of a string")
                 if q[j] == "'":
                     if j + 1 < n and q[j + 1] == "'":
-                        out.append("'"); j += 2; continue
+                        out.append("'")
+                        j += 2
+                        continue
                     break
-                out.append(q[j]); j += 1
-            toks.append(("STR", "".join(out), i)); i = j + 1
+                out.append(q[j])
+                j += 1
+            toks.append(("STR", "".join(out), i))
+            i = j + 1
         elif c == '"':
             j, out = i + 1, []
             while True:
@@ -68,30 +83,37 @@ def lex(q):
                     raise QueryError("syntax", i, expected='the closing " of a name')
                 if q[j] == '"':
                     if j + 1 < n and q[j + 1] == '"':
-                        out.append('"'); j += 2; continue
+                        out.append('"')
+                        j += 2
+                        continue
                     break
-                out.append(q[j]); j += 1
+                out.append(q[j])
+                j += 1
             if not out:
-                raise QueryError("unsupported", i, feature="empty-name", hint='a column with an empty name is written by its position, #N')
-            toks.append(("QID", "".join(out), i)); i = j + 1
+                raise QueryError("unsupported", i, feature="empty-name", hint="a column with an empty name is written by its position, #N")
+            toks.append(("QID", "".join(out), i))
+            i = j + 1
         elif c == "#":
-            m = re.compile(r"[0-9]+").match(q, i + 1)
+            m = DIGITS.match(q, i + 1)
             if not m:
                 raise QueryError("syntax", i, expected="digits after #, a column position")
-            toks.append(("POS", int(m.group()), i)); i = m.end()
-        elif c.isdigit() or (c in "+-." and NUMBER.match(q, i)) :
+            toks.append(("POS", m.group(), i))
+            i = m.end()
+        elif c in "0123456789" or (c in "+-." and NUMBER.match(q, i)):
             m = NUMBER.match(q, i)
-            if not m:
-                raise QueryError("syntax", i, expected="a number")
-            toks.append(("NUM", m.group(), i)); i = m.end()
+            toks.append(("NUM", m.group(), i))
+            i = m.end()
         elif IDENT.match(q, i):
             m = IDENT.match(q, i)
-            toks.append(("ID", m.group(), i)); i = m.end()
+            toks.append(("ID", m.group(), i))
+            i = m.end()
         elif q.startswith("!=", i) or q.startswith("<>", i) or q.startswith("<=", i) or q.startswith(">=", i) or q.startswith("::", i):
-            toks.append(("SYM", q[i:i + 2], i)); i += 2
+            toks.append(("SYM", q[i:i + 2], i))
+            i += 2
         elif c in ",()*=<>;":
-            toks.append(("SYM", c, i)); i += 1
-        elif c == "|" or c == "+" or c == "/" or c == "%" or c == "-":
+            toks.append(("SYM", c, i))
+            i += 1
+        elif c in "|+/%-":
             raise QueryError("unsupported", i, feature="expression", hint="no arithmetic or concatenation: a column is a column")
         else:
             raise QueryError("syntax", i, expected="a column, a keyword, a string or a number")
@@ -139,11 +161,11 @@ class P:
             raise QueryError("syntax", self.peek()[2], expected=what or s)
 
     # column := IDENT | "QID" | #N      (an IDENT may not be a reserved word)
-    def column(self, what="a column"):
+    def column(self, what=WHAT_COLUMN):
         t = self.peek()
         if t[0] == "ID":
             if t[1].lower() in RESERVED or t[1].lower() in FUTURE:
-                raise QueryError("syntax", t[2], expected=what + ' (a name that is a keyword is written "like this")')
+                raise QueryError("syntax", t[2], expected=what + WHAT_KEYWORD)
             self.k += 1
             return ("name", t[1])
         if t[0] == "QID":
@@ -163,14 +185,14 @@ class P:
             self.k += 1
             self.expect_sym("(", "( and the scale of dec(N)")
             t = self.take()
-            if t[0] != "NUM" or not re.fullmatch(r"[0-9]+", t[1]) or int(t[1]) > 18:
+            if t[0] != "NUM" or not DIGITS.fullmatch(t[1]) or len(t[1]) > 3 or int(t[1]) > 18:
                 raise QueryError("syntax", t[2], expected="a scale from 0 to 18")
             self.expect_sym(")", ")")
             return ("dec", int(t[1]))
         raise QueryError("syntax", self.peek()[2], expected="a type: int, dec(N) or float")
 
     # expr := column [ "::" type ] | cast ( column as type )
-    def expr(self, what="a column"):
+    def expr(self, what=WHAT_COLUMN):
         if self.word() == "cast" and self.peek(1)[:2] == ("SYM", "("):
             self.k += 2
             c = self.column()
@@ -183,20 +205,24 @@ class P:
             return (c, self.typ())
         return (c, None)
 
-    def number(self, what="a non-negative integer"):
+    def number(self, what="a non-negative integer", limit=None):
         t = self.take()
-        if t[0] != "NUM" or not re.fullmatch(r"[0-9]+", t[1]):
+        if t[0] != "NUM" or not DIGITS.fullmatch(t[1]):
             raise QueryError("syntax", t[2], expected=what)
+        if limit is not None and (len(t[1]) > 3 or int(t[1]) > limit):
+            raise QueryError("syntax", t[2], expected=what)
+        if len(t[1]) > MAX_DIGITS:
+            raise QueryError("syntax", t[2], expected="a non-negative integer of at most 18 digits")
         return int(t[1])
 
     def literal(self):
         t = self.peek()
         if t[0] == "STR":
             self.k += 1
-            return ("str", t[1])
+            return ("str", t[1], t[2])
         if t[0] == "NUM":
             self.k += 1
-            return ("num", t[1])
+            return ("num", t[1], t[2])
         if t[0] == "ID" and t[1].lower() in ("null", "true", "false"):
             raise QueryError("unsupported", t[2], feature="null" if t[1].lower() == "null" else "boolean",
                              hint="there is no null (an empty cell is the empty text: = '') and no boolean type")
@@ -220,7 +246,7 @@ class P:
         e = self.expr()
         scale = None
         if fn == "mean" and self.eat_sym(","):
-            scale = self.number("the scale N of mean(x, N), 0 to 18")
+            scale = self.number("a scale from 0 to 18", 18)
         self.expect_sym(")", ")" if fn != "mean" else ", N or )")
         return {"fn": fn, "arg": e, "scale": scale, "at": at}
 
@@ -236,7 +262,7 @@ class P:
                 out.append(("agg", self.agg_call()))
             else:
                 at = self.peek()[2]
-                e = self.expr("a column, *, or an aggregate: count(*), sum(x), min(x), max(x), mean(x), count(distinct x)")
+                e = self.expr(WHAT_ITEM)
                 if e[1] is not None:
                     raise QueryError("unsupported", at, feature="cast-in-select",
                                      hint="a type is part of how a column is read in a condition, a sort or an aggregate; selecting a column returns its text")
@@ -250,14 +276,17 @@ class P:
         conds = []
         while True:
             at = self.peek()[2]
-            e = self.expr("a column")
+            if len(conds) >= MAX_CONDITIONS:
+                raise QueryError("syntax", at, expected=WHAT_CEILING)
+            e = self.expr(WHAT_COLUMN)
             w = self.word()
             t = self.peek()
             if t[0] == "SYM" and t[1] in ("=", "!=", "<>", "<", "<=", ">", ">="):
                 self.k += 1
                 op = "!=" if t[1] == "<>" else t[1]
-                if self.peek()[0] in ("ID", "QID", "POS") and not (self.peek()[0] == "ID" and self.peek()[1].lower() in ("null", "true", "false")):
-                    raise QueryError("unsupported", self.peek()[2], feature="column-comparison", hint="a condition compares a column with a value, not with another column")
+                nxt = self.peek()
+                if nxt[0] in ("QID", "POS") or (nxt[0] == "ID" and nxt[1].lower() not in ("null", "true", "false")):
+                    raise QueryError("unsupported", nxt[2], feature="column-comparison", hint="a condition compares a column with a value, not with another column")
                 conds.append({"col": e, "op": op, "vals": [self.literal()], "at": at})
             elif w == "contains":
                 self.k += 1
@@ -269,6 +298,8 @@ class P:
                 self.expect_sym("(", "( and a list of values")
                 vals = [self.literal()]
                 while self.eat_sym(","):
+                    if len(vals) >= MAX_VALUES:
+                        raise QueryError("syntax", self.peek()[2], expected=WHAT_CEILING)
                     vals.append(self.literal())
                 self.expect_sym(")", ", or )")
                 conds.append({"col": e, "op": "in", "vals": vals, "at": at})
@@ -291,8 +322,10 @@ class P:
 
     def parse(self):
         self.expect_word("select", "select")
+        items_at = self.peek()[2]
         items = self.items()
-        q = {"items": items, "source": None, "conds": [], "group": [], "order": [], "limit": None, "offset": None}
+        items_end = self.peek()[2]
+        q = {"items": items, "items_at": items_at, "items_end": items_end, "group_end": None, "source": None, "conds": [], "group": [], "group_at": None, "order": [], "limit": None, "offset": None}
         if self.eat_word("from"):
             t = self.take()
             if t[0] == "STR":
@@ -309,14 +342,17 @@ class P:
             q["conds"] = self.cond()
         if self.eat_word("group"):
             self.expect_word("by", "by")
+            q["group_at"] = self.peek()[2]
             while True:
                 at = self.peek()[2]
                 e = self.expr()
                 if e[1] is not None:
-                    raise QueryError("unsupported", at, feature="cast-in-group", hint="grouping by a typed column is not built (docs/numbers.md); group by the text")
+                    raise QueryError("unsupported", at, feature="cast-in-group",
+                                     hint="the grammar groups by the text of a column; a grouping by value is the flag --group x:int, x:dec(N) or x:float")
                 q["group"].append(e[0])
                 if not self.eat_sym(","):
                     break
+            q["group_end"] = self.peek()[2]
         if self.word() == "having":
             raise QueryError("unsupported", self.peek()[2], feature="having", hint="there is no having; filter the groups' rows with where, or order and limit the groups")
         if self.eat_word("order"):
@@ -352,12 +388,12 @@ class P:
         return q
 
 
-# ---- translation to the flags the tool has ----------------------------------------------------------------------------------
+# ---- translation to the flags the tool has ---------------------------------------------------------------------------------
 
 def list_name(c):
     """a column as a word of a --select / --group list: a backslash before a comma, a backslash or a leading #."""
     if c[0] == "pos":
-        return f"#{c[1]}"
+        return "#%s" % c[1]
     s = c[1].replace("\\", "\\\\").replace(",", "\\,")
     return "\\" + s if s.startswith("#") else s
 
@@ -365,7 +401,7 @@ def list_name(c):
 def order_name(c):
     """a column in an --order-by key: a backslash before a comma, a backslash, a colon, and a leading # or - (an at-sign is NOT escapable here)."""
     if c[0] == "pos":
-        return f"#{c[1]}"
+        return "#%s" % c[1]
     s = c[1].replace("\\", "\\\\").replace(",", "\\,").replace(":", "\\:")
     return "\\" + s if s[:1] in ("#", "-") else s
 
@@ -379,13 +415,13 @@ def agg_name(c):
 def type_suffix(ty):
     if ty is None:
         return ""
-    return {"int": ":int", "float": ":float"}.get(ty[0]) or f":dec({ty[1]})"
+    return {"int": ":int", "float": ":float"}.get(ty[0]) or ":dec(%d)" % ty[1]
 
 
 def where_word(c):
     """a column in --where: bare when it is a plain identifier that is not one of the grammar's three words, else 'quoted' (never a position or a keyword)."""
     if c[0] == "pos":
-        return f"#{c[1]}"
+        return "#%s" % c[1]
     if IDENT.fullmatch(c[1]) and c[1] not in ("and", "in", "contains"):
         return c[1]
     return "'" + c[1].replace("'", "''") + "'"
@@ -399,16 +435,16 @@ def agg_label(a):
     """the output column an aggregate has (and what --sort names)."""
     if a["fn"] == "count":
         return "count"
-    return f"{a['fn']}:{a['arg'][0][1] if a['arg'][0][0] == 'name' else '#' + str(a['arg'][0][1])}"
+    return "%s:%s" % (a["fn"], a["arg"][0][1] if a["arg"][0][0] == "name" else "#" + a["arg"][0][1])
 
 
 def agg_item(a):
     if a["fn"] == "count":
         return "count"
     col, ty = a["arg"]
-    s = f"{a['fn']}:{agg_name(col)}{type_suffix(ty)}"
+    s = "%s:%s%s" % (a["fn"], agg_name(col), type_suffix(ty))
     if a["fn"] == "mean" and a.get("scale") is not None:
-        s += f"@{a['scale']}"
+        s += "@%d" % a["scale"]
     return s
 
 
@@ -417,8 +453,20 @@ def same_agg(a, b):
 
 
 def translate(q):
-    """Return (argv, source): argv the flags, source ('file', name) or ('stdin', None) or None."""
-    ast = P(q).parse() if isinstance(q, str) else q
+    """Return (argv, source): argv the flags, source ('file', name) or ('stdin', None) or None. `q` is str (Latin-1 view of the bytes) or bytes."""
+    if isinstance(q, bytes):
+        q = q.decode("latin-1")
+    ast = P(q).parse()
+    try:
+        return _translate(ast)
+    except QueryError as e:
+        if e.kind == "group-mismatch":
+            e.select = q[ast["items_at"]:ast["items_end"]].strip()
+            e.group_by = q[ast["group_at"]:ast["group_end"]].strip() if ast["group_at"] is not None else ""
+        raise
+
+
+def _translate(ast):
     items, argv = ast["items"], []
     aggs = [i[1] for i in items if i[0] == "agg"]
     cols = [i for i in items if i[0] == "col"]
@@ -428,16 +476,15 @@ def translate(q):
         gnames = ast["group"]
         # the select list is the group columns, in the group by order, then the aggregates (what the output is)
         if star:
-            raise QueryError("group-mismatch", 0, expected="the group columns then the aggregates, not *")
+            raise QueryError("group-mismatch", ast["items_at"], expected="the group columns then the aggregates, not *")
         order_ok = [i[0] for i in items] == ["col"] * len(cols) + ["agg"] * len(aggs)
         if not order_ok or [c[1] for c in cols] != gnames:
-            raise QueryError("group-mismatch", cols[0][2] if cols else 7,
+            raise QueryError("group-mismatch", cols[0][2] if cols else ast["items_at"],
                              expected="the select list is the group by columns in the same order, then the aggregates")
         if not aggs:
-            raise QueryError("group-mismatch", 7, expected="at least one aggregate, count(*) at least (a grouping always counts something)")
+            raise QueryError("group-mismatch", ast["items_at"], expected="at least one aggregate, count(*) at least (a grouping always counts something)")
         if gnames:
             argv += ["--group", ",".join(list_name(c) for c in gnames)]
-        # --agg: omitted only for exactly [count] (the default), kept otherwise
         argv += ["--agg", ",".join(agg_item(a) for a in aggs)]
     else:
         if not star:
@@ -448,9 +495,9 @@ def translate(q):
             col, ty = c["col"]
             w = where_word(col) + type_suffix(ty)
             if c["op"] == "in":
-                parts.append(f"{w} in (" + ", ".join(where_value(v) for v in c["vals"]) + ")")
+                parts.append(w + " in (" + ", ".join(where_value(v) for v in c["vals"]) + ")")
             else:
-                parts.append(f"{w} {c['op']} {where_value(c['vals'][0])}")
+                parts.append("%s %s %s" % (w, c["op"], where_value(c["vals"][0])))
         argv += ["--where", " and ".join(parts)]
     if ast["order"]:
         if grouped:
@@ -464,7 +511,7 @@ def translate(q):
                     raise QueryError("unsupported", at, feature="order-by-position", hint="--sort names output columns by their header name: name the column instead of its position")
                 key = agg_label(k)
             else:
-                if k[1] is not None or k[0] not in [c for c in ast["group"]]:
+                if k[1] is not None or k[0] not in ast["group"]:
                     raise QueryError("group-mismatch", at, expected="a group by column or an aggregate of the select list")
                 if k[0][0] == "pos":
                     raise QueryError("unsupported", at, feature="order-by-position", hint="--sort names output columns by their header name: name the column instead of its position")
@@ -478,8 +525,6 @@ def translate(q):
                 if kind == "agg":
                     raise QueryError("group-mismatch", at, expected="a column (an aggregate needs a group by or an aggregate select list)")
                 col, ty = k
-                if ty is not None and ty[0] != "int":
-                    raise QueryError("unsupported", at, feature="order-by-" + ty[0], hint="only int keys are numeric (docs/sort.md); text keys are bytewise")
                 keys.append(("-" if desc else "") + order_name(col) + type_suffix(ty))
             argv += ["--order-by", ",".join(keys)]
     if ast["limit"] is not None:
@@ -487,7 +532,7 @@ def translate(q):
     if ast["offset"] is not None:
         argv += ["--from", str(ast["offset"])]
     if star and not ast["conds"] and not ast["order"] and not grouped:
-        argv = ["--rows"] + argv        # needs the new flag (docs/query.md): `select *` alone has no flag form today
+        argv = ["--rows"] + argv        # `select *` alone has no other flag form
     return argv, ast["source"]
 
 

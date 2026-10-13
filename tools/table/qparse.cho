@@ -1,0 +1,695 @@
+edition 5;
+
+module qparse;
+
+// The parser of `--query` (docs/query.md section 2): recursive descent over the tokens `qlex` wrote, one pass, no look-back, each production a function that answers 0 or
+// sets the one error (`qarena.fail`) and answers 1. What it reads it keeps as records in the block (`qarena`), in the order of the text; `qtrans` turns the records into the
+// flags. A column is a token (a name, a quoted name or a position), a value is a token, and a type is a code: 0 text, 1 int, 2 + S for dec(S), 21 for float
+// (the codes of query.cho).
+//
+//     select item      [0 column | 1 aggregate, function, column token, type, scale or -1, start, end, 0]       functions: 0 count, 1 sum, 2 min, 3 max, 4 distinct, 5 mean
+//     condition        [column token, type, operator, how many values, start, 0, 0, 0] then the values' tokens   operators: 0 = 1 != 2 < 3 <= 4 > 5 >= 6 contains 7 in
+//     order key        [0 column | 1 aggregate, function, column token, type, scale or -1, 1 when descending, start, end of an aggregate]
+//     group column     the column's token
+
+import std.bytes;
+import qarena;
+import qlex;
+
+fn lower_eq[&q](q: &q [byte], start: int, end: int, word: &static [byte]) -> [] bool {
+    if end - start != len(word) {
+        return false;
+    }
+    var i = 0;
+    while i < len(word) {
+        if bytes.to_lower(int_of(q[start + i])) != int_of(word[i]) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Whether the bytes are one of the words of `list` (lower case, separated by spaces), whatever their case.
+fn in_list[&q](q: &q [byte], start: int, end: int, list: &static [byte]) -> [] bool {
+    var i = 0;
+    while i < len(list) {
+        var j = i;
+        while j < len(list) && int_of(list[j]) != 32 {
+            j = j + 1;
+        }
+        if lower_eq(q, start, end, list[i..j]) {
+            return true;
+        }
+        i = j + 1;
+    }
+    return false;
+}
+
+pub fn reserved() -> [] &static [byte] {
+    return "select from where group order limit offset by and in contains asc desc as cast";
+}
+
+// Words the grammar will need later (docs/query.md section 2): refused as bare names now, so that a query that is valid today stays valid.
+pub fn reserved_later() -> [] &static [byte] {
+    return "join inner left right full cross on using having union intersect except like ilike between is not or case when then else end null true false distinct over with all any exists";
+}
+
+pub fn functions() -> [] &static [byte] {
+    return "count sum min max mean";
+}
+
+fn keyword[&q, &m](q: &q [byte], m: &m [int], i: int) -> [] bool {
+    if qarena.tok_kind(m, i) != qlex.t_id() {
+        return false;
+    }
+    let a = qarena.tok_start(m, i);
+    let b = qarena.tok_end(m, i);
+    return in_list(q, a, b, reserved()) || in_list(q, a, b, reserved_later());
+}
+
+// The token `d` ahead of the cursor (the end token when that is past it).
+fn tk[&m](m: &m [int], d: int) -> [] int {
+    var i = m[qarena.s_k()] + d;
+    if i > m[qarena.s_tokens()] - 1 {
+        i = m[qarena.s_tokens()] - 1;
+    }
+    return i;
+}
+
+fn start_of[&m](m: &m [int], d: int) -> [] int {
+    return qarena.tok_start(m, tk(m, d));
+}
+
+fn is_word[&q, &m](q: &q [byte], m: &m [int], d: int, word: &static [byte]) -> [] bool {
+    let i = tk(m, d);
+    return qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, qarena.tok_start(m, i), qarena.tok_end(m, i), word);
+}
+
+fn is_sym[&m](m: &m [int], d: int, which: int) -> [] bool {
+    let i = tk(m, d);
+    return qarena.tok_kind(m, i) == qlex.t_sym() && qarena.tok_aux(m, i) == which;
+}
+
+fn step[&m](m: &!m [int]) -> [] int {
+    m[qarena.s_k()] = m[qarena.s_k()] + 1;
+    return 0;
+}
+
+fn eat_word[&q, &m](q: &q [byte], m: &!m [int], word: &static [byte]) -> [] bool {
+    if is_word(q, m, 0, word) {
+        step(m);
+        return true;
+    }
+    return false;
+}
+
+fn eat_sym[&m](m: &!m [int], which: int) -> [] bool {
+    if is_sym(m, 0, which) {
+        step(m);
+        return true;
+    }
+    return false;
+}
+
+// Expect a symbol; the error is `code` at the token that is there.
+fn expect_sym[&m](m: &!m [int], which: int, code: int) -> [] int {
+    if eat_sym(m, which) {
+        return 0;
+    }
+    return qarena.fail(m, 1, code, start_of(m, 0));
+}
+
+// A new record of eight integers; answers where it begins.
+fn record[&m](m: &!m [int]) -> [] int {
+    let at = m[qarena.s_rec_base()];
+    var i = 0;
+    while i < 8 {
+        m[at + i] = 0;
+        i = i + 1;
+    }
+    m[qarena.s_rec_base()] = at + 8;
+    return at;
+}
+
+// A column: a name (bare, and not a keyword), a quoted name, or a position. Answers its token, or -1 with the error `what` (or `what_keyword` when a keyword is there).
+fn column[&q, &m](q: &q [byte], m: &!m [int], what: int, what_keyword: int) -> [] int {
+    let i = tk(m, 0);
+    let kind = qarena.tok_kind(m, i);
+    if kind == qlex.t_id() {
+        if keyword(q, m, i) {
+            qarena.fail(m, 1, what_keyword, qarena.tok_start(m, i));
+            return 0 - 1;
+        }
+        step(m);
+        return i;
+    }
+    if kind == qlex.t_qid() || kind == qlex.t_pos() {
+        step(m);
+        return i;
+    }
+    qarena.fail(m, 1, what, qarena.tok_start(m, i));
+    return 0 - 1;
+}
+
+// A scale or a count: digits and nothing else. Answers the number, or -1 with the error `what` (a scale has at most three digits and is at most `most`; a count, `most` of -1,
+// has at most 18, and the error is 12 when it has more).
+fn natural[&q, &m](q: &q [byte], m: &!m [int], what: int, most: int) -> [] int {
+    let i = tk(m, 0);
+    step(m);
+    let a = qarena.tok_start(m, i);
+    let b = qarena.tok_end(m, i);
+    var digits = qarena.tok_kind(m, i) == qlex.t_num();
+    var j = a;
+    while digits && j < b {
+        if !bytes.is_digit(int_of(q[j])) {
+            digits = false;
+        }
+        j = j + 1;
+    }
+    if !digits {
+        qarena.fail(m, 1, what, a);
+        return 0 - 1;
+    }
+    if most >= 0 && b - a > 3 {
+        // a scale: not a number of this tool's size at all
+        qarena.fail(m, 1, what, a);
+        return 0 - 1;
+    }
+    if b - a > 18 {
+        qarena.fail(m, 1, 12, a);
+        return 0 - 1;
+    }
+    var value = 0;
+    j = a;
+    while j < b {
+        value = value * 10 + bytes.digit_of(int_of(q[j]));
+        j = j + 1;
+    }
+    if most >= 0 && value > most {
+        qarena.fail(m, 1, what, a);
+        return 0 - 1;
+    }
+    return value;
+}
+
+// A type after `::` or `as`: int, float or dec(S). Answers its code, or -1 with the error.
+fn type_code[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    if is_word(q, m, 0, "int") {
+        step(m);
+        return 1;
+    }
+    if is_word(q, m, 0, "float") {
+        step(m);
+        return 21;
+    }
+    if is_word(q, m, 0, "dec") {
+        step(m);
+        if expect_sym(m, qlex.y_open(), 17) != 0 {
+            return 0 - 1;
+        }
+        let scale = natural(q, m, 10, 18);
+        if scale < 0 {
+            return 0 - 1;
+        }
+        if expect_sym(m, qlex.y_close(), 8) != 0 {
+            return 0 - 1;
+        }
+        return 2 + scale;
+    }
+    qarena.fail(m, 1, 16, start_of(m, 0));
+    return 0 - 1;
+}
+
+// A column as a condition, a sort, an aggregate or a group reads it: `c`, `c::type` or `cast(c as type)`. Answers the column's token (-1 with the error) and the type.
+fn typed[&q, &m](q: &q [byte], m: &!m [int], what: int, what_keyword: int) -> [] (int, int) {
+    if is_word(q, m, 0, "cast") && is_sym(m, 1, qlex.y_open()) {
+        step(m);
+        step(m);
+        let c = column(q, m, 4, 5);
+        if c < 0 {
+            return (0 - 1, 0);
+        }
+        if !eat_word(q, m, "as") {
+            qarena.fail(m, 1, 18, start_of(m, 0));
+            return (0 - 1, 0);
+        }
+        let t = type_code(q, m);
+        if t < 0 {
+            return (0 - 1, 0);
+        }
+        if expect_sym(m, qlex.y_close(), 8) != 0 {
+            return (0 - 1, 0);
+        }
+        return (c, t);
+    }
+    let c = column(q, m, what, what_keyword);
+    if c < 0 {
+        return (0 - 1, 0);
+    }
+    if eat_sym(m, qlex.y_cast()) {
+        let t = type_code(q, m);
+        if t < 0 {
+            return (0 - 1, 0);
+        }
+        return (c, t);
+    }
+    return (c, 0);
+}
+
+fn is_call[&q, &m](q: &q [byte], m: &m [int]) -> [] bool {
+    if !is_sym(m, 1, qlex.y_open()) {
+        return false;
+    }
+    return is_word(q, m, 0, "count") || is_word(q, m, 0, "sum") || is_word(q, m, 0, "min") || is_word(q, m, 0, "max") || is_word(q, m, 0, "mean");
+}
+
+// An aggregate call at the cursor into the record at `r` (kind 1): count(*), count(distinct c), sum, min, max (c), mean(c [, N]). `r + 7` is left alone.
+fn agg_call[&q, &m](q: &q [byte], m: &!m [int], r: int) -> [] int {
+    var f = 0;
+    if is_word(q, m, 0, "sum") {
+        f = 1;
+    } else if is_word(q, m, 0, "min") {
+        f = 2;
+    } else if is_word(q, m, 0, "max") {
+        f = 3;
+    } else if is_word(q, m, 0, "mean") {
+        f = 5;
+    }
+    let at = start_of(m, 0);
+    step(m);
+    step(m);
+    m[r] = 1;
+    m[r + 2] = 0 - 1;
+    m[r + 4] = 0 - 1;
+    m[r + 5] = at;
+    if f == 0 {
+        if eat_sym(m, qlex.y_star()) {
+            if expect_sym(m, qlex.y_close(), 8) != 0 {
+                return 1;
+            }
+        } else if eat_word(q, m, "distinct") {
+            let (c, t) = typed(q, m, 4, 5);
+            if c < 0 {
+                return 1;
+            }
+            if expect_sym(m, qlex.y_close(), 8) != 0 {
+                return 1;
+            }
+            m[r + 1] = 4;
+            m[r + 2] = c;
+            m[r + 3] = t;
+        } else {
+            return qarena.fail(m, 2, 62, start_of(m, 0));
+        }
+    } else {
+        let (c, t) = typed(q, m, 4, 5);
+        if c < 0 {
+            return 1;
+        }
+        m[r + 1] = f;
+        m[r + 2] = c;
+        m[r + 3] = t;
+        if f == 5 && eat_sym(m, qlex.y_comma()) {
+            let scale = natural(q, m, 10, 18);
+            if scale < 0 {
+                return 1;
+            }
+            m[r + 4] = scale;
+        }
+        var closing = 8;
+        if f == 5 {
+            closing = 9;
+        }
+        if expect_sym(m, qlex.y_close(), closing) != 0 {
+            return 1;
+        }
+    }
+    m[r + 6] = qarena.tok_end(m, tk(m, 0 - 1));
+    return 0;
+}
+
+// The select list: `*`, or items (a column, or an aggregate), the first record at s_items.
+fn items[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    m[qarena.s_items()] = m[qarena.s_rec_base()];
+    if eat_sym(m, qlex.y_star()) {
+        m[qarena.s_star()] = 1;
+        let r = record(m);
+        m[r + 1] = 0;
+        m[r + 5] = start_of(m, 0 - 1);
+        m[qarena.s_item_count()] = 1;
+        return 0;
+    }
+    var n = 0;
+    var more = true;
+    while more {
+        let r = record(m);
+        n = n + 1;
+        if is_call(q, m) {
+            if agg_call(q, m, r) != 0 {
+                return 1;
+            }
+        } else {
+            let at = start_of(m, 0);
+            let (c, t) = typed(q, m, 2, 3);
+            if c < 0 {
+                return 1;
+            }
+            if t != 0 {
+                return qarena.fail(m, 2, 63, at);
+            }
+            m[r] = 0;
+            m[r + 2] = c;
+            m[r + 3] = 0;
+            m[r + 4] = 0 - 1;
+            m[r + 5] = at;
+            m[r + 6] = qarena.tok_end(m, tk(m, 0 - 1));
+        }
+        if is_word(q, m, 0, "as") {
+            return qarena.fail(m, 2, 65, start_of(m, 0));
+        }
+        more = eat_sym(m, qlex.y_comma());
+    }
+    m[qarena.s_item_count()] = n;
+    return 0;
+}
+
+// A value: a string or a number.
+fn literal[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    let i = tk(m, 0);
+    let kind = qarena.tok_kind(m, i);
+    if kind == qlex.t_str() || kind == qlex.t_num() {
+        step(m);
+        return i;
+    }
+    if kind == qlex.t_id() {
+        let a = qarena.tok_start(m, i);
+        let b = qarena.tok_end(m, i);
+        if lower_eq(q, a, b, "null") {
+            qarena.fail(m, 2, 69, a);
+            return 0 - 1;
+        }
+        if lower_eq(q, a, b, "true") || lower_eq(q, a, b, "false") {
+            qarena.fail(m, 2, 70, a);
+            return 0 - 1;
+        }
+    }
+    qarena.fail(m, 1, 14, qarena.tok_start(m, i));
+    return 0 - 1;
+}
+
+fn op_of(m_aux: int) -> [] int {
+    if m_aux == qlex.y_eq() {
+        return 0;
+    }
+    if m_aux == qlex.y_ne() || m_aux == qlex.y_ltgt() {
+        return 1;
+    }
+    if m_aux == qlex.y_lt() {
+        return 2;
+    }
+    if m_aux == qlex.y_le() {
+        return 3;
+    }
+    if m_aux == qlex.y_gt() {
+        return 4;
+    }
+    if m_aux == qlex.y_ge() {
+        return 5;
+    }
+    return 0 - 1;
+}
+
+fn comparison[&m](m: &m [int]) -> [] int {
+    let i = tk(m, 0);
+    if qarena.tok_kind(m, i) != qlex.t_sym() {
+        return 0 - 1;
+    }
+    return op_of(qarena.tok_aux(m, i));
+}
+
+// WHERE: conditions joined by `and`. At most 64 conditions and, in one `in`, 1,024 values.
+fn conditions[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    m[qarena.s_conds()] = m[qarena.s_rec_base()];
+    var n = 0;
+    var more = true;
+    while more {
+        let at = start_of(m, 0);
+        if n >= 64 {
+            return qarena.fail(m, 1, 27, at);
+        }
+        let (c, t) = typed(q, m, 4, 5);
+        if c < 0 {
+            return 1;
+        }
+        let r = record(m);
+        n = n + 1;
+        m[r] = c;
+        m[r + 1] = t;
+        m[r + 4] = at;
+        let op = comparison(m);
+        let here = tk(m, 0);
+        if op >= 0 {
+            step(m);
+            let next = tk(m, 0);
+            let nk = qarena.tok_kind(m, next);
+            if nk == qlex.t_qid() || nk == qlex.t_pos() {
+                return qarena.fail(m, 2, 68, qarena.tok_start(m, next));
+            }
+            if nk == qlex.t_id() && !is_word(q, m, 0, "null") && !is_word(q, m, 0, "true") && !is_word(q, m, 0, "false") {
+                return qarena.fail(m, 2, 68, qarena.tok_start(m, next));
+            }
+            let v = literal(q, m);
+            if v < 0 {
+                return 1;
+            }
+            m[r + 2] = op;
+            m[r + 3] = 1;
+            m[m[qarena.s_rec_base()]] = v;
+            m[qarena.s_rec_base()] = m[qarena.s_rec_base()] + 1;
+        } else if is_word(q, m, 0, "contains") {
+            step(m);
+            if t != 0 {
+                return qarena.fail(m, 1, 15, qarena.tok_start(m, here));
+            }
+            let v = literal(q, m);
+            if v < 0 {
+                return 1;
+            }
+            m[r + 2] = 6;
+            m[r + 3] = 1;
+            m[m[qarena.s_rec_base()]] = v;
+            m[qarena.s_rec_base()] = m[qarena.s_rec_base()] + 1;
+        } else if is_word(q, m, 0, "in") {
+            step(m);
+            if expect_sym(m, qlex.y_open(), 19) != 0 {
+                return 1;
+            }
+            var values = 0;
+            var listing = true;
+            while listing {
+                if values >= 1024 {
+                    return qarena.fail(m, 1, 27, start_of(m, 0));
+                }
+                let v = literal(q, m);
+                if v < 0 {
+                    return 1;
+                }
+                m[m[qarena.s_rec_base()]] = v;
+                m[qarena.s_rec_base()] = m[qarena.s_rec_base()] + 1;
+                values = values + 1;
+                listing = eat_sym(m, qlex.y_comma());
+            }
+            if expect_sym(m, qlex.y_close(), 20) != 0 {
+                return 1;
+            }
+            m[r + 2] = 7;
+            m[r + 3] = values;
+        } else if is_word(q, m, 0, "like") || is_word(q, m, 0, "ilike") {
+            return qarena.fail(m, 2, 73, qarena.tok_start(m, here));
+        } else if is_word(q, m, 0, "between") {
+            return qarena.fail(m, 2, 74, qarena.tok_start(m, here));
+        } else if is_word(q, m, 0, "is") {
+            return qarena.fail(m, 2, 75, qarena.tok_start(m, here));
+        } else if is_word(q, m, 0, "not") {
+            return qarena.fail(m, 2, 76, qarena.tok_start(m, here));
+        } else {
+            return qarena.fail(m, 1, 13, qarena.tok_start(m, here));
+        }
+        if eat_word(q, m, "and") {
+            more = true;
+        } else if is_word(q, m, 0, "or") {
+            return qarena.fail(m, 2, 71, start_of(m, 0));
+        } else if is_sym(m, 0, qlex.y_open()) {
+            return qarena.fail(m, 2, 72, start_of(m, 0));
+        } else {
+            more = false;
+        }
+    }
+    m[qarena.s_cond_count()] = n;
+    return 0;
+}
+
+// GROUP BY: columns (the grammar groups by the text of a column).
+fn group_columns[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    m[qarena.s_groups()] = m[qarena.s_rec_base()];
+    m[qarena.s_group_at()] = start_of(m, 0);
+    var n = 0;
+    var more = true;
+    while more {
+        let at = start_of(m, 0);
+        let (c, t) = typed(q, m, 4, 5);
+        if c < 0 {
+            return 1;
+        }
+        if t != 0 {
+            return qarena.fail(m, 2, 64, at);
+        }
+        m[m[qarena.s_rec_base()]] = c;
+        m[qarena.s_rec_base()] = m[qarena.s_rec_base()] + 1;
+        n = n + 1;
+        more = eat_sym(m, qlex.y_comma());
+    }
+    m[qarena.s_group_count()] = n;
+    m[qarena.s_group_end()] = start_of(m, 0);
+    return 0;
+}
+
+// ORDER BY: keys, each a column (with a type) or an aggregate, then asc or desc.
+fn order_keys[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    m[qarena.s_orders()] = m[qarena.s_rec_base()];
+    var n = 0;
+    var more = true;
+    while more {
+        let r = record(m);
+        n = n + 1;
+        let at = start_of(m, 0);
+        if is_call(q, m) {
+            if agg_call(q, m, r) != 0 {
+                return 1;
+            }
+            // where the call ends, for a repair that copies it (agg_call left it in the slot the order key keeps its start in)
+            m[r + 7] = m[r + 6];
+        } else {
+            let (c, t) = typed(q, m, 4, 5);
+            if c < 0 {
+                return 1;
+            }
+            m[r] = 0;
+            m[r + 2] = c;
+            m[r + 3] = t;
+            m[r + 4] = 0 - 1;
+        }
+        m[r + 5] = 0;
+        m[r + 6] = at;
+        if eat_word(q, m, "desc") {
+            m[r + 5] = 1;
+        } else {
+            eat_word(q, m, "asc");
+        }
+        more = eat_sym(m, qlex.y_comma());
+    }
+    m[qarena.s_order_count()] = n;
+    return 0;
+}
+
+// The whole statement. Answers 0, or 1 with the error set.
+pub fn statement[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    m[qarena.s_limit()] = 0 - 1;
+    m[qarena.s_offset_value()] = 0 - 1;
+    m[qarena.s_clause()] = 0;
+    if !eat_word(q, m, "select") {
+        return qarena.fail(m, 1, 1, start_of(m, 0));
+    }
+    m[qarena.s_items_at()] = start_of(m, 0);
+    if items(q, m) != 0 {
+        return 1;
+    }
+    m[qarena.s_items_end()] = start_of(m, 0);
+    m[qarena.s_clause()] = 1;
+    if eat_word(q, m, "from") {
+        let i = tk(m, 0);
+        step(m);
+        let a = qarena.tok_start(m, i);
+        let b = qarena.tok_end(m, i);
+        if qarena.tok_kind(m, i) == qlex.t_str() {
+            m[qarena.s_source()] = 1;
+            m[qarena.s_source_tok()] = i;
+        } else if qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, a, b, "stdin") {
+            m[qarena.s_source()] = 2;
+        } else if qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, a, b, "select") {
+            return qarena.fail(m, 2, 66, a);
+        } else if qarena.tok_kind(m, i) == qlex.t_id() && in_list(q, a, b, "join left inner cross") {
+            return qarena.fail(m, 2, 67, a);
+        } else {
+            return qarena.fail(m, 1, 6, a);
+        }
+        if is_word(q, m, 0, "join") || is_word(q, m, 0, "left") || is_word(q, m, 0, "inner") || is_word(q, m, 0, "cross") || is_word(q, m, 0, "full") {
+            return qarena.fail(m, 2, 67, start_of(m, 0));
+        }
+        m[qarena.s_clause()] = 2;
+    }
+    if eat_word(q, m, "where") {
+        if conditions(q, m) != 0 {
+            return 1;
+        }
+        m[qarena.s_clause()] = 3;
+    }
+    if eat_word(q, m, "group") {
+        if !eat_word(q, m, "by") {
+            return qarena.fail(m, 1, 21, start_of(m, 0));
+        }
+        if group_columns(q, m) != 0 {
+            return 1;
+        }
+        m[qarena.s_clause()] = 4;
+    }
+    if is_word(q, m, 0, "having") {
+        return qarena.fail(m, 2, 77, start_of(m, 0));
+    }
+    if eat_word(q, m, "order") {
+        if !eat_word(q, m, "by") {
+            return qarena.fail(m, 1, 21, start_of(m, 0));
+        }
+        if order_keys(q, m) != 0 {
+            return 1;
+        }
+        m[qarena.s_clause()] = 5;
+    }
+    if eat_word(q, m, "limit") {
+        let n = natural(q, m, 11, 0 - 1);
+        if n < 0 {
+            return 1;
+        }
+        m[qarena.s_limit()] = n;
+        if eat_word(q, m, "offset") {
+            let o = natural(q, m, 11, 0 - 1);
+            if o < 0 {
+                return 1;
+            }
+            m[qarena.s_offset_value()] = o;
+        }
+        m[qarena.s_clause()] = 6;
+    } else if eat_word(q, m, "offset") {
+        let o = natural(q, m, 11, 0 - 1);
+        if o < 0 {
+            return 1;
+        }
+        m[qarena.s_offset_value()] = o;
+        m[qarena.s_clause()] = 6;
+    }
+    eat_sym(m, qlex.y_semi());
+    let i = tk(m, 0);
+    if qarena.tok_kind(m, i) != qlex.t_end() {
+        let a = qarena.tok_start(m, i);
+        if qarena.tok_kind(m, i) == qlex.t_id() && in_list(q, a, qarena.tok_end(m, i), "union intersect except") {
+            return qarena.fail(m, 2, 78, a);
+        }
+        if qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, a, qarena.tok_end(m, i), "or") {
+            return qarena.fail(m, 2, 71, a);
+        }
+        m[qarena.s_bad_tok()] = i;
+        return qarena.fail(m, 1, 7, a);
+    }
+    return 0;
+}

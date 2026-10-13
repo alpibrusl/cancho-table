@@ -211,6 +211,15 @@ CORPUS = [
     {"file": "data.csv/x"},
     {"file": "nums.csv", "select": "k", "where": "k:int>0"},
     {"file": "latin.csv", "select": "a,b"},
+    # a query, and --rows: the same bytes as the CLI's, a refusal of the query front end with its repair (the invocation offered back), a conflict
+    {"file": "data.csv", "query": "select id, status where status = 404 limit 5"},
+    {"file": "data.csv", "query": "select status, count(*), sum(bytes) group by status order by count(*) desc limit 3", "format": "csv"},
+    {"file": "data.csv", "query": "select * where bytes::int > 90000 and status in (301, 500) order by bytes::int desc limit 4"},
+    {"file": "data.csv", "rows": True, "limit": 3},
+    {"file": "data.csv", "rows": True, "format": "csv", "max-rows": 20},
+    {"file": "data.csv", "query": "selct id"},
+    {"file": "data.csv", "query": "select id, status where status = 404 or status = 500"},
+    {"file": "data.csv", "query": "select id", "select": "id"},
 ]
 
 
@@ -265,7 +274,8 @@ class Differential(unittest.TestCase):
         self.assertGreater(seen_text, 3)
         self.assertGreater(seen_stderr, 0)
         for rule in ("parse.csv-ragged-row", "select.unknown-column", "where.syntax", "agg.bad-spec", "io.not-found", "parse.csv-bad-quote",
-                     "limit.too-many-groups", "args.required-flag", "io.is-a-directory", "value.not-integer", "column.unknown"):
+                     "limit.too-many-groups", "args.required-flag", "io.is-a-directory", "value.not-integer", "column.unknown",
+                     "query.syntax", "query.unsupported", "args.conflict"):
             self.assertIn(rule, seen_rules)
 
     def test_one_call_at_a_time_in_order(self):
@@ -344,9 +354,11 @@ class Schema(unittest.TestCase):
                 self.assertNotIn("type", p)
             elif kind == "text":
                 self.assertEqual((p["type"], p["minLength"]), ("string", 1))
+            elif kind == "bool":
+                self.assertEqual(p["type"], "boolean")
             else:
                 self.fail("a flag kind this test does not know: %s" % f["kind"])
-        self.assertEqual(kinds_seen, {"nat", "text", "choice"})
+        self.assertEqual(kinds_seen, {"nat", "text", "choice", "bool"})
         # The operand: one FILE, required of a caller of the server (the tool's own is optional, for standard input, which the server does not offer: its description says so).
         [operand] = d["operands"]
         self.assertEqual((operand["name"], operand["min"], operand["max"]), ("FILE", 0, 1))

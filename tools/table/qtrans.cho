@@ -1,0 +1,746 @@
+edition 5;
+
+module qtrans;
+
+// `--query` is a translator (docs/query.md section 1, decision 2): the records `qparse` read are written as the flags the tool already has, and the parsers of those flags then
+// fill the one `Query`. There is no second plan. This module is the writing: one function per flag for how a name is escaped in it (the flags disagree, docs/query.md section 3),
+// and the checks the grammar leaves to the translation (`query.group-mismatch`, `query.unsupported` for an order the flags cannot say).
+//
+// The result is `Translated`: `text` holds seven sections, each ended by a zero byte (a query comes from an argument, which holds none), in this order
+//
+//     0 --select   1 --where   2 --group   3 --agg   4 --order-by   5 --sort   6 the source (a path)
+//
+// and `info` the integers (the slots below) and, after them, for a literal that may not fit its column, where it is in the --where text and in the query.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import qarena;
+import qlex;
+import qparse;
+
+pub res struct Translated {
+    text: buffer.Buffer,
+    info: vec.Vec[int],
+}
+
+// the slots of `info`
+pub fn i_status() -> [] int {
+    return 0;
+}
+
+pub fn i_code() -> [] int {
+    return 1;
+}
+
+pub fn i_offset() -> [] int {
+    return 2;
+}
+
+pub fn i_select() -> [] int {
+    return 3;
+}
+
+pub fn i_where() -> [] int {
+    return 4;
+}
+
+pub fn i_group() -> [] int {
+    return 5;
+}
+
+pub fn i_agg() -> [] int {
+    return 6;
+}
+
+pub fn i_order() -> [] int {
+    return 7;
+}
+
+pub fn i_sort() -> [] int {
+    return 8;
+}
+
+pub fn i_limit_given() -> [] int {
+    return 9;
+}
+
+pub fn i_limit() -> [] int {
+    return 10;
+}
+
+pub fn i_from_given() -> [] int {
+    return 11;
+}
+
+pub fn i_from() -> [] int {
+    return 12;
+}
+
+pub fn i_rows() -> [] int {
+    return 13;
+}
+
+// 0 no source clause, 1 a path, 2 standard input
+pub fn i_source() -> [] int {
+    return 14;
+}
+
+pub fn i_items_at() -> [] int {
+    return 15;
+}
+
+pub fn i_items_end() -> [] int {
+    return 16;
+}
+
+pub fn i_group_at() -> [] int {
+    return 17;
+}
+
+pub fn i_group_end() -> [] int {
+    return 18;
+}
+
+// the length of the query, for query.too-long
+pub fn i_length() -> [] int {
+    return 19;
+}
+
+// how many literals are mapped (when asked), and where the header ends: the map follows, six integers a literal: where it begins in the --where text, where it is in the query
+// (start, end), the column's place in the query (start, end), and the type the condition reads it as
+pub fn i_maps() -> [] int {
+    return 24;
+}
+
+pub fn i_header() -> [] int {
+    return 25;
+}
+
+pub fn largest() -> [] int {
+    return 4096;
+}
+
+// ---- names ---------------------------------------------------------------------------------------------------------------------
+
+// The name a column token stands for: a bare word as it is, a quoted name without its quotes (a doubled quote is one), a position as `#digits`.
+fn decode[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], tok: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 16);
+    let a = qarena.tok_start(m, tok);
+    let b = qarena.tok_end(m, tok);
+    if qarena.tok_kind(m, tok) == qlex.t_qid() {
+        var j = a + 1;
+        while j < b - 1 {
+            out = buffer.push(heap, out, q[j]);
+            if int_of(q[j]) == 34 {
+                j = j + 1;
+            }
+            j = j + 1;
+        }
+    } else {
+        out = buffer.append(heap, out, q[a..b]);
+    }
+    return out;
+}
+
+fn is_position[&m](m: &m [int], tok: int) -> [] bool {
+    return qarena.tok_kind(m, tok) == qlex.t_pos();
+}
+
+// Whether two column tokens name the same column: both positions with the same digits, or both names with the same bytes.
+fn same_column[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], x: int, y: int) -> [heap] bool {
+    if is_position(m, x) != is_position(m, y) {
+        return false;
+    }
+    let a = decode(heap, q, m, x);
+    let b = decode(heap, q, m, y);
+    var same = false;
+    borrow a as &ar in {
+        borrow b as &br in {
+            same = bytes.equal(buffer.bytes(ar), buffer.bytes(br));
+        }
+    }
+    buffer.drop(heap, a);
+    buffer.drop(heap, b);
+    return same;
+}
+
+// A name as a word of a --select or --group list: a backslash before a comma, a backslash and a leading `#`. An escape of `:` and `@` too when the list is --agg's (`agg`), and of `:`
+// when it is --order-by's (`order`), which also escapes a leading `-`.
+fn put_name[&h, &d](heap: &!h Heap, out: buffer.Buffer, name: &d [byte], position: bool, agg: bool, order: bool) -> [heap] buffer.Buffer {
+    var o = out;
+    if position {
+        return buffer.append(heap, o, name);
+    }
+    if len(name) > 0 && (int_of(name[0]) == '#' || order && int_of(name[0]) == '-') {
+        o = buffer.push(heap, o, byte_of('\\'));
+    }
+    var i = 0;
+    while i < len(name) {
+        let c = int_of(name[i]);
+        if c == '\\' || c == ',' || (agg || order) && c == ':' || agg && c == '@' {
+            o = buffer.push(heap, o, byte_of('\\'));
+        }
+        o = buffer.push(heap, o, name[i]);
+        i = i + 1;
+    }
+    return o;
+}
+
+fn put_column[&h, &q, &m](heap: &!h Heap, out: buffer.Buffer, q: &q [byte], m: &m [int], tok: int, agg: bool, order: bool) -> [heap] buffer.Buffer {
+    let name = decode(heap, q, m, tok);
+    var o = out;
+    borrow name as &nr in {
+        o = put_name(heap, o, buffer.bytes(nr), is_position(m, tok), agg, order);
+    }
+    buffer.drop(heap, name);
+    return o;
+}
+
+fn put_type[&h](heap: &!h Heap, out: buffer.Buffer, t: int) -> [heap] buffer.Buffer {
+    var o = out;
+    if t == 1 {
+        o = buffer.append(heap, o, ":int");
+    } else if t == 21 {
+        o = buffer.append(heap, o, ":float");
+    } else if t >= 2 {
+        o = buffer.append(heap, o, ":dec(");
+        o = buffer.push_nat(heap, o, t - 2);
+        o = buffer.push(heap, o, byte_of(')'));
+    }
+    return o;
+}
+
+fn is_identifier[&d](name: &d [byte]) -> [] bool {
+    if len(name) == 0 {
+        return false;
+    }
+    var i = 0;
+    while i < len(name) {
+        let c = int_of(name[i]);
+        let letter = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_';
+        if !(letter || i > 0 && c >= '0' && c <= '9') {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// A column in --where: a position as it is, a plain identifier (that is not one of the expression's own words) bare, any other name 'quoted' with a doubled quote.
+fn put_where_column[&h, &q, &m](heap: &!h Heap, out: buffer.Buffer, q: &q [byte], m: &m [int], tok: int) -> [heap] buffer.Buffer {
+    let name = decode(heap, q, m, tok);
+    var o = out;
+    borrow name as &nr in {
+        let n = buffer.bytes(nr);
+        if is_position(m, tok) {
+            o = buffer.append(heap, o, n);
+        } else if is_identifier(n) && !bytes.equal(n, "and") && !bytes.equal(n, "in") && !bytes.equal(n, "contains") {
+            o = buffer.append(heap, o, n);
+        } else {
+            o = buffer.push(heap, o, byte_of(39));
+            var i = 0;
+            while i < len(n) {
+                o = buffer.push(heap, o, n[i]);
+                if int_of(n[i]) == 39 {
+                    o = buffer.push(heap, o, byte_of(39));
+                }
+                i = i + 1;
+            }
+            o = buffer.push(heap, o, byte_of(39));
+        }
+    }
+    buffer.drop(heap, name);
+    return o;
+}
+
+fn function_name(f: int) -> [] &static [byte] {
+    if f == 1 {
+        return "sum";
+    }
+    if f == 2 {
+        return "min";
+    }
+    if f == 3 {
+        return "max";
+    }
+    if f == 4 {
+        return "distinct";
+    }
+    if f == 5 {
+        return "mean";
+    }
+    return "count";
+}
+
+// An aggregate as an item of --agg: `count`, or `function:column[:type][@scale]`.
+fn put_agg[&h, &q, &m](heap: &!h Heap, out: buffer.Buffer, q: &q [byte], m: &m [int], r: int) -> [heap] buffer.Buffer {
+    var o = out;
+    let f = m[r + 1];
+    if f == 0 {
+        return buffer.append(heap, o, "count");
+    }
+    o = buffer.append(heap, o, function_name(f));
+    o = buffer.push(heap, o, byte_of(':'));
+    o = put_column(heap, o, q, m, m[r + 2], true, false);
+    o = put_type(heap, o, m[r + 3]);
+    if f == 5 && m[r + 4] >= 0 {
+        o = buffer.push(heap, o, byte_of('@'));
+        o = buffer.push_nat(heap, o, m[r + 4]);
+    }
+    return o;
+}
+
+// An aggregate as --sort names it: its output column, `count` or `function:column` (the column as written, a position as `#N`).
+fn put_label[&h, &q, &m](heap: &!h Heap, out: buffer.Buffer, q: &q [byte], m: &m [int], r: int) -> [heap] buffer.Buffer {
+    var o = out;
+    let f = m[r + 1];
+    if f == 0 {
+        return buffer.append(heap, o, "count");
+    }
+    o = buffer.append(heap, o, function_name(f));
+    o = buffer.push(heap, o, byte_of(':'));
+    let name = decode(heap, q, m, m[r + 2]);
+    borrow name as &nr in {
+        o = buffer.append(heap, o, buffer.bytes(nr));
+    }
+    buffer.drop(heap, name);
+    return o;
+}
+
+fn same_aggregate[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], x: int, y: int) -> [heap] bool {
+    if m[x + 1] != m[y + 1] || m[x + 3] != m[y + 3] || m[x + 4] != m[y + 4] {
+        return false;
+    }
+    if m[x + 1] == 0 {
+        return true;
+    }
+    return same_column(heap, q, m, m[x + 2], m[y + 2]);
+}
+
+fn put_zero[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
+    return buffer.push(heap, out, byte_of(0));
+}
+
+// ---- the translation -----------------------------------------------------------------------------------------------------------
+
+fn put_info(info: vec.Vec[int], slot: int, value: int) -> [] vec.Vec[int] {
+    var v = info;
+    borrow mut v as &!w in {
+        vec.set(w, slot, value);
+    }
+    return v;
+}
+
+// The flags of a statement that parsed, or the error of the one that does not make sense (set in `m`). Answers the text and the info.
+fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Buffer, info0: vec.Vec[int], want_map: bool) -> [heap] (buffer.Buffer, vec.Vec[int]) {
+    var text = text0;
+    var info = info0;
+    let items = m[qarena.s_items()];
+    let n_items = m[qarena.s_item_count()];
+    let star = m[qarena.s_star()] == 1;
+    let groups = m[qarena.s_groups()];
+    let n_groups = m[qarena.s_group_count()];
+    let orders = m[qarena.s_orders()];
+    let n_orders = m[qarena.s_order_count()];
+    let n_conds = m[qarena.s_cond_count()];
+    var n_cols = 0;
+    var n_aggs = 0;
+    var k = 0;
+    var cols_first = true;
+    while k < n_items && !star {
+        if m[items + 8 * k] == 0 {
+            n_cols = n_cols + 1;
+            if n_aggs > 0 {
+                cols_first = false;
+            }
+        } else {
+            n_aggs = n_aggs + 1;
+        }
+        k = k + 1;
+    }
+    let grouped = n_aggs > 0 || n_groups > 0;
+    let items_at = m[qarena.s_items_at()];
+    if grouped {
+        // a grouping selects its group by columns first, in order, then the aggregates; and has at least one aggregate
+        if star {
+            qarena.fail(m, 3, 40, items_at);
+            return (text, info);
+        }
+        var same = cols_first && n_cols == n_groups;
+        var g = 0;
+        while same && g < n_groups {
+            same = same_column(heap, q, m, m[items + 8 * g + 2], m[groups + g]);
+            g = g + 1;
+        }
+        if !same {
+            // at the first column of the list (the first item that is not an aggregate), or the list
+            var bad_at = items_at;
+            var first_col = 0;
+            var found = false;
+            while first_col < n_items && !found {
+                if m[items + 8 * first_col] == 0 {
+                    bad_at = m[items + 8 * first_col + 5];
+                    found = true;
+                }
+                first_col = first_col + 1;
+            }
+            qarena.fail(m, 3, 41, bad_at);
+            return (text, info);
+        }
+        if n_aggs == 0 {
+            qarena.fail(m, 3, 42, items_at);
+            return (text, info);
+        }
+    }
+    // 0 --select
+    if !grouped && !star {
+        var s = 0;
+        while s < n_cols {
+            if s > 0 {
+                text = buffer.push(heap, text, byte_of(','));
+            }
+            text = put_column(heap, text, q, m, m[items + 8 * s + 2], false, false);
+            s = s + 1;
+        }
+        info = put_info(info, i_select(), 1);
+    }
+    text = put_zero(heap, text);
+    // 1 --where
+    var where_at = 0;
+    borrow text as &wr in {
+        where_at = buffer.size(wr);
+    }
+    var c = 0;
+    var at = m[qarena.s_conds()];
+    var maps = 0;
+    while c < n_conds {
+        let col = m[at];
+        let t = m[at + 1];
+        let op = m[at + 2];
+        let nv = m[at + 3];
+        if c > 0 {
+            text = buffer.append(heap, text, " and ");
+        }
+        text = put_where_column(heap, text, q, m, col);
+        text = put_type(heap, text, t);
+        text = buffer.push(heap, text, byte_of(32));
+        if op == 7 {
+            text = buffer.append(heap, text, "in (");
+        } else if op == 6 {
+            text = buffer.append(heap, text, "contains ");
+        } else if op == 0 {
+            text = buffer.append(heap, text, "= ");
+        } else if op == 1 {
+            text = buffer.append(heap, text, "!= ");
+        } else if op == 2 {
+            text = buffer.append(heap, text, "< ");
+        } else if op == 3 {
+            text = buffer.append(heap, text, "<= ");
+        } else if op == 4 {
+            text = buffer.append(heap, text, "> ");
+        } else {
+            text = buffer.append(heap, text, ">= ");
+        }
+        var v = 0;
+        while v < nv {
+            if v > 0 {
+                text = buffer.append(heap, text, ", ");
+            }
+            let tok = m[at + 8 + v];
+            if want_map {
+                // where the literal begins in the --where text, and in the query, and the column and the type it is read as
+                var here = 0;
+                borrow text as &hr in {
+                    here = buffer.size(hr);
+                }
+                info = vec.push(heap, info, here - where_at);
+                info = vec.push(heap, info, qarena.tok_start(m, tok));
+                info = vec.push(heap, info, qarena.tok_end(m, tok));
+                info = vec.push(heap, info, qarena.tok_start(m, col));
+                info = vec.push(heap, info, qarena.tok_end(m, col));
+                info = vec.push(heap, info, t);
+                maps = maps + 1;
+            }
+            text = buffer.append(heap, text, q[qarena.tok_start(m, tok)..qarena.tok_end(m, tok)]);
+            v = v + 1;
+        }
+        if op == 7 {
+            text = buffer.push(heap, text, byte_of(')'));
+        }
+        at = at + 8 + nv;
+        c = c + 1;
+    }
+    if n_conds > 0 {
+        info = put_info(info, i_where(), 1);
+    }
+    text = put_zero(heap, text);
+    // 2 --group
+    var i = 0;
+    while i < n_groups {
+        if i > 0 {
+            text = buffer.push(heap, text, byte_of(','));
+        }
+        text = put_column(heap, text, q, m, m[groups + i], false, false);
+        i = i + 1;
+    }
+    if n_groups > 0 {
+        info = put_info(info, i_group(), 1);
+    }
+    text = put_zero(heap, text);
+    // 3 --agg
+    if grouped {
+        var a = 0;
+        var first = true;
+        while a < n_items {
+            if m[items + 8 * a] == 1 {
+                if !first {
+                    text = buffer.push(heap, text, byte_of(','));
+                }
+                first = false;
+                text = put_agg(heap, text, q, m, items + 8 * a);
+            }
+            a = a + 1;
+        }
+        info = put_info(info, i_agg(), 1);
+    }
+    text = put_zero(heap, text);
+    // 4 --order-by (rows) and 5 --sort (a grouping)
+    var order_text = buffer.empty(heap, 16);
+    var sort_text = buffer.empty(heap, 16);
+    if n_orders > 0 {
+        if grouped {
+            if n_orders != 1 {
+                qarena.fail(m, 2, 79, m[orders + 8 + 6]);
+                buffer.drop(heap, order_text);
+                buffer.drop(heap, sort_text);
+                return (text, info);
+            }
+            let r = orders;
+            let where_key = m[r + 6];
+            if m[r] == 1 {
+                var listed = false;
+                var a = 0;
+                while a < n_items && !listed {
+                    if m[items + 8 * a] == 1 {
+                        listed = same_aggregate(heap, q, m, r, items + 8 * a);
+                    }
+                    a = a + 1;
+                }
+                if !listed {
+                    qarena.fail(m, 3, 43, where_key);
+                    buffer.drop(heap, order_text);
+                    buffer.drop(heap, sort_text);
+                    return (text, info);
+                }
+                if m[r + 1] != 0 && is_position(m, m[r + 2]) {
+                    qarena.fail(m, 2, 80, where_key);
+                    buffer.drop(heap, order_text);
+                    buffer.drop(heap, sort_text);
+                    return (text, info);
+                }
+                sort_text = put_label(heap, sort_text, q, m, r);
+            } else {
+                var listed = false;
+                if m[r + 3] == 0 {
+                    var g2 = 0;
+                    while g2 < n_groups && !listed {
+                        listed = same_column(heap, q, m, m[r + 2], m[groups + g2]);
+                        g2 = g2 + 1;
+                    }
+                }
+                if !listed {
+                    qarena.fail(m, 3, 44, where_key);
+                    buffer.drop(heap, order_text);
+                    buffer.drop(heap, sort_text);
+                    return (text, info);
+                }
+                if is_position(m, m[r + 2]) {
+                    qarena.fail(m, 2, 80, where_key);
+                    buffer.drop(heap, order_text);
+                    buffer.drop(heap, sort_text);
+                    return (text, info);
+                }
+                let label = decode(heap, q, m, m[r + 2]);
+                borrow label as &lr in {
+                    sort_text = buffer.append(heap, sort_text, buffer.bytes(lr));
+                }
+                buffer.drop(heap, label);
+            }
+            var dash = false;
+            borrow sort_text as &sr in {
+                dash = buffer.size(sr) > 0 && int_of(buffer.bytes(sr)[0]) == '-';
+            }
+            if dash {
+                qarena.fail(m, 2, 81, where_key);
+                buffer.drop(heap, order_text);
+                buffer.drop(heap, sort_text);
+                return (text, info);
+            }
+            if m[r + 5] == 1 {
+                var signed = buffer.push(heap, buffer.empty(heap, 16), byte_of('-'));
+                borrow sort_text as &sr in {
+                    signed = buffer.append(heap, signed, buffer.bytes(sr));
+                }
+                buffer.drop(heap, sort_text);
+                sort_text = signed;
+            }
+            info = put_info(info, i_sort(), 1);
+        } else {
+            var o = 0;
+            while o < n_orders {
+                let r = orders + 8 * o;
+                if m[r] == 1 {
+                    qarena.fail(m, 3, 45, m[r + 6]);
+                    buffer.drop(heap, order_text);
+                    buffer.drop(heap, sort_text);
+                    return (text, info);
+                }
+                let t = m[r + 3];
+                if o > 0 {
+                    order_text = buffer.push(heap, order_text, byte_of(','));
+                }
+                if m[r + 5] == 1 {
+                    order_text = buffer.push(heap, order_text, byte_of('-'));
+                }
+                order_text = put_column(heap, order_text, q, m, m[r + 2], false, true);
+                order_text = put_type(heap, order_text, t);
+                o = o + 1;
+            }
+            info = put_info(info, i_order(), 1);
+        }
+    }
+    borrow order_text as &or in {
+        text = buffer.append(heap, text, buffer.bytes(or));
+    }
+    text = put_zero(heap, text);
+    borrow sort_text as &sr in {
+        text = buffer.append(heap, text, buffer.bytes(sr));
+    }
+    text = put_zero(heap, text);
+    buffer.drop(heap, order_text);
+    buffer.drop(heap, sort_text);
+    // 6 the source
+    if m[qarena.s_source()] == 1 {
+        let tok = m[qarena.s_source_tok()];
+        let a = qarena.tok_start(m, tok);
+        let b = qarena.tok_end(m, tok);
+        var j = a + 1;
+        while j < b - 1 {
+            text = buffer.push(heap, text, q[j]);
+            if int_of(q[j]) == 39 {
+                j = j + 1;
+            }
+            j = j + 1;
+        }
+    }
+    text = put_zero(heap, text);
+    info = put_info(info, i_source(), m[qarena.s_source()]);
+    if m[qarena.s_limit()] >= 0 {
+        info = put_info(info, i_limit_given(), 1);
+        info = put_info(info, i_limit(), m[qarena.s_limit()]);
+    }
+    if m[qarena.s_offset_value()] >= 0 {
+        info = put_info(info, i_from_given(), 1);
+        info = put_info(info, i_from(), m[qarena.s_offset_value()]);
+    }
+    if star && n_conds == 0 && n_orders == 0 && !grouped {
+        info = put_info(info, i_rows(), 1);
+    }
+    if want_map {
+        info = put_info(info, i_maps(), maps);
+    }
+    return (text, info);
+}
+
+// The query's bytes as the flags they stand for. `want_map` also records, for each literal, where it is in the --where text and in the query (the refusal of a literal that does not
+// fit its column needs both).
+pub fn translate[&h, &q](heap: &!h Heap, q: &q [byte], want_map: bool) -> [heap] Translated {
+    var info = vec.empty(heap, 32, 0);
+    var z = 0;
+    while z < i_header() {
+        info = vec.push(heap, info, 0);
+        z = z + 1;
+    }
+    var text = buffer.empty(heap, 128);
+    info = put_info(info, i_length(), len(q));
+    if len(q) > largest() {
+        info = put_info(info, i_status(), 4);
+        info = put_info(info, i_code(), 28);
+        info = put_info(info, i_offset(), largest());
+        return Translated { text: text, info: info };
+    }
+    var arena = box_slice(heap, qarena.size_for(len(q)), 0);
+    var status = 0;
+    var code = 0;
+    var at = 0;
+    var items_at = 0;
+    var items_end = 0;
+    var group_at = 0;
+    var group_end = 0;
+    borrow mut arena as &!w in {
+        let m = contents(w);
+        m[qarena.s_rec_base()] = qarena.rec_base_for(len(q));
+        m[qarena.s_length()] = len(q);
+        var bad = qlex.lex(q, m);
+        if bad == 0 {
+            bad = qparse.statement(q, m);
+        }
+        if bad == 0 {
+            let (t2, i2) = emit(heap, q, m, text, info, want_map);
+            text = t2;
+            info = i2;
+        }
+        status = m[qarena.s_kind()];
+        code = m[qarena.s_code()];
+        at = m[qarena.s_offset()];
+        items_at = m[qarena.s_items_at()];
+        items_end = m[qarena.s_items_end()];
+        group_at = m[qarena.s_group_at()];
+        group_end = m[qarena.s_group_end()];
+    }
+    unbox_slice(heap, arena);
+    info = put_info(info, i_status(), status);
+    info = put_info(info, i_code(), code);
+    info = put_info(info, i_offset(), at);
+    info = put_info(info, i_items_at(), items_at);
+    info = put_info(info, i_items_end(), items_end);
+    info = put_info(info, i_group_at(), group_at);
+    info = put_info(info, i_group_end(), group_end);
+    return Translated { text: text, info: info };
+}
+
+pub fn drop[&h](heap: &!h Heap, t: Translated) -> [heap] int {
+    let Translated { text, info } = t;
+    buffer.drop(heap, text);
+    vec.drop(heap, info);
+    return 0;
+}
+
+pub fn status[&t](t: &t Translated) -> [] int {
+    return vec.get(t.info, i_status());
+}
+
+pub fn info_at[&t](t: &t Translated, slot: int) -> [] int {
+    return vec.get(t.info, slot);
+}
+
+// Section `k` of the text (see the top).
+pub fn section[&t](t: &t Translated, k: int) -> [] &t [byte] {
+    let all = buffer.bytes(t.text);
+    var begin = 0;
+    var seen = 0;
+    var i = 0;
+    while i < len(all) && seen < k {
+        if int_of(all[i]) == 0 {
+            seen = seen + 1;
+            begin = i + 1;
+        }
+        i = i + 1;
+    }
+    var end = begin;
+    while end < len(all) && int_of(all[end]) != 0 {
+        end = end + 1;
+    }
+    return all[begin..end];
+}

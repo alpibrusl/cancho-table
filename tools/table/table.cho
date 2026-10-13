@@ -63,6 +63,9 @@ import frame;
 import inputs;
 import par;
 import plan;
+import qpath;
+import qrefuse;
+import qtrans;
 import query;
 import reader;
 import report;
@@ -85,7 +88,7 @@ fn flag_table() -> [] &static [byte] {
 }
 
 fn tool() -> [] describe.Tool {
-    return describe.Tool { name: "table", version: "0.3.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some columns (--select), the rows that satisfy a condition (--where, bytewise or exact integers, decimals or doubles), rows in order (--order-by), or counts, sums, means, minima, maxima and distinct counts of groups (--group, --agg, --sort, --top), as json pages or csv. Every refusal is a rule, with its hint. Four forms, chosen by the flags: the shape (FILE alone: the column names and the row count), rows (--select, --where or --order-by, then --top, --limit and --from to cut and page), groups (--group or --agg, then --where, --sort, --top, --limit and --from) and the type report (--report types, then --select, --where, --limit and --from: one row per column, saying what its cells are and which declaration would read it). A mix is refused. args.conflict: --select or --order-by with --group or --agg, --report with --group, --agg, --order-by, --sort or --top, and --format text with rows, groups or the report. args.required-flag: --limit, --from or --format csv with the shape, --top with neither --order-by, --group nor --agg, and --sort without --group or --agg. The report reads every row once and changes nothing: its suggestions (:int, :dec(S), :float or none) are applied by no flag. A page that was cut says data.next.from: pass it as --from. FILE is one path, relative to --root when given, and its first row is the header. With no FILE, or with - for FILE, the table is read from standard input in one pass on one core: the same answer as the file's, byte for byte (but that detail.path is -), whatever --threads says; a pipe is read in blocks on one core, so a large file is better named when --threads should help, and a read that fails is a refusal naming -.", usage: "shape:  table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] [FILE|-]\nrows:   table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--select NAMES] [--where EXPR] [--order-by KEYS] [--top N] [--limit N] [--from N] [--max-bytes N] [--max-sort-rows N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] [FILE|-]\ngroups: table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --group NAMES [--agg ITEMS] [--where EXPR] [--sort KEY] [--top N] [--limit N] [--from N] [--max-bytes N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] [FILE|-]\n        (--agg alone, without --group, is one group of all the rows)\nreport: table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --report types [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] [FILE|-]\n\nFILE: at most one, a CSV file (--delimiter tab for TSV) whose first row is the header, or - (or no FILE) for standard input, read in one pass on one core: --root, --threads, --chunk-bytes and --parallel-min-bytes do not apply to it, and a refusal names the input as -. With --root a FILE is relative to that directory (absolute paths, .. and symbolic links are refused); a file called - is ./-.\nNAMES, KEYS and ITEMS are comma-separated lists, and in a name a comma or backslash is written with a backslash before it. A column is its header name or #N, the Nth (1-based).\nRows and groups come as data.columns, data.rows (every cell a string, numbers too), data.row_count, data.truncated, data.next ({\"from\": N} or null) and, for groups, data.group_count.\n\nExamples, on the file sales.csv (a refusal is shown as its rule, exit status, hint and repair kind):\nhost,status,bytes,price\na,200,512,1.50\nb,404,0,2.25\na,200,1024,1.5\nc,500,2048,10.00\nb,200,64,0.75\n\n$ table sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"headers\":[\"host\",\"status\",\"bytes\",\"price\"],\"column_count\":4,\"row_count\":5,\"truncated\":false},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --select host,bytes --where 'status = 200' --order-by -bytes:int --limit 2 sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"host\",\"bytes\"],\"rows\":[[\"a\",\"1024\"],[\"a\",\"512\"]],\"row_count\":2,\"truncated\":true,\"next\":{\"from\":2}},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --group host --agg count,sum:bytes --sort -sum:bytes --top 2 sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"host\",\"count\",\"sum:bytes\"],\"rows\":[[\"c\",\"1\",\"2048\"],[\"a\",\"2\",\"1536\"]],\"row_count\":2,\"truncated\":false,\"next\":null,\"group_count\":3},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --agg 'sum:price:dec(2),mean:bytes@1' sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"sum:price\",\"mean:bytes\"],\"rows\":[[\"16.00\",\"729.6\"]],\"row_count\":1,\"truncated\":false,\"next\":null,\"group_count\":1},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --select host --group host sales.csv\nrefused: exit 2, rule args.conflict, hint \"drop --select\", repair none", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|0|1|the CSV file to read, a path relative to --root when given (absolute paths, .. and symbolic links are refused), or - or nothing for standard input (a file called - is ./-), and its first row is the header that --select, --where, --group, --agg and --order-by name columns by", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;io.write-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;limit.too-many-sort-rows;limit.too-many-groups;limit.too-many-distinct;limit.state-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column;column.unknown;column.ambiguous;where.syntax;agg.bad-spec;sort.unknown-key;value.not-integer;value.integer-overflow;value.not-decimal;value.decimal-scale;value.decimal-too-wide;column.type-conflict;value.not-float;value.not-finite;value.float-range;limit.number-too-long;agg.float-overflow", extra_rules: finish.extra(), limits: "threads|1|64;chunk-bytes|4194304|1073741824;parallel-min-bytes|1048576|1073741824;limit|1000|1000000;max-bytes|1048576|67108864;max-groups|100000|1000000;max-distinct|100000|10000000;max-state-bytes|67108864|1073741824;max-sort-rows|1000000|20000000;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "when FILE is - or absent", guarantees: "deterministic;idempotent;bounded_memory" };
+    return describe.Tool { name: "table", version: "0.3.0", summary: "A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some columns (--select), the rows that satisfy a condition (--where, bytewise or exact integers, decimals or doubles), rows in order (--order-by), or counts, sums, means, minima, maxima and distinct counts of groups (--group, --agg, --sort, --top), as json pages or csv. Every refusal is a rule, with its hint. Four forms, chosen by the flags: the shape (FILE alone: the column names and the row count), rows (--select, --where or --order-by, then --top, --limit and --from to cut and page), groups (--group or --agg, then --where, --sort, --top, --limit and --from) and the type report (--report types, then --select, --where, --limit and --from: one row per column, saying what its cells are and which declaration would read it). A mix is refused. args.conflict: --select or --order-by with --group or --agg, --report with --group, --agg, --order-by, --sort or --top, and --format text with rows, groups or the report. args.required-flag: --limit, --from or --format csv with the shape, --top with neither --order-by, --group nor --agg, and --sort without --group or --agg. --rows is every row with every column and no condition, and conflicts with --select, --where, --group, --agg, --order-by and --report. --query asks one of the forms in a small subset of SQL (select, from, where, group by, order by, limit, offset) and is translated to the flags it stands for, so it gives the same bytes: it conflicts with --select, --where, --group, --agg, --sort, --order-by, --rows and --report, with --limit, --from or --top when the query has its own limit or offset, and with a FILE when it has a from. A query that is not in the grammar is refused as query.syntax at a byte offset with what was expected (and the corrected command when the correction is certain), what the language leaves out (or, like, null, an alias, an expression, a join) as query.unsupported with what to write instead, a select list that is not the group by columns then at least one aggregate as query.group-mismatch, and a query over 4096 bytes as query.too-long. The report reads every row once and changes nothing: its suggestions (:int, :dec(S), :float or none) are applied by no flag. A page that was cut says data.next.from: pass it as --from. FILE is one path, relative to --root when given, and its first row is the header. With no FILE, or with - for FILE, the table is read from standard input in one pass on one core: the same answer as the file's, byte for byte (but that detail.path is -), whatever --threads says; a pipe is read in blocks on one core, so a large file is better named when --threads should help, and a read that fails is a refusal naming -.", usage: "shape:  table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] [FILE|-]\nrows:   table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--select NAMES] [--where EXPR] [--order-by KEYS] [--top N] [--limit N] [--from N] [--max-bytes N] [--max-sort-rows N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] [FILE|-]\ngroups: table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --group NAMES [--agg ITEMS] [--where EXPR] [--sort KEY] [--top N] [--limit N] [--from N] [--max-bytes N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] [FILE|-]\n        (--agg alone, without --group, is one group of all the rows)\nall:    table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --rows [--limit N] [--from N] [--max-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] [FILE|-]\nquery:  table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --query TEXT [--top N] [--limit N] [--from N] [--max-bytes N] [--max-sort-rows N] [--max-groups N] [--max-distinct N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] [FILE|-]\n        (a query says select, from, where, group by, order by, limit and offset; its from names the FILE)\nreport: table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --report types [--select NAMES] [--where EXPR] [--limit N] [--from N] [--max-bytes N] [--max-state-bytes N] [--threads N] [--chunk-bytes N] [--parallel-min-bytes N] [--format json|csv] [FILE|-]\n\nFILE: at most one, a CSV file (--delimiter tab for TSV) whose first row is the header, or - (or no FILE) for standard input, read in one pass on one core: --root, --threads, --chunk-bytes and --parallel-min-bytes do not apply to it, and a refusal names the input as -. With --root a FILE is relative to that directory (absolute paths, .. and symbolic links are refused); a file called - is ./-.\nNAMES, KEYS and ITEMS are comma-separated lists, and in a name a comma or backslash is written with a backslash before it. A column is its header name or #N, the Nth (1-based).\nRows and groups come as data.columns, data.rows (every cell a string, numbers too), data.row_count, data.truncated, data.next ({\"from\": N} or null) and, for groups, data.group_count.\n\nExamples, on the file sales.csv (a refusal is shown as its rule, exit status, hint and repair kind):\nhost,status,bytes,price\na,200,512,1.50\nb,404,0,2.25\na,200,1024,1.5\nc,500,2048,10.00\nb,200,64,0.75\n\n$ table sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"headers\":[\"host\",\"status\",\"bytes\",\"price\"],\"column_count\":4,\"row_count\":5,\"truncated\":false},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --select host,bytes --where 'status = 200' --order-by -bytes:int --limit 2 sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"host\",\"bytes\"],\"rows\":[[\"a\",\"1024\"],[\"a\",\"512\"]],\"row_count\":2,\"truncated\":true,\"next\":{\"from\":2}},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --group host --agg count,sum:bytes --sort -sum:bytes --top 2 sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"host\",\"count\",\"sum:bytes\"],\"rows\":[[\"c\",\"1\",\"2048\"],[\"a\",\"2\",\"1536\"]],\"row_count\":2,\"truncated\":false,\"next\":null,\"group_count\":3},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --query \"select host, count(*) from 'sales.csv' group by host order by count(*) desc limit 1\"\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"host\",\"count\"],\"rows\":[[\"a\",\"2\"]],\"row_count\":1,\"truncated\":true,\"next\":{\"from\":1},\"group_count\":3},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --agg 'sum:price:dec(2),mean:bytes@1' sales.csv\n{\"ok\":true,\"command\":\"table\",\"schema\":\"table.v2\",\"data\":{\"columns\":[\"sum:price\",\"mean:bytes\"],\"rows\":[[\"16.00\",\"729.6\"]],\"row_count\":1,\"truncated\":false,\"next\":null,\"group_count\":1},\"meta\":{\"version\":\"0.3.0\"}}\n$ table --select host --group host sales.csv\nrefused: exit 2, rule args.conflict, hint \"drop --select\", repair none", output: "document", schema: "table.v2", flags: flag_table(), operands: "FILE|path-read|0|1|the CSV file to read, a path relative to --root when given (absolute paths, .. and symbolic links are refused), or - or nothing for standard input (a file called - is ./-), and its first row is the header that --select, --where, --group, --agg and --order-by name columns by", rules: "args.unknown-flag;args.missing-value;args.bad-value;args.duplicate-flag;args.conflict;args.required-flag;args.too-many-operands;path.empty;path.dotdot;path.absolute;path.outside-root;path.too-long;path.symlink;io.not-found;io.not-a-directory;io.is-a-directory;io.permission-denied;io.read-failed;io.write-failed;limit.line-too-long;limit.header-too-large;limit.record-too-large;limit.output-too-large;limit.too-many-rows;limit.too-many-sort-rows;limit.too-many-groups;limit.too-many-distinct;limit.state-too-large;parse.csv-ragged-row;parse.csv-bad-quote;parse.csv-unterminated-quote;select.unknown-column;select.ambiguous-column;column.unknown;column.ambiguous;where.syntax;agg.bad-spec;sort.unknown-key;value.not-integer;value.integer-overflow;value.not-decimal;value.decimal-scale;value.decimal-too-wide;column.type-conflict;value.not-float;value.not-finite;value.float-range;limit.number-too-long;agg.float-overflow;query.syntax;query.unsupported;query.group-mismatch;query.too-long", extra_rules: finish.extra(), limits: "threads|1|64;chunk-bytes|4194304|1073741824;parallel-min-bytes|1048576|1073741824;limit|1000|1000000;max-bytes|1048576|67108864;max-groups|100000|1000000;max-distinct|100000|10000000;max-state-bytes|67108864|1073741824;max-sort-rows|1000000|20000000;max-rows|10000000|1000000000;max-line-bytes|1048576|16777216", reversibility: "reversible-cheap", stdin: "when FILE is - or absent", guarantees: "deterministic;idempotent;bounded_memory" };
 }
 
 fn built() -> [] describe.Built {
@@ -1266,11 +1269,12 @@ fn settle[&h, &g, &p, &s, &rt, &fu, &i, &fs, &q](heap: &!h Heap, args: &g Args, 
     return (tree, e, payload, plain, streamed);
 }
 
-fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, io_read, io_write, err_write, conc] int {
+// The plan, from the plan's values (`inp`, and the text of each list as the flags or a query's translation gave it), run: the checks of the flags, the `Query` they fill, the
+// source, the read and the answer. It does not know where the values came from (docs/query.md, Q0): `body` hands it the flags' own, `query_body` a translation's.
+fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors, inp: inputs.Inputs, select_t: &s1 [byte], where_t: &s2 [byte], group_t: &s3 [byte], agg_t: &s4 [byte], order_t: &s5 [byte], sort_t: &s6 [byte], source_t: &s7 [byte]) -> [heap, args, fs_read(""), dir_read, io_read, io_write, err_write, conc] int {
     let table = flag_table();
-    let inp = inputs.from_flags(args, parsed, table);
     var e = errs;
-    let form = cli.text(args, parsed, table, "format");
+    let form = inp.format_text;
     let text_mode = bytes.equal(form, "text");
     let as_csv = bytes.equal(form, "csv");
     let has_select = inp.has_select;
@@ -1283,7 +1287,7 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     var mode = 0;
     if grouped {
         mode = 2;
-    } else if has_select || has_where || has_order || has_report {
+    } else if has_select || has_where || has_order || has_report || inp.has_rows {
         mode = 1;
     }
     let delim = delimiter_of(cli.text(args, parsed, table, "delimiter"));
@@ -1372,21 +1376,27 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
             e = flags.problem(heap, e, "args.conflict", "--report types describes the columns of the whole table: it is not a grouping, a sort or a cut of rows", "drop --group, --agg, --order-by, --sort or --top", "--report --group --agg --order-by --sort --top");
         }
     }
+    if inp.has_rows && (has_select || has_where || grouped || has_order || has_report) {
+        e = flags.problem(heap, e, "args.conflict", "--rows is every row and every column, with no condition, selection, grouping or order", "drop --rows, or drop the flags that say more", "--rows --select --where --group --agg --order-by --report");
+    }
     if !has_report && !grouped && (inp.has_sort || inp.has_top && !has_order) {
         e = flags.problem(heap, e, "args.required-flag", "--sort orders groups and --top cuts groups or sorted rows, so they need --group, --agg or --order-by", "--group NAMES", "--sort --top --group");
     }
     // The plan.
     var tree = query.empty(heap);
     if has_select {
-        let (t2, e2) = flags.add_names(heap, tree, e, inp.select_text, 0, "--select");
+        let (t2, e2) = flags.add_names(heap, tree, e, select_t, 0, "--select");
         tree = t2;
         e = e2;
     }
     if has_where {
-        let given = inp.where_text;
+        let given = where_t;
         let (t2, what, at) = expr.parse(heap, tree, given);
         tree = t2;
-        if what != 0 {
+        if what != 0 && inp.has_query {
+            // a literal of the query that does not fit the type its column is read as: refused at the literal of the query
+            e = qrefuse.literal_refusal(heap, e, inp.query_text, what, at);
+        } else if what != 0 {
             var w = fail.open_in(heap, finish.extra(), "where.syntax", "--where is not an expression", "the grammar is in the help of --where: COLUMN OP VALUE joined by and");
             w = fail.repair_none(heap, w, "what the expression was meant to say is not known");
             w = fail.detail_open(heap, w);
@@ -1397,13 +1407,13 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         }
     }
     if has_group {
-        let (t2, e2) = flags.add_names(heap, tree, e, inp.group_text, 2, "--group");
+        let (t2, e2) = flags.add_names(heap, tree, e, group_t, 2, "--group");
         tree = t2;
         e = e2;
     }
     if grouped {
         if has_agg {
-            let given = inp.agg_text;
+            let given = agg_t;
             let (t2, bad) = agg.parse_aggs(heap, tree, given);
             tree = t2;
             if bad == -2 {
@@ -1424,9 +1434,12 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
         tree = query.set_reporting(heap, tree);
     }
     if has_order && !grouped && !has_report {
-        let (t2, e2) = flags.add_order_keys(heap, tree, e, inp.order_text);
+        let (t2, e2) = flags.add_order_keys(heap, tree, e, order_t);
         tree = t2;
         e = e2;
+    }
+    if inp.has_sort && inp.has_query {
+        tree = query.set_sort(heap, tree, sort_t);
     }
     let (root, after_root) = path.root(heap, args, inp.root_text, inp.root_at, e);
     e = after_root;
@@ -1460,6 +1473,32 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
                     plain = l2;
                     streamed = s2;
                 }
+            }
+        } else if inp.src_file {
+            // A query's `from 'path'`: the path is checked as an operand is (qpath.cho), and opened beneath the root the same way.
+            borrow root as &rr in {
+                let (full, shown_at, checked) = qpath.resolve(heap, buffer.bytes(rr), source_t, e);
+                e = checked;
+                borrow full as &fr in {
+                    if shown_at >= 0 {
+                        let whole = buffer.bytes(fr);
+                        let shown = whole[shown_at..len(whole)];
+                        match place.open_operand(fs, buffer.bytes(rr), shown, whole) {
+                            Opened::Failed(reason) => {
+                                e = fail.io_error(heap, e, reason, false, shown);
+                            }
+                            Opened::Ok(opened) => {
+                                let (t2, e2, d2, l2, s2) = settle(heap, args, parsed, opened, false, shown, buffer.bytes(rr), whole, io, fs, delim, mode, as_csv, from, limit, budget, top, tree, names_at, e, payload, plain);
+                                tree = t2;
+                                e = e2;
+                                payload = d2;
+                                plain = l2;
+                                streamed = s2;
+                            }
+                        }
+                    }
+                }
+                buffer.drop(heap, full);
             }
         } else {
             borrow root as &rr in {
@@ -1515,6 +1554,144 @@ fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     buffer.drop(heap, plain);
     fail.drop(heap, e);
     return status;
+}
+
+// The answer to a call that is refused before any plan is built: its errors, as the end of `plan_body` writes them.
+fn refused_with[&h, &i](heap: &!h Heap, io: &!i Io, e: fail.Errors, as_csv: bool, text_mode: bool) -> [heap, io_write, err_write] int {
+    var status = 0;
+    if as_csv {
+        borrow e as &er in {
+            if fail.count(er) > 0 {
+                out.say_errors(io, "table", er);
+                status = fail.exit_code(er);
+            }
+        }
+        if status == 0 && !out.flushed(io) {
+            out.write_failed(io, "table");
+            status = 1;
+        }
+    } else {
+        let payload = buffer.empty(heap, 1);
+        let plain = buffer.empty(heap, 1);
+        borrow e as &er in {
+            borrow payload as &d in {
+                borrow plain as &t in {
+                    status = out.respond(heap, io, "table", "table.v2", "0.3.0", buffer.bytes(d), "", er, text_mode, buffer.bytes(t), 0);
+                }
+            }
+        }
+        buffer.drop(heap, payload);
+        buffer.drop(heap, plain);
+    }
+    fail.drop(heap, e);
+    return status;
+}
+
+// `--query`: translated to the flags it stands for (docs/query.md), then run as `plan_body` runs the flags. A query says the plan, and the flags that say it too are refused.
+fn query_body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors, inp: inputs.Inputs) -> [heap, args, fs_read(""), dir_read, io_read, io_write, err_write, conc] int {
+    let table = flag_table();
+    var e = errs;
+    let form = inp.format_text;
+    let text_mode = bytes.equal(form, "text");
+    let as_csv = bytes.equal(form, "csv");
+    let tr = qtrans.translate(heap, inp.query_text, false);
+    var translated = 0;
+    var limit_given = false;
+    var from_given = false;
+    var source = 0;
+    borrow tr as &t in {
+        translated = qtrans.status(t);
+        limit_given = qtrans.info_at(t, qtrans.i_limit_given()) == 1;
+        from_given = qtrans.info_at(t, qtrans.i_from_given()) == 1;
+        source = qtrans.info_at(t, qtrans.i_source());
+    }
+    if translated != 0 {
+        borrow tr as &t in {
+            let (query_at, query_whole) = inputs.query_place(parsed, table);
+            e = qrefuse.refuse(heap, e, inp.query_text, t, args, query_at, query_whole, inp.operands);
+        }
+        qtrans.drop(heap, tr);
+        return refused_with(heap, io, e, as_csv, text_mode);
+    }
+    var clash = buffer.append(heap, buffer.empty(heap, 64), "--query");
+    var clashed = false;
+    if inp.has_select {
+        clash = buffer.append(heap, clash, " --select");
+        clashed = true;
+    }
+    if inp.has_where {
+        clash = buffer.append(heap, clash, " --where");
+        clashed = true;
+    }
+    if inp.has_group {
+        clash = buffer.append(heap, clash, " --group");
+        clashed = true;
+    }
+    if inp.has_agg {
+        clash = buffer.append(heap, clash, " --agg");
+        clashed = true;
+    }
+    if inp.has_sort {
+        clash = buffer.append(heap, clash, " --sort");
+        clashed = true;
+    }
+    if inp.has_order {
+        clash = buffer.append(heap, clash, " --order-by");
+        clashed = true;
+    }
+    if inp.has_rows {
+        clash = buffer.append(heap, clash, " --rows");
+        clashed = true;
+    }
+    if inp.has_report {
+        clash = buffer.append(heap, clash, " --report");
+        clashed = true;
+    }
+    if inp.has_limit && limit_given {
+        clash = buffer.append(heap, clash, " --limit");
+        clashed = true;
+    }
+    if inp.has_from && from_given {
+        clash = buffer.append(heap, clash, " --from");
+        clashed = true;
+    }
+    if inp.has_top && limit_given {
+        clash = buffer.append(heap, clash, " --top");
+        clashed = true;
+    }
+    if source != 0 && inp.operands > 0 {
+        clash = buffer.append(heap, clash, " FILE");
+        clashed = true;
+    }
+    if clashed {
+        var w = fail.open(heap, "args.conflict", "--query says the plan: a flag or a FILE that says it too is another plan", "say it once, in the query (from 'FILE' is its file) or in the flags");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        borrow clash as &cr in {
+            w = fail.detail_text(heap, w, "flags", buffer.bytes(cr));
+        }
+        e = fail.add(heap, e, w);
+        buffer.drop(heap, clash);
+        qtrans.drop(heap, tr);
+        return refused_with(heap, io, e, as_csv, text_mode);
+    }
+    buffer.drop(heap, clash);
+    var status = 0;
+    borrow tr as &t in {
+        let planned = inputs.for_query(inp, t);
+        status = plan_body(heap, args, parsed, fs, io, e, planned, qtrans.section(t, 0), qtrans.section(t, 1), qtrans.section(t, 2), qtrans.section(t, 3), qtrans.section(t, 4), qtrans.section(t, 5), qtrans.section(t, 6));
+    }
+    qtrans.drop(heap, tr);
+    return status;
+}
+
+fn body[&h, &g, &p, &f, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &f Fs(""), io: &!i Io, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, io_read, io_write, err_write, conc] int {
+    let table = flag_table();
+    let inp = inputs.from_flags(args, parsed, table);
+    if inp.has_query {
+        return query_body(heap, args, parsed, fs, io, errs, inp);
+    }
+    return plan_body(heap, args, parsed, fs, io, errs, inp, inp.select_text, inp.where_text, inp.group_text, inp.agg_text, inp.order_text, inp.sort_text, "");
 }
 
 fn run[&h, &g, &f, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, io_read, io_write, err_write, conc] int {

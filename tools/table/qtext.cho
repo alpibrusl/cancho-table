@@ -1,0 +1,311 @@
+edition 5;
+
+module qtext;
+
+// What the refusals of `--query` say (docs/query.md section 5), by the code the lexer, the parser and the translation set (`qarena.fail`): what was expected where a query is not in
+// the grammar (`query.syntax`, kinds 1 and 4), what the grouping must be (`query.group-mismatch`, kind 3), and the feature a query reaches for that the language leaves out with
+// what to write instead (`query.unsupported`, kind 2). The words are the ones the reference front end of the tests uses (tests/conformance/query_ref.py): they are compared.
+
+pub fn expected(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "select";
+    }
+    if code == 2 {
+        return "a column, *, or an aggregate: count(*), sum(x), min(x), max(x), mean(x), count(distinct x)";
+    }
+    if code == 3 {
+        return "a column, *, or an aggregate: count(*), sum(x), min(x), max(x), mean(x), count(distinct x) (a name that is a keyword is written \"like this\")";
+    }
+    if code == 4 {
+        return "a column";
+    }
+    if code == 5 {
+        return "a column (a name that is a keyword is written \"like this\")";
+    }
+    if code == 6 {
+        return "a 'file name' in quotes, or stdin";
+    }
+    if code == 7 {
+        return "the end of the query (one statement)";
+    }
+    if code == 8 {
+        return ")";
+    }
+    if code == 9 {
+        return ", N or )";
+    }
+    if code == 10 {
+        return "a scale from 0 to 18";
+    }
+    if code == 11 {
+        return "a non-negative integer";
+    }
+    if code == 12 {
+        return "a non-negative integer of at most 18 digits";
+    }
+    if code == 13 {
+        return "= != <> < <= > >= contains in";
+    }
+    if code == 14 {
+        return "a value: a number or a 'quoted string'";
+    }
+    if code == 15 {
+        return "a typed column is compared with = != < <= > >= or in, not contains";
+    }
+    if code == 16 {
+        return "a type: int, dec(N) or float";
+    }
+    if code == 17 {
+        return "( and the scale of dec(N)";
+    }
+    if code == 18 {
+        return "as and a type";
+    }
+    if code == 19 {
+        return "( and a list of values";
+    }
+    if code == 20 {
+        return ", or )";
+    }
+    if code == 21 {
+        return "by";
+    }
+    if code == 22 {
+        return "the closing ' of a string";
+    }
+    if code == 23 {
+        return "the closing \" of a name";
+    }
+    if code == 24 {
+        return "digits after #, a column position";
+    }
+    if code == 25 {
+        return "a column, a keyword, a string or a number";
+    }
+    if code == 26 {
+        return "no comments: a query is one statement of words, names and values";
+    }
+    if code == 27 {
+        return "fewer conditions or values: the ceiling is 64 conditions and 1024 values";
+    }
+    if code == 28 {
+        return "a query of at most 4096 bytes";
+    }
+    if code == 40 {
+        return "the group columns then the aggregates, not *";
+    }
+    if code == 41 {
+        return "the select list is the group by columns in the same order, then the aggregates";
+    }
+    if code == 42 {
+        return "at least one aggregate, count(*) at least (a grouping always counts something)";
+    }
+    if code == 43 {
+        return "an aggregate that is in the select list";
+    }
+    if code == 44 {
+        return "a group by column or an aggregate of the select list";
+    }
+    if code == 45 {
+        return "a column (an aggregate needs a group by or an aggregate select list)";
+    }
+    return "a statement of the grammar";
+}
+
+// The feature a `query.unsupported` names.
+pub fn feature(code: int) -> [] &static [byte] {
+    if code == 60 {
+        return "empty-name";
+    }
+    if code == 61 {
+        return "expression";
+    }
+    if code == 62 {
+        return "count-column";
+    }
+    if code == 63 {
+        return "cast-in-select";
+    }
+    if code == 64 {
+        return "cast-in-group";
+    }
+    if code == 65 {
+        return "alias";
+    }
+    if code == 66 {
+        return "subquery";
+    }
+    if code == 67 {
+        return "join";
+    }
+    if code == 68 {
+        return "column-comparison";
+    }
+    if code == 69 {
+        return "null";
+    }
+    if code == 70 {
+        return "boolean";
+    }
+    if code == 71 {
+        return "or";
+    }
+    if code == 72 {
+        return "parentheses";
+    }
+    if code == 73 {
+        return "like";
+    }
+    if code == 74 {
+        return "between";
+    }
+    if code == 75 {
+        return "is-null";
+    }
+    if code == 76 {
+        return "not";
+    }
+    if code == 77 {
+        return "having";
+    }
+    if code == 78 {
+        return "union";
+    }
+    if code == 79 {
+        return "order-by-two-keys";
+    }
+    if code == 80 {
+        return "order-by-position";
+    }
+    return "order-by-dash-name";
+}
+
+// What to write instead of a feature the language leaves out.
+pub fn hint(code: int) -> [] &static [byte] {
+    if code == 60 {
+        return "a column with an empty name is written by its position, #N";
+    }
+    if code == 61 {
+        return "no arithmetic or concatenation: a column is a column";
+    }
+    if code == 62 {
+        return "count(*) counts rows and count(distinct col) counts values; count(col) would count the empty cells too, so it is not offered";
+    }
+    if code == 63 {
+        return "a type is part of how a column is read in a condition, a sort or an aggregate; selecting a column returns its text";
+    }
+    if code == 64 {
+        return "the grammar groups by the text of a column; a grouping by value is the flag --group x:int, x:dec(N) or x:float";
+    }
+    if code == 65 {
+        return "a column keeps its header name and an aggregate its name (sum:bytes); there is no renaming";
+    }
+    if code == 66 || code == 67 {
+        return "one input; there are no joins and no subqueries yet";
+    }
+    if code == 68 {
+        return "a condition compares a column with a value, not with another column";
+    }
+    if code == 69 || code == 70 {
+        return "there is no null (an empty cell is the empty text: = '') and no boolean type";
+    }
+    if code == 71 {
+        return "only and; a set of values of one column is col in ('a', 'b')";
+    }
+    if code == 72 {
+        return "conditions joined by and, nothing grouped";
+    }
+    if code == 73 {
+        return "contains 'text' finds a substring; there are no patterns";
+    }
+    if code == 74 {
+        return "write two conditions: x >= a and x <= b";
+    }
+    if code == 75 {
+        return "there is no null: an empty cell is the empty text, x = ''";
+    }
+    if code == 76 {
+        return "write the opposite comparison: != for =, in has no negation";
+    }
+    if code == 77 {
+        return "there is no having; filter the groups' rows with where, or order and limit the groups";
+    }
+    if code == 78 {
+        return "one statement";
+    }
+    if code == 79 {
+        return "a grouping is ordered by one output column";
+    }
+    if code == 80 {
+        return "--sort names output columns by their header name: name the column instead of its position";
+    }
+    return "--sort has no escape for a name that starts with -";
+}
+
+// The type of a literal that does not fit its column, as the query writes it.
+pub fn type_name(t: int) -> [] &static [byte] {
+    if t == 1 {
+        return "int";
+    }
+    if t == 21 {
+        return "float";
+    }
+    if t == 2 {
+        return "dec(0)";
+    }
+    if t == 3 {
+        return "dec(1)";
+    }
+    if t == 4 {
+        return "dec(2)";
+    }
+    if t == 5 {
+        return "dec(3)";
+    }
+    if t == 6 {
+        return "dec(4)";
+    }
+    if t == 7 {
+        return "dec(5)";
+    }
+    if t == 8 {
+        return "dec(6)";
+    }
+    if t == 9 {
+        return "dec(7)";
+    }
+    if t == 10 {
+        return "dec(8)";
+    }
+    if t == 11 {
+        return "dec(9)";
+    }
+    if t == 12 {
+        return "dec(10)";
+    }
+    if t == 13 {
+        return "dec(11)";
+    }
+    if t == 14 {
+        return "dec(12)";
+    }
+    if t == 15 {
+        return "dec(13)";
+    }
+    if t == 16 {
+        return "dec(14)";
+    }
+    if t == 17 {
+        return "dec(15)";
+    }
+    if t == 18 {
+        return "dec(16)";
+    }
+    if t == 19 {
+        return "dec(17)";
+    }
+    if t == 20 {
+        return "dec(18)";
+    }
+    return "text";
+}

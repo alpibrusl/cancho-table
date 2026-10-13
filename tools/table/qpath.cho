@@ -1,0 +1,113 @@
+edition 5;
+
+module qpath;
+
+// The source of a query, `from 'path'` (docs/query.md section 6): checked as an operand is, and opened beneath `--root` the same way. `toolbox.path.operand` reads its path from
+// the arguments of the call and the query's path is a part of one argument, so the same checks are made here, rule for rule and in the same order: empty, longer than 4096 bytes,
+// a `..` component, an absolute path (under the root: `path.absolute`; elsewhere: `path.outside-root`), and then `.` components, repeated `/` and a trailing `/` are collapsed. What
+// the checks do not see, a symbolic link, is `toolbox.place`'s, which opens the path beneath the root one component at a time and refuses a link (`path.symlink`). The refusals are
+// the operand's, with the path in the detail and no argument position (the path is not an argument).
+// tests/conformance/test_query.py holds this to the operand for each of those rules.
+
+import std.buffer;
+import std.bytes;
+import toolbox.fail;
+import toolbox.path;
+
+fn refuse[&h, &d](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message: &static [byte], hint: &static [byte], given: &d [byte]) -> [heap] fail.Errors {
+    var w = fail.open(heap, rule, message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", given);
+    return fail.add(heap, e, w);
+}
+
+// `p` without its empty and `.` components, and with its leading `/` (there is no `..` in it: that was refused).
+fn collapsed[&h, &p](heap: &!h Heap, p: &p [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(p) + 1);
+    let absolute = len(p) > 0 && int_of(p[0]) == '/';
+    if absolute {
+        out = buffer.push(heap, out, byte_of('/'));
+    }
+    var at = 0;
+    while at < len(p) {
+        var end = at;
+        while end < len(p) && int_of(p[end]) != '/' {
+            end = end + 1;
+        }
+        let part = p[at..end];
+        if len(part) > 0 && !bytes.equal(part, ".") {
+            var count = 0;
+            borrow out as &o in {
+                count = buffer.size(o);
+            }
+            if count > 0 && !(absolute && count == 1) {
+                out = buffer.push(heap, out, byte_of('/'));
+            }
+            out = buffer.append(heap, out, part);
+        }
+        at = end + 1;
+    }
+    return out;
+}
+
+// Where to open `given` beneath `root` (normalised, or empty for none): the whole path, and the offset in it where the path as the answer shows it begins, or -1 when it was
+// refused (the refusal is in the errors).
+pub fn resolve[&h, &r, &s](heap: &!h Heap, root: &r [byte], given: &s [byte], errs: fail.Errors) -> [heap] (buffer.Buffer, int, fail.Errors) {
+    var e = errs;
+    if len(given) == 0 {
+        e = refuse(heap, e, "path.empty", "the path is empty", "", given);
+        return (buffer.empty(heap, 1), 0 - 1, e);
+    }
+    if len(given) > path.longest() {
+        e = refuse(heap, e, "path.too-long", "the path is longer than 4096 bytes", "", given);
+        return (buffer.empty(heap, 1), 0 - 1, e);
+    }
+    let absolute = int_of(given[0]) == '/';
+    if path.has_dotdot(given) {
+        e = refuse(heap, e, "path.dotdot", "the path has a `..` component", "name the file without `..`; the tool does not resolve it, because a symlink makes `a/link/../b` something other than `a/b`", given);
+        return (buffer.empty(heap, 1), 0 - 1, e);
+    }
+    let norm = collapsed(heap, given);
+    var count = 0;
+    borrow norm as &n in {
+        count = buffer.size(n);
+    }
+    if len(root) == 0 {
+        var out = norm;
+        if count == 0 {
+            out = buffer.push(heap, out, byte_of('.'));
+        }
+        return (out, 0, e);
+    }
+    if absolute {
+        var below = 0 - 1;
+        borrow norm as &n in {
+            below = path.under(root, buffer.bytes(n));
+        }
+        buffer.drop(heap, norm);
+        if below >= 0 {
+            e = refuse(heap, e, "path.absolute", "the path is absolute, and paths are relative to --root", "write it relative to --root", given);
+        } else {
+            e = refuse(heap, e, "path.outside-root", "the path is not under --root", "name a path inside --root", given);
+        }
+        return (buffer.empty(heap, 1), 0 - 1, e);
+    }
+    var full = buffer.empty(heap, len(root) + len(given) + 2);
+    full = buffer.append(heap, full, root);
+    if !bytes.equal(root, "/") {
+        full = buffer.push(heap, full, byte_of('/'));
+    }
+    var shown = 0;
+    borrow full as &f in {
+        shown = buffer.size(f);
+    }
+    borrow norm as &n in {
+        full = buffer.append(heap, full, buffer.bytes(n));
+    }
+    buffer.drop(heap, norm);
+    if count == 0 {
+        full = buffer.push(heap, full, byte_of('.'));
+    }
+    return (full, shown, e);
+}

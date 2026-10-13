@@ -29,7 +29,7 @@ $ table --where 'status = 200' --select customer,bytes orders.csv
 Most data tools optimise for flexibility. `table` optimises for predictability.
 
 * **Explicit types.** A column is text unless you write `:int` (an exact 64-bit integer), `:dec(S)` (an exact decimal with S fractional digits) or `:float` (the nearest double, in `--where` and in every aggregate); a cell that is not one is refused. [docs/filter.md](docs/filter.md)
-* **Explicit operations.** One plan from flags, no expressions or functions. [docs/filter.md](docs/filter.md)
+* **Explicit operations.** One plan, from flags or from a `--query` that is translated to them; no expressions or functions. [docs/filter.md](docs/filter.md), [docs/query.md](docs/query.md)
 * **Bounded resource use.** Rows, line and record size, groups, distinct values and group state each have a limit with its own rule. Peak memory is about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). `table introspect` lists the limits; [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html)
 * **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, and nothing written to disk. CI fails if the binary differs from the committed [`manifests/table.authority.json`](manifests/table.authority.json). [docs/architecture.md](docs/architecture.md)
 * **Machine-readable errors.** One JSON line against a schema (`table.v2`); a refusal is `{code, rule, message, hint, repair, detail}`. [docs/refusals.md](docs/refusals.md)
@@ -257,6 +257,25 @@ Zed,1,64
 ```
 <!-- /gen:t-group -->
 
+### Ask in a small SQL
+
+`--query` takes one statement of a small subset of SQL (`select`, `from`, `where` with `and`, `group by`, `order by`, `limit` and `offset`) and means exactly the flags it is translated to: there is one plan, and the same question asked in flags gives the same bytes. What the subset leaves out (`or`, aliases, expressions, `like`, `null`, joins) is refused with the feature named and what to write instead, and a mistake is refused at the byte where it is, with a corrected command when the correction is certain. [docs/query.md](docs/query.md) has the grammar.
+
+<!-- gen:t-query -->
+```console
+$ table --query "select customer, count(*), sum(bytes) from 'orders.csv' where bytes != '' group by customer order by sum(bytes) desc limit 2" --format csv
+customer,count,sum:bytes
+"Doe, Jane",2,2560
+Acme,1,128
+$ table --query "select customer form 'orders.csv'"
+{"rule": "query.syntax", "hint": "detail.expected says what was expected at detail.offset, and the grammar is in the help of --query", "repair": {"kind": "choose", "options": [{"argv": ["table", "--select", "customer", "orders.csv"]}]}, "detail": {"offset": 16, "expected": "the end of the query (one statement)", "query": "select customer form 'orders.csv'"}}
+# exit status 2; the rule, hint, repair, detail of the JSON line it prints
+$ table --query "select id from 'orders.csv' where status = 404 or status = 500"
+{"rule": "query.unsupported", "hint": "only and; a set of values of one column is col in ('a', 'b')", "repair": {"kind": "none", "reason": "the feature has no spelling in this language; the hint says what to write instead"}, "detail": {"offset": 47, "feature": "or", "query": "select id from 'orders.csv' where status = 404 or status = 500"}}
+# exit status 2; the rule, hint, repair, detail of the JSON line it prints
+```
+<!-- /gen:t-query -->
+
 ### Page through the results
 
 JSON comes in pages; `next` says where the next starts. Resuming re-reads the file from the start, so paging deep into a huge file gets slow.
@@ -319,10 +338,11 @@ $ table --where "bytes:int > 100" --select id orders.csv
 * **Numbers are mostly built.** `:int`, `:dec(S)` and `:float` work in `--where`, `--agg`, `--group` and `--order-by`. Columns of 15- to 17-digit numbers are read by an exact reader that allocates nothing on the paths a real column takes (Clinger, then Eisel-Lemire, then an exact fallback); it matched Python's `float()` on every cell of each differential run, the largest of 101,400,000 cells, and costs 29.6 ns a cell against 1,151 ns before (one Mac core, load average 6.7 to 13.5; [conditions](https://alpibrusl.github.io/cancho-table/benchmarks.html#float-reader)).
 * **A sort uses more cores only for a whole sort written as CSV.** With `--order-by`, `--format csv` and no `--top`, `--limit` or `--from`, `--threads` above 1 sorts in parallel and gives the same bytes; pages, `--top` and JSON output run on one core. A threaded sort peaks at 11.8 to 14.8 times the size of a 39.55 MB file at 16 threads on the Mac, against 4.4 to 6.2 times for the sequential sort. There is no sort that spills to disk.
 * **No joins**, and **one input** at a time: a file named on the command line, or standard input (`-`, or no file), read in one pass on one core, in blocks, at about the speed of a named file on one core. A producer that writes slowly is waited for until the first 512 bytes arrive; a closed descriptor 0 reads as empty; a descriptor that fails is refused with an io.* rule (docs/readers.md 11.1, 11.7). ([docs/readers.md](docs/readers.md), section "R1 as built").
-* **No JSON lines**, no Parquet, no `--query` string. Only CSV and TSV (comma, tab or semicolon). Readers and a query form are designed in [docs/readers.md](docs/readers.md) and [docs/query.md](docs/query.md), not built.
+* **No JSON lines**, no Parquet. Only CSV and TSV (comma, tab or semicolon). Readers are designed in [docs/readers.md](docs/readers.md), not built.
+* **`--query` is a small subset of SQL**, not SQL: no `or` and no parentheses, no aliases, no expressions or functions, no `like`, no `null`, no joins, no subqueries, and a grouping sorts by one column. Each is refused as `query.unsupported`, with the feature named ([docs/query.md](docs/query.md)).
 * **No guessing.** Every column is text unless you declare `:int`, `:dec(S)` or `:float`; `--report types` suggests a declaration and applies none. No computed or renamed column, no `or` in a filter.
 
-JSON lines, `--query`, `or` in a filter and joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
+JSON lines, `--explain`, `or` in a filter and joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
 
 ## How fast
 

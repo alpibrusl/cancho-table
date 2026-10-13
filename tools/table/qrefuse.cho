@@ -1,0 +1,133 @@
+edition 5;
+
+module qrefuse;
+
+// The refusals of `--query` as the one JSON error every refusal of the tool is: `{code, rule, message, hint, repair, detail}` (docs/query.md section 5). All exit 2 (nothing was
+// read). The detail points at the query: `offset` is a byte of it, `query` is it, and `expected` or `feature` says what was there to write.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.vec;
+import expr;
+import finish;
+import qarena;
+import qrepair;
+import qtext;
+import qtrans;
+import toolbox.fail;
+
+// The error so far: its code, rule, message and hint.
+fn start[&h](heap: &!h Heap, kind: int, code: int) -> [heap] json.Writer {
+    if kind == 2 {
+        return fail.open_in(heap, finish.extra(), "query.unsupported", "--query uses something this language leaves out: detail.feature names it", qtext.hint(code));
+    }
+    if kind == 3 {
+        return fail.open_in(heap, finish.extra(), "query.group-mismatch", "--query selects something other than its grouping", "a grouping selects its group by columns first, in the same order, then aggregates, and has at least one: select a, count(*) from 'f.csv' group by a");
+    }
+    if kind == 4 {
+        return fail.open_in(heap, finish.extra(), "query.too-long", "--query is longer than 4096 bytes", "ask the question in fewer bytes, the limit is detail.limit");
+    }
+    return fail.open_in(heap, finish.extra(), "query.syntax", "--query is not a statement of the grammar", "detail.expected says what was expected at detail.offset, and the grammar is in the help of --query");
+}
+
+// The refusal of a query that did not translate, added to `errs`. The repair offers the invocation as it was given (`args`, the query at `query_at`, an argument of its own when `whole`).
+pub fn refuse[&h, &q, &t, &g](heap: &!h Heap, errs: fail.Errors, q: &q [byte], t: &t qtrans.Translated, args: &g Args, query_at: int, whole: bool, operands: int) -> [heap, args] fail.Errors {
+    let kind = qtrans.status(t);
+    let code = qtrans.info_at(t, qtrans.i_code());
+    let offset = qtrans.info_at(t, qtrans.i_offset());
+    var w = start(heap, kind, code);
+    w = qrepair.repair(heap, w, q, t, args, query_at, whole, operands);
+    w = fail.detail_open(heap, w);
+    if kind == 4 {
+        w = fail.detail_int(heap, w, "bytes", len(q));
+        w = fail.detail_int(heap, w, "limit", qtrans.largest());
+        return fail.add(heap, errs, w);
+    }
+    w = fail.detail_int(heap, w, "offset", offset);
+    if kind == 2 {
+        w = fail.detail_str(heap, w, "feature", qtext.feature(code));
+    } else {
+        w = fail.detail_str(heap, w, "expected", qtext.expected(code));
+    }
+    w = fail.detail_text(heap, w, "query", q);
+    if kind == 3 {
+        let a = qtrans.info_at(t, qtrans.i_items_at());
+        let b = qtrans.info_at(t, qtrans.i_items_end());
+        w = fail.detail_text(heap, w, "select", bytes.trim(q[a..b]));
+        var group = q[0..0];
+        if qtrans.info_at(t, qtrans.i_group_end()) > 0 {
+            group = bytes.trim(q[qtrans.info_at(t, qtrans.i_group_at())..qtrans.info_at(t, qtrans.i_group_end())]);
+        }
+        w = fail.detail_text(heap, w, "group_by", group);
+    }
+    return fail.add(heap, errs, w);
+}
+
+// The name of the column whose token begins at `a` and ends at `b` in the query, as the query means it (a quoted name without its quotes and with a doubled quote undone).
+fn column_name[&h, &q](heap: &!h Heap, q: &q [byte], a: int, b: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 16);
+    if int_of(q[a]) == 34 {
+        var j = a + 1;
+        while j < b - 1 {
+            out = buffer.push(heap, out, q[j]);
+            if int_of(q[j]) == 34 {
+                j = j + 1;
+            }
+            j = j + 1;
+        }
+    } else {
+        out = buffer.append(heap, out, q[a..b]);
+    }
+    return out;
+}
+
+// `--where` refused a literal of the translation (`what` at byte `at` of the --where text, `expr.expected`): that is a literal of the query that does not fit the type its condition
+// reads the column as, and the refusal is `query.syntax` at that literal of the QUERY, with the column, the type and the value (docs/query.md section 1). The translation is made again,
+// with the map of where each literal went.
+pub fn literal_refusal[&h, &q](heap: &!h Heap, errs: fail.Errors, q: &q [byte], what: int, at: int) -> [heap] fail.Errors {
+    let t = qtrans.translate(heap, q, true);
+    var offset = 0;
+    var col_a = 0;
+    var col_b = 0;
+    var lit_a = 0;
+    var lit_b = 0;
+    var ty = 0;
+    var best = 0 - 1;
+    borrow t as &tr in {
+        let maps = qtrans.info_at(tr, qtrans.i_maps());
+        var k = 0;
+        while k < maps {
+            if qtrans.info_at(tr, qtrans.i_header() + 6 * k) <= at {
+                best = k;
+            }
+            k = k + 1;
+        }
+        if best >= 0 {
+            let base = qtrans.i_header() + 6 * best;
+            lit_a = qtrans.info_at(tr, base + 1);
+            lit_b = qtrans.info_at(tr, base + 2);
+            col_a = qtrans.info_at(tr, base + 3);
+            col_b = qtrans.info_at(tr, base + 4);
+            ty = qtrans.info_at(tr, base + 5);
+            offset = lit_a;
+        }
+    }
+    qtrans.drop(heap, t);
+    var w = fail.open_in(heap, finish.extra(), "query.syntax", "--query is not a statement of the grammar", "detail.expected says what was expected at detail.offset, and the grammar is in the help of --query");
+    w = fail.repair_none(heap, w, "which type or which value was meant is not known: detail.expected says what the type takes");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "offset", offset);
+    w = fail.detail_str(heap, w, "expected", expr.expected(what));
+    w = fail.detail_text(heap, w, "query", q);
+    if best >= 0 {
+        let name = column_name(heap, q, col_a, col_b);
+        borrow name as &nr in {
+            w = fail.detail_text(heap, w, "column", buffer.bytes(nr));
+        }
+        buffer.drop(heap, name);
+        w = fail.detail_str(heap, w, "type", qtext.type_name(ty));
+        w = fail.detail_text(heap, w, "value", q[lit_a..lit_b]);
+    }
+    return fail.add(heap, errs, w);
+}

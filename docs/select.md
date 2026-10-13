@@ -142,4 +142,4 @@ benchmark was not.
   they work on a platform whose arguments are bytes, but no test covers it).
 * Pages are not cheap to resume (above). An index would need a second file or a
   seekable record format, and neither belongs in a tool that holds no state.
-* The `--query` of the design. (The filter, the sort and the groups are built: `docs/filter.md`, `docs/sort.md`.)
+* (The `--query` string is built: `docs/query.md`. The filter, the sort and the groups are built: `docs/filter.md`, `docs/sort.md`.)
