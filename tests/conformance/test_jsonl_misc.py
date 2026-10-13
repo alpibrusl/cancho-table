@@ -53,10 +53,16 @@ class Misc(unittest.TestCase):
         for n, ok in (("0", False), ("1", True), ("1048576", True), ("1048577", False)):
             got = self.jl(b'{}\n', "--fields", "a", "--absent", "empty", "--max-json-nodes", n)
             self.assertEqual(got.status == 0, ok, (n, got))
-        for flags in (["--fields", "a"], ["--absent", "empty"], ["--max-json-nodes", "9"], ["--discover"]):
+        for flags in (["--fields", "a"], ["--absent", "empty"], ["--max-json-nodes", "9"], ["--discover"], ["--max-fields", "5"], ["--discover-lines", "5"]):
             self.s.write("c.csv", "a\n1\n")
             got = run("--root", self.s.dir, *flags, "c.csv")
             self.assertEqual((got.status, got.first_rule()), (2, "args.conflict"), flags)
+
+    def test_an_explained_plan_lists_the_refusals_of_its_format(self):
+        got = self.jl(b'{"a":1}\n', "--fields", "a", "--explain")
+        possible = got.data()["explain"]["refusals"]["possible"]
+        self.assertIn("parse.jsonl-syntax", possible)
+        self.assertFalse([r for r in possible if r.startswith("parse.csv-")], possible)
 
 
 if __name__ == "__main__":
