@@ -106,7 +106,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     var tally = box_slice(heap, engine.k_size(), 0);
     var out_rows = buffer.empty(heap, 1);
     var out_kept = buffer.empty(heap, 1);
-    var tape = box_slice(heap, 3 * nodes + 3, 0);
+    var tape = box_slice(heap, 3 * nodes, 0);
     var st = box_slice(heap, 2, 0);
     var picked = 0;
     var r = lines.start(heap, cap);

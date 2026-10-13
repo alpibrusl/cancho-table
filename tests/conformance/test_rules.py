@@ -49,6 +49,14 @@ LOCAL = {
     "query.unsupported": (2, "sometimes", "leaves out"),
     "query.group-mismatch": (2, "sometimes", "group by columns"),
     "query.too-long": (2, "never", "4096"),
+    "input.fields-required": (2, "sometimes", "no header"),
+    "input.bad-fields": (2, "never", "list of paths"),
+    "parse.jsonl-syntax": (8, "never", "strict JSON"),
+    "parse.jsonl-not-object": (8, "never", "not an object"),
+    "parse.jsonl-missing-field": (8, "sometimes", "has no value"),
+    "parse.jsonl-not-scalar": (8, "never", "object or an array"),
+    "parse.jsonl-duplicate-key": (8, "never", "occurs twice"),
+    "limit.json-too-many-nodes": (8, "never", "--max-json-nodes"),
 }
 # rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
 VARIABLE_HINT = {"query.unsupported"}
@@ -103,6 +111,12 @@ class Rules(unittest.TestCase):
         s.write("open.csv", 'a,b\n1,"x\n')
         s.write("wide.csv", "a,b\n" + "1," + "x" * 5000 + "\n")
         s.write("header.csv", '"a\n' + "b\n" * 600 + '",c\n1,2\n')
+        s.write("ok.jsonl", '{"a":1}\n')
+        s.write("bad.jsonl", '{"a":1,}\n')
+        s.write("arr.jsonl", '[1]\n')
+        s.write("miss.jsonl", '{"b":1}\n')
+        s.write("nested.jsonl", '{"a":{}}\n')
+        s.write("twice.jsonl", '{"a":1,"a":2}\n')
         (s.dir / "sub").mkdir(exist_ok=True)
         s.write("secret.csv", "a\n1\n")
         os.symlink(s.dir / "secret.csv", s.dir / "link.csv")
@@ -158,6 +172,14 @@ class Rules(unittest.TestCase):
             ("query.unsupported", root + ["--query", "select a from 'ok.csv' where b like '%x%'"], None),
             ("query.group-mismatch", root + ["--query", "select a from 'ok.csv' group by a"], None),
             ("query.too-long", root + ["--query", "select a from 'ok.csv' where b = '" + "x" * 4100 + "'"], None),
+            ("input.fields-required", root + ["--input-format", "jsonl", "ok.jsonl"], None),
+            ("input.bad-fields", root + ["--input-format", "jsonl", "--fields", "a..b", "ok.jsonl"], None),
+            ("parse.jsonl-syntax", root + ["--input-format", "jsonl", "--fields", "a", "bad.jsonl"], None),
+            ("parse.jsonl-not-object", root + ["--input-format", "jsonl", "--fields", "a", "arr.jsonl"], None),
+            ("parse.jsonl-missing-field", root + ["--input-format", "jsonl", "--fields", "a", "miss.jsonl"], None),
+            ("parse.jsonl-not-scalar", root + ["--input-format", "jsonl", "--fields", "a", "nested.jsonl"], None),
+            ("parse.jsonl-duplicate-key", root + ["--input-format", "jsonl", "--fields", "a", "twice.jsonl"], None),
+            ("limit.json-too-many-nodes", root + ["--input-format", "jsonl", "--fields", "a", "--max-json-nodes", "1", "ok.jsonl"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")

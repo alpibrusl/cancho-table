@@ -19,7 +19,7 @@ E = "explain.cho"
 MUTANTS = [
     # the header, and nothing but the header
     ("the read goes on past the header", E, "                        got = true;\n                        going = false;", "                        got = true;"),
-    ("standard input is read like a file", E, "    if !stdin {\n        let Head {", "    if true {\n        let Head {"),
+    ("standard input is read like a file", E, "    } else if !stdin {\n        let Head {", "    } else if true {\n        let Head {"),
     ("a header past the bound is one byte later", E, "if held + 1 > cap {", "if held + 2 > cap {"),
     ("a header past the bound is a line past it", E, "                            abort = 3;", "                            abort = 4;"),
     ("a line past the bound is a header past it", E, "        abort = 4;\n            borrow r as &rr in {", "        abort = 3;\n            borrow r as &rr in {"),
@@ -29,7 +29,7 @@ MUTANTS = [
     ("the carriage return stays in the header", E, "                if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {", "                if false && len(line) > 0 && int_of(line[len(line) - 1]) == 13 {"),
     ("a blank line before the header is the header", E, "                if !quoted && len(line) == 0 {", "                if false && len(line) == 0 {"),
     ("the bound of the line is --max-bytes", E, '        let cap = cli.nat(args, parsed, table, "max-line-bytes");', '        let cap = cli.nat(args, parsed, table, "max-bytes");'),
-    ("the file size is not asked for", E, "                    size = n;", "                    size = -1;"),
+    ("the file size is not asked for", E, "            head = read_head(heap, handle, cap, delim, mode);\n            match file_size(handle) {\n                Done::Ok(n) => {\n                    size = n;", "            head = read_head(heap, handle, cap, delim, mode);\n            match file_size(handle) {\n                Done::Ok(n) => {\n                    size = -1;"),
     ("the delimiter is not given to the reader", E, "head = read_head(heap, handle, cap, delim, mode);", "head = read_head(heap, handle, cap, 44, mode);"),
     # what the header makes of the plan
     ("the plan is not resolved", E, "    if got && mode != 0 {\n        frame.drop(heap, made);", "    if false && got && mode != 0 {\n        frame.drop(heap, made);"),
@@ -56,7 +56,7 @@ MUTANTS = [
     ("the sort label of the flag is not shown", E, "    if len(flagged) > 0 {\n        sort = flagged;\n    }\n    var form", "    var form"),
     ("a limit is shown for the shape", E, "    if mode == 0 || unbounded {\n        o = buffer.append(heap, o, \"null\");", "    if unbounded {\n        o = buffer.append(heap, o, \"null\");"),
     ("a csv plan is a json plan", E, '    if as_csv {\n        o = buffer.append(heap, o, "csv");', '    if false {\n        o = buffer.append(heap, o, "csv");'),
-    ("the columns of standard input are known", E, "    if stdin {\n        o = buffer.append(heap, o, \"null\");\n    } else if mode == 0 {", "    if false {\n        o = buffer.append(heap, o, \"null\");\n    } else if mode == 0 {"),
+    ("the columns of standard input are known", E, "    if stdin && !as_json {\n        o = buffer.append(heap, o, \"null\");\n    } else if mode == 0 {", "    if false {\n        o = buffer.append(heap, o, \"null\");\n    } else if mode == 0 {"),
     # the work
     ("a grouping is a sort", E, "    } else if mode == 2 {\n        class = 2;", "    } else if ordering && mode == 2 {\n        class = 2;"),
     ("the report is a selection", E, "    if reporting {\n        class = 1;", "    if false {\n        class = 1;"),
@@ -90,7 +90,7 @@ MUTANTS = [
     ("the threads are one", E, "        } else {\n            effective = requested;", "        } else {\n            effective = 1;"),
     # the refusals the data could still raise
     ("no ragged row is possible", E, '    o = rule(heap, o, "parse.csv-ragged-row");\n', ""),
-    ("a record too large is possible for the shape", E, "    if mode != 0 {\n        o = rule(heap, o, \"limit.record-too-large\");", "    if true {\n        o = rule(heap, o, \"limit.record-too-large\");"),
+    ("a record too large is possible for the shape", E, "        if mode != 0 {\n            o = rule(heap, o, \"limit.record-too-large\");", "        if true {\n            o = rule(heap, o, \"limit.record-too-large\");"),
     ("a header is possible after it was read", E, "    if !got {\n        o = rule(heap, o, \"limit.header-too-large\");", "    if true {\n        o = rule(heap, o, \"limit.header-too-large\");"),
     ("an unknown column is not possible for standard input", E, "        if nw + ng + na + nk > 0 {", "        if false {"),
     ("an unknown select is not possible for standard input", E, "        if ns > 0 {\n            o = rule(heap, o, \"select.unknown-column\");", "        if false {\n            o = rule(heap, o, \"select.unknown-column\");"),
@@ -110,7 +110,7 @@ MUTANTS = [
     ("an equality is compared as text, with a note", E, "query.cond_at(tree, k, 2) >= 2 && query.cond_at(tree, k, 5) == 1", "query.cond_at(tree, k, 2) >= 0 && query.cond_at(tree, k, 5) == 1"),
     ("a typed comparison is told to be text", E, "query.cond_at(tree, k, 1) == 0 && query.cond_at(tree, k, 2) >= 2", "query.cond_at(tree, k, 1) >= 0 && query.cond_at(tree, k, 2) >= 2"),
     ("a word is a number", E, "    return digits > 0 && points <= 1;", "    return points <= 1;"),
-    ("no note for standard input", E, "        if requested > 1 {\n            o = note(", "        if false {\n            o = note("),
+    ("no note for standard input", E, "a name the header lacks is not reported\");\n        first_note = false;\n        if requested > 1 {\n            o = note(", "a name the header lacks is not reported\");\n        first_note = false;\n        if false {\n            o = note("),
     ("a window is told to be all", E, "    if class == 3 && wanted == 0 {\n        var sentence", "    if class == 3 {\n        var sentence"),
     # the call
     ("the flag is not looked for when it is the only one", "inputs.cho", '} else if bytes.starts_with(a, "--explain") {', "} else if false {"),

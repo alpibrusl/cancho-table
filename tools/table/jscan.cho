@@ -77,7 +77,7 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
             k = k + 1;
         }
     }
-    var tape = box_slice(heap, 3 * nodes + 3, 0);
+    var tape = box_slice(heap, 3 * nodes, 0);
     var st = box_slice(heap, 2, 0);
     let nfields = a[engine.k_columns()];
     var flat = true;
