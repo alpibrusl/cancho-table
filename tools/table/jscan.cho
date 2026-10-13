@@ -166,7 +166,7 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
                         borrow mut tape as &!tw in {
                             borrow mut st as &!stw in {
                                 borrow sb as &sbr in {
-                                    let (code, rec2) = jrec.extract(heap, line, contents(tw), contents(stw), table, contents(sbr), nfields, flat, absent, qdelim, cells, rec, a);
+                                    let (code, rec2) = jrec.extract(heap, line, contents(tw), contents(stw), table, contents(sbr), nfields, flat, nodes, absent, qdelim, cells, rec, a);
                                     rec = rec2;
                                     shape = code;
                                 }

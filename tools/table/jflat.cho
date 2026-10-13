@@ -1,0 +1,202 @@
+edition 5;
+
+module jflat;
+
+// The flat-object scanner (docs/readers.md section 12.9, stage R2b): for a line that is one object of scalar values, written as RFC 8259 writes it, it finds the value of every
+// declared field in one pass over the bytes and builds no tape. It is an accelerator and never a judge: it answers only for a line it has *validated itself*, in the narrowest
+// grammar (keys and strings of printable ASCII with no backslash, numbers in the RFC's grammar, `true`, `false`, `null`, whitespace of space, tab and CR, nothing after the
+// closing brace, no key twice that a field names, at most `nodes` nodes), and for any other line it answers 1 and `std.json` decides it, with the same refusal as without the
+// scanner. A line it answers for is a line `std.json` accepts, with the values it finds: `tests/conformance/test_jsonl.py` runs both on the same lines.
+//
+// What it leaves in `found`, three ints a field: -1 (the key is not on the line) or -10 - K, K the kind of the value (0 a string, 1 a number, 2 true, 3 false, 4 null), then
+// where the value's bytes begin and end (a string's without its quotes).
+
+import std.bytes;
+
+fn blanks[&l](line: &l [byte], from: int) -> [] int {
+    var p = from;
+    while p < len(line) && (int_of(line[p]) == ' ' || int_of(line[p]) == 9 || int_of(line[p]) == 13) {
+        p = p + 1;
+    }
+    return p;
+}
+
+// The index of the closing quote of the string that begins after the quote before `from`, or -1 when the string is not plain: a control byte, a backslash, a byte past ASCII, or no end.
+fn plain_end[&l](line: &l [byte], from: int) -> [] int {
+    var q = from;
+    let n = len(line);
+    while q < n {
+        let c = int_of(line[q]);
+        if c == '"' {
+            return q;
+        }
+        if c < 32 || c == '\\' || c >= 128 {
+            return 0 - 1;
+        }
+        q = q + 1;
+    }
+    return 0 - 1;
+}
+
+fn digits[&l](line: &l [byte], from: int) -> [] int {
+    var p = from;
+    while p < len(line) && int_of(line[p]) >= '0' && int_of(line[p]) <= '9' {
+        p = p + 1;
+    }
+    return p;
+}
+
+// The end of the number at `from` in the grammar of RFC 8259 (std.json's), or -1.
+fn number_end[&l](line: &l [byte], from: int) -> [] int {
+    var p = from;
+    let n = len(line);
+    if p < n && int_of(line[p]) == '-' {
+        p = p + 1;
+    }
+    if p >= n {
+        return 0 - 1;
+    }
+    if int_of(line[p]) == '0' {
+        p = p + 1;
+    } else if int_of(line[p]) >= '1' && int_of(line[p]) <= '9' {
+        p = digits(line, p);
+    } else {
+        return 0 - 1;
+    }
+    if p < n && int_of(line[p]) == '.' {
+        let q = digits(line, p + 1);
+        if q == p + 1 {
+            return 0 - 1;
+        }
+        p = q;
+    }
+    if p < n && (int_of(line[p]) == 'e' || int_of(line[p]) == 'E') {
+        var q = p + 1;
+        if q < n && (int_of(line[q]) == '+' || int_of(line[q]) == '-') {
+            q = q + 1;
+        }
+        let r = digits(line, q);
+        if r == q {
+            return 0 - 1;
+        }
+        p = r;
+    }
+    return p;
+}
+
+fn word_at[&l](line: &l [byte], p: int, word: &static [byte]) -> [] bool {
+    return p + len(word) <= len(line) && bytes.equal(line[p..p + len(word)], word);
+}
+
+// Scan `line`: 0 and `found` filled, or 1 (not for the scanner). `table` and `sbytes` are the declaration of jfields.cho, every path one key.
+pub fn scan[&l, &t, &b, &f](line: &l [byte], table: &t [int], sbytes: &b [byte], nfields: int, nodes: int, found: &!f [int]) -> [] int {
+    let n = len(line);
+    let base = 2 * nfields;
+    var i = 0;
+    while i < nfields {
+        found[3 * i] = 0 - 1;
+        i = i + 1;
+    }
+    var p = blanks(line, 0);
+    if p >= n || int_of(line[p]) != '{' {
+        return 1;
+    }
+    p = blanks(line, p + 1);
+    if p < n && int_of(line[p]) == '}' {
+        if blanks(line, p + 1) == n {
+            return 0;
+        }
+        return 1;
+    }
+    var pairs = 0;
+    var going = true;
+    while going {
+        if p >= n || int_of(line[p]) != '"' {
+            return 1;
+        }
+        let k0 = p + 1;
+        let ke = plain_end(line, k0);
+        if ke < 0 {
+            return 1;
+        }
+        p = blanks(line, ke + 1);
+        if p >= n || int_of(line[p]) != ':' {
+            return 1;
+        }
+        p = blanks(line, p + 1);
+        if p >= n {
+            return 1;
+        }
+        var kind = 0;
+        var v0 = p;
+        var v1 = p;
+        let c = int_of(line[p]);
+        if c == '"' {
+            let ve = plain_end(line, p + 1);
+            if ve < 0 {
+                return 1;
+            }
+            v0 = p + 1;
+            v1 = ve;
+            p = ve + 1;
+        } else if c == '-' || c >= '0' && c <= '9' {
+            let ne = number_end(line, p);
+            if ne < 0 {
+                return 1;
+            }
+            kind = 1;
+            v1 = ne;
+            p = ne;
+        } else if c == 't' && word_at(line, p, "true") {
+            kind = 2;
+            p = p + 4;
+            v1 = p;
+        } else if c == 'f' && word_at(line, p, "false") {
+            kind = 3;
+            p = p + 5;
+            v1 = p;
+        } else if c == 'n' && word_at(line, p, "null") {
+            kind = 4;
+            p = p + 4;
+            v1 = p;
+        } else {
+            return 1;
+        }
+        // the key against the declared names, by length first
+        let klen = ke - k0;
+        var f = 0;
+        while f < nfields {
+            let s0 = table[base + 3 * f];
+            let s1 = table[base + 3 * f + 1];
+            if s1 - s0 == klen && bytes.equal(line[k0..ke], sbytes[s0..s1]) {
+                if found[3 * f] != 0 - 1 {
+                    // a key twice: a refusal, which std.json's path says
+                    return 1;
+                }
+                found[3 * f] = 0 - 10 - kind;
+                found[3 * f + 1] = v0;
+                found[3 * f + 2] = v1;
+            }
+            f = f + 1;
+        }
+        pairs = pairs + 1;
+        if 1 + 2 * pairs > nodes {
+            return 1;
+        }
+        p = blanks(line, p);
+        if p >= n {
+            return 1;
+        }
+        if int_of(line[p]) == ',' {
+            p = blanks(line, p + 1);
+        } else if int_of(line[p]) == '}' {
+            if blanks(line, p + 1) != n {
+                return 1;
+            }
+            going = false;
+        } else {
+            return 1;
+        }
+    }
+    return 0;
+}

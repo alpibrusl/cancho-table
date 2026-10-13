@@ -137,9 +137,7 @@ otherwise said to be inferred.
 ## Ideas, roughly in order
 
 1. ~~**Parallel scan**~~ (done: `--threads N`, byte-identical to the sequential engine, `docs/parallel.md`).
-2. **JSON lines** as a second reader behind a record-reader interface (design: cancho-tools `docs/next-tools.md`
-   §5, "Formats"): declared flat projection with dotted paths; a non-scalar in a cell is a tagged refusal; one big
-   JSON array is refused with a pointer to `jsonq`.
+2. ~~**JSON lines** as a second reader behind a record-reader interface~~ **Built** (stage R2 of `docs/readers.md`, section 12): `--input-format jsonl` with the columns declared by `--fields` (dotted paths), from a file (by ranges, `--threads`) or standard input, on `std.json.parse_with` (cancho #363) with one tape per reader; a non-scalar in a cell, a missing key, a key twice and a line that is not strict JSON are tagged refusals; `--discover` reports what the first lines hold; a JSON array or a pretty-printed document is refused with a pointer to `jq -c`. Still ahead from that design: `--format jsonl` (R3, the output), `--format md` (not before someone asks), and the flat-object scanner (R2b, section 12.9: the reader is parse-bound).
 3. ~~**`--query`**~~, the string front end to the same plan (done, stage Q1 of `docs/query.md`: a small subset of SQL translated to the
    flags, the typed-flags form equal to it byte for byte on the corpus and on random plans; `--rows` with it), and **`--explain`** (done, stage Q2: the plan said and not run,
    one JSON line, `docs/query.md` section 15). Still ahead from that design: `or` (item 6), the repair of `or` on one column as `in (...)`, the text form of

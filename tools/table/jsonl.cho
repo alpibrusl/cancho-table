@@ -308,7 +308,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
                                     } else {
                                         var shape = 0;
                                         borrow mut cells as &!cw in {
-                                            let (code, rec2) = jrec.extract(heap, line, contents(tpw), contents(sw), contents(tbr), buffer.bytes(sbr), nfields, flat, absent, qdelim, contents(cw), rec, a);
+                                            let (code, rec2) = jrec.extract(heap, line, contents(tpw), contents(sw), contents(tbr), buffer.bytes(sbr), nfields, flat, nodes, absent, qdelim, contents(cw), rec, a);
                                             rec = rec2;
                                             shape = code;
                                         }

@@ -17,6 +17,7 @@ The second half of the module generates inputs: `random_case`, `edge_cases`, `ch
 generator knows, to test the oracle against).
 """
 
+import copy
 import json
 import random
 import re
@@ -569,7 +570,7 @@ def add_extras(doc, rng):
         return
     for _ in range(rng.randint(1, 3)):
         k, v = rng.choice(EXTRAS)
-        doc.insert(rng.randint(0, len(doc)), [k + rng.choice(["", "1", "_"]), v])
+        doc.insert(rng.randint(0, len(doc)), [k + rng.choice(["", "1", "_"]), copy.deepcopy(v)])
     for pair in doc:
         if isinstance(pair[1], P) and rng.random() < 0.3:
             pair[1].insert(rng.randint(0, len(pair[1])), ["nick", rng.choice(["z", 3, None])])
