@@ -57,6 +57,8 @@ LOCAL = {
     "parse.jsonl-not-scalar": (8, "never", "object or an array"),
     "parse.jsonl-duplicate-key": (8, "never", "occurs twice"),
     "limit.json-too-many-nodes": (8, "never", "--max-json-nodes"),
+    "output.duplicate-column": (2, "never", "same name"),
+    "output.not-representable": (2, "never", "UTF-8"),
 }
 # rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
 VARIABLE_HINT = {"query.unsupported"}
@@ -112,6 +114,7 @@ class Rules(unittest.TestCase):
         s.write("wide.csv", "a,b\n" + "1," + "x" * 5000 + "\n")
         s.write("header.csv", '"a\n' + "b\n" * 600 + '",c\n1,2\n')
         s.write("ok.jsonl", '{"a":1}\n')
+        s.write("badhead.csv", b"\xff\n1\n")
         s.write("bad.jsonl", '{"a":1,}\n')
         s.write("arr.jsonl", '[1]\n')
         s.write("miss.jsonl", '{"b":1}\n')
@@ -179,6 +182,8 @@ class Rules(unittest.TestCase):
             ("parse.jsonl-missing-field", root + ["--input-format", "jsonl", "--fields", "a", "miss.jsonl"], None),
             ("parse.jsonl-not-scalar", root + ["--input-format", "jsonl", "--fields", "a", "nested.jsonl"], None),
             ("parse.jsonl-duplicate-key", root + ["--input-format", "jsonl", "--fields", "a", "twice.jsonl"], None),
+            ("output.duplicate-column", root + ["--select", "a,a", "--format", "jsonl", "ok.csv"], None),
+            ("output.not-representable", root + ["--rows", "--format", "jsonl", "badhead.csv"], None),
             ("limit.json-too-many-nodes", root + ["--input-format", "jsonl", "--fields", "a", "--max-json-nodes", "1", "ok.jsonl"], None),
         ]
         if os.geteuid() != 0 or True:

@@ -59,7 +59,7 @@ MUTANTS = [
     ("an example of --where is not a condition", "spec.cho", "--where 'status = 404 and bytes:int > 1000'", "--where 'status = 404 or bytes:int > 1000'"),
     ("the help says a float has no sum", "spec.cho", "(min, max, distinct, and the exact sum and mean:", "(min, max and distinct only:"),
     ("the help says text compares the other way", "spec.cho", "so 10 is less than 9", "so 9 is less than 10"),
-    ("the help says csv is a document", "spec.cho", "csv and text are not a json document", "csv and text are a json document"),
+    ("the help says csv is a document", "spec.cho", "csv, jsonl and text are not a json document", "csv, jsonl and text are a json document"),
     ("the help says a refusal in csv is on standard output", "spec.cho", "a refusal is one line on standard error", "a refusal is one line on standard output"),
     ("the help of --agg forgets the scale of a mean", "spec.cho", "as mean:bytes@2, and @N may be left out", "as mean:bytes@2, and @N may be left out of a sum"),
     ("the escape of a column called x:dec(2) is not the one", "spec.cho", "sum:x\\\\:dec(2)", "sum:x\\\\\\\\:dec(2)"),

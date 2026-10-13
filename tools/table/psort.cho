@@ -423,6 +423,7 @@ pub fn make_run[&h, &s, &c, &l, &o](heap: &!h Heap, g: &s agg.Groups, cells: &!c
     let ord = order_radix(heap, g);
     borrow ord as &or in {
         borrow mut tally as &!tw in {
+            scratch = engine.begin_jsonl(heap, scratch, sel, picked, contents(tw));
             let od = contents(or);
             var i = 0;
             while i < n && fits {

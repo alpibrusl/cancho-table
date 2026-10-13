@@ -143,7 +143,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
             frame.drop(heap, made);
             borrow names as &nr in {
                 borrow hends as &er in {
-                    made = frame.prepare(heap, tree, nr, er, nfields, mode, delim, sort);
+                    made = frame.prepare(heap, tree, nr, er, nfields, mode, delim, sort, budget < 0);
                 }
             }
             let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
@@ -187,7 +187,11 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
                 going = false;
             }
             if as_csv && fabort == 0 {
-                rows = finish.start_output(heap, rows, finish.report_lead(heap, query.reporting(tree), flead, delim));
+                borrow sel as &sr in {
+                    let (r2, s2) = finish.start_output(heap, rows, scratch, finish.report_lead(heap, query.reporting(tree), flead, delim), contents(sr), picked, a, budget);
+                    rows = r2;
+                    scratch = s2;
+                }
             } else {
                 buffer.drop(heap, flead);
             }
@@ -406,9 +410,11 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
             }
             if a[engine.k_abort()] == 0 {
                 borrow groups as &gr in {
-                    let (r2, s2) = finish.finish_groups(heap, io, finished, spare, gr, tree, as_csv, delim, from, limit, top, budget, a);
-                    finished = r2;
-                    spare = s2;
+                    borrow sel as &sr0 in {
+                        let (r2, s2) = finish.finish_groups(heap, io, finished, spare, gr, tree, contents(sr0), as_csv, delim, from, limit, top, budget, a);
+                        finished = r2;
+                        spare = s2;
+                    }
                     if a[engine.k_total()] > 0 {
                         a[engine.k_groups()] = a[engine.k_total()];
                     }

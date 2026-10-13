@@ -318,6 +318,7 @@
     "k_first_line",
     "k_first_row",
     "k_groups",
+    "k_jsonl",
     "k_long",
     "k_more",
     "k_next",
@@ -573,7 +574,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 210,
+  "folded_operators": 211,
   "folded_calls": 0,
-  "functions": 897
+  "functions": 905
 }

@@ -55,7 +55,7 @@ MUTANTS = [
     ("the report has the key of the sort it is read by", E, "    if reporting {\n        nk = 0;\n    }", "    if false {\n        nk = 0;\n    }"),
     ("the sort label of the flag is not shown", E, "    if len(flagged) > 0 {\n        sort = flagged;\n    }\n    var form", "    var form"),
     ("a limit is shown for the shape", E, "    if mode == 0 || unbounded {\n        o = buffer.append(heap, o, \"null\");", "    if unbounded {\n        o = buffer.append(heap, o, \"null\");"),
-    ("a csv plan is a json plan", E, '    if as_csv {\n        o = buffer.append(heap, o, "csv");', '    if false {\n        o = buffer.append(heap, o, "csv");'),
+    ("a csv plan is a json plan", E, '    } else if as_csv {\n        o = buffer.append(heap, o, "csv");', '    } else if false {\n        o = buffer.append(heap, o, "csv");'),
     ("the columns of standard input are known", E, "    if stdin && !as_json {\n        o = buffer.append(heap, o, \"null\");\n    } else if mode == 0 {", "    if false {\n        o = buffer.append(heap, o, \"null\");\n    } else if mode == 0 {"),
     # the work
     ("a grouping is a sort", E, "    } else if mode == 2 {\n        class = 2;", "    } else if ordering && mode == 2 {\n        class = 2;"),

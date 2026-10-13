@@ -1,0 +1,167 @@
+edition 5;
+
+module jout;
+
+// JSON lines out (`--format jsonl`, docs/readers.md section 13): one JSON object per row, the keys the output columns in order.
+//
+// What carries the keys to the writers is the tail of `sel`, the array of the answer's columns that every read, every thread and every writer already has (a parameter added to the
+// functions of the read loop was measured to cost them registers, docs/readers.md 11.3). After the `picked` column numbers of a selection (none for a grouping, which has no column
+// numbers) `with_template` writes
+//
+//     sel[picked]            1: the rows are JSON lines (0, as `box_slice` makes it, for every other output)
+//     sel[picked + 1]        n, the number of keys (0 for `--report`, which has keys of its own)
+//     sel[picked + 2 + j]    where fragment j ends, in the text below (j < n)
+//     sel[picked + 2 + n +]  that text, a byte to an integer: fragment 0 is `{"name0":`, fragment j is `,"namej":`
+//
+// and `engine.begin_jsonl` makes the text a buffer once, in the read and in each thread. A row is then a copy of a fragment and a cell, for each column, and `}` and an LF.
+//
+// A value is `writer.json_cell`: the cell as a JSON string, or `{"b64":"..."}` when its bytes are not UTF-8 (the `text_or_bytes` of the pages). A key must be a string, so a name that
+// is not UTF-8 is `output.not-representable` and a name twice is `output.duplicate-column`: both before any row (`with_template` answers which, and where).
+
+import std.buffer;
+import std.vec;
+import agg;
+import gmap;
+import query;
+import toolbox.text;
+import writer;
+
+// One row of a selection, appended to `out`: `tmpl` is the text of the keys, `sel` and `picked` the columns of the answer.
+pub fn row[&h, &t, &d, &c, &s](heap: &!h Heap, out: buffer.Buffer, tmpl: &t [byte], record: &d [byte], cells: &c [int], sel: &s [int], picked: int) -> [heap] buffer.Buffer {
+    var o = out;
+    var from = 0;
+    var j = 0;
+    while j < picked {
+        let to = sel[picked + 2 + j];
+        o = buffer.append(heap, o, tmpl[from..to]);
+        from = to;
+        let at = 3 * sel[j];
+        o = writer.json_cell(heap, o, record, cells[at], cells[at + 1], cells[at + 2]);
+        j = j + 1;
+    }
+    o = buffer.push(heap, o, byte_of(125));
+    return buffer.push(heap, o, byte_of(10));
+}
+
+// One group as an object: its keys are strings (a typed key as the text it is written as, `1.50`), its aggregates the numbers the csv output writes. `sel` is the tail of a
+// grouping (`picked` is 0), whose n is the group columns and the aggregates.
+pub fn group_row[&h, &g, &q, &t, &s](heap: &!h Heap, out: buffer.Buffer, groups: &g agg.Groups, tree: &q query.Query, x: int, tmpl: &t [byte], sel: &s [int]) -> [heap] buffer.Buffer {
+    let ng = query.count_of(tree, 2);
+    let na = query.agg_count(tree);
+    var o = out;
+    var from = 0;
+    var m = 0;
+    while m < ng + na {
+        let to = sel[2 + m];
+        o = buffer.append(heap, o, tmpl[from..to]);
+        from = to;
+        if m < ng {
+            if query.gkind_at(tree, m) != 0 {
+                o = buffer.push(heap, o, byte_of(34));
+                o = agg.put_key(heap, o, groups, tree, x, m);
+                o = buffer.push(heap, o, byte_of(34));
+            } else {
+                o = text.append_json(heap, o, agg.key_field(groups, x, m));
+            }
+        } else {
+            o = agg.put_value(heap, o, groups, tree, x, m - ng);
+        }
+        m = m + 1;
+    }
+    o = buffer.push(heap, o, byte_of(125));
+    return buffer.push(heap, o, byte_of(10));
+}
+
+// `sel` (its first `picked` entries the answer's columns) with the tail above for the `n` names that `labels` holds, ended by `lends` (name m is labels[lends[m - 1]..lends[m]]).
+// Answers the new array (the old one is freed), a status (0, 60 a name twice, 61 a name that is not UTF-8) and the index of the name the status is about (the second of a pair).
+// With n = 0 the tail only says that the rows are JSON lines.
+pub fn with_template[&h, &l, &e](heap: &!h Heap, sel: Box[[int]], picked: int, labels: &l buffer.Buffer, lends: &e vec.Vec[int], n: int) -> [heap] (Box[[int]], int, int) {
+    var status = 0;
+    var at = 0;
+    var frags = buffer.empty(heap, 64);
+    var ends = vec.empty(heap, 8, 0);
+    var seen = gmap.empty(heap, 16);
+    var begin = 0;
+    var m = 0;
+    while m < n && status == 0 {
+        let to = vec.get(lends, m);
+        let name = buffer.bytes(labels)[begin..to];
+        begin = to;
+        if !text.is_utf8(name) {
+            status = 61;
+            at = m;
+        } else {
+            let h = gmap.hash(name);
+            var found = 0 - 1;
+            borrow seen as &sn in {
+                found = gmap.find_h(sn, name, h);
+            }
+            if found >= 0 {
+                status = 60;
+                at = m;
+            } else {
+                seen = gmap.put_new(heap, seen, name, h);
+            }
+        }
+        if status == 0 {
+            if m == 0 {
+                frags = buffer.push(heap, frags, byte_of(123));
+            } else {
+                frags = buffer.push(heap, frags, byte_of(44));
+            }
+            frags = text.append_json(heap, frags, name);
+            frags = buffer.push(heap, frags, byte_of(58));
+            var upto = 0;
+            borrow frags as &fr in {
+                upto = buffer.size(fr);
+            }
+            ends = vec.push(heap, ends, upto);
+        }
+        m = m + 1;
+    }
+    gmap.drop(heap, seen);
+    var total = 0;
+    if status == 0 && n > 0 {
+        borrow frags as &fr2 in {
+            total = buffer.size(fr2);
+        }
+    }
+    let made = box_slice(heap, picked + 3 + n + total, 0);
+    var out = made;
+    borrow mut out as &!ow in {
+        borrow sel as &sr in {
+            let o = contents(ow);
+            let s = contents(sr);
+            var k = 0;
+            while k < picked {
+                o[k] = s[k];
+                k = k + 1;
+            }
+            if status == 0 {
+                o[picked] = 1;
+                if n > 0 {
+                    o[picked + 1] = n;
+                    borrow ends as &er3 in {
+                        borrow frags as &fr3 in {
+                            k = 0;
+                            while k < n {
+                                o[picked + 2 + k] = vec.get(er3, k);
+                                k = k + 1;
+                            }
+                            let text_bytes = buffer.bytes(fr3);
+                            k = 0;
+                            while k < total {
+                                o[picked + 2 + n + k] = int_of(text_bytes[k]);
+                                k = k + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    unbox_slice(heap, sel);
+    buffer.drop(heap, frags);
+    vec.drop(heap, ends);
+    return (out, status, at);
+}

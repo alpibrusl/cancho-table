@@ -452,3 +452,54 @@ pub fn put_row[&h, &g, &n](heap: &!h Heap, out: buffer.Buffer, g: &g agg.Groups,
     }
     return o;
 }
+
+// The same row as one JSON object (`--format jsonl`, docs/readers.md section 13): the row of a page, `["name","5",...]`, with the report's column names for the keys. Every value is
+// a string, as in the page (the counts are not aggregates), or the `{"b64":...}` of a cell that is not UTF-8.
+pub fn put_object[&h, &g, &n](heap: &!h Heap, out: buffer.Buffer, g: &g agg.Groups, m: int, name: &n [byte]) -> [heap] buffer.Buffer {
+    var page = put_row(heap, buffer.empty(heap, 256), g, m, name, false, 0);
+    var o = out;
+    let all = names();
+    var key_start = 0;
+    var k = 0;
+    borrow page as &pr in {
+        let a = buffer.bytes(pr);
+        var p = 1;
+        while p < len(a) - 1 {
+            var key_end = key_start;
+            while key_end < len(all) && int_of(all[key_end]) != '|' {
+                key_end = key_end + 1;
+            }
+            if k == 0 {
+                o = buffer.push(heap, o, byte_of('{'));
+            } else {
+                o = buffer.push(heap, o, byte_of(','));
+            }
+            o = text.append_json(heap, o, all[key_start..key_end]);
+            o = buffer.push(heap, o, byte_of(':'));
+            key_start = key_end + 1;
+            let begin = p;
+            if int_of(a[p]) == '"' {
+                p = p + 1;
+                while int_of(a[p]) != '"' {
+                    if int_of(a[p]) == '\\' {
+                        p = p + 1;
+                    }
+                    p = p + 1;
+                }
+                p = p + 1;
+            } else {
+                while int_of(a[p]) != '}' {
+                    p = p + 1;
+                }
+                p = p + 1;
+            }
+            o = buffer.append(heap, o, a[begin..p]);
+            if int_of(a[p]) == ',' {
+                p = p + 1;
+            }
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, page);
+    return buffer.push(heap, o, byte_of('}'));
+}
