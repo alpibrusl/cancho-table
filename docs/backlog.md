@@ -141,8 +141,9 @@ otherwise said to be inferred.
    §5, "Formats"): declared flat projection with dotted paths; a non-scalar in a cell is a tagged refusal; one big
    JSON array is refused with a pointer to `jsonq`.
 3. ~~**`--query`**~~, the string front end to the same plan (done, stage Q1 of `docs/query.md`: a small subset of SQL translated to the
-   flags, the typed-flags form equal to it byte for byte on the corpus and on random plans; `--rows` with it). Still ahead from that design:
-   `--explain` (Q2), `or` (item 6), and the repair of `or` on one column as `in (...)`.
+   flags, the typed-flags form equal to it byte for byte on the corpus and on random plans; `--rows` with it), and **`--explain`** (done, stage Q2: the plan said and not run,
+   one JSON line, `docs/query.md` section 15). Still ahead from that design: `or` (item 6), the repair of `or` on one column as `in (...)`, the text form of
+   `--explain` and a `plan.flags` that is the flags' argv (section 15.1), and the `grammar` object of `introspect`.
 4. ~~**`mean`**~~ (done: `mean:COL[@N]`, exact, rounded half to even, `docs/numbers.md` 3.6) and **`describe`**: per-column
    count/empty/distinct/min/max. Not built; `--report types` (item 7) counts what the cells are and nothing else.
 5. ~~**Decimals and floats**~~ (done, `docs/numbers.md` stages N0p to N6: `:dec(S)` and `:float` in `--where`, `--agg`, `--group` and `--order-by`; exact `sum` and `mean` of both; `agg.float-overflow`; the exact float reader, #32).

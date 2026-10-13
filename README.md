@@ -276,6 +276,17 @@ $ table --query "select id from 'orders.csv' where status = 404 or status = 500"
 ```
 <!-- /gen:t-query -->
 
+### See the plan before it runs
+
+`--explain` takes the flags (or the `--query`) of a call and prints, as one JSON line, what the call would do, without doing it: each column the plan names and where the header puts it, every condition, group, aggregate and order with the type it is read as, the page, the kind of work it is and the limits in force, how many threads it would use and why not more, the rules the data could still refuse it with, and notes. It opens the file and reads its first 64 KiB for the header, and nothing after the header: no row is framed, counted or judged, so what it costs does not grow with the file ([docs/query.md](docs/query.md) section 15 has the measured time). It does not read standard input at all, so the columns of a plan on a pipe are not known, and the notes say so. A plan the run would refuse before it read a row (a bad flag or query, a name the header lacks, a missing file, a header past `--max-line-bytes`) is refused with the run's own error and exit status.
+
+<!-- gen:t-explain -->
+```console
+$ table --explain --threads 4 --where "bytes:int > 100" --group customer --agg count,sum:bytes --sort -sum:bytes --limit 2 orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"explain":{"source":{"kind":"file","path":"orders.csv","reader":"file","block_bytes":65536,"format":"csv","delimiter":",","size":110,"header_read":true,"columns":4,"bytes_read":110},"plan":{"form":"groups","select":[],"where":[{"column":{"ref":"bytes","position":4,"name":"bytes"},"type":"int","op":">","values":["100"]}],"group":[{"column":{"ref":"customer","position":2,"name":"customer"},"type":"text"}],"aggregates":[{"function":"count","column":null,"type":null,"scale":null},{"function":"sum","column":{"ref":"bytes","position":4,"name":"bytes"},"type":"int","scale":null}],"order_by":[],"sort":"-sum:bytes","top":null,"limit":2,"from":0},"output":{"format":"json","columns":["customer","count","sum:bytes"]},"work":{"class":"grouped single pass","reads":"all rows","bounds":{"max_rows":10000000,"max_line_bytes":1048576,"max_bytes":1048576,"max_groups":100000,"max_state_bytes":67108864},"threads":{"requested":4,"effective":1,"reason":"the file after the header is under --parallel-min-bytes"}},"refusals":{"possible":["io.read-failed","parse.csv-ragged-row","parse.csv-bad-quote","parse.csv-unterminated-quote","limit.line-too-long","limit.record-too-large","value.not-integer","value.integer-overflow","limit.output-too-large","limit.too-many-groups","limit.state-too-large"]},"notes":[]}},"meta":{"version":"0.3.0"}}
+```
+<!-- /gen:t-explain -->
+
 ### Page through the results
 
 JSON comes in pages; `next` says where the next starts. Resuming re-reads the file from the start, so paging deep into a huge file gets slow.
@@ -342,7 +353,7 @@ $ table --where "bytes:int > 100" --select id orders.csv
 * **`--query` is a small subset of SQL**, not SQL: no `or` and no parentheses, no aliases, no expressions or functions, no `like`, no `null`, no joins, no subqueries, and a grouping sorts by one column. Each is refused as `query.unsupported`, with the feature named ([docs/query.md](docs/query.md)).
 * **No guessing.** Every column is text unless you declare `:int`, `:dec(S)` or `:float`; `--report types` suggests a declaration and applies none. No computed or renamed column, no `or` in a filter.
 
-JSON lines, `--explain`, `or` in a filter and joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
+JSON lines, `or` in a filter and joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
 
 ## How fast
 

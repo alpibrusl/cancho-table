@@ -428,6 +428,14 @@ Acme,1,128
 <!-- /gen:t-query -->
   </div>
   <div>
+    <h3 class="task">See the plan before it runs</h3>
+    <p><code>--explain</code> takes the flags (or the <code>--query</code>) of a call and prints, as one JSON line, what the call would do, without doing it: each column the plan names and where the header puts it, every condition, group, aggregate and order with the type it is read as, the page, the kind of work it is and the limits in force, how many threads it would use and why not more, the rules the data could still refuse it with, and notes. It reads the first 64 KiB of the file for the header and nothing after the header, so what it costs does not grow with the file; it does not read standard input at all. A plan the run would refuse before it read a row is refused with the run's own error and exit status.</p>
+<!-- gen:t-explain -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --explain --threads 4 --where "bytes:int &gt; 100" --group customer --agg count,sum:bytes --sort -sum:bytes --limit 2 orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"explain":{"source":{"kind":"file","path":"orders.csv","reader":"file","block_bytes":65536,"format":"csv","delimiter":",","size":110,"header_read":true,"columns":4,"bytes_read":110},"plan":{"form":"groups","select":[],"where":[{"column":{"ref":"bytes","position":4,"name":"bytes"},"type":"int","op":"&gt;","values":["100"]}],"group":[{"column":{"ref":"customer","position":2,"name":"customer"},"type":"text"}],"aggregates":[{"function":"count","column":null,"type":null,"scale":null},{"function":"sum","column":{"ref":"bytes","position":4,"name":"bytes"},"type":"int","scale":null}],"order_by":[],"sort":"-sum:bytes","top":null,"limit":2,"from":0},"output":{"format":"json","columns":["customer","count","sum:bytes"]},"work":{"class":"grouped single pass","reads":"all rows","bounds":{"max_rows":10000000,"max_line_bytes":1048576,"max_bytes":1048576,"max_groups":100000,"max_state_bytes":67108864},"threads":{"requested":4,"effective":1,"reason":"the file after the header is under --parallel-min-bytes"}},"refusals":{"possible":["io.read-failed","parse.csv-ragged-row","parse.csv-bad-quote","parse.csv-unterminated-quote","limit.line-too-long","limit.record-too-large","value.not-integer","value.integer-overflow","limit.output-too-large","limit.too-many-groups","limit.state-too-large"]},"notes":[]}},"meta":{"version":"0.3.0"}}</pre>
+<!-- /gen:t-explain -->
+  </div>
+  <div>
     <h3 class="task">Page through the results</h3>
     <p>JSON answers come in pages. <code>next</code> tells you where the next one starts. Resuming re-reads the file from the start, so paging deep into a huge file gets slow.</p>
 <!-- gen:t-page -->
@@ -492,7 +500,7 @@ status,count
 <pre class="code" tabindex="0">$ table introspect          # one JSON document; excerpts, long lines cut
 
 tool        table 0.3.0   (compiler e47d6473)
-flags       25, for example
+flags       26, for example
   --root     path  resolve FILE relative to this directory and refuse paths outs…
   --select   text  the columns to return, a list: header names separated by comm…
   --where    text  only the rows that satisfy this: conditions joined by and (no…
@@ -553,7 +561,7 @@ query:  table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-byte
     <li><strong><code>--query</code> is a small subset of SQL,</strong> not SQL: no <code>or</code> and no parentheses, no aliases, no expressions or functions, no <code>like</code>, no <code>null</code>, no joins, no subqueries, and a grouping sorts by one column. Each is refused as <code>query.unsupported</code>, with the feature named (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a>).</li>
     <li><strong>No guessing.</strong> Every column is text unless you declare <code>:int</code>, <code>:dec(S)</code> or <code>:float</code>; <code>--report types</code> suggests a declaration and applies none. No computed or renamed column, no <code>or</code> in a filter.</li>
   </ul>
-  <p class="note">JSON lines, <code>--explain</code>, <code>or</code> in a filter and joins are on the <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
+  <p class="note">JSON lines, <code>or</code> in a filter and joins are on the <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
 </section>
 
 <section id="start">

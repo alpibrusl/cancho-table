@@ -1,9 +1,9 @@
-# `--query`, `--explain` and the surface: a design, and the build of its first slice (Q1)
+# `--query`, `--explain` and the surface: a design, and the build of its first slices (Q1, Q2)
 
-> **Status: Q0 (the plan in one `Inputs`) and Q1 (`--query`, `--rows`) are built; `--explain` (Q2) and the surface of Q3 are designs.** This document follows the rules of `docs/numbers.md` (decisions with their reasons, the gates fixed before
+> **Status: Q0 (the plan in one `Inputs`), Q1 (`--query`, `--rows`) and Q2 (`--explain`) are built; the surface of Q3 (the docs and the MCP check) is a design, most of it done by the generators.** This document follows the rules of `docs/numbers.md` (decisions with their reasons, the gates fixed before
 > the build, claims that are measured and assumptions that are listed). Its twin is [`docs/readers.md`](readers.md) (standard input, JSON lines, the reader interface, the outputs). Sections 0 to 13 are the design as it was accepted on 2026-10-07
-> ("go with the recommendations"); **section 14 is the build of Q1: what it is, the readings of the design that had to be chosen (each the smallest reading, each recorded), the gates and their numbers, and what is not measured.** Where section 14
-> and an earlier section differ, section 14 is what the program does. The prototype and its examples are now the reference front end of the tests (`tests/conformance/query_ref.py`, `query_cases.py`), which share no code with the tool.
+> ("go with the recommendations"); **section 14 is the build of Q1 and section 15 the build of Q2: what each is, the readings of the design that had to be chosen (each the smallest reading, each recorded), the gates and their numbers, and what is not measured.** Where section 14 or 15
+> and an earlier section differ, the later section is what the program does. The prototype and its examples are now the reference front end of the tests (`tests/conformance/query_ref.py`, `query_cases.py`), which share no code with the tool.
 >
 > **What was measured when the design was written:** the real `table` (main, `3084478`, built with the pinned compiler) on randomly generated tables and plans; 800 cases (1,556 runs, as JSON and as CSV) of the gate gave **0 differences** between the flag form
 > and the translated query; the prototype's **26 mutants are all killed**; and the generator found **one bug in `table` itself and three places where the flags' own rules differ** (section 12), which is what a gate is for.
@@ -22,7 +22,7 @@
 | `select *` alone | needs one new flag, **`--rows`** (rows, all columns, no condition): today `table FILE` is the shape, and there is no way to ask for every row without a condition | a small gap the front end found |
 | errors | `query.syntax` (offset, what was expected), `query.unsupported` (the feature, what to write), `query.group-mismatch`, `query.too-long`; all exit 2 | as `where.syntax` does |
 | the gate | **a random plan rendered twice (flags, SQL), both run on the same table: same stdout, same stderr, same exit, refusals included**; prototype run: 0 differences in 1,556 runs; 26 of 26 mutants killed | section 8 |
-| `table explain` | **`--explain`, a flag** (not a subcommand): the resolved plan, columns with positions and types, bounds, the work class, the refusals that are certain without reading data and the ones that are possible; it reads the first chunk of the file for the header and nothing else, and nothing from standard input | section 9. Decided (section 13, 1): the flag |
+| `table explain` | **`--explain`, a flag** (not a subcommand): the resolved plan, columns with positions and types, bounds, the work class, the refusals that are certain without reading data and the ones that are possible; it reads the first chunk of the file for the header and nothing else, and nothing from standard input | section 9, built as section 15 says. Decided (section 13, 1): the flag |
 | surface | `introspect` and `skill` stay generated from the flag table and the rule table; the grammar's lexical tables (keywords, functions, types) are static tables the lexer and `introspect` both read; the examples in the skill are tested by parsing them | section 10 |
 
 ## 1. Why a translator, and what it costs

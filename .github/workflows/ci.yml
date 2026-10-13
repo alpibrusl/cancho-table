@@ -96,7 +96,7 @@ jobs:
       - name: The mutants still apply
         working-directory: table
         run: |
-          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin query; do python3 scripts/${m}_mutants.py --check; done
+          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin query explain; do python3 scripts/${m}_mutants.py --check; done
 
       - name: Conformance gates (differential against Python's csv, rules, limits, memory, authority)
         working-directory: table
@@ -124,3 +124,9 @@ jobs:
       - name: The query form gives the bytes of the flag form on the corpus
         working-directory: table
         run: python3 scripts/query_corpus.py --require f1
+
+      # --explain is the plan said and not run (docs/query.md section 15, X1): the same plans of the corpus, explained as flags and as a query, are the same bytes, and name the columns of
+      # the answer the run gives.
+      - name: The explain of the flag form is the explain of the query form on the corpus
+        working-directory: table
+        run: python3 scripts/explain_corpus.py --require f1

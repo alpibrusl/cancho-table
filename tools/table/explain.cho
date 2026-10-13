@@ -1,0 +1,908 @@
+edition 5;
+
+module explain;
+
+// `--explain` (docs/query.md sections 9 and 15): the plan the flags or a query resolve to, said as one JSON document, and not run.
+//
+// What it reads. A file is opened and its header taken with the reader the run uses (`toolbox.lines`, one 64 KiB chunk at a time, a header that holds line breaks in a
+// quoted name read through them, bounded by `--max-line-bytes`); the header is resolved against the plan by `frame.prepare`, the same call the run makes, and a plan
+// the run would refuse at that point is refused by `finish.explain`, the same call, with the same error. Nothing after the header is framed, split, counted or judged.
+// Standard input is not read at all: its columns are not known, and the document says so. The loops of `table.cho` that read the rows are not touched.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import finish;
+import frame;
+import query;
+import reader;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.lines;
+import toolbox.text;
+
+// The header of a file, read as `read_file` reads it, and nothing more. `abort` is the run's code for what went wrong with it (4 a line past the bound, 3 a header past it, 1 a
+// closing quote followed by something other than the delimiter, 2 a quote open at the end, 5 no header at all when the plan names columns), `consumed` the bytes up to the end of
+// the header's last line and `bytes_read` the bytes taken from the file.
+pub res struct Head {
+    names: buffer.Buffer,
+    ends: vec.Vec[int],
+    got: bool,
+    abort: int,
+    abort_line: int,
+    long_length: int,
+    errno: int,
+    consumed: int,
+    bytes_read: int,
+}
+
+pub fn read_head[&h, &f](heap: &!h Heap, file: &!f File, cap: int, delim: int, mode: int) -> [heap, file_read] Head {
+    var names = buffer.empty(heap, 1);
+    var ends = vec.empty(heap, 1, 0);
+    var rec = buffer.empty(heap, 256);
+    var r = lines.start(heap, cap);
+    var got = false;
+    var quoted = false;
+    var seps = 0;
+    var opened = 0;
+    var abort = 0;
+    var abort_line = 0;
+    var long_length = 0;
+    var going = true;
+    while going {
+        let (stepped, status) = lines.next(heap, r);
+        r = stepped;
+        if status == lines.need() {
+            r = lines.fill_file(r, file);
+        } else if status == lines.done() {
+            going = false;
+        } else if status == lines.long() {
+            abort = 4;
+            borrow r as &rr in {
+                abort_line = lines.number(rr);
+                long_length = lines.length(rr);
+            }
+            going = false;
+        } else {
+            borrow r as &rr in {
+                let number = lines.number(rr);
+                var line = lines.text(rr);
+                // A byte order mark belongs to the file, not to the first name.
+                if number == 1 && len(line) >= 3 && int_of(line[0]) == 239 && int_of(line[1]) == 187 && int_of(line[2]) == 191 {
+                    line = line[3..len(line)];
+                }
+                let whole = line;
+                if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                    line = line[0..len(line) - 1];
+                }
+                if !quoted && len(line) == 0 {
+                    // A blank line before the header is not a record.
+                } else {
+                    if !quoted {
+                        opened = number;
+                        borrow mut rec as &!rw in {
+                            buffer.clear(rw);
+                        }
+                        seps = 0;
+                    }
+                    let (inside, n, bad) = reader.scan(line, delim, quoted, seps);
+                    seps = n;
+                    rec = buffer.append(heap, rec, whole);
+                    var held = 0;
+                    borrow rec as &rw in {
+                        held = buffer.size(rw);
+                    }
+                    if bad {
+                        abort = 1;
+                        abort_line = number;
+                        going = false;
+                    } else if inside {
+                        quoted = true;
+                        rec = buffer.push(heap, rec, byte_of(10));
+                        if held + 1 > cap {
+                            abort = 3;
+                            abort_line = opened;
+                            going = false;
+                        }
+                    } else {
+                        quoted = false;
+                        buffer.drop(heap, names);
+                        vec.drop(heap, ends);
+                        borrow rec as &rw in {
+                            let (nm, en) = reader.split_header(heap, buffer.bytes(rw), delim);
+                            names = nm;
+                            ends = en;
+                        }
+                        got = true;
+                        going = false;
+                    }
+                }
+            }
+        }
+    }
+    // The ends of the file without a header: a plan that names columns has none to name, and a quote left open is not a record.
+    if mode != 0 && !got && abort == 0 {
+        abort = 5;
+    }
+    if quoted && abort == 0 {
+        abort = 2;
+        abort_line = opened;
+    }
+    var consumed = 0;
+    var bytes_read = 0;
+    var errno = 0;
+    borrow r as &rr in {
+        consumed = lines.consumed(rr);
+        bytes_read = lines.bytes_read(rr);
+        errno = lines.failed(rr);
+    }
+    lines.drop(heap, r);
+    buffer.drop(heap, rec);
+    return Head { names: names, ends: ends, got: got, abort: abort, abort_line: abort_line, long_length: long_length, errno: errno, consumed: consumed, bytes_read: bytes_read };
+}
+
+// ---- the document ----------------------------------------------------------------------------------------------------------
+
+// A type code of the plan (query.cho): 0 text, 1 :int, 2 + S :dec(S), 21 :float.
+fn put_type[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buffer {
+    var b = o;
+    if t == 0 {
+        b = buffer.append(heap, b, "\"text\"");
+    } else if t == 1 {
+        b = buffer.append(heap, b, "\"int\"");
+    } else if t == 21 {
+        b = buffer.append(heap, b, "\"float\"");
+    } else {
+        b = buffer.append(heap, b, "\"dec(");
+        b = buffer.push_nat(heap, b, t - 2);
+        b = buffer.append(heap, b, ")\"");
+    }
+    return b;
+}
+
+fn op_text(op: int) -> [] &static [byte] {
+    if op == 0 {
+        return "=";
+    }
+    if op == 1 {
+        return "!=";
+    }
+    if op == 2 {
+        return "<";
+    }
+    if op == 3 {
+        return "<=";
+    }
+    if op == 4 {
+        return ">";
+    }
+    return ">=";
+}
+
+// Name `i` of the plan as the flags spell it: the name, with a backslash before a `#` that begins it, or `#N` for a position.
+fn spelled[&h, &q](heap: &!h Heap, tree: &q query.Query, i: int) -> [heap] buffer.Buffer {
+    var s = buffer.empty(heap, 32);
+    let position = query.kind_at(tree, i);
+    if position >= 0 {
+        s = buffer.push(heap, s, byte_of('#'));
+        s = buffer.push_nat(heap, s, position);
+    } else {
+        let given = query.name_at(tree, i);
+        if len(given) > 0 && int_of(given[0]) == '#' {
+            s = buffer.push(heap, s, byte_of(92));
+        }
+        s = buffer.append(heap, s, given);
+    }
+    return s;
+}
+
+// A column of the plan: how it was named, and where the header put it (null when the header is not known).
+fn put_column[&h, &q, &c, &n, &e](heap: &!h Heap, o: buffer.Buffer, tree: &q query.Query, i: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, o, "{\"ref\":");
+    let s = spelled(heap, tree, i);
+    borrow s as &sr in {
+        b = text.append_json(heap, b, buffer.bytes(sr));
+    }
+    buffer.drop(heap, s);
+    if resolved {
+        b = buffer.append(heap, b, ",\"position\":");
+        b = buffer.push_nat(heap, b, cols[i] + 1);
+        b = buffer.append(heap, b, ",\"name\":");
+        b = text.append_json(heap, b, finish.name_of(names, ends, cols[i]));
+    } else {
+        b = buffer.append(heap, b, ",\"position\":null,\"name\":null");
+    }
+    return buffer.push(heap, b, byte_of('}'));
+}
+
+fn put_bool[&h](heap: &!h Heap, o: buffer.Buffer, v: bool) -> [heap] buffer.Buffer {
+    if v {
+        return buffer.append(heap, o, "true");
+    }
+    return buffer.append(heap, o, "false");
+}
+
+fn put_nullable[&h](heap: &!h Heap, o: buffer.Buffer, v: int, none: int) -> [heap] buffer.Buffer {
+    if v == none {
+        return buffer.append(heap, o, "null");
+    }
+    return buffer.push_nat(heap, o, v);
+}
+
+fn class_text(c: int) -> [] &static [byte] {
+    if c == 0 {
+        return "shape";
+    }
+    if c == 1 {
+        return "type report";
+    }
+    if c == 2 {
+        return "grouped single pass";
+    }
+    if c == 3 {
+        return "sorted rows";
+    }
+    return "stream rows";
+}
+
+fn function_text(f: int, mean: int) -> [] &static [byte] {
+    if f == 0 {
+        return "count";
+    }
+    if f == 1 && mean != 0 {
+        return "mean";
+    }
+    if f == 1 {
+        return "sum";
+    }
+    if f == 2 {
+        return "min";
+    }
+    if f == 3 {
+        return "max";
+    }
+    return "distinct";
+}
+
+// A literal that reads as a number: an optional sign, digits and at most one point.
+fn numeric[&d](s: &d [byte]) -> [] bool {
+    var i = 0;
+    if len(s) > 0 && (int_of(s[0]) == '-' || int_of(s[0]) == '+') {
+        i = 1;
+    }
+    var digits = 0;
+    var points = 0;
+    while i < len(s) {
+        let c = int_of(s[i]);
+        if bytes.is_digit(c) {
+            digits = digits + 1;
+        } else if c == '.' {
+            points = points + 1;
+        } else {
+            return false;
+        }
+        i = i + 1;
+    }
+    return digits > 0 && points <= 1;
+}
+
+fn rule[&h](heap: &!h Heap, o: buffer.Buffer, name: &static [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, o, ",\"");
+    b = buffer.append(heap, b, name);
+    return buffer.push(heap, b, byte_of(34));
+}
+
+fn note[&h, &d](heap: &!h Heap, o: buffer.Buffer, first: bool, sentence: &d [byte]) -> [heap] buffer.Buffer {
+    var b = o;
+    if !first {
+        b = buffer.push(heap, b, byte_of(','));
+    }
+    return text.append_json(heap, b, sentence);
+}
+
+// The document, `{"explain": {...}}`, for a plan whose header (when it has been read) has been resolved. `resolved` says that `cols` holds, for each name of the plan, the
+// column it is; `head` is the json array of the answer's columns when the plan names columns (`frame.prepare`), and `names` and `ends` the header.
+pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer) -> [heap, args] buffer.Buffer {
+    let table = spec.flag_table();
+    let reporting = query.reporting(tree);
+    let ns = query.count_of(tree, 0);
+    let nw = query.count_of(tree, 1);
+    let ng = query.count_of(tree, 2);
+    let na = query.agg_count(tree);
+    var nk = query.order_count(tree);
+    if reporting {
+        nk = 0;
+    }
+    let ordering = query.count_of(tree, 4) > 0;
+    let columns = vec.size(ends);
+    let max_rows = cli.nat(args, parsed, table, "max-rows");
+    let max_line = cli.nat(args, parsed, table, "max-line-bytes");
+    let max_bytes = cli.nat(args, parsed, table, "max-bytes");
+    let max_groups = cli.nat(args, parsed, table, "max-groups");
+    let max_distinct = cli.nat(args, parsed, table, "max-distinct");
+    let max_state = cli.nat(args, parsed, table, "max-state-bytes");
+    let max_sort = cli.nat(args, parsed, table, "max-sort-rows");
+    let requested = cli.nat(args, parsed, table, "threads");
+    let min_bytes = cli.nat(args, parsed, table, "parallel-min-bytes");
+    let form_given = cli.text(args, parsed, table, "format");
+    let text_mode = bytes.equal(form_given, "text");
+    var flagged = "";
+    if cli.has(parsed, table, "sort") {
+        flagged = cli.text(args, parsed, table, "sort");
+    }
+    var sort = query.sort_label(tree);
+    if len(flagged) > 0 {
+        sort = flagged;
+    }
+    var form = "shape";
+    if reporting {
+        form = "report";
+    } else if mode == 2 {
+        form = "groups";
+    } else if mode == 1 {
+        form = "rows";
+    }
+    // the work
+    // 0 the shape, 1 the type report, 2 groups, 3 sorted rows, 4 rows streamed
+    var class = 0;
+    if reporting {
+        class = 1;
+    } else if mode == 2 {
+        class = 2;
+    } else if ordering {
+        class = 3;
+    } else if mode == 1 {
+        class = 4;
+    }
+    let unbounded = limit >= 1000000000000000;
+    var reads = "all rows";
+    if class == 4 && !unbounded {
+        reads = "until the page is full";
+    }
+    var wanted = 0;
+    if class == 3 {
+        if limit < 100000000 {
+            wanted = from + limit + 1;
+        }
+        if top > 0 && (wanted == 0 || top < wanted) {
+            wanted = top;
+        }
+        if wanted > 0 && 2 * wanted + 1 > max_sort {
+            wanted = 0;
+        }
+    }
+    // the threads: the conditions of `read_file`, which are decided at the header
+    var effective = 1;
+    var why = "";
+    if requested > 1 {
+        let psortable = ordering && !reporting && as_csv && wanted == 0 && top == 0 && from == 0 && unbounded;
+        var row_from = from;
+        if mode == 2 || ordering {
+            row_from = 0;
+        }
+        if stdin {
+            why = "standard input is read on one core";
+        } else if mode == 0 {
+            why = "the shape is counted on one core";
+        } else if ordering && !reporting && !psortable {
+            why = "--order-by sorts on one core, except a whole sort written as csv";
+        } else if mode != 2 && row_from != 0 {
+            why = "--from on a selection: the rows before it are skipped one by one";
+        } else if size - consumed < min_bytes || size - consumed <= 0 {
+            why = "the file after the header is under --parallel-min-bytes";
+        } else {
+            effective = requested;
+        }
+    }
+    // what the data could still refuse
+    var has_int = false;
+    var has_dec = false;
+    var has_float = false;
+    var float_sum = false;
+    var distinct = false;
+    var typed = 0;
+    var k = 0;
+    while k < nw {
+        let t = query.cond_at(tree, k, 1);
+        if t == 1 {
+            has_int = true;
+        } else if t == 21 {
+            has_float = true;
+        } else if t >= 2 {
+            has_dec = true;
+        }
+        if t != 0 {
+            typed = typed + 1;
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < na {
+        let f = query.agg_at(tree, k, 0);
+        let t = query.agg_at(tree, k, 2);
+        if f == 4 {
+            distinct = true;
+        }
+        if f != 0 {
+            if t == 1 {
+                has_int = true;
+            } else if t == 21 {
+                has_float = true;
+                if f == 1 {
+                    float_sum = true;
+                }
+            } else if t >= 2 {
+                has_dec = true;
+            }
+            if t != 0 {
+                typed = typed + 1;
+            }
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < ng {
+        let t = query.gkind_at(tree, k);
+        if t == 1 {
+            has_int = true;
+        } else if t == 21 {
+            has_float = true;
+        } else if t >= 2 {
+            has_dec = true;
+        }
+        if t != 0 {
+            typed = typed + 1;
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < nk {
+        let t = query.order_flags(tree, k) / 2;
+        if t == 1 {
+            has_int = true;
+        } else if t == 21 {
+            has_float = true;
+        } else if t >= 2 {
+            has_dec = true;
+        }
+        if t != 0 {
+            typed = typed + 1;
+        }
+        k = k + 1;
+    }
+    var o = buffer.empty(heap, 2048);
+    o = buffer.append(heap, o, "{\"explain\":{\"source\":{\"kind\":");
+    if stdin {
+        o = buffer.append(heap, o, "\"stdin\",\"path\":\"-\",\"reader\":\"blocks\"");
+    } else {
+        o = buffer.append(heap, o, "\"file\",\"path\":");
+        o = text.append_json(heap, o, shown);
+        o = buffer.append(heap, o, ",\"reader\":\"file\"");
+    }
+    o = buffer.append(heap, o, ",\"block_bytes\":65536,\"format\":\"csv\",\"delimiter\":");
+    if delim == 9 {
+        o = buffer.append(heap, o, "\"\\t\"");
+    } else {
+        o = buffer.append(heap, o, "\"");
+        o = buffer.push(heap, o, byte_of(delim));
+        o = buffer.append(heap, o, "\"");
+    }
+    o = buffer.append(heap, o, ",\"size\":");
+    if stdin || size < 0 {
+        o = buffer.append(heap, o, "null");
+    } else {
+        o = buffer.push_nat(heap, o, size);
+    }
+    o = buffer.append(heap, o, ",\"header_read\":");
+    o = put_bool(heap, o, got);
+    o = buffer.append(heap, o, ",\"columns\":");
+    if got {
+        o = buffer.push_nat(heap, o, columns);
+    } else {
+        o = buffer.append(heap, o, "null");
+    }
+    o = buffer.append(heap, o, ",\"bytes_read\":");
+    o = buffer.push_nat(heap, o, bytes_read);
+    // the plan
+    o = buffer.append(heap, o, "},\"plan\":{\"form\":\"");
+    o = buffer.append(heap, o, form);
+    o = buffer.append(heap, o, "\",\"select\":[");
+    k = 0;
+    while k < ns {
+        if k > 0 {
+            o = buffer.push(heap, o, byte_of(','));
+        }
+        o = put_column(heap, o, tree, k, resolved, cols, names, ends);
+        k = k + 1;
+    }
+    o = buffer.append(heap, o, "],\"where\":[");
+    k = 0;
+    while k < nw {
+        if k > 0 {
+            o = buffer.push(heap, o, byte_of(','));
+        }
+        let kind = query.cond_at(tree, k, 0);
+        o = buffer.append(heap, o, "{\"column\":");
+        o = put_column(heap, o, tree, query.cond_at(tree, k, 3), resolved, cols, names, ends);
+        o = buffer.append(heap, o, ",\"type\":");
+        o = put_type(heap, o, query.cond_at(tree, k, 1));
+        o = buffer.append(heap, o, ",\"op\":\"");
+        if kind == 1 {
+            o = buffer.append(heap, o, "contains");
+        } else if kind == 2 {
+            o = buffer.append(heap, o, "in");
+        } else {
+            o = buffer.append(heap, o, op_text(query.cond_at(tree, k, 2)));
+        }
+        o = buffer.append(heap, o, "\",\"values\":[");
+        let first = query.cond_at(tree, k, 4);
+        let many = query.cond_at(tree, k, 5);
+        var l = 0;
+        while l < many {
+            if l > 0 {
+                o = buffer.push(heap, o, byte_of(','));
+            }
+            o = text.append_json(heap, o, query.lit_bytes(tree, first + l));
+            l = l + 1;
+        }
+        o = buffer.append(heap, o, "]}");
+        k = k + 1;
+    }
+    o = buffer.append(heap, o, "],\"group\":[");
+    k = 0;
+    while k < ng {
+        if k > 0 {
+            o = buffer.push(heap, o, byte_of(','));
+        }
+        o = buffer.append(heap, o, "{\"column\":");
+        o = put_column(heap, o, tree, ns + nw + k, resolved, cols, names, ends);
+        o = buffer.append(heap, o, ",\"type\":");
+        o = put_type(heap, o, query.gkind_at(tree, k));
+        o = buffer.push(heap, o, byte_of('}'));
+        k = k + 1;
+    }
+    o = buffer.append(heap, o, "],\"aggregates\":[");
+    if mode == 2 {
+        k = 0;
+        while k < na {
+            if k > 0 {
+                o = buffer.push(heap, o, byte_of(','));
+            }
+            let f = query.agg_at(tree, k, 0);
+            let at = query.agg_at(tree, k, 1);
+            let mean = query.agg_at(tree, k, 3);
+            o = buffer.append(heap, o, "{\"function\":\"");
+            o = buffer.append(heap, o, function_text(f, mean));
+            o = buffer.append(heap, o, "\",\"column\":");
+            if f == 0 {
+                o = buffer.append(heap, o, "null,\"type\":null");
+            } else {
+                o = put_column(heap, o, tree, at, resolved, cols, names, ends);
+                o = buffer.append(heap, o, ",\"type\":");
+                o = put_type(heap, o, query.agg_at(tree, k, 2));
+            }
+            o = buffer.append(heap, o, ",\"scale\":");
+            if mean == 0 || mean == 100 {
+                o = buffer.append(heap, o, "null");
+            } else {
+                o = buffer.push_nat(heap, o, mean - 1);
+            }
+            o = buffer.push(heap, o, byte_of('}'));
+            k = k + 1;
+        }
+    }
+    o = buffer.append(heap, o, "],\"order_by\":[");
+    k = 0;
+    while k < nk {
+        if k > 0 {
+            o = buffer.push(heap, o, byte_of(','));
+        }
+        let flags = query.order_flags(tree, k);
+        o = buffer.append(heap, o, "{\"column\":");
+        o = put_column(heap, o, tree, query.order_name(tree, k), resolved, cols, names, ends);
+        o = buffer.append(heap, o, ",\"type\":");
+        o = put_type(heap, o, flags / 2);
+        o = buffer.append(heap, o, ",\"descending\":");
+        o = put_bool(heap, o, flags % 2 == 1);
+        o = buffer.push(heap, o, byte_of('}'));
+        k = k + 1;
+    }
+    o = buffer.append(heap, o, "],\"sort\":");
+    if len(sort) > 0 {
+        o = text.append_json(heap, o, sort);
+    } else {
+        o = buffer.append(heap, o, "null");
+    }
+    o = buffer.append(heap, o, ",\"top\":");
+    o = put_nullable(heap, o, top, 0);
+    o = buffer.append(heap, o, ",\"limit\":");
+    if mode == 0 || unbounded {
+        o = buffer.append(heap, o, "null");
+    } else {
+        o = buffer.push_nat(heap, o, limit);
+    }
+    o = buffer.append(heap, o, ",\"from\":");
+    o = buffer.push_nat(heap, o, from);
+    // the answer
+    o = buffer.append(heap, o, "},\"output\":{\"format\":\"");
+    if as_csv {
+        o = buffer.append(heap, o, "csv");
+    } else if text_mode {
+        o = buffer.append(heap, o, "text");
+    } else {
+        o = buffer.append(heap, o, "json");
+    }
+    o = buffer.append(heap, o, "\",\"columns\":");
+    if stdin {
+        o = buffer.append(heap, o, "null");
+    } else if mode == 0 {
+        o = buffer.push(heap, o, byte_of('['));
+        k = 0;
+        while k < columns {
+            if k > 0 {
+                o = buffer.push(heap, o, byte_of(','));
+            }
+            o = text.append_json(heap, o, finish.name_of(names, ends, k));
+            k = k + 1;
+        }
+        o = buffer.push(heap, o, byte_of(']'));
+    } else {
+        o = buffer.append(heap, o, buffer.bytes(head));
+    }
+    // the work
+    o = buffer.append(heap, o, "},\"work\":{\"class\":\"");
+    o = buffer.append(heap, o, class_text(class));
+    o = buffer.append(heap, o, "\",\"reads\":\"");
+    o = buffer.append(heap, o, reads);
+    o = buffer.append(heap, o, "\",");
+    if class == 3 {
+        o = buffer.append(heap, o, "\"rows_held\":");
+        o = put_nullable(heap, o, wanted, 0);
+        o = buffer.push(heap, o, byte_of(','));
+    }
+    o = buffer.append(heap, o, "\"bounds\":{\"max_rows\":");
+    o = buffer.push_nat(heap, o, max_rows);
+    o = buffer.append(heap, o, ",\"max_line_bytes\":");
+    o = buffer.push_nat(heap, o, max_line);
+    if mode != 0 && !as_csv {
+        o = buffer.append(heap, o, ",\"max_bytes\":");
+        o = buffer.push_nat(heap, o, max_bytes);
+    }
+    if class == 2 {
+        o = buffer.append(heap, o, ",\"max_groups\":");
+        o = buffer.push_nat(heap, o, max_groups);
+        if distinct {
+            o = buffer.append(heap, o, ",\"max_distinct\":");
+            o = buffer.push_nat(heap, o, max_distinct);
+        }
+    }
+    if class == 3 {
+        o = buffer.append(heap, o, ",\"max_sort_rows\":");
+        o = buffer.push_nat(heap, o, max_sort);
+    }
+    if class == 2 || class == 3 || class == 1 {
+        o = buffer.append(heap, o, ",\"max_state_bytes\":");
+        o = buffer.push_nat(heap, o, max_state);
+    }
+    o = buffer.append(heap, o, "},\"threads\":{\"requested\":");
+    o = buffer.push_nat(heap, o, requested);
+    o = buffer.append(heap, o, ",\"effective\":");
+    o = buffer.push_nat(heap, o, effective);
+    o = buffer.append(heap, o, ",\"reason\":");
+    if len(why) > 0 {
+        o = text.append_json(heap, o, why);
+    } else {
+        o = buffer.append(heap, o, "null");
+    }
+    // the refusals the data could still raise
+    o = buffer.append(heap, o, "}},\"refusals\":{\"possible\":[\"io.read-failed\"");
+    o = rule(heap, o, "parse.csv-ragged-row");
+    o = rule(heap, o, "parse.csv-bad-quote");
+    o = rule(heap, o, "parse.csv-unterminated-quote");
+    o = rule(heap, o, "limit.line-too-long");
+    if mode != 0 {
+        o = rule(heap, o, "limit.record-too-large");
+    }
+    if !got {
+        o = rule(heap, o, "limit.header-too-large");
+        if ns > 0 {
+            o = rule(heap, o, "select.unknown-column");
+            o = rule(heap, o, "select.ambiguous-column");
+        }
+        if nw + ng + na + nk > 0 {
+            o = rule(heap, o, "column.unknown");
+            o = rule(heap, o, "column.ambiguous");
+        }
+        if typed > 1 {
+            o = rule(heap, o, "column.type-conflict");
+        }
+        if len(sort) > 0 {
+            o = rule(heap, o, "sort.unknown-key");
+        }
+    }
+    if has_int {
+        o = rule(heap, o, "value.not-integer");
+        o = rule(heap, o, "value.integer-overflow");
+    }
+    if has_dec {
+        o = rule(heap, o, "value.not-decimal");
+        o = rule(heap, o, "value.decimal-scale");
+        o = rule(heap, o, "value.decimal-too-wide");
+    }
+    if has_float {
+        o = rule(heap, o, "value.not-float");
+        o = rule(heap, o, "value.not-finite");
+        o = rule(heap, o, "value.float-range");
+        o = rule(heap, o, "limit.number-too-long");
+    }
+    if float_sum {
+        o = rule(heap, o, "agg.float-overflow");
+    }
+    if as_csv || ordering {
+        o = rule(heap, o, "limit.too-many-rows");
+    }
+    if mode != 0 && !as_csv {
+        o = rule(heap, o, "limit.output-too-large");
+    }
+    if class == 2 {
+        o = rule(heap, o, "limit.too-many-groups");
+        if distinct {
+            o = rule(heap, o, "limit.too-many-distinct");
+        }
+    }
+    if class == 3 {
+        o = rule(heap, o, "limit.too-many-sort-rows");
+    }
+    if class == 2 || class == 3 || class == 1 {
+        o = rule(heap, o, "limit.state-too-large");
+    }
+    // notes: advice, not refusals
+    o = buffer.append(heap, o, "]},\"notes\":[");
+    var first_note = true;
+    k = 0;
+    while k < nw {
+        if query.cond_at(tree, k, 0) == 0 && query.cond_at(tree, k, 1) == 0 && query.cond_at(tree, k, 2) >= 2 && query.cond_at(tree, k, 5) == 1 && numeric(query.lit_bytes(tree, query.cond_at(tree, k, 4))) {
+            var sentence = spelled(heap, tree, query.cond_at(tree, k, 3));
+            sentence = buffer.append(heap, sentence, " is compared as text with ");
+            sentence = buffer.append(heap, sentence, op_text(query.cond_at(tree, k, 2)));
+            sentence = buffer.append(heap, sentence, ", byte by byte, so 10 comes before 9: declare the column :int, :dec(S) or :float where the plan names it to compare numbers");
+            borrow sentence as &sr in {
+                o = note(heap, o, first_note, buffer.bytes(sr));
+            }
+            buffer.drop(heap, sentence);
+            first_note = false;
+        }
+        k = k + 1;
+    }
+    if stdin {
+        o = note(heap, o, first_note, "standard input is not read by --explain: its header is unknown, so the columns are not resolved and a name the header lacks is not reported");
+        first_note = false;
+        if requested > 1 {
+            o = note(heap, o, first_note, "--threads has no effect on standard input: it is read on one core, in blocks");
+        }
+    }
+    if class == 3 && wanted == 0 {
+        var sentence = buffer.append(heap, buffer.empty(heap, 128), "--order-by holds all the rows it keeps, up to --max-sort-rows (");
+        sentence = buffer.push_nat(heap, sentence, max_sort);
+        sentence = buffer.append(heap, sentence, "): add --top N, or a smaller --limit, to keep a window of them");
+        borrow sentence as &sr in {
+            o = note(heap, o, first_note, buffer.bytes(sr));
+        }
+        buffer.drop(heap, sentence);
+        first_note = false;
+    }
+    o = buffer.append(heap, o, "]}}");
+    return o;
+}
+
+// `--explain` for an input that is open: the header is read (a file) and resolved, a refusal of the run is the refusal, and otherwise the document. `opened` is closed here.
+pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, opened: File, stdin: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree0: query.Query, names_at: int, errs: fail.Errors, payload0: buffer.Buffer) -> [heap, args] (query.Query, fail.Errors, buffer.Buffer) {
+    let table = spec.flag_table();
+    var e = errs;
+    var file = opened;
+    var payload = payload0;
+    var size = -1;
+    var head = Head { names: buffer.empty(heap, 1), ends: vec.empty(heap, 1, 0), got: false, abort: 0, abort_line: 0, long_length: 0, errno: 0, consumed: 0, bytes_read: 0 };
+    if !stdin {
+        let Head { names, ends, got, abort, abort_line, long_length, errno, consumed, bytes_read } = head;
+        buffer.drop(heap, names);
+        vec.drop(heap, ends);
+        let cap = cli.nat(args, parsed, table, "max-line-bytes");
+        borrow mut file as &!handle in {
+            head = read_head(heap, handle, cap, delim, mode);
+            match file_size(handle) {
+                Done::Ok(n) => {
+                    size = n;
+                }
+                Done::Failed(reason) => {
+                    size = -1;
+                }
+            }
+        }
+    }
+    file_close(file);
+    let Head { names, ends, got, abort, abort_line, long_length, errno, consumed, bytes_read } = head;
+    var flagged = "";
+    if cli.has(parsed, table, "sort") {
+        flagged = cli.text(args, parsed, table, "sort");
+    }
+    var made = frame.none(heap);
+    var abort_now = abort;
+    var bad = 0;
+    if got && mode != 0 {
+        frame.drop(heap, made);
+        borrow tree0 as &tq in {
+            borrow names as &nr in {
+                borrow ends as &er in {
+                    made = frame.prepare(heap, tq, nr, er, vec.size(er), mode, delim, flagged);
+                }
+            }
+        }
+        borrow made as &mr in {
+            if mr.fabort != 0 {
+                abort_now = mr.fabort;
+                bad = mr.fbad;
+            }
+        }
+    }
+    let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
+    var ncols = 0;
+    borrow ends as &er in {
+        ncols = vec.size(er);
+    }
+    let counted = finish.Counts { columns: ncols, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: abort_now, abort_line: abort_line, long_length: long_length, emitted: 0, more: false, next: 0, bad_name: bad, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+    let none = buffer.empty(heap, 1);
+    borrow tree0 as &tq in {
+        borrow names as &nr in {
+            borrow ends as &er in {
+                borrow flabels as &lr in {
+                    borrow flends as &le in {
+                        borrow none as &kr in {
+                            e = finish.explain(heap, args, parsed, tq, nr, er, lr, le, kr, counted, shown, names_at, errno, as_csv, budget, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, none);
+    var refused = false;
+    borrow e as &er in {
+        refused = fail.count(er) > 0;
+    }
+    if !refused {
+        var reporting = false;
+        borrow tree0 as &tq in {
+            reporting = query.reporting(tq);
+        }
+        var shown_head = fhead;
+        if mode != 0 && got {
+            shown_head = finish.report_head(heap, reporting, shown_head);
+        }
+        borrow tree0 as &tq in {
+            borrow fcols as &cr in {
+                borrow names as &nr in {
+                    borrow ends as &er in {
+                        borrow shown_head as &hr in {
+                            buffer.drop(heap, payload);
+                            payload = document(heap, args, parsed, tq, stdin, shown, delim, mode, as_csv, from, limit, top, size, got, consumed, bytes_read, got && mode != 0, contents(cr), nr, er, hr);
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, shown_head);
+    } else {
+        buffer.drop(heap, fhead);
+    }
+    unbox_slice(heap, fcols);
+    unbox_slice(heap, fsel);
+    unbox_slice(heap, fcells);
+    buffer.drop(heap, flead);
+    buffer.drop(heap, flabels);
+    vec.drop(heap, flends);
+    buffer.drop(heap, names);
+    vec.drop(heap, ends);
+    return (tree0, e, payload);
+}

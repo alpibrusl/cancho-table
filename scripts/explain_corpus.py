@@ -63,21 +63,31 @@ def main():
                     if good:
                         d = json.loads(x[1])
                         good = list(d["data"]) == ["explain"] and d["data"]["explain"]["source"]["header_read"]
-                    if good and fmt == []:
-                        # the real run's columns (json runs only; a csv run writes its header line, which is the same names)
-                        real = subprocess.run([str(table), *base, *plan, *fmt, *extra, *var, path.name], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                        rd = json.loads(real.stdout)
-                        if rd.get("ok"):
+                    if good:
+                        # the columns of the real answer: a json run's data.columns, a csv run's header line (the run is stopped after it)
+                        want = d["data"]["explain"]["output"]["columns"]
+                        argv = [str(table), *base, *plan, *fmt, *extra, *var, path.name]
+                        if fmt == []:
+                            real = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            rd = json.loads(real.stdout)
+                            if rd.get("ok"):
+                                columns += 1
+                                good = rd["data"]["columns"] == want
+                        else:
+                            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            first = proc.stdout.readline().decode().rstrip("\n")
+                            proc.kill()
+                            proc.wait()
                             columns += 1
-                            good = rd["data"]["columns"] == d["data"]["explain"]["output"]["columns"]
+                            good = first.split(",") == want
                     if not good:
                         differ += 1
                         print("DIFFERENT %s %s\n  flags: %r\n  query: %r" % (key, plan, x[:2] + (x[2][:200],), y[:2] + (y[2][:200],)), file=sys.stderr)
     if not a.quiet or differ:
-        print("explain corpus: %d runs explained as flags and as a query, %d different, %d plans skipped (file missing), %d compared with the real answer's columns" % (ran, differ, skipped, columns))
-    if not skipped and ran != 166 and not need:
-        pass
-    if need and ran != 166:
+        print("explain corpus: %d runs explained as flags and as a query, %d different, %d plans skipped (file missing), %d compared with the columns of the real answer (json runs: data.columns; csv runs: the header line)" % (ran, differ, skipped, columns))
+    if not ran:
+        return 2
+    if need >= set(corpus.PLANS) and ran != 166:
         print("expected 166 runs, ran %d" % ran, file=sys.stderr)
         return 2
     return 1 if differ else 0
