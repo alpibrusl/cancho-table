@@ -595,6 +595,20 @@ class Document(Base):
         self.assertEqual(cls("--order-by", "a:int", "--top", "3")["rows_held"], 3)
         self.assertIsNone(cls("--order-by", "a:int", "--format", "csv")["rows_held"])
         self.assertEqual(cls("--order-by", "a:int")["bounds"]["max_sort_rows"], 1000000)
+        # a window that would not fit twice in --max-sort-rows is not one (the sort holds them all, and refuses past the bound)
+        held = lambda sort_rows: cls("--order-by", "a:int", "--limit", "10", "--max-sort-rows", str(sort_rows))["rows_held"]
+        self.assertEqual([held(n) for n in (22, 23, 24, 30)], [None, 11, 11, 11])
+        # the bounds in force: the keys of each plan's
+        keys = lambda *f: sorted(cls(*f)["bounds"])
+        common = ["max_line_bytes", "max_rows"]
+        self.assertEqual(keys(), common)
+        self.assertEqual(keys("--select", "a"), sorted(common + ["max_bytes"]))
+        self.assertEqual(keys("--select", "a", "--format", "csv"), common)
+        self.assertEqual(keys("--group", "a"), sorted(common + ["max_bytes", "max_groups", "max_state_bytes"]))
+        self.assertEqual(keys("--group", "a", "--agg", "distinct:b", "--format", "csv"), sorted(common + ["max_distinct", "max_groups", "max_state_bytes"]))
+        self.assertEqual(keys("--order-by", "a"), sorted(common + ["max_bytes", "max_sort_rows", "max_state_bytes"]))
+        self.assertEqual(keys("--report", "types"), sorted(common + ["max_bytes", "max_state_bytes"]))
+        self.assertEqual(cls("--select", "a", "--max-rows", "5", "--max-line-bytes", "99", "--max-bytes", "77")["bounds"], {"max_rows": 5, "max_line_bytes": 99, "max_bytes": 77})
 
     def test_types_are_what_the_plan_reads(self):
         e = explain_of(self.x("--where", "a:dec(2) > 1 and b = x and c:float < 3", "--group", "a:dec(2)", "--agg", "sum:a:dec(2),mean:a:dec(2),min:c:float,distinct:b"))
