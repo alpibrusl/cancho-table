@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_jsonl_out", "test_report", "test_rules", "test_authority"]
+TESTS = ["test_jsonl_out", "test_jsonl_out_more", "test_report", "test_rules", "test_authority"]
 
 ROW = "        let to = sel[picked + 2 + j];\n        o = buffer.append(heap, o, tmpl[from..to]);\n        from = to;\n        let at = 3 * sel[j];\n        o = writer.json_cell(heap, o, record, cells[at], cells[at + 1], cells[at + 2]);\n        j = j + 1;\n    }\n    o = buffer.push(heap, o, byte_of(125));\n    return buffer.push(heap, o, byte_of(10));\n}\n"
 
@@ -40,7 +40,6 @@ MUTANTS = [
     ("a name twice is accepted", "jout.cho", "            if found >= 0 {", "            if found >= 1000000000 {"),
     ("a name that is not UTF-8 is accepted", "jout.cho", "        if !text.is_utf8(name) {", "        if false {"),
     ("a name twice is refused as not representable", "jout.cho", "                status = 60;", "                status = 61;"),
-    ("the second name of a pair is not the one named", "jout.cho", "                status = 60;\n                at = m;", "                status = 60;\n                at = 0;"),
     ("the key text is read from the wrong place", "jout.cho", "                        o[picked + 2 + n + k] = int_of(text_bytes[k]);", "                        o[picked + 2 + n + k] = int_of(text_bytes[0]);"),
     ("the ends of the fragments are shifted", "jout.cho", "                                o[picked + 2 + k] = vec.get(er3, k);", "                                o[picked + 2 + k] = vec.get(er3, k) + 1;"),
     # who is told
@@ -54,7 +53,7 @@ MUTANTS = [
     ("JSON lines groups are written as csv", "finish.cho", "} else if as_csv && a[engine.k_jsonl()] != 0 {\n                                borrow row", "} else if as_csv && a[engine.k_jsonl()] == 7 {\n                                borrow row"),
     ("JSON lines groups are not counted for the page", "finish.cho", "                                a[engine.k_emitted()] = a[engine.k_emitted()] + 1;\n                                var held3 = 0;", "                                var held3 = 0;"),
     ("the type report is written as csv", "finish.cho", "} else if as_csv && a[engine.k_jsonl()] != 0 {\n                pending = report.put_object", "} else if as_csv && a[engine.k_jsonl()] == 7 {\n                pending = report.put_object"),
-    ("a group page is not cut for JSON lines", "finish.cho", "                                    if !ok {\n                                        a[engine.k_abort()] = 9;\n                                        going = false;\n                                    }\n                                }\n                                pos = pos + 1;\n                            } else if as_csv {", "                                    if !ok {\n                                        a[engine.k_abort()] = 9;\n                                    }\n                                }\n                                pos = pos + 1;\n                            } else if as_csv {"),
+    # (Not here: the `going = false` after a failed write of the groups' block. It survives and is equivalent: the abort code 9 is set before it and nothing else reads `going` once the groups are written.)
     # the plan
     ("the budget is not set for JSON lines", "table.cho", "        budget = -1;\n", "        budget = budget;\n"),
     ("jsonl is not a streamed format", "table.cho", '    let as_csv = bytes.equal(form, "csv") || jsonl_out;\n    let has_select', '    let as_csv = bytes.equal(form, "csv");\n    let has_select'),
@@ -68,10 +67,9 @@ MUTANTS = [
     ("a type report row has no key", "report.cho", "            o = text.append_json(heap, o, all[key_start..key_end]);\n            o = buffer.push(heap, o, byte_of(':'));", "            o = buffer.push(heap, o, byte_of(':'));"),
     ("a type report row is not closed", "report.cho", "    buffer.drop(heap, page);\n    return buffer.push(heap, o, byte_of('}'));", "    buffer.drop(heap, page);\n    return o;"),
     ("the second value of a type report row is lost", "report.cho", "            if int_of(a[p]) == ',' {\n                p = p + 1;\n            }\n            k = k + 1;", "            if int_of(a[p]) == ',' {\n                p = p + 2;\n            }\n            k = k + 1;"),
-    # the refusal's rules
+    # the refusal's rules (Not here: the `first`/`second` of the detail and the column it names: a refusal of JSON lines is a sentence on standard error, which carries no detail, so no surface shows them)
     ("the rule of a name twice is not in the catalogue", "finish.cho", ";output.duplicate-column|2|never|", ";output.duplicate-colum|2|never|"),
     ("the rule of a name twice exits 8", "finish.cho", ";output.duplicate-column|2|never|", ";output.duplicate-column|8|never|"),
-    ("the second place of a name twice is the first", "finish.cho", '    w = fail.detail_int(heap, w, "second", at + 1);', '    w = fail.detail_int(heap, w, "second", at);'),
 ]
 
 if __name__ == "__main__":

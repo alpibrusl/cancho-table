@@ -265,16 +265,18 @@ class Surface(Gated):
     def test_explain_of_a_plan_the_run_refuses_before_a_row(self):
         self.s.write("t.csv", b"a,b,c\n1,2,3\n")
         got = run("--explain", "--select", "a,a", "--format", "jsonl", "t.csv", cwd=str(self.s.dir))
-        # the explanation of a plan the run refuses is either the document (naming the rule among the refusals) or the refusal itself, never rows
-        self.assertIn(got.status, (0, 2), got.stdout[:300])
-        if got.status == 0:
-            doc = got.doc()
-            self.assertEqual(doc["data"]["explain"]["output"]["format"], "jsonl")
-            self.assertIn("output.duplicate-column", json.dumps(doc))
-        elif got.stdout:
-            self.assertEqual(got.doc()["error"]["rule"], "output.duplicate-column")
-        else:
-            self.assertEqual(rule_of(got.stderr), "output.duplicate-column")
+        # the plan the run refuses before a row is refused by --explain as the run refuses it: a sentence on standard error, as for csv, and nothing on standard output
+        self.assertEqual((got.status, got.stdout), (2, b""))
+        self.assertEqual(rule_of(got.stderr), "output.duplicate-column")
+        got = run("--explain", "--select", "a,b", "--format", "jsonl", "t.csv", cwd=str(self.s.dir))
+        self.assertEqual(got.status, 0)
+
+    def test_a_plan_with_no_columns_names_the_format_it_was_asked_for(self):
+        self.s.write("t.csv", b"a,b,c\n1,2,3\n")
+        for fmt in ("jsonl", "csv"):
+            got = run("--format", fmt, "t.csv", cwd=str(self.s.dir))
+            self.assertEqual((got.status, rule_of(got.stderr)), (2, "args.required-flag"))
+            self.assertIn("--format " + fmt, got.stderr.decode())
 
     def test_the_query_form_and_the_other_flags_work_with_jsonl_as_with_csv(self):
         self.s.write("t.csv", b"k,n\na,1\nb,22\nc,3\n")
