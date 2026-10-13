@@ -467,6 +467,33 @@ tool an empty input, and a fuzz that is vacuous until the property exists, so it
 | the tests of `test_mcp.py` | 43 tests; four of them held the old surface (`file` required, no `stdin`, three flags, the rules list) and were edited for it, §12.6 |
 | the tool is the same | `tools/table` and `generated/table` untouched; the binary is the same bytes as `main`'s; the corpus of 166 plans (`scripts/corpus.py`) has the same md5; the instruction-count gate (`gate_regress.py --counter`, bound 1.01) against `main` |
 | authority | every label, `bounded` and the foreign symbols of the row are `main`'s (compared by a script, §12.6); `scripts/mcp.py --check` (the ceiling) passes |
-| mutants | 24 new in `scripts/mcp_mutants.py` (and one retargeted), real run on `gram` |
+| mutants | 24 new in `scripts/mcp_mutants.py` (and one removed: it pinned the old rule), real run on `gram` |
 | generated files | `scripts/mcp.py --check`, `schemas.py --check`, `manifest.py --check`, `site.py --check`, `seo_check.py`, `stream.py --check`, every `*_mutants.py --check`, `cancho fmt --check` |
+
+### 12.6 What was measured
+
+Conditions: Mac = arm64, macOS (Darwin 25.2), compiler `e47d647` (the pin); gram = Linux x86-64, 16 cores shared with other jobs (load average 4 to 6 during the
+runs), work niced and pinned to cores 0 to 5, `perf_event_paranoid` 4 (not changed). Head of the branch `mcp-stdin` on `c6b010e`.
+
+| item | result |
+|---|---|
+| `test_mcp_stdin.py` before the code | 26 tests, 23 failed against `main`'s server |
+| `test_mcp_stdin.py` after | 26 of 26 pass: Mac 10 s; gram, with `test_mcp.py`, 69 tests in 57 s |
+| `test_mcp.py` (43 tests) against the new server | 38 pass untouched. 4 are edited, each because it held the old surface: `test_tools_list_is_what_introspect_says` (the property set, `file`'s description, `required` is now empty), `test_introspect` (the flag, the limit, the usage line), `test_every_rule_it_lists_is_one_it_says_and_every_one_it_says_is_listed` (the three new rules are provoked), `test_the_generator_refuses_what_would_be_false` (`file\|0\|1`, `stdin` is `text`, and a tool that does not read standard input keeps `file` required). `test_the_mutants_still_apply` passes once the mutant list is current |
+| the whole suite | Mac: 539 tests OK, 10 skipped, 632 s |
+| corpus of 166 plans (`scripts/corpus.py`) | md5 `fccb01b66dd7518d74611219a6c5aa29` on `main`'s binary and on this branch's: the md5 recorded in docs/readers.md section 11, and the two binaries are the same bytes on the Mac (`cmp`). The sources of the tool are untouched, so this is a check that nothing else moved |
+| instruction counts (`gate_regress.py --counter`, bound 1.01, 42 cells, 3 builds a side) | Mac: **PASS**, ratios 0.998 to 1.003, spread under 0.5 percent. The six builds are the same bytes (one md5) on the Mac, so the ratios are the counter's run-to-run noise, not layout; the gate was shown to fail on the same builds when its bound was set to 0.99 (a control of the arithmetic, not of a real regression: `test_gate_regress.py` is the gate's own test) |
+| clock form on gram (the counter is unavailable there) | **FAIL as a gate, and the failure is the control's.** Clock form (`gate_regress.py` without `--counter`, 21 runs, bound 1.02, 3 builds a side of `main` and of the branch, cores 0 to 5, niced, other jobs running): 8 of 42 cells over 1.02, ratios 0.934 to 1.061, spreads up to 20 percent (a build "off"). **The two sides are builds of the same tool sources** (`tools/table` and `generated/table` are byte for byte `main`'s; the six Linux builds are six different binaries, so this is layout alone), so the gate fails its own control, as docs/numbers.md G6 says it does on both machines, and says nothing about this change either way. The evidence for "the file path is not slower" is the diff (empty for the tool) and the Mac counter above; gram's counter was not available (`perf_event_paranoid` 4, left as it was) |
+| mutants (`mcp_mutants.py`, real run on gram, nice, cores 0 to 5) | **90 of 90 killed** on the first run (unmutated pass first): the 66 that remain of the 67 (one, which pinned the old rule that the operand is required of the caller, is replaced) and 24 new, which are the pair check (3), the `-` operand, the text reaching the child, the bound (one more, one less, not the flag's, not enforced, no limit named, the wrong hint, the wrong rule, the flag setting the output bound, zero accepted, the default), and the generator (not offered, not a text, `minLength`, the operand required again, its description, the default). `--check` of the 16 mutant scripts passes |
+| authority | every label, `bounded` and `foreign_symbols` of `manifests/mcp.authority.json` equal to `main`'s (checked by a script: `labels` equal, 11 labels); the file differs in its `pure` list (`default_input`, `hint_input`) and `functions` (182 to 184). `scripts/mcp.py --check` (ceiling) passes |
+| generated files | `mcp.py`, `schemas.py`, `manifest.py`, `site.py`, `stream.py --check`, `seo_check.py`, `cancho fmt --check tools generated`: pass (Mac) |
+| cost of the text (informational, Mac) | a 1 MiB table, 30 calls in a session, the minimum of 5 sessions: `agg count` 8.8 ms by `file`, 34.5 ms by `stdin`; `select a limit 1` 2.2 ms and 27.6 ms. About 25 to 30 ms a MiB more by `stdin`, of which the parse of the request line, the decoding and the pipe (8 KiB on macOS) are not separated. gram not measured |
+
+**Found while building.** `main` did not enforce `required`: `{}` (no `file`) reached the tool and was answered with the empty table. The new pair check closes it
+for this tool (§12.1). The JSON parser of the server already refuses invalid UTF-8 and lone surrogates; the property needed no check of its own for text.
+
+**Not measured.** A client that really sends `stdin` (Claude Code or another: the transcript of §9 has no such call); the server's memory for an input of 1 MiB
+(or of the 4 MiB the line allows); gram's timings of the text's cost; Windows; the cost of `--threads` with an input (the tool uses one core for a pipe,
+docs/readers.md section 3.2, and that was not repeated here); an input whose decoded size is between the bound and the line limit on a slow client. The default
+of 1 MiB is a judgement.
 
