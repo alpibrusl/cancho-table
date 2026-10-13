@@ -65,8 +65,8 @@ jobs:
         working-directory: table
         run: cancho build
 
-      # The six numeric modules are published as stores another repository pins (docs/numeric-package.md): a fresh publish with the pinned
-      # compiler must give the committed .cancho-vcs byte for byte.
+      # The six numeric modules (pow5, dec, flt, cellnum, facc, reader) are published as stores another repository pins (docs/numeric-package.md): a fresh publish with the pinned
+      # compiler must give the committed .cancho-vcs byte for byte, and no published module may be the table's plan.
       - name: The committed numeric stores are what the sources publish
         working-directory: table
         run: python3 scripts/publish_numeric.py --check

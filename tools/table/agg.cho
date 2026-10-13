@@ -39,6 +39,7 @@ import gmap;
 import facc;
 import flt;
 import plan;
+import cellnum;
 import query;
 import toolbox.text;
 import writer;
@@ -592,7 +593,7 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
                     v = v2;
                     bad = bad2;
                 } else {
-                    let (v2, bad2) = query.parse_int(record[cells[3 * column]..cells[3 * column + 1]]);
+                    let (v2, bad2) = cellnum.parse_int(record[cells[3 * column]..cells[3 * column + 1]]);
                     v = v2;
                     bad = 0;
                     if bad2 != 0 {
@@ -1055,7 +1056,7 @@ pub fn put_row_csv[&o, &g, &q](out: &!o buffer.Buffer, g: &g Groups, tree: &q qu
         } else if function != 0 {
             v = vec.get(g.acc, x * g.stride + 1 + k);
         }
-        if v == query.int_min() {
+        if v == cellnum.int_min() {
             return 0 - 1;
         }
         at = put_digits(room, at, v);
@@ -1070,7 +1071,7 @@ fn append_int[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.B
     if v >= 0 {
         return buffer.push_nat(heap, out, v);
     }
-    if v == query.int_min() {
+    if v == cellnum.int_min() {
         return buffer.append(heap, out, "-9223372036854775808");
     }
     var o = buffer.push(heap, out, byte_of('-'));

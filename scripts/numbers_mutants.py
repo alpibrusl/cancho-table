@@ -16,19 +16,19 @@ TESTS = ["test_numbers", "test_plan", "test_rules", "test_filter"]
 
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file.
 MUTANTS = [
-    # the cell reader (query.parse_dec)
-    ("a cell with too many fractional digits is accepted", "query.cho", "    if frac > scale {\n        return (0, 3);\n    }", "    if false && frac > scale {\n        return (0, 3);\n    }"),
-    ("the width limit is 10^18 * 10", "query.cho", "            if v >= 100000000000000000 {\n                wide = true;", "            if v >= 1000000000000000000 {\n                wide = true;"),
-    ("the padding to the scale is not checked for width", "query.cho", "        if v > 999999999999999999 / pow10(pad) {", "        if false && v > 999999999999999999 / pow10(pad) {"),
-    ("a short cell is not padded to the scale", "query.cho", "        v = v * pow10(pad);", "        v = v + 0 * pow10(pad);"),
-    ("the padding is one digit short", "query.cho", "        let pad = scale - frac;", "        let pad = scale - frac - 1;"),
-    ("a width error outranks a grammar error", "query.cho", "                wide = true;\n            } else {", "                return (0, 2);\n            } else {"),
-    ("a sign or a point alone is zero", "query.cho", "    if digits == 0 {\n        return (0, 1);\n    }\n    if frac > scale {", "    if false && digits == 0 {\n        return (0, 1);\n    }\n    if frac > scale {"),
-    ("a second point is accepted", "query.cho", "        } else if c == '.' && !seen_point {", "        } else if c == '.' {"),
-    ("a minus sign is a plus, in a decimal", "query.cho", "        negative = int_of(data[0]) == '-';\n        at = 1;\n    }\n    var v = 0;", "        negative = int_of(data[0]) == '+';\n        at = 1;\n    }\n    var v = 0;"),
-    ("the digits after the point are not counted", "query.cho", "            if seen_point {\n                frac = frac + 1;\n            }", "            if seen_point {\n                frac = frac + 0;\n            }"),
+    # the cell reader (cellnum.parse_dec)
+    ("a cell with too many fractional digits is accepted", "cellnum.cho", "    if frac > scale {\n        return (0, 3);\n    }", "    if false && frac > scale {\n        return (0, 3);\n    }"),
+    ("the width limit is 10^18 * 10", "cellnum.cho", "            if v >= 100000000000000000 {\n                wide = true;", "            if v >= 1000000000000000000 {\n                wide = true;"),
+    ("the padding to the scale is not checked for width", "cellnum.cho", "        if v > 999999999999999999 / pow10(pad) {", "        if false && v > 999999999999999999 / pow10(pad) {"),
+    ("a short cell is not padded to the scale", "cellnum.cho", "        v = v * pow10(pad);", "        v = v + 0 * pow10(pad);"),
+    ("the padding is one digit short", "cellnum.cho", "        let pad = scale - frac;", "        let pad = scale - frac - 1;"),
+    ("a width error outranks a grammar error", "cellnum.cho", "                wide = true;\n            } else {", "                return (0, 2);\n            } else {"),
+    ("a sign or a point alone is zero", "cellnum.cho", "    if digits == 0 {\n        return (0, 1);\n    }\n    if frac > scale {", "    if false && digits == 0 {\n        return (0, 1);\n    }\n    if frac > scale {"),
+    ("a second point is accepted", "cellnum.cho", "        } else if c == '.' && !seen_point {", "        } else if c == '.' {"),
+    ("a minus sign is a plus, in a decimal", "cellnum.cho", "        negative = int_of(data[0]) == '-';\n        at = 1;\n    }\n    var v = 0;", "        negative = int_of(data[0]) == '+';\n        at = 1;\n    }\n    var v = 0;"),
+    ("the digits after the point are not counted", "cellnum.cho", "            if seen_point {\n                frac = frac + 1;\n            }", "            if seen_point {\n                frac = frac + 0;\n            }"),
     # the grammar of the suffix and of literals (expr.cho)
-    ("a decimal literal is read at scale 0", "expr.cho", "let (v, bad) = query.parse_dec(buffer.bytes(wr), typed - 2);", "let (v, bad) = query.parse_dec(buffer.bytes(wr), 0);"),
+    ("a decimal literal is read at scale 0", "expr.cho", "let (v, bad) = cellnum.parse_dec(buffer.bytes(wr), typed - 2);", "let (v, bad) = cellnum.parse_dec(buffer.bytes(wr), 0);"),
     ("a literal finer than the scale is accepted", "expr.cho", "                } else if bad == 3 {\n                    what = 14;", "                } else if false {\n                    what = 14;"),
     ("a literal that is too wide is accepted", "expr.cho", "                } else if bad == 2 {\n                    what = 15;", "                } else if false {\n                    what = 15;"),
     ("a scale of 19 is accepted", "expr.cho", "    if digits > 2 || value > 18 {", "    if digits > 2 || value > 19 {"),
@@ -71,7 +71,7 @@ MUTANTS = [
     ("distinct counts the text of a decimal", "agg.cho", "                    if query.agg_at(tree, k, 2) != 0 {\n                        // by value", "                    if false {\n                        // by value"),
     ("an aggregate reads a decimal cell as an integer, in place", "agg.cho", "let (v2, bad2) = query.parse_typed(record[cells[3 * column]..cells[3 * column + 1]], query.agg_at(tree, k, 2));", "let (v2, bad2) = query.parse_typed(record[cells[3 * column]..cells[3 * column + 1]], 1);"),
     ("the cell of the first aggregate is used for all the others", "agg.cho", "            if column != seen_column {\n                seen_column = column;", "            if seen_column < 0 {\n                seen_column = column;"),
-    ("an integer cell in place is read as a decimal of scale 0", "agg.cho", "                    let (v2, bad2) = query.parse_int(record[cells[3 * column]..cells[3 * column + 1]]);\n                    v = v2;\n                    bad = 0;", "                    let (v2, bad2) = query.parse_int(record[cells[3 * column]..cells[3 * column + 1]]);\n                    v = v2 + 1;\n                    bad = 0;"),
+    ("an integer cell in place is read as a decimal of scale 0", "agg.cho", "                    let (v2, bad2) = cellnum.parse_int(record[cells[3 * column]..cells[3 * column + 1]]);\n                    v = v2;\n                    bad = 0;", "                    let (v2, bad2) = cellnum.parse_int(record[cells[3 * column]..cells[3 * column + 1]]);\n                    v = v2 + 1;\n                    bad = 0;"),
     ("an aggregate reads a decimal cell as an integer, by value", "agg.cho", "typed_cell(heap, scr, record, first, last, quoted, query.agg_at(tree, k, 2));\n                    scr = s3;", "typed_cell(heap, scr, record, first, last, quoted, 1);\n                    scr = s3;"),
     ("too many fractional digits is said to be not a decimal, in an aggregate", "query.cho", "        if bad == 3 {\n            return (0, 7);", "        if bad == 3 {\n            return (0, 6);"),
     ("a mean of a decimal defaults to scale 0", "agg.cho", "        var to = scale;", "        var to = 0;"),

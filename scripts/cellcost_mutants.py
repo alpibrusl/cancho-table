@@ -74,11 +74,11 @@ MUTANTS = [
     ("a line is counted twice", "scan.cho", "    r.count = r.count + 1;", "    r.count = r.count + 2;"),
     ("the next line starts at the newline", "scan.cho", "    r.pos = k + 1;", "    r.pos = k;"),
     ("the line starts one byte late", "scan.cho", "    r.view_from = at;", "    r.view_from = at + 1;"),
-    # query.parse_int
-    ("an integer of 19 digits is read without the check", "query.cho", "    if len(data) - at <= 18 {", "    if len(data) - at <= 19 {"),
-    ("a negative integer is positive on the short way", "query.cho", "        if negative {\n            return (0 - plain, 0);", "        if false && negative {\n            return (0 - plain, 0);"),
-    ("a digit is read one low on the short way", "query.cho", "            plain = plain * 10 + c - '0';", "            plain = plain * 10 + c - '1';"),
-    ("a letter is a digit on the short way", "query.cho", "            if c < '0' || c > '9' {\n                return (0, 1);\n            }\n            plain", "            if c < '0' || c > 'z' {\n                return (0, 1);\n            }\n            plain"),
+    # cellnum.parse_int
+    ("an integer of 19 digits is read without the check", "cellnum.cho", "    if len(data) - at <= 18 {", "    if len(data) - at <= 19 {"),
+    ("a negative integer is positive on the short way", "cellnum.cho", "        if negative {\n            return (0 - plain, 0);", "        if false && negative {\n            return (0 - plain, 0);"),
+    ("a digit is read one low on the short way", "cellnum.cho", "            plain = plain * 10 + c - '0';", "            plain = plain * 10 + c - '1';"),
+    ("a letter is a digit on the short way", "cellnum.cho", "            if c < '0' || c > '9' {\n                return (0, 1);\n            }\n            plain", "            if c < '0' || c > 'z' {\n                return (0, 1);\n            }\n            plain"),
 ]
 
 
