@@ -19,7 +19,7 @@ import mutlib  # noqa: E402
 
 ROOT = mutlib.ROOT
 SERVER = ROOT / "server"
-TESTS = ["test_mcp"]
+TESTS = ["test_mcp", "test_mcp_stdin"]
 
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file. Files are relative to server/.
 MUTANTS = [
@@ -86,8 +86,32 @@ MUTANTS = [
     ("the help is not in the schema", "../scripts/mcp.py", "    s[\"description\"] = flag[\"help\"]", "    s[\"description\"] = \"\""),
     ("the root is offered to the model", "../scripts/mcp.py", "WITHHELD_ROLES = {\"root\"}", "WITHHELD_ROLES = set()"),
     ("a count is a text to the server", "../scripts/mcp.py", "\"bool\" if f[\"kind\"] == \"bool\" else \"nat\" if f[\"kind\"] == \"nat\" else \"text\"", "\"bool\" if f[\"kind\"] == \"bool\" else \"text\""),
-    ("the optional operand of a tool that reads standard input stays optional", "../scripts/mcp.py", "        least = 1 if reads_stdin and o[\"min\"] == 0 and o[\"max\"] == 1 else o[\"min\"]", "        least = o[\"min\"]"),
     ("a tool that reads standard input and has no optional operand is offered", "../scripts/mcp.py", "    if reads_stdin and not any(o[\"min\"] == 0 and o[\"max\"] == 1 for o in d[\"operands\"]):", "    if False:"),
+    # the `stdin` property (docs/mcp.md section 12)
+    ("both the operand and stdin are accepted", "mcp.cho", "        if with_operand && with_stdin {", "        if false && with_operand && with_stdin {"),
+    ("neither the operand nor stdin is accepted", "mcp.cho", "        if !with_operand && !with_stdin {", "        if false && !with_operand && !with_stdin {"),
+    ("the input is not checked at all", "mcp.cho", "    if bytes.equal(tools.stdin(tool), \"text\") {\n        let operands = tools.operands(tool);\n        var with_operand", "    if false {\n        let operands = tools.operands(tool);\n        var with_operand"),
+    ("an empty stdin is taken for none", "mcp.cho", "        let with_stdin = json.get(src, tape, given, \"stdin\") >= 0;", "        let with_stdin = json.get(src, tape, given, \"stdin\") >= 0 && json.string_length(src, tape, json.get(src, tape, given, \"stdin\")) > 0;"),
+    ("a conflict says the input is missing", "mcp.cho", "    if code == 5 {\n        return \"mcp.input-conflict\";", "    if code == 5 {\n        return \"mcp.input-missing\";"),
+    ("a refusal of the pair names other properties", "mcp.cho", "        w = json.put_string(heap, w, \"stdin\");\n        w = json.end_array(heap, w);", "        w = json.put_string(heap, w, \"input\");\n        w = json.end_array(heap, w);"),
+    ("stdin is not named by the operand dash", "mcp.cho", "        let (added, refused) = process.add(heap, entries, \"-\");", "        let (added, refused) = process.add(heap, entries, \"--\");"),
+    ("the text is not written to the child", "mcp.cho", "process.capture_both(heap, clock, child, to_child, from_child, from_errors, contents(ir), ", "process.capture_both(heap, clock, child, to_child, from_child, from_errors, \"\", "),
+    ("the input bound is one byte more", "mcp.cho", "json.string_length(src, tape, given) > config.input {", "json.string_length(src, tape, given) > config.input + 1 {"),
+    ("the input bound is one byte less", "mcp.cho", "json.string_length(src, tape, given) > config.input {", "json.string_length(src, tape, given) >= config.input {"),
+    ("the input bound is not the flag's", "mcp.cho", "json.string_length(src, tape, given) > config.input {", "json.string_length(src, tape, given) > tools.default_input() {"),
+    ("an input past the bound is run", "mcp.cho", "        if json.is_string(tape, given) && json.string_length(src, tape, given) > config.input {", "        if false && json.is_string(tape, given) && json.string_length(src, tape, given) > config.input {"),
+    ("an input refusal names no limit", "mcp.cho", "tools.hint_input(), 0, config.input);", "tools.hint_input(), 0, 0);"),
+    ("an input refusal says what to do about the output", "mcp.cho", "tools.hint_input(), 0, config.input);", "tools.hint_too_large(), 0, config.input);"),
+    ("an input refusal is the output rule", "mcp.cho", "\"PRECONDITION_FAILED\", \"mcp.input-too-large\",", "\"PRECONDITION_FAILED\", \"mcp.output-too-large\","),
+    ("--max-input sets the output bound", "mcp.cho", "        } else if bytes.equal(flag, \"--max-input\") {\n            input = nat_of(value);", "        } else if bytes.equal(flag, \"--max-input\") {\n            most = nat_of(value);"),
+    ("an input bound of zero is accepted", "mcp.cho", "            input = nat_of(value);\n            if input <= 0 {", "            input = nat_of(value);\n            if input < 0 {"),
+    ("the default input bound is the output's", "mcp.cho", "    var input = tools.default_input();", "    var input = tools.default_output();"),
+    ("stdin is not offered", "../scripts/mcp.py", "        props[\"stdin\"] = {\"type\": \"string\", \"description\": STDIN_HELP}", "        pass"),
+    ("stdin is not a text to the server", "../scripts/mcp.py", "        \"stdin\": \"text\" if reads_stdin else \"\",", "        \"stdin\": \"\","),
+    ("stdin may not be empty in the schema", "../scripts/mcp.py", "        props[\"stdin\"] = {\"type\": \"string\", \"description\"", "        props[\"stdin\"] = {\"type\": \"string\", \"minLength\": 1, \"description\""),
+    ("the operand is required again", "../scripts/mcp.py", "        least = o[\"min\"]\n        helptext = o[\"help\"]", "        least = 1\n        helptext = o[\"help\"]"),
+    ("the operand does not say it shares the call", "../scripts/mcp.py", "            helptext += \" Give exactly one of `%s` and `stdin`.\" % prop", "            pass"),
+    ("the default input bound is four mebibytes", "../scripts/mcp.py", "DEFAULT_MAX_INPUT = 1048576 ", "DEFAULT_MAX_INPUT = 4194304 "),
     ("the operand is not required", "../scripts/mcp.py", "        if least > 0:\n            required.append(prop)", "        if False:\n            required.append(prop)"),
     ("the operand is an array", "../scripts/mcp.py", "        if o[\"max\"] == 1:\n            s = {\"type\": \"string\"", "        if False:\n            s = {\"type\": \"string\""),
     ("the format does not choose the structure", "../scripts/mcp.py", "        selector = \"format\"", "        selector = \"\""),

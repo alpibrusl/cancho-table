@@ -340,7 +340,7 @@ class Schema(unittest.TestCase):
         ceilings = {l["name"]: l["ceiling"] for l in d["limits"]}
         flags = [f for f in d["flags"] if f["role"] != "root"]
         # Every flag but the server's `--root`, by kind, with its help and default; and nothing else but the operand.
-        self.assertEqual(set(props), {f["name"][2:] for f in flags} | {"file"})
+        self.assertEqual(set(props), {f["name"][2:] for f in flags} | {"file", "stdin"})
         self.assertNotIn("root", props)
         kinds_seen = set()
         for f in flags:
@@ -365,11 +365,13 @@ class Schema(unittest.TestCase):
             else:
                 self.fail("a flag kind this test does not know: %s" % f["kind"])
         self.assertEqual(kinds_seen, {"nat", "text", "choice", "bool"})
-        # The operand: one FILE, required of a caller of the server (the tool's own is optional, for standard input, which the server does not offer: its description says so).
+        # The operand: one FILE, optional as the tool's is, for standard input, which the server offers as `stdin` (docs/mcp.md section 12, held by test_mcp_stdin.py):
+        # a call gives exactly one of the two, which the server checks, so neither is `required` in the schema.
         [operand] = d["operands"]
         self.assertEqual((operand["name"], operand["min"], operand["max"]), ("FILE", 0, 1))
-        self.assertEqual(props["file"], {"type": "string", "description": operand["help"] + " Through this server the input is always a file (its standard input is empty), so name one."})
-        self.assertEqual(s["required"], ["file"])
+        self.assertEqual(props["file"], {"type": "string", "description": operand["help"] + " Give exactly one of `file` and `stdin`."})
+        self.assertEqual(props["stdin"]["type"], "string")
+        self.assertEqual(s["required"], [])
         # The strings the model has to write are documented from introspect's help, in the schema.
         for name in ("where", "select", "agg", "sort", "order-by", "group"):
             self.assertEqual(props[name]["description"], next(f["help"] for f in flags if f["name"] == "--" + name))
@@ -928,10 +930,10 @@ class Own(unittest.TestCase):
         self.assertEqual(d["compiler"], manifest.project()["package"]["cancho"])
         self.assertEqual(d["serves"]["tool"], "table")
         self.assertEqual(d["serves"]["version"], introspect()["version"])
-        self.assertEqual({f["name"] for f in d["flags"]}, {"--root", "--timeout-ms", "--max-output"})
+        self.assertEqual({f["name"] for f in d["flags"]}, {"--root", "--timeout-ms", "--max-output", "--max-input"})
         self.assertEqual(d["protocol"]["max_line_bytes"], 4194304)
-        self.assertEqual({l["name"]: l["default"] for l in d["limits"]}, {"timeout-ms": 30000, "max-output": 2097152, "stderr": 65536, "line": 4194304})
-        self.assertEqual(d["usage"], "mcp --root DIR [--timeout-ms N] [--max-output N] | mcp introspect")
+        self.assertEqual({l["name"]: l["default"] for l in d["limits"]}, {"timeout-ms": 30000, "max-output": 2097152, "max-input": 1048576, "stderr": 65536, "line": 4194304})
+        self.assertEqual(d["usage"], "mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N] | mcp introspect")
 
     def test_every_rule_it_lists_is_one_it_says_and_every_one_it_says_is_listed(self):
         listed = {r["rule"] for r in self.introspect()["rules"]}
@@ -939,11 +941,12 @@ class Own(unittest.TestCase):
         # the protocol's
         responses, _ = talk(root(), [b"nope", b"[]", {"jsonrpc": "2.0", "id": 1, "method": "x"}, call({}, name="sh"), call([]),
                                      call({"file": "a", "zz": 1}), call({"file": 5}), call({"file": "a\u0000"}),
+                                     call({"file": "a", "stdin": "x"}), call({"select": "a"}),
                                      b'{"jsonrpc":"2.0","id":1,"method":"ping","x":"' + b"a" * 4194304 + b'"}'])
         for r in responses:
             said.add(r["error"]["data"]["rule"])
         # a call the server ended
-        for arguments, flags in (({"file": "data.csv", "select": "id,note", "limit": 400}, ["--max-output", "100"]),):
+        for arguments, flags in (({"file": "data.csv", "select": "id,note", "limit": 400}, ["--max-output", "100"]), ({"stdin": "a,b\n1,2\n"}, ["--max-input", "3"])):
             said.add(json.loads(one(root(), arguments, flags=flags)["result"]["content"][0]["text"])["error"]["rule"])
         fb = fake()
         for name, flags in (("sleep", ["--timeout-ms", "100"]), ("signal", [])):
@@ -1058,9 +1061,17 @@ class Own(unittest.TestCase):
         self.assertIn("io_read", d["authority"]["effects"])
         self.assertEqual(d["operands"][0]["min"], 0)
         entry, tables, props = mcp.definition(d)
+        self.assertEqual(entry["inputSchema"]["required"], [])
+        self.assertEqual(tables["operands"], "file|0|1")
+        self.assertEqual(tables["stdin"], "text")
+        self.assertEqual(props["stdin"]["type"], "string")
+        # A tool that does not read standard input keeps its operand required and has no `stdin`.
+        d2 = json.loads(json.dumps(d))
+        d2["authority"]["effects"].remove("io_read")
+        d2["operands"][0]["min"] = 1
+        entry, tables, props = mcp.definition(d2)
         self.assertEqual(entry["inputSchema"]["required"], ["file"])
-        self.assertEqual(tables["operands"], "file|1|1")
-        self.assertEqual(tables["stdin"], "")
+        self.assertEqual((tables["operands"], tables["stdin"]), ("file|1|1", ""))
         self.assertNotIn("stdin", props)
         d = json.loads(json.dumps(introspect()))
         d["operands"][0]["name"] = "LIMIT"
