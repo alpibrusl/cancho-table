@@ -65,7 +65,7 @@ jobs:
         working-directory: table
         run: cancho build
 
-      # The six numeric modules are published as stores another repository pins (docs/numeric-package.md): a fresh publish with the pinned
+      # The five numeric modules are published as stores another repository pins (docs/numeric-package.md): a fresh publish with the pinned
       # compiler must give the committed .cancho-vcs byte for byte.
       - name: The committed numeric stores are what the sources publish
         working-directory: table

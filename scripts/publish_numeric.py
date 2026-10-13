@@ -17,8 +17,9 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# the modules another repository reads cells with: the cell parsers (pow5, dec, flt, query), the exact float sum (facc) and RFC 4180 records (reader)
-MODULES = ["pow5", "dec", "flt", "query", "facc", "reader"]
+# the modules another repository reads cells with: the cell parsers (pow5, dec, flt), the exact float sum (facc) and RFC 4180 records (reader).
+# `query` is not one of them: it is the table's own plan struct, an internal interface (#44 published it by mistake)
+MODULES = ["pow5", "dec", "flt", "facc", "reader"]
 STORE = ".cancho-vcs"
 
 
