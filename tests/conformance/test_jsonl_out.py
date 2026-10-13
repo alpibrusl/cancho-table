@@ -454,35 +454,17 @@ class Differential(Gated):
         self.assertIsNone(R.compare_out(got.stdout, R.Out(["c"], rows, [False])))
         self.assertEqual((got.status, got.stderr), (0, b""))
 
-    def test_o1_report_types_is_strings_and_the_csv_of_the_plan(self):
+    def test_o1_report_types_is_refused_as_args_conflict_before_a_row(self):
+        """N22: `--report types` is a table of its own (strings, the counts too): json or csv, not JSON lines."""
         fails = Failures()
-        for k, (t, p, flags) in cases(5150, 60 * ROUNDS):
-            sel = []
-            if rng_pick(k):
-                sel = ["--select", "#1,#%d" % len(t.header)]
-            if len(t.header) < 2 and sel:
-                sel = []
-            lab = "report %d header %r" % (k, t.header)
-            with fails.case(lab):
-                hdr = None
-                got = self.frun(t.data, ["--report", "types", *sel], "jsonl")
-                self.assertNotIn(got.status, TRAPS)
-                c = self.frun(t.data, ["--report", "types", *sel], "csv")
-                recs = R.csv_records(c.stdout)
-                names = recs[0]
-                bad, dup = name_problems(names)
-                self.assertFalse(bad or dup)
-                if c.status == 0:
-                    self.assertEqual(got.status, 0, got)
-                    lines = R.read_lines(got.stdout)
-                    self.assertEqual(len(lines), len(recs) - 1)
-                    for pairs, rec in zip(lines, recs[1:]):
-                        self.assertEqual([k_.encode() for k_, _ in pairs], [R.raw(n) for n in names])
-                        for (key, v), cell in zip(pairs, rec):
-                            self.assertTrue(R.value_matches(v, cell, False), (key, v, cell))      # every value, the counts too, is a string
-                    self.assertEqual(got.stdout, R.from_csv_out(c.stdout, 0)[1])
-                else:
-                    self.assertEqual((got.status, rule_of(got.stderr)), (c.status, rule_of(c.stderr)))
+        for k, (t, p, flags) in cases(5150, 20 * ROUNDS):
+            sel = ["--select", "#1,#%d" % len(t.header)] if rng_pick(k) and len(t.header) >= 2 else []
+            with fails.case("report %d header %r" % (k, t.header)):
+                for extra in ((), ("--threads", 3, "--chunk-bytes", 7, "--parallel-min-bytes", 1)):
+                    got = self.frun(t.data, ["--report", "types", *sel, *extra], "jsonl")
+                    self.assertEqual((got.status, got.stdout, rule_of(got.stderr)), (2, b"", "args.conflict"), got)
+                    c = self.frun(t.data, ["--report", "types", *sel], "csv")
+                    self.assertNotEqual(c.status, 2 if rule_of(c.stderr) == "args.conflict" else -1)
         fails.check(self, "reports")
 
 
@@ -563,21 +545,11 @@ class Golden(Gated):
             got = self.frun(data, flags, "jsonl")
             self.assertEqual((got.status, got.stderr, got.stdout), (0, b"", want), flags)
 
-    def test_report_types_values_are_all_strings(self):
+    def test_report_types_is_refused(self):
         data = b"a,b\n1,x\n2,\n"
         got = self.frun(data, ["--report", "types"], "jsonl")
-        self.assertEqual(got.status, 0, got)
-        lines = R.read_lines(got.stdout)
-        self.assertEqual(len(lines), 2)
-        c = self.frun(data, ["--report", "types"], "csv")
-        names = R.csv_records(c.stdout)[0]
-        for pairs in lines:
-            self.assertEqual([k for k, _ in pairs], names)
-            for k, v in pairs:
-                self.assertIs(type(v), str, (k, v))
-        self.assertEqual(dict(lines[0])["name"], "a")
-        self.assertEqual(dict(lines[0])["cells"], "2")
-        self.assertEqual(dict(lines[1])["empty"], "1")
+        self.assertEqual((got.status, got.stdout, rule_of(got.stderr)), (2, b"", "args.conflict"), got)
+        self.assertEqual(self.frun(data, ["--report", "types"], "csv").status, 0)
 
     def test_no_header_no_envelope_no_page(self):
         data = b"a\n1\n2\n3\n"
@@ -857,16 +829,6 @@ class Refusals(Gated):
         got = self.frun(data, ["--rows"], "jsonl")
         self.assertEqual((got.status, got.stdout, rule_of(got.stderr)), (2, b"", "output.not-representable"))
 
-    def test_o4_the_report_names_its_own_columns(self):
-        data = b"ok,\xff\n1,2\n"
-        got = self.frun(data, ["--report", "types"], "jsonl")
-        self.assertEqual(got.status, 0, got.stderr)
-        lines = R.read_lines(got.stdout)
-        self.assertEqual(len(lines), 2)
-        self.assertEqual(dict(lines[1])["name"], R.Pairs([("b64", "/w==")]))
-        c = self.frun(data, ["--report", "types"], "csv")
-        self.assertEqual([k for k, _ in lines[0]], R.csv_records(c.stdout)[0])
-
     def test_o4_the_refusal_is_one_sentence_and_the_exit_is_the_cataloged_one(self):
         for rule in ("output.duplicate-column", "output.not-representable"):
             entry = [r for r in introspect()["rules"] if r["rule"] == rule]
@@ -1034,7 +996,6 @@ PLANS = [
     ["--group", "k", "--agg", "count,sum:n,min:big,max:big,mean:n@2,distinct:txt,sum:d:dec(2),mean:d:dec(3),min:f:float,max:f:float"],
     ["--group", "d:dec(2),k", "--agg", "count,distinct:n:int", "--sort", "-count", "--top", "9"],
     ["--agg", "count,sum:n,sum:big,distinct:w"],
-    ["--report", "types"],
     ["--select", "id,txt,k", "--from", "17", "--limit", "23"],
     ["--where", "id:int >= 5", "--group", "n:int", "--agg", "count", "--sort", "n", "--limit", "5", "--from", "2"],
 ]
@@ -1079,7 +1040,7 @@ class Threads(Gated):
         self.matrix("mid", self.mid, (2, 3, 7, 16, 64), (7, 64, 1000, 65536))
 
     def test_gate3_a_table_of_hundreds_of_kilobytes(self):
-        self.matrix("big", self.big, (2, 7, 64), (1000, 65536, 4194304), [p for p in PLANS if p[0] != "--report"] + [PLANS[9]])
+        self.matrix("big", self.big, (2, 7, 64), (1000, 65536, 4194304), PLANS)
 
     def test_gate3_the_default_thresholds(self):
         # the default --parallel-min-bytes (1 MiB) keeps a small file sequential, and --threads without it changes nothing

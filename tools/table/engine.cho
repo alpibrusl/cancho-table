@@ -157,11 +157,6 @@ pub fn k_total() -> [] int {
     return 31;
 }
 
-// 1 when the rows are written as JSON lines (`--format jsonl`, docs/readers.md section 13): set by `begin_jsonl` from the tail of `sel`, in the read and in every thread.
-pub fn k_jsonl() -> [] int {
-    return 29;
-}
-
 pub fn k_size() -> [] int {
     return 32;
 }
@@ -198,27 +193,36 @@ pub fn flush[&i](io: &!i Io, pending: buffer.Buffer) -> [io_write] (buffer.Buffe
     return (held, ok);
 }
 
-// The start of a read or of a thread for `--format jsonl` (docs/readers.md section 13): `sel` is the answer's columns followed by the tail `frame.prepare` made (`jout.with_template`);
-// when it says the rows are JSON lines the tally is told so and `scratch` becomes the text of the keys, which `emit_buf` copies a row at a time. Any other `sel` leaves `scratch` as it is.
-pub fn begin_jsonl[&h, &s, &a](heap: &!h Heap, scratch: buffer.Buffer, sel: &s [int], picked: int, a: &!a [int]) -> [heap] buffer.Buffer {
-    if sel[picked] == 0 {
-        return scratch;
+// A row of the selection as a JSON line (jout.cho): a budget below 0 says so (`table.plan_body`; a page budget is never below 1, and csv never reads it), and `scratch` is made the text of the keys by the first row of each reader, thread and sorted run. A function of its own, so that
+// the csv row above has none of it (docs/readers.md section 13.2).
+fn emit_jsonl[&h, &d, &c, &s, &a](heap: &!h Heap, rows: buffer.Buffer, scratch: buffer.Buffer, record: &d [byte], cells: &c [int], sel: &s [int], picked: int, a: &!a [int]) -> [heap] (buffer.Buffer, buffer.Buffer) {
+    var pending = jout.drop_mark(heap, rows);
+    var row = scratch;
+    var keyed = 0;
+    borrow row as &kr in {
+        keyed = buffer.size(kr);
     }
-    a[k_jsonl()] = 1;
-    var t = scratch;
-    borrow mut t as &!w in {
+    if keyed == 0 {
+        row = jout.template(heap, row, sel, picked);
+    }
+    borrow row as &tr in {
+        pending = jout.row(heap, pending, buffer.bytes(tr), record, cells, sel, picked);
+    }
+    a[k_emitted()] = a[k_emitted()] + 1;
+    return (pending, row);
+}
+
+// The last write of a read: `flush`, but a JSON-lines answer's mark of the header line it does not have (jout.mark) is left out, which matters when no row was written.
+pub fn flush_last[&i](io: &!i Io, pending: buffer.Buffer) -> [io_write] (buffer.Buffer, bool) {
+    var ok = true;
+    var held = pending;
+    borrow held as &r in {
+        ok = out.emit(io, jout.unmarked(buffer.bytes(r)));
+    }
+    borrow mut held as &!w in {
         buffer.clear(w);
     }
-    let n = sel[picked + 1];
-    if n > 0 {
-        let total = sel[picked + 1 + n];
-        var i = 0;
-        while i < total {
-            t = buffer.push(heap, t, byte_of(sel[picked + 2 + n + i]));
-            i = i + 1;
-        }
-    }
-    return t;
+    return (held, ok);
 }
 
 // One row of the selection, from the record `record` whose fields are in
@@ -229,12 +233,8 @@ pub fn emit_buf[&h, &d, &c, &s, &a](heap: &!h Heap, rows: buffer.Buffer, scratch
     var pending = rows;
     var row = scratch;
     if as_csv {
-        if a[k_jsonl()] != 0 {
-            borrow row as &tr in {
-                pending = jout.row(heap, pending, buffer.bytes(tr), record, cells, sel, picked);
-            }
-            a[k_emitted()] = a[k_emitted()] + 1;
-            return (pending, row);
+        if budget < 0 {
+            return emit_jsonl(heap, pending, row, record, cells, sel, picked, a);
         }
         var begun = 0;
         borrow pending as &br in {

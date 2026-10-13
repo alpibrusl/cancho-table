@@ -26,6 +26,74 @@ import query;
 import toolbox.text;
 import writer;
 
+// `scratch` made the text of the keys that `sel` holds (see above), when it is not already: an unchanged buffer for a `sel` that does not say JSON lines.
+pub fn template[&h, &s](heap: &!h Heap, scratch: buffer.Buffer, sel: &s [int], picked: int) -> [heap] buffer.Buffer {
+    var t = scratch;
+    borrow mut t as &!w in {
+        buffer.clear(w);
+    }
+    let n = sel[picked + 1];
+    if n > 0 {
+        let total = sel[picked + 1 + n];
+        var i = 0;
+        while i < total {
+            t = buffer.push(heap, t, byte_of(sel[picked + 2 + n + i]));
+            i = i + 1;
+        }
+    }
+    return t;
+}
+
+// The plan says the answer is JSON lines (`--format jsonl`): one more element at the end of `gkinds`, after the types of the group columns, which nothing reads (`query.gkind_at` stops at the
+// last group column). The plan carries it, as it carries `--top` and `--from` (query.with_page), because the read functions cannot be handed another parameter, nor another branch, without
+// costing the one-thread reads of every plan instructions a row (docs/readers.md section 13.2).
+pub fn set_jsonl[&h](heap: &!h Heap, q: query.Query) -> [heap] query.Query {
+    let query.Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    return query.Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: vec.push(heap, gkinds, 0), sort: sort };
+}
+
+pub fn jsonl[&q](q: &q query.Query) -> [] bool {
+    return vec.size(q.gkinds) == 3 + query.count_of(q, 2);
+}
+
+// A JSON-lines answer has no header line, and the code that writes it (`finish.start_output`) is the code that writes a csv one, which is not edited (docs/readers.md section 13.2): the frame
+// gives it this for the line, `"`, NUL, `"`, NUL, which no csv header line begins with (a field that starts with a quote is closed by a quote before anything else but the delimiter,
+// which is never NUL), and `start_output` follows it with its line feed. `unmarked` is what `engine.flush` writes of its bytes: the same, without the mark and its line feed when
+// they begin it (only the first block of an answer can).
+pub fn mark[&h](heap: &!h Heap, lead: buffer.Buffer) -> [heap] buffer.Buffer {
+    var l = lead;
+    l = buffer.push(heap, l, byte_of(34));
+    l = buffer.push(heap, l, byte_of(0));
+    l = buffer.push(heap, l, byte_of(34));
+    return buffer.push(heap, l, byte_of(0));
+}
+
+pub fn unmarked[&d](data: &d [byte]) -> [] &d [byte] {
+    if len(data) >= 5 && int_of(data[0]) == 34 && int_of(data[1]) == 0 && int_of(data[2]) == 34 && int_of(data[3]) == 0 && int_of(data[4]) == 10 {
+        return data[5..len(data)];
+    }
+    return data;
+}
+
+// `data` without the mark of a JSON-lines answer's header line (the mark and its line feed) when it begins with it.
+pub fn drop_mark[&h](heap: &!h Heap, data: buffer.Buffer) -> [heap] buffer.Buffer {
+    var skip = 0;
+    borrow data as &dr in {
+        let all = buffer.bytes(dr);
+        skip = len(all) - len(unmarked(all));
+    }
+    if skip == 0 {
+        return data;
+    }
+    var rest = buffer.empty(heap, 65536);
+    borrow data as &dr2 in {
+        let all2 = buffer.bytes(dr2);
+        rest = buffer.append(heap, rest, all2[skip..len(all2)]);
+    }
+    buffer.drop(heap, data);
+    return rest;
+}
+
 // One row of a selection, appended to `out`: `tmpl` is the text of the keys, `sel` and `picked` the columns of the answer.
 pub fn row[&h, &t, &d, &c, &s](heap: &!h Heap, out: buffer.Buffer, tmpl: &t [byte], record: &d [byte], cells: &c [int], sel: &s [int], picked: int) -> [heap] buffer.Buffer {
     var o = out;

@@ -41,6 +41,7 @@ import sorter;
 import toolbox.out;
 import toolbox.path;
 import toolbox.place;
+import jout;
 
 // The slot: a header of 36 integers, then the payload.
 //   0 status (0 the range was read and nothing in it needs the parent, 1 it does, 2 not run)
@@ -130,7 +131,6 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
         borrow mut cells as &!cw in {
             let t = contents(aw);
             t[engine.k_columns()] = contents(w.par)[j_columns()];
-            scratch = engine.begin_jsonl(w.heap, scratch, contents(w.sel), contents(w.par)[scan.p_picked()], t);
             var hint = 0;
             if contents(w.par)[j_spec()] == 1 && contents(w.par)[jscan.p_format()] == 0 {
                 var window = buffer.empty(w.heap, 65536);
@@ -407,6 +407,9 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
             }
         }
         u[scan.p_budget()] = wide;
+        if budget < 0 {
+            u[scan.p_budget()] = budget;
+        }
         u[scan.p_limit()] = wide;
         u[scan.p_most()] = wide;
         u[scan.p_from()] = 0;
@@ -1652,7 +1655,7 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     let (top, from) = query.page_of(tree);
     let limit = pp[scan.p_limit()];
     var want = 0;
-    if !(as_csv && a[engine.k_jsonl()] == 0 && a[engine.k_sort_field()] < 0 && a[engine.k_sort_slot()] < 0 && from == 0 && top == 0 && limit >= 100000000) {
+    if !(as_csv && !jout.jsonl(tree) && a[engine.k_sort_field()] < 0 && a[engine.k_sort_slot()] < 0 && from == 0 && top == 0 && limit >= 100000000) {
         if top > 0 {
             want = top;
         } else if limit < 100000000 {
@@ -1662,6 +1665,9 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
         }
     }
     var r = rows;
+    if jout.jsonl(tree) {
+        r = jout.drop_mark(heap, r);
+    }
     var sc = scratch;
     var es = escr;
     var ke = kept;

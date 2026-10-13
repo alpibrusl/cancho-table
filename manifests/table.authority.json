@@ -294,6 +294,7 @@
     "j_start",
     "j_until",
     "json_code_name",
+    "jsonl",
     "k_abort",
     "k_abort",
     "k_abort_line",
@@ -318,7 +319,6 @@
     "k_first_line",
     "k_first_row",
     "k_groups",
-    "k_jsonl",
     "k_long",
     "k_more",
     "k_next",
@@ -547,6 +547,7 @@
     "typed_mention",
     "under",
     "uneven_neighbours",
+    "unmarked",
     "valid",
     "value_index",
     "value_is_whole",
@@ -576,5 +577,5 @@
   ],
   "folded_operators": 211,
   "folded_calls": 0,
-  "functions": 905
+  "functions": 910
 }

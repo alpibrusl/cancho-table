@@ -22,6 +22,7 @@ import toolbox.cli;
 import toolbox.fail;
 import toolbox.lines;
 import toolbox.text;
+import jout;
 
 // The header of a file, read as `read_file` reads it, and nothing more. `abort` is the run's code for what went wrong with it (4 a line past the bound, 3 a header past it, 1 a
 // closing quote followed by something other than the delimiter, 2 a quote open at the end, 5 no header at all when the plan names columns), `consumed` the bytes up to the end of
@@ -304,7 +305,7 @@ fn note[&h, &d](heap: &!h Heap, o: buffer.Buffer, first: bool, sentence: &d [byt
 
 // The document, `{"explain": {...}}`, for a plan whose header (when it has been read) has been resolved. `resolved` says that `cols` holds, for each name of the plan, the
 // column it is; `head` is the json array of the answer's columns when the plan names columns (`frame.prepare`), and `names` and `ends` the header.
-pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, jsonl_out: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer) -> [heap, args] buffer.Buffer {
+pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let reporting = query.reporting(tree);
     let ns = query.count_of(tree, 0);
@@ -644,7 +645,7 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
     o = buffer.push_nat(heap, o, from);
     // the answer
     o = buffer.append(heap, o, "},\"output\":{\"format\":\"");
-    if jsonl_out {
+    if jout.jsonl(tree) {
         o = buffer.append(heap, o, "jsonl");
     } else if as_csv {
         o = buffer.append(heap, o, "csv");
@@ -894,7 +895,7 @@ pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
         borrow tree0 as &tq in {
             borrow names as &nr in {
                 borrow ends as &er in {
-                    made = frame.prepare(heap, tq, nr, er, vec.size(er), mode, delim, flagged, budget < 0);
+                    made = frame.prepare(heap, tq, nr, er, vec.size(er), mode, delim, flagged);
                 }
             }
         }
@@ -952,7 +953,7 @@ pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
                     borrow ends as &er in {
                         borrow shown_head as &hr in {
                             buffer.drop(heap, payload);
-                            payload = document(heap, args, parsed, tq, stdin, as_json, shown, delim, mode, as_csv, budget < 0, from, limit, top, size, got, consumed, bytes_read, got && mode != 0, contents(cr), nr, er, hr);
+                            payload = document(heap, args, parsed, tq, stdin, as_json, shown, delim, mode, as_csv, from, limit, top, size, got, consumed, bytes_read, got && mode != 0, contents(cr), nr, er, hr);
                         }
                     }
                 }

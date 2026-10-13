@@ -91,9 +91,16 @@ pub fn finish_groups[&h, &i, &g, &q, &z, &a](heap: &!h Heap, io: &!i Io, rows: b
     let prefixes = box_slice(heap, n + 1, 0);
     let words2 = box_slice(heap, n + 1, 0);
     let hist = box_slice(heap, 1792, 0);
+    let jl = jout.jsonl(tree);
     var pending = rows;
-    var row = scratch;
+    if jl {
+        pending = jout.drop_mark(heap, pending);
+    }
     let plain = agg.rows_plain(tree);
+    var row = scratch;
+    if jl {
+        row = jout.template(heap, row, sel, 0);
+    }
     borrow mut order as &!ow in {
         borrow mut spare as &!sw in {
             borrow mut prefixes as &!pw in {
@@ -116,7 +123,7 @@ pub fn finish_groups[&h, &i, &g, &q, &z, &a](heap: &!h Heap, io: &!i Io, rows: b
                                 a[engine.k_more()] = 1;
                                 a[engine.k_next()] = pos;
                                 going = false;
-                            } else if as_csv && a[engine.k_jsonl()] != 0 {
+                            } else if as_csv && jl {
                                 borrow row as &tr in {
                                     pending = jout.group_row(heap, pending, groups, tree, x, buffer.bytes(tr), sel);
                                 }
@@ -291,23 +298,6 @@ pub fn finish_report[&h, &i, &q, &n, &e, &c, &a](heap: &!h Heap, io: &!i Io, row
                 a[engine.k_more()] = 1;
                 a[engine.k_next()] = pos;
                 going = false;
-            } else if as_csv && a[engine.k_jsonl()] != 0 {
-                pending = report.put_object(heap, pending, gr, pos, name_of(names, hends, column));
-                pending = buffer.push(heap, pending, byte_of(10));
-                a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
-                var held4 = 0;
-                borrow pending as &pr4 in {
-                    held4 = buffer.size(pr4);
-                }
-                if held4 >= 65536 {
-                    let (after, ok) = engine.flush(io, pending);
-                    pending = after;
-                    if !ok {
-                        a[engine.k_abort()] = 9;
-                        going = false;
-                    }
-                }
-                pos = pos + 1;
             } else if as_csv {
                 pending = report.put_row(heap, pending, gr, pos, name_of(names, hends, column), true, delim);
                 pending = buffer.push(heap, pending, byte_of(10));
@@ -967,7 +957,7 @@ pub fn output_refusal[&h, &l, &d](heap: &!h Heap, errs: fail.Errors, labels: &l 
 
 // The same for a run that read its header and stopped at abort 60 or 61: the plan is resolved again against the header, which names the columns (once, on the way to a refusal).
 pub fn output_refusal_run[&h, &q, &n, &d](heap: &!h Heap, errs: fail.Errors, tree: &q query.Query, names: &n buffer.Buffer, hends: &d vec.Vec[int], columns: int, mode: int, delim: int, sort_flag: &static [byte], abort: int) -> [heap] fail.Errors {
-    let made = frame.prepare(heap, tree, names, hends, columns, mode, delim, sort_flag, true);
+    let made = frame.prepare(heap, tree, names, hends, columns, mode, delim, sort_flag);
     var e = errs;
     let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
     borrow flabels as &lr in {
@@ -985,13 +975,8 @@ pub fn output_refusal_run[&h, &q, &n, &d](heap: &!h Heap, errs: fail.Errors, tre
     return e;
 }
 
-// The output of a csv answer starts with its header line. A JSON-lines answer (`budget` below 0, see `table.plan_body`) has none: it starts its tally and its key text instead
-// (`engine.begin_jsonl`), from the tail `frame.prepare` made for `sel`.
-pub fn start_output[&h, &s, &a](heap: &!h Heap, rows: buffer.Buffer, scratch: buffer.Buffer, lead: buffer.Buffer, sel: &s [int], picked: int, a: &!a [int], budget: int) -> [heap] (buffer.Buffer, buffer.Buffer) {
-    if budget < 0 {
-        buffer.drop(heap, lead);
-        return (rows, engine.begin_jsonl(heap, scratch, sel, picked, a));
-    }
+// The output of a csv answer starts with its header line.
+pub fn start_output[&h](heap: &!h Heap, rows: buffer.Buffer, lead: buffer.Buffer) -> [heap] buffer.Buffer {
     var r = rows;
     var empty = true;
     borrow lead as &lr in {
@@ -1004,7 +989,7 @@ pub fn start_output[&h, &s, &a](heap: &!h Heap, rows: buffer.Buffer, scratch: bu
     }
     r = buffer.push(heap, r, byte_of(10));
     buffer.drop(heap, lead);
-    return (r, scratch);
+    return r;
 }
 
 // The sorted rows of `--order-by`, written as `--select` writes them: the rows from `from` on, up to `limit` and `top`, as

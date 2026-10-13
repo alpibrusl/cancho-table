@@ -63,11 +63,11 @@ def random_bytes(rng):
 CSV_PLANS = [
     ["--rows"], ["--select", "#1"], ["--select", "#1,#2"], ["--select", "#2,#1"], ["--select", "#1,#1"], ["--where", "#1 != zzz"], ["--where", "#1:int > 0", "--select", "#1"],
     ["--where", "#2 contains a", "--select", "#2"], ["--group", "#1"], ["--group", "#1", "--agg", "count,distinct:#2"], ["--agg", "sum:#1,min:#1"], ["--order-by", "#1"],
-    ["--order-by", "-#1:int", "--top", "3"], ["--report", "types"], ["--group", "#1:float", "--agg", "mean:#1:float"], ["--select", "#1", "--limit", "3", "--from", "1"],
+    ["--order-by", "-#1:int", "--top", "3"], ["--group", "#1:float", "--agg", "mean:#1:float"], ["--select", "#1", "--limit", "3", "--from", "1"],
     ["--group", "#2:dec(2)", "--agg", "sum:#1:dec(2),count"], ["--agg", "count,max:#1"],
 ]
 JSONL_PLANS = [["--rows"], ["--select", "a"], ["--select", "b,a"], ["--select", "a,a"], ["--where", "a != zzz", "--select", "b"], ["--group", "a", "--agg", "count"], ["--order-by", "a"],
-               ["--report", "types"], ["--agg", "count,distinct:b"]]
+               ["--agg", "count,distinct:b"]]
 
 
 def fuzz_input(rng, pool):
@@ -246,7 +246,7 @@ class Surface(Gated):
     def test_explain_says_jsonl_and_the_columns(self):
         self.s.write("t.csv", b"a,b,c\n1,2,3\n")
         for flags, cols in ((["--rows"], ["a", "b", "c"]), (["--select", "c,a"], ["c", "a"]), (["--group", "a", "--agg", "count,sum:b"], ["a", "count", "sum:b"]),
-                            (["--order-by", "b", "--select", "b"], ["b"]), (["--report", "types"], None)):
+                            (["--order-by", "b", "--select", "b"], ["b"])):
             got = run("--explain", *flags, "--format", "jsonl", "t.csv", cwd=str(self.s.dir))
             self.assertEqual(got.status, 0, got.stdout[:300])
             out = got.data()["explain"]["output"]
