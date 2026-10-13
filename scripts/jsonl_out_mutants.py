@@ -49,7 +49,7 @@ MUTANTS = [
     # the plan
     ("the mark of the header line is written", "jout.cho", "        return data[5..len(data)];", "        return data[0..len(data)];"),
     ("the mark is not dropped from the rows kept", "jout.cho", "    if skip == 0 {", "    if true {"),
-    ("the last write keeps the mark", "engine.cho", "        ok = out.emit(io, jout.unmarked(buffer.bytes(r)));", "        ok = out.emit(io, buffer.bytes(r));"),
+    ("the last write keeps the mark", "engine.cho", "        if !jout.is_mark(all) {", "        if false {"),
     ("the threads' answer keeps the mark", "par.cho", "        r = jout.drop_mark(heap, r);", "        r = r;"),
     ("the groups keep the mark", "finish.cho", "        pending = jout.drop_mark(heap, pending);", "        pending = pending;"),
     ("a row does not drop the mark", "engine.cho", "    var pending = jout.drop_mark(heap, rows);", "    var pending = rows;"),

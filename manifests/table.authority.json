@@ -273,6 +273,7 @@
     "is_identifier",
     "is_letter",
     "is_loop",
+    "is_mark",
     "is_num",
     "is_position",
     "is_sym",
@@ -577,5 +578,5 @@
   ],
   "folded_operators": 211,
   "folded_calls": 0,
-  "functions": 910
+  "functions": 911
 }

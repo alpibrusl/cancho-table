@@ -68,6 +68,11 @@ pub fn mark[&h](heap: &!h Heap, lead: buffer.Buffer) -> [heap] buffer.Buffer {
     return buffer.push(heap, l, byte_of(0));
 }
 
+// Whether `data` is nothing but the mark and its line feed.
+pub fn is_mark[&d](data: &d [byte]) -> [] bool {
+    return len(data) == 5 && int_of(data[0]) == 34 && int_of(data[1]) == 0 && int_of(data[2]) == 34 && int_of(data[3]) == 0 && int_of(data[4]) == 10;
+}
+
 pub fn unmarked[&d](data: &d [byte]) -> [] &d [byte] {
     if len(data) >= 5 && int_of(data[0]) == 34 && int_of(data[1]) == 0 && int_of(data[2]) == 34 && int_of(data[3]) == 0 && int_of(data[4]) == 10 {
         return data[5..len(data)];

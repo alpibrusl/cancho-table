@@ -212,12 +212,17 @@ fn emit_jsonl[&h, &d, &c, &s, &a](heap: &!h Heap, rows: buffer.Buffer, scratch: 
     return (pending, row);
 }
 
-// The last write of a read: `flush`, but a JSON-lines answer's mark of the header line it does not have (jout.mark) is left out, which matters when no row was written.
+// The last write of a read: `flush`, but a JSON-lines answer's mark of the header line it does not have (jout.mark) is not written when it is all there is, which is when no row was written (the
+// rows that were, took the mark off before them: `emit_jsonl`, `finish_groups`, `par.run`). Written with the check in a function of its own and nothing but the call in `flush_last`: the other formulations measured
+// 2 to 19 instructions a row more in the read loops, which inline it (docs/readers.md section 13.2).
 pub fn flush_last[&i](io: &!i Io, pending: buffer.Buffer) -> [io_write] (buffer.Buffer, bool) {
     var ok = true;
     var held = pending;
     borrow held as &r in {
-        ok = out.emit(io, jout.unmarked(buffer.bytes(r)));
+        let all = buffer.bytes(r);
+        if !jout.is_mark(all) {
+            ok = out.emit(io, all);
+        }
     }
     borrow mut held as &!w in {
         buffer.clear(w);
