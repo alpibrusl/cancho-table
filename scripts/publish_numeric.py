@@ -20,6 +20,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # the modules another repository reads cells with: the cell parsers (pow5, dec, flt, query), the exact float sum (facc) and RFC 4180 records (reader)
 MODULES = ["pow5", "dec", "flt", "query", "facc", "reader"]
 STORE = ".cancho-vcs"
+# The rule of what may be published (docs/numeric-package.md): a published module is an interface another repository pins, so it imports nothing but
+# `std.*` and other published modules, and it is not the table's own plan. `Query` (names, conditions, aggregates, meta) is what ten internal modules
+# share; a module that declares it is internal whatever else it holds (#44 published `query` for the three cell parsers it then held; they are in `cells`).
+PLAN_STRUCT = re.compile(r"^\s*(?:pub\s+)?(?:res\s+)?struct\s+Query\b", re.M)
 
 
 def compiler(src):
@@ -34,9 +38,18 @@ def compiler(src):
     return exe
 
 
+def interface_problems(text, module, imports):
+    """why `module` (its source `text`, its non-std `imports`) may not be published, as a list of sentences"""
+    bad = []
+    if PLAN_STRUCT.search(text):
+        bad.append(f"{module} declares the table's plan struct `Query`: it is an internal module, not a stable interface")
+    return bad + [f"{module} imports {i}, which is not published: add it to MODULES or cut the import" for i in imports if i not in MODULES]
+
+
 def sources(src):
-    """{module: (file, [imports that are not std])}"""
+    """{module: (file, [imports that are not std])}; refuses a module that is not a stable interface (interface_problems)"""
     found = {}
+    problems = []
     for m in MODULES:
         path = os.path.join(src, "tools", "table", m + ".cho")
         text = open(path).read()
@@ -44,10 +57,10 @@ def sources(src):
         if not decl or decl.group(1) != m:
             raise SystemExit(f"{path} does not declare module {m}")
         imports = [i for i in re.findall(r"^import\s+([\w.]+)\s*;", text, re.M) if not i.startswith("std.")]
-        for i in imports:
-            if i not in MODULES:
-                raise SystemExit(f"{m} imports {i}, which is not published: add it to MODULES or cut the import")
+        problems += interface_problems(text, m, imports)
         found[m] = (path, imports)
+    if problems:
+        raise SystemExit("the published set has a module that is not a stable interface:\n" + "\n".join("  " + p for p in problems))
     return found
 
 

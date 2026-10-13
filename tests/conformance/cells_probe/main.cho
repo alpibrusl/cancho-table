@@ -1,0 +1,58 @@
+// The probe of scripts/cells_golden.py: the three cell parsers of the module @MODULE@ (parse_int, parse_dec, pow10), driven from the command line, so that the same
+// cases run through the module's sources and through its published store. Arguments come in threes: an operation (I parse_int, D parse_dec, P pow10), a number
+// (D: the scale, P: the exponent, I: ignored) and the cell. One line a case: the value, a space, the status (pow10 has the status 0).
+import std.io as console;
+import @MODULE@;
+
+fn number[&a](s: &a [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(s) {
+        n = n * 10 + int_of(s[at]) - '0';
+        at = at + 1;
+    }
+    return n;
+}
+
+fn line[&i](io: &!i Io, value: int, status: int) -> [io_write] int {
+    console.print_int(io, value);
+    console.space(io);
+    console.print_int(io, status);
+    return console.newline(io);
+}
+
+fn run[&i, &g](io: &!i Io, args: &g Args) -> [io_write, args] int {
+    var at = 1;
+    while at + 2 < arg_count(args) {
+        let op = arg(args, at);
+        let num = number(arg(args, at + 1));
+        let cell = arg(args, at + 2);
+        if int_of(op[0]) == 'I' {
+            let (v, st) = @MODULE@.parse_int(cell);
+            line(io, v, st);
+        } else if int_of(op[0]) == 'D' {
+            let (v, st) = @MODULE@.parse_dec(cell, num);
+            line(io, v, st);
+        } else {
+            line(io, @MODULE@.pow10(num), 0);
+        }
+        at = at + 3;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    release(heap);
+    var status = 0;
+    borrow mut io as &!i in {
+        borrow args as &g in {
+            status = run(i, g);
+        }
+    }
+    release(io);
+    release(args);
+    return status;
+}
