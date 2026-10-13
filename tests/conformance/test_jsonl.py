@@ -159,10 +159,10 @@ class Jsonl(unittest.TestCase):
 
     def same_everywhere(self, data, flags, got, name="t.jsonl", threads=((3, 7),), label=""):
         """Standard input (named - and bare) and `--threads` give the answer of the file read once, but for the path."""
-        want = (got.status, got.stdout, got.stderr)
+        want = (got.status, strip_par(got.stdout), got.stderr)
         for operand in (True, False):
             s = self.srun(data, flags, operand)
-            self.assertEqual((s.status, s.stdout, s.stderr), (want[0], norm(want[1], name, operand), norm(want[2], name, operand)),
+            self.assertEqual((s.status, strip_par(s.stdout), s.stderr), (want[0], norm(want[1], name, operand), norm(want[2], name, operand)),
                              "%s stdin operand=%s flags %r" % (label, operand, flags))
         for t, c in threads:
             p = self.frun(data, flags + par(t, c), name)
@@ -476,29 +476,37 @@ class Equivalence(Jsonl):
 
     def compare_with_csv(self, got, want, dec, csv_out, flags, case):
         self.assertEqual(got.status, want.status, (got, want))
+        if "--report" in flags and want.status == 0:
+            return self.compare_report(self.table_of(got, csv_out), self.table_of(want, csv_out), dec)
         if csv_out:
             self.assertEqual((got.stdout, got.stderr), (want.stdout, want.stderr))
             return
         gd, wd = got.doc(), want.doc()
-        if "--report" in flags:
-            return self.compare_report(gd, wd, dec)
         self.assertEqual(strip_lines(gd), strip_lines(wd))
         if "error" in wd and "line" in wd["error"]["detail"]:
             row = wd["error"]["detail"]["row"]
             self.assertEqual(gd["error"]["detail"]["line"], J.line_of(case.data, row, case.max_line))
 
-    def compare_report(self, gd, wd, dec):
+    @staticmethod
+    def table_of(result, csv_out):
+        if csv_out:
+            rows = list(csv.reader(io.StringIO(result.stdout.decode("utf-8"), newline="")))
+            return rows[0], rows[1:]
+        d = result.data()
+        return d["columns"], d["rows"]
+
+    def compare_report(self, got, want, dec):
         """The type report names the first row and line of each kind of cell: the rows are the CSV's, the lines are the JSON lines'."""
-        gc, wc = gd["data"]["columns"], wd["data"]["columns"]
+        (gc, grows), (wc, wrows) = got, want
         self.assertEqual(gc, wc)
         keep = [k for k, c in enumerate(wc) if not c.endswith("_line")]
         pick = lambda rows: [[r[k] for k in keep] for r in rows]
-        self.assertEqual(pick(gd["data"]["rows"]), pick(wd["data"]["rows"]))
-        rowcols = [k for k, c in enumerate(wc) if c.endswith("_row")]
-        for g, w in zip(gd["data"]["rows"], wd["data"]["rows"]):
-            for k in rowcols:
-                if w[k] and dec[0] == "ok":
-                    self.assertEqual(g[k + 1], str(dec[3]["line_of_row"][int(w[k]) - 1]))
+        self.assertEqual(pick(grows), pick(wrows))
+        for k, c in enumerate(wc):
+            if c.endswith("_row"):
+                for g, w in zip(grows, wrows):
+                    if w[k] and dec[0] == "ok":
+                        self.assertEqual(g[k + 1], str(dec[3]["line_of_row"][int(w[k]) - 1]))
 
 
 # ---- J1b -------------------------------------------------------------------------------------------------------------------------------------

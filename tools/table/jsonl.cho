@@ -98,6 +98,8 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     var kept = buffer.empty(heap, 64);
     var groups = agg.start(heap, tree);
     var rec = buffer.empty(heap, 256);
+    var crec = buffer.empty(heap, 256);
+    let sorting = ordering && !query.reporting(tree);
     var cols = box_slice(heap, 1, 0);
     var cells = box_slice(heap, 3, 0);
     var sel = box_slice(heap, 1, 0);
@@ -312,6 +314,22 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
                                             rec = rec2;
                                             shape = code;
                                         }
+                                        if shape < 50 && sorting {
+                                            // a held row is split again by the CSV reader when it is written (jrec.csv_record)
+                                            borrow rec as &rcr in {
+                                                var record = buffer.bytes(rcr);
+                                                if shape == 0 {
+                                                    record = line;
+                                                }
+                                                borrow mut cells as &!cw in {
+                                                    crec = jrec.csv_record(heap, crec, record, contents(cw), nfields, delim);
+                                                }
+                                            }
+                                            let swap = rec;
+                                            rec = crec;
+                                            crec = swap;
+                                            shape = 1;
+                                        }
                                         if shape >= 50 {
                                             a[engine.k_abort_line()] = number;
                                             a[engine.k_err_line()] = number;
@@ -435,6 +453,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     unbox_slice(heap, tape);
     unbox_slice(heap, st);
     buffer.drop(heap, rec);
+    buffer.drop(heap, crec);
     buffer.drop(heap, fsbytes);
     unbox_slice(heap, ftable);
     var errno = 0;

@@ -24,6 +24,7 @@ import std.bytes;
 import std.json;
 import engine;
 import jflat;
+import reader;
 
 pub fn a_syntax() -> [] int {
     return 50;
@@ -539,4 +540,54 @@ pub fn parse_only[&s, &t, &q, &a](line: &s [byte], tape: &!t [int], st: &!q [int
         return fail_with(a, a_not_object());
     }
     return 0;
+}
+
+// The record as a CSV record, for the one consumer that reads a held record again with the CSV reader: a sort (`--order-by`) keeps the rows' bytes and splits them
+// when it writes them (finish.finish_sort, psort.make_run). `record` and its `cells` are the JSON line's (or its copy's), the answer is the same cells joined by `delim`,
+// quoted when they must be and their quotes doubled, written to `out` (cleared first) and cut again by `reader.fields`, so that `cells` are what CSV would give for it.
+pub fn csv_record[&h, &r, &c](heap: &!h Heap, out: buffer.Buffer, record: &r [byte], cells: &!c [int], nfields: int, delim: int) -> [heap] buffer.Buffer {
+    var o = out;
+    borrow mut o as &!ow in {
+        buffer.clear(ow);
+    }
+    var i = 0;
+    while i < nfields {
+        if i > 0 {
+            o = buffer.push(heap, o, byte_of(delim));
+        }
+        let first = cells[3 * i];
+        let last = cells[3 * i + 1];
+        let text = record[first..last];
+        var must = nfields == 1 && first == last;
+        if !must {
+            must = index_of_byte(text, byte_of(34)) >= 0 || index_of_byte(text, byte_of(delim)) >= 0 || index_of_byte(text, byte_of(10)) >= 0 || index_of_byte(text, byte_of(13)) >= 0 || cells[3 * i + 2] == 1;
+        }
+        if must {
+            o = buffer.push(heap, o, byte_of(34));
+            if cells[3 * i + 2] == 1 {
+                o = buffer.append(heap, o, text);
+            } else {
+                var p = first;
+                while p < last {
+                    let found = index_of_byte(record[p..last], byte_of(34));
+                    if found < 0 {
+                        o = buffer.append(heap, o, record[p..last]);
+                        p = last;
+                    } else {
+                        o = buffer.append(heap, o, record[p..p + found + 1]);
+                        o = buffer.push(heap, o, byte_of(34));
+                        p = p + found + 1;
+                    }
+                }
+            }
+            o = buffer.push(heap, o, byte_of(34));
+        } else {
+            o = buffer.append(heap, o, text);
+        }
+        i = i + 1;
+    }
+    borrow o as &or in {
+        let (n, open, wrong) = reader.fields(buffer.bytes(or), delim, cells, nfields);
+    }
+    return o;
 }

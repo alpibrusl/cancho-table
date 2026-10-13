@@ -100,6 +100,8 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
     var kept2 = kept;
     var groups2 = groups;
     var rec = buffer.empty(heap, 256);
+    var crec = buffer.empty(heap, 256);
+    let sorting = query.count_of(tree, 4) > 0 && !query.reporting(tree);
     a[engine.k_first_at()] = start;
     var r = lines.start(heap, cap);
     var going = true;
@@ -172,9 +174,26 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
                                 }
                             }
                         }
+                        if shape < 50 && sorting {
+                            // a held row is split again by the CSV reader when it is written (jrec.csv_record)
+                            borrow rec as &rcr in {
+                                var record = buffer.bytes(rcr);
+                                if shape == 0 {
+                                    record = line;
+                                }
+                                crec = jrec.csv_record(heap, crec, record, cells, nfields, delim);
+                            }
+                            let swap = rec;
+                            rec = crec;
+                            crec = swap;
+                            shape = 1;
+                        }
                         if shape >= 50 {
                             a[engine.k_abort_line()] = base_line + number;
                             a[engine.k_err_line()] = base_line + number;
+                            borrow sb as &sbr in {
+                                kept2 = jrec.keep_facts(heap, kept2, shape, line, table, contents(sbr), nfields, a);
+                            }
                             status = 2;
                             going = false;
                         } else if engine.count_row(a, nfields, base_line + number, from) {
@@ -244,6 +263,7 @@ pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File
         }
     }
     buffer.drop(heap, rec);
+    buffer.drop(heap, crec);
     lines.drop(heap, r);
     unbox_slice(heap, tape);
     unbox_slice(heap, st);

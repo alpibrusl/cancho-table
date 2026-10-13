@@ -94,6 +94,7 @@
     "bit_length",
     "bits_of_key",
     "blank",
+    "blanks",
     "blob_hi",
     "blob_lo",
     "built",
@@ -136,6 +137,7 @@
     "delimiter_of",
     "digit_of",
     "digit_of",
+    "digits",
     "digits_after_point",
     "digits_before_point",
     "digits_end",
@@ -388,6 +390,7 @@
     "none",
     "number",
     "number_end",
+    "number_end",
     "numeric",
     "offset",
     "ok",
@@ -423,6 +426,7 @@
     "parse_typed",
     "part_of",
     "parts_size",
+    "plain_end",
     "plausible",
     "point_width",
     "position_of",
@@ -553,6 +557,7 @@
     "within",
     "word",
     "word_at",
+    "word_at",
     "word_is",
     "y_cast",
     "y_close",
@@ -568,7 +573,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 199,
+  "folded_operators": 210,
   "folded_calls": 0,
-  "functions": 890
+  "functions": 897
 }
