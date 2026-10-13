@@ -49,6 +49,7 @@ VERSION = "0.1.0"
 # server from the generated module: `introspect` and the code cannot disagree.
 DEFAULT_TIMEOUT_MS = 30000
 DEFAULT_MAX_OUTPUT = 2097152     # 2 MiB: a default json page (--max-bytes 1 MiB) and its envelope always fit
+DEFAULT_MAX_INPUT = 1048576      # 1 MiB: the `stdin` text of one call (docs/mcp.md section 12); the request line bounds it from above
 MAX_LINE = 4194304               # a request line longer than this is refused
 MAX_STDERR = 65536               # the tool's standard error, kept up to this much
 
@@ -98,6 +99,9 @@ def schema_of_flag(flag, ceiling):
     return s
 
 
+HINT_INPUT = ("send less text: the header line and the rows that are needed, not the whole table; the bound is the server's --max-input")
+
+
 def hints(props):
     """What the server says when it ends a call, naming properties the tool has:
     the generator fails if one of them is gone, rather than say something false."""
@@ -122,9 +126,10 @@ def definition(d):
         prop = f["name"][2:]
         props[prop] = schema_of_flag(f, ceiling)
         flags.append((prop, f["name"], "bool" if f["kind"] == "bool" else "nat" if f["kind"] == "nat" else "text"))
-    # A tool that reads standard input when its operand is absent or `-` (table, docs/readers.md section 3): the server gives the child an empty input and
-    # offers no `stdin` property (docs/mcp.md section 1), so for the server that operand is required, as it was before the tool read standard input, and the
-    # property says so. A tool that reads standard input and has no such operand is still refused: nothing here would tell a caller what its input is.
+    # A tool that reads standard input when its operand is absent or `-` (table, docs/readers.md section 3): the server offers it a `stdin` property, the text
+    # it writes to the pipe that is the child's standard input (docs/mcp.md section 12), and a call gives exactly one of the operand and `stdin`, which the
+    # server checks, so neither is `required` in the schema. A tool that reads standard input and has no such operand is still refused: nothing here would
+    # tell a caller what its input is.
     reads_stdin = "io_read" in d["authority"]["effects"]
     if reads_stdin and not any(o["min"] == 0 and o["max"] == 1 for o in d["operands"]):
         sys.exit("mcp: %s reads standard input, which this generator does not offer" % name)
@@ -132,10 +137,10 @@ def definition(d):
         prop = property_of_operand(o["name"])
         if prop in props:
             sys.exit("mcp: %s's operand %s and a flag are both `%s`" % (name, o["name"], prop))
-        least = 1 if reads_stdin and o["min"] == 0 and o["max"] == 1 else o["min"]
+        least = o["min"]
         helptext = o["help"]
-        if least != o["min"]:
-            helptext += " Through this server the input is always a file (its standard input is empty), so name one."
+        if reads_stdin and o["min"] == 0 and o["max"] == 1:
+            helptext += " Give exactly one of `%s` and `stdin`." % prop
         if o["max"] == 1:
             s = {"type": "string", "description": helptext}
         else:
@@ -148,6 +153,10 @@ def definition(d):
         if least > 0:
             required.append(prop)
         operands.append((prop, least, "" if o["max"] is None else o["max"]))
+    if reads_stdin:
+        if "stdin" in props:
+            sys.exit("mcp: %s has a flag called `stdin`" % name)
+        props["stdin"] = {"type": "string", "description": STDIN_HELP}
     for table in (flags, operands):
         for row in table:
             for field in row:
@@ -173,16 +182,23 @@ def definition(d):
         "name": name,
         "flags": ";".join("|".join(map(str, r)) for r in flags),
         "operands": ";".join("|".join(map(str, r)) for r in operands),
-        "stdin": "",
+        "stdin": "text" if reads_stdin else "",
         "output": d["output"],
         "structured": selector,
     }, props
 
 
+# The property `stdin` (docs/mcp.md section 12), for a tool that reads standard input when its operand is absent or `-`.
+STDIN_HELP = (
+    "The table itself, as text, instead of `file`: give exactly one of the two. It is read as `table -` reads standard input, so the answer is the "
+    "one for a file with the same bytes (a refusal names the path `-`). UTF-8 text only (a NUL is allowed); at most %d bytes by default "
+    "(--max-input), else `mcp.input-too-large`. A `query` must not name a source with `from` when `stdin` is given: it reads this text. "
+    "An empty string is an empty table." % DEFAULT_MAX_INPUT)
+
 # Appended to the tool's own summary: what the server adds (docs/mcp.md §2, §4).
 DESCRIPTION_SUFFIX = (
     "\n\nThe file is read beneath the server's root: a path outside it, a `..` component or a link is refused "
-    "with a rule (path.outside-root, path.dotdot, path.symlink). The answer is the tool's "
+    "with a rule (path.outside-root, path.dotdot, path.symlink); a table you hold as text goes in `stdin` instead of `file`. The answer is the tool's "
     "own output, byte for byte, and is bounded by the server: ask for fewer rows with `limit`, groups with "
     "`top`, columns with `select`. A refusal is an error result whose JSON names a `rule` and a `repair`; "
     "match on the rule.")
@@ -191,6 +207,7 @@ DESCRIPTION_SUFFIX = (
 def server_doc(d, props, authority, bin_dir, pin):
     """What `mcp introspect` prints."""
     too_large, timeout = hints(props)
+    too_large_input = HINT_INPUT
     return {
         "tool": "mcp",
         "version": VERSION,
@@ -198,7 +215,7 @@ def server_doc(d, props, authority, bin_dir, pin):
         "summary": "An MCP server (stdio, JSON-RPC 2.0) that serves the tool `table` under one root: its input schema is "
                    "derived from the tool's `introspect`, a call is a fixed argv with no shell, the answer is the tool's "
                    "stdout, stderr and exit code unchanged, bounded in size and in time.",
-        "usage": "mcp --root DIR [--timeout-ms N] [--max-output N] | mcp introspect",
+        "usage": "mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N] | mcp introspect",
         "output": "stdio",
         "protocol": {"transport": "stdio, one JSON-RPC 2.0 message per line", "version": "2025-06-18",
                      "methods": ["initialize", "ping", "tools/list", "tools/call"],
@@ -215,10 +232,14 @@ def server_doc(d, props, authority, bin_dir, pin):
             {"name": "--max-output", "kind": "nat", "role": "none", "default": DEFAULT_MAX_OUTPUT,
              "help": "the most standard output of one call, in bytes: the tool is killed past it and the call ends as "
                      "mcp.output-too-large"},
+            {"name": "--max-input", "kind": "nat", "role": "none", "default": DEFAULT_MAX_INPUT,
+             "help": "the most text of one call's `stdin` property, in decoded bytes: past it the call is refused before the tool starts, as "
+                     "mcp.input-too-large"},
         ],
         "limits": [
             {"name": "timeout-ms", "default": DEFAULT_TIMEOUT_MS},
             {"name": "max-output", "default": DEFAULT_MAX_OUTPUT},
+            {"name": "max-input", "default": DEFAULT_MAX_INPUT, "note": "the `stdin` text of a call, in decoded bytes; the request line (below) bounds it from above"},
             {"name": "stderr", "default": MAX_STDERR, "note": "fixed: the tool's standard error beyond it ends the call as mcp.output-too-large"},
             {"name": "line", "default": MAX_LINE, "note": "fixed: a request line beyond it is refused as mcp.line-too-long"},
         ],
@@ -232,6 +253,9 @@ def server_doc(d, props, authority, bin_dir, pin):
             {"rule": "mcp.unknown-argument", "answer": "jsonrpc -32602", "summary": "a property the input schema does not have (data lists the real ones)"},
             {"rule": "mcp.wrong-type", "answer": "jsonrpc -32602", "summary": "a property of the wrong type; every fault is listed in data.problems"},
             {"rule": "mcp.nul-in-argument", "answer": "jsonrpc -32602", "summary": "a NUL byte in a string, which would arrive as two arguments"},
+            {"rule": "mcp.input-conflict", "answer": "jsonrpc -32602", "summary": "both `file` and `stdin` given: the call has one input (data.properties names them)"},
+            {"rule": "mcp.input-missing", "answer": "jsonrpc -32602", "summary": "neither `file` nor `stdin` given: the call has no input (data.properties names them)"},
+            {"rule": "mcp.input-too-large", "answer": "isError result", "summary": "the `stdin` text passed --max-input; " + too_large_input},
             {"rule": "mcp.timeout", "answer": "isError result", "summary": "the call ran past --timeout-ms; " + timeout},
             {"rule": "mcp.output-too-large", "answer": "isError result", "summary": "the output passed --max-output (or the error stream passed its bound); " + too_large},
             {"rule": "mcp.signaled", "answer": "isError result", "summary": "the tool was ended by a signal"},
@@ -257,7 +281,7 @@ module mcp.tools;
 // `tools/list` result, and for tool `i` the tables a call is checked against:
 // its properties as flags (`property|flag|kind`, kind `bool`, `nat` or `text`),
 // its operands in order (`property|min|max`, `max` empty for unbounded), how
-// standard input reaches it (none), its output (`document` or `stream`), and the
+// standard input reaches it (none, or `text`: a property called `stdin`), its output (`document` or `stream`), and the
 // property that chooses its format (the answer is structured content only when
 // it is `json`). Then the server's bounds and the sentences it says when it
 // ends a call, and `introspect`.
@@ -286,6 +310,10 @@ pub fn default_output() -> [] int {
     return %d;
 }
 
+pub fn default_input() -> [] int {
+    return %d;
+}
+
 pub fn longest_line() -> [] int {
     return %d;
 }
@@ -303,11 +331,15 @@ pub fn hint_timeout() -> [] &static [byte] {
     return %s;
 }
 
+pub fn hint_input() -> [] &static [byte] {
+    return %s;
+}
+
 // `mcp introspect`.
 pub fn introspect() -> [] &static [byte] {
     return %s;
 }
-""" % (DEFAULT_TIMEOUT_MS, DEFAULT_MAX_OUTPUT, MAX_LINE, MAX_STDERR, lit(too_large), lit(timeout),
+""" % (DEFAULT_TIMEOUT_MS, DEFAULT_MAX_OUTPUT, DEFAULT_MAX_INPUT, MAX_LINE, MAX_STDERR, lit(too_large), lit(timeout), lit(HINT_INPUT),
        lit(manifest.compact(doc))))
     return "".join(out)
 
