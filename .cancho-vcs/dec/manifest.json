@@ -1,0 +1,64 @@
+{
+  "entries": {
+    "05be54d051c63cba3e0d723624f27bce7c26cf64f378261b14a85508e0524fd0": {
+      "name": "digits_of_limbs",
+      "stage_id": "5c2321df494dc6d61192f4ae0d2cecd974ee286610049fab7661029471df0eb0",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    },
+    "11a984ac07467e70a6f77b76d8858e7845a5a8d794de58f2c2762617bde8d293": {
+      "name": "put_sum",
+      "stage_id": "12be40b4b2635581482bed7bbe83cb4020efd352064c65c0604e66c5ee1a0f25",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    },
+    "3d8dc0cd415881ea4c07afd3de0a5b4c1548c66d5a116c70a39f3831ad026d28": {
+      "name": "div_small",
+      "stage_id": "d218f62052e15690707fab3b9c9909b8b4f86845fbfa57829ab6fbef4d84662a",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    },
+    "46a8a31b1b4665df3c77302ea36898a627b94b1486c4b968a6a4cd4b416729c7": {
+      "name": "put_scaled",
+      "stage_id": "bf6b036f0acf6cdd4a0e8558cf64dd5e1ca071d6c8028a8fd9538ba535d0b48c",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    },
+    "5a5ebb4c2f743fd6863f009ec092518f335eada59013cbdef26b2f0d419982f7": {
+      "name": "compare_means",
+      "stage_id": "a77a00febcb54a2439e6a5ba72ed03ddaa393b6462636c72e1b8aca7db810093",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    },
+    "617bf85001a7b701a13b84a50ce4214e67b88d95b7911c2fc29120ffcd8fa2ca": {
+      "name": "emit",
+      "stage_id": "daecbf47f315830d94e35b1b8f3275f949a4dff7ad5d5d148dfad6127cae7d0d",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    },
+    "a3c2927050b3e036214f70faf0e266079199f87e94a2650ba200dcee1bcb9d20": {
+      "name": "magnitude_times",
+      "stage_id": "4d462d96f1eb3b9875381d0bf094051bc98117a64a26b1733c8cb58bc898006a",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    },
+    "e9dd2b57a71c2be02f9dae3671a3b2245e5b0ab7b402ca1da18f2398f3ee7840": {
+      "name": "mul_small",
+      "stage_id": "e40d80ab278ab5efe33403a50e0947f6814c6e91e8779f246b03aff3f570b12d",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    },
+    "ea63efb5cfb15bc01880662abfb07c106743cf6a6723509f047e6b6973d990c7": {
+      "name": "put_mean",
+      "stage_id": "01fe467b01e43b0792e8fd8997e72f62a18ad87ef5d619591dd29b58022a7208",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    },
+    "f319579c76c1f8926839982c871f9b636f98cfbd997fe8d02df5579e5cfd61ce": {
+      "name": "is_zero",
+      "stage_id": "e52fa3301058fefabbdb57ed78e4653d84fe8245c0f2f000754138a07a0077e2",
+      "source_hash": "e2887a3a53394ff9c2d0eacadf5138d64a3b3d52ecbcf167f98ff8ab47b67890",
+      "uses_std": true
+    }
+  }
+}

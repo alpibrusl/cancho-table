@@ -1,0 +1,208 @@
+edition 5;
+
+module facc;
+
+// The exact sum of doubles (docs/numbers.md, 4.4; the spike is scripts/spikes/superacc.cho): a sum kept as an integer multiple of 2^-1074 (every finite double
+// is one) in 72 limbs of 32 bits, limb `i` of weight 2^(32 i - 1074), plus a counter, in 73 consecutive integers of the group's row at `at`.
+//
+// **Adding** a double is its sign, exponent and 53-bit mantissa (from the bits: `float_of_bits` does not exist) shifted by `p mod 32` into three pieces of at most
+// 2^33 added to (or, for a negative double, taken from) limbs `p/32`, `+1`, `+2`. There is no carry and **nothing rounds**: every 2^27 additions a carry pass
+// brings every limb but the top into [0, 2^32), and the top limb holds the sign. A limb is therefore at most 2^27 * 2^33 = 2^60 before a carry, and a sum of
+// two accumulators (limb by limb) cannot leave 64 bits: **the merge of ranges read by threads is exact, so it is order-independent**, and so is the answer.
+//
+// **Rounding** happens once, in `finalize_key` and `mean_key`: the top bit is found, 53 bits kept, the next one is the guard and any lower bit the sticky, and
+// the tie goes to even; the result is built as the bits of the double, in integers, and answered as its **key** (the order-preserving `int` of `:float`:
+// flt.cho), with a status 1 when the exact sum is beyond the largest double (`agg.float-overflow`). A result of zero is the key 0 (there is no -0).
+//
+// `mean_key` divides |sum| * 2^64 by the count in 16-bit digits, so 64 fractional bits: a tie between two doubles cannot be decided by the remainder
+// (it is at least 2^-41 of a unit away) and a remainder that is not zero is the sticky bit.
+
+import std.vec;
+
+pub fn width() -> [] int {
+    return 73;
+}
+
+// Add the finite double whose bits are `bits` into the accumulator at `at`.
+pub fn add_bits[&v](acc: &!v vec.Vec[int], at: int, bits: int) -> [] int {
+    let e = bits >> 52 & 0x7ff;
+    var m = bits & 0xfffffffffffff;
+    var p = 0;
+    if e != 0 {
+        m = m | 0x10000000000000;
+        p = e - 1;
+    }
+    let i = at + (p >> 5);
+    let s = p & 31;
+    let a = (m & 0xffffffff) << s;
+    let b = m >> 32 << s;
+    let c0 = a & 0xffffffff;
+    let c1 = (a >> 32) + (b & 0xffffffff);
+    let c2 = b >> 32;
+    if bits < 0 {
+        vec.set(acc, i, vec.get(acc, i) - c0);
+        vec.set(acc, i + 1, vec.get(acc, i + 1) - c1);
+        vec.set(acc, i + 2, vec.get(acc, i + 2) - c2);
+    } else {
+        vec.set(acc, i, vec.get(acc, i) + c0);
+        vec.set(acc, i + 1, vec.get(acc, i + 1) + c1);
+        vec.set(acc, i + 2, vec.get(acc, i + 2) + c2);
+    }
+    let n = vec.get(acc, at + 72) + 1;
+    if n >= 134217728 {
+        normalize(acc, at);
+    } else {
+        vec.set(acc, at + 72, n);
+    }
+    return 0;
+}
+
+// Carry so that every limb but the top is in [0, 2^32) and the top is the sign (0 or -1); the counter is zero.
+pub fn normalize[&v](acc: &!v vec.Vec[int], at: int) -> [] int {
+    var carry = 0;
+    var i = 0;
+    while i < 71 {
+        let x = vec.get(acc, at + i) + carry;
+        vec.set(acc, at + i, x & 0xffffffff);
+        carry = x >> 32;
+        i = i + 1;
+    }
+    vec.set(acc, at + 71, vec.get(acc, at + 71) + carry);
+    vec.set(acc, at + 72, 0);
+    return 0;
+}
+
+fn bit_length(v: int) -> [] int {
+    var n = 0;
+    var x = v;
+    while x > 0 {
+        n = n + 1;
+        x = x >> 1;
+    }
+    return n;
+}
+
+fn bit_at[&a](t: &a [int], pos: int) -> [] int {
+    if pos < 0 {
+        return 0;
+    }
+    return t[pos >> 5] >> (pos & 31) & 1;
+}
+
+// The magnitude `t` (`n` limbs of 32 bits, normalized, non-negative) rounded once to 53 bits, to nearest even. `unit` is the bit index of 2^-1074 (0 for a
+// sum, 64 for a mean computed with 64 fractional bits), `sticky` says that bits below the lowest limb bit were not zero (the remainder of a division).
+// Answers the key of the double (negative when `negative`) and 1 in the second place when it is beyond the largest double.
+fn round_key[&a](t: &a [int], n: int, unit: int, sticky: bool, negative: bool) -> [] (int, int) {
+    var h = n - 1;
+    while h >= 0 && t[h] == 0 {
+        h = h - 1;
+    }
+    if h < 0 {
+        return (0, 0);
+    }
+    let top = 32 * h + bit_length(t[h]) - 1;
+    var lsb = top - 52;
+    if lsb < unit {
+        lsb = unit;
+    }
+    var m = 0;
+    var k = top;
+    while k >= lsb {
+        m = m * 2 + bit_at(t, k);
+        k = k - 1;
+    }
+    var guard = 0;
+    var rest = sticky;
+    if lsb > 0 {
+        guard = bit_at(t, lsb - 1);
+        var j = lsb - 2;
+        while j >= 0 && !rest {
+            if bit_at(t, j) == 1 {
+                rest = true;
+            }
+            j = j - 1;
+        }
+    }
+    if guard == 1 && (rest || m & 1 == 1) {
+        m = m + 1;
+    }
+    var q = lsb - unit - 1074;
+    if m == 9007199254740992 {
+        m = 4503599627370496;
+        q = q + 1;
+    }
+    var bits = m;
+    if m == 0 {
+        return (0, 0);
+    }
+    if m >= 4503599627370496 {
+        let biased = q + 1075;
+        if biased >= 2047 {
+            return (0, 1);
+        }
+        bits = biased * 4503599627370496 + (m - 4503599627370496);
+    }
+    if negative {
+        return (bits + (0 - 9223372036854775807 - 1) ^ 0x7fffffffffffffff, 0);
+    }
+    return (bits, 0);
+}
+
+// The magnitude of the normalized accumulator at `at` into `t` (71 limbs), and whether it is negative.
+fn magnitude[&v, &a](acc: &v vec.Vec[int], at: int, t: &!a [int], shift: int) -> [] bool {
+    let negative = vec.get(acc, at + 71) < 0;
+    var carry = 0;
+    var i = 0;
+    while i < 71 {
+        var x = vec.get(acc, at + i);
+        if negative {
+            x = carry - x;
+            carry = x >> 32;
+            x = x & 0xffffffff;
+        }
+        t[i + shift] = x;
+        i = i + 1;
+    }
+    return negative;
+}
+
+// The sum at `at` as a key, rounded once; and 1 in the second place if it is beyond the largest double. The accumulator keeps its value (it is carried).
+pub fn finalize_key[&v](acc: &!v vec.Vec[int], at: int) -> [] (int, int) {
+    normalize(acc, at);
+    var key = 0;
+    var over = 0;
+    region r {
+        let t = alloc_slice[r](71, 0);
+        let negative = magnitude(acc, at, t, 0);
+        let (k2, o2) = round_key(t, 71, 0, false, negative);
+        key = k2;
+        over = o2;
+    }
+    return (key, over);
+}
+
+// The mean (the exact sum over `n`, rounded once) as a key.
+pub fn mean_key[&v](acc: &!v vec.Vec[int], at: int, n: int) -> [] int {
+    normalize(acc, at);
+    var key = 0;
+    region r {
+        let t = alloc_slice[r](73, 0);
+        let negative = magnitude(acc, at, t, 2);
+        var rem = 0;
+        var j = 72;
+        while j >= 0 {
+            let limb = t[j];
+            let cur_hi = rem * 65536 + (limb >> 16);
+            let q_hi = cur_hi / n;
+            rem = cur_hi - q_hi * n;
+            let cur_lo = rem * 65536 + (limb & 0xffff);
+            let q_lo = cur_lo / n;
+            rem = cur_lo - q_lo * n;
+            t[j] = q_hi * 65536 + q_lo;
+            j = j - 1;
+        }
+        let (k2, o2) = round_key(t, 73, 64, rem != 0, negative);
+        key = k2;
+    }
+    return key;
+}

@@ -59,6 +59,10 @@ here. And the only correctly rounded reader costs about a microsecond per call t
 so the float path needs its own scanner with Clinger's fast path inline, and the exact slow path is the one
 cost that has to be bought back (stage N3b).
 
+### 1.1 The numeric modules as a package
+
+Another repository can pin the exact readers and the exact float sum as `.cancho-vcs` stores (`pow5`, `dec`, `flt`, `query`, `facc`, `reader`; `docs/numeric-package.md`; written by `scripts/publish_numeric.py`, checked byte for byte in CI). The functions a consumer pins against are `flt.parse_float`, `flt.key_of`, `flt.float_of_key`, `flt.put_float`, `query.parse_int`, `query.parse_dec`, `query.pow10`, `facc.width`, `facc.add_bits`, `facc.normalize`, `facc.finalize_key`, `facc.mean_key`, `reader.scan`, `reader.fields` and `reader.split_header`; all are `pub` in `tools/table/`. A change to the name, signature, effects or behaviour of any of them is a change to a pinned interface: the stores are republished in the same commit, and the commit says so.
+
 ## 2. What the other tools do (measured, Mac; Python 3.14.5, pandas 3.0.3, DuckDB v1.5.6, csvtk v0.38.0)
 
 Miller is not installed on the Mac or on the Linux box, so nothing is claimed about it. `scripts/spikes/numbers_ref.py

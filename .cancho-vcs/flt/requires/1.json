@@ -1,0 +1,17 @@
+{
+  "store": "../pow5",
+  "lock": {
+    "entries": {
+      "pow5_128": {
+        "sig_id": "09c9cb61703a119cfc85676d603d9f5afc06ad5300801095e3bdbafb1932d933",
+        "stage_id": "faf80631c8111affbfc013b3d2f59c76941bbb067aaf932edbeb359bd550ea7f",
+        "source_hash": "ba517ee2dbef5ee18be70d4dc46c003a9c2bd408ad599f908dc91855a6d92537"
+      },
+      "word": {
+        "sig_id": "39f2c5be7f28f5a5d89193a9ae27330aa08e8b9caa5fcf769012f8de727f7eb0",
+        "stage_id": "fd192782c875e32c6f9ec6c7ebc77267f2d12c6c5a9dd677289cf72687cce78c",
+        "source_hash": "ba517ee2dbef5ee18be70d4dc46c003a9c2bd408ad599f908dc91855a6d92537"
+      }
+    }
+  }
+}
