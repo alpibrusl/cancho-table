@@ -1,0 +1,593 @@
+edition 5;
+
+module jrec;
+
+// One JSON-lines record (docs/readers.md section 12.2 to 12.4): the line parsed into the reader's tape by `std.json.parse_with`, and each declared field's cell found in
+// it, as the three ints the engine takes (first, last, flag 0) into the record's bytes. The engine never sees JSON: a cell of a string with no escape, or a number,
+// is a slice of the line itself; a string with an escape is decoded, and a `true` or `false` written, after a copy of the line, and the record is then that copy.
+//
+// One thing the CSV invariant says that JSON does not: an unquoted CSV field holds no delimiter and no LF, so `writer.csv_cell` quotes a field with flag 0 only for a quote or
+// a CR. A JSON string may hold both. When the output is csv (`qdelim` the delimiter, else -1) a string that holds an LF or the delimiter is written after the record, its quotes
+// doubled, and its cell is flag 1, which is what a quoted CSV field is.
+//
+// `extract` answers 0 (the record is the line), 1 (the record is `rec`) or the abort code of a refusal (`a` holds its facts):
+//   50 the line is not strict JSON (err_fn: std.json's code, err_digits: its offset)
+//   51 the line is JSON that is not an object (err_fn: 0 array, 1 string, 2 number, 3 boolean, 4 null)
+//   52 a declared path has no value (err_col, err_fn: 0 missing, 1 null, 2 not a container)
+//   53 a declared path holds an object or an array (err_col, err_fn: 0 object, 1 array)
+//   54 a key twice at a step of a declared path (err_col, err_digits: the segment)
+//   55 more nodes than the tape holds
+// and always err_row (the row it would be), err_cond (the line looks like a JSON document, rule 12.5). The tape and the state are the reader's, made once.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import engine;
+import jflat;
+import reader;
+
+pub fn a_syntax() -> [] int {
+    return 50;
+}
+
+pub fn a_not_object() -> [] int {
+    return 51;
+}
+
+pub fn a_missing() -> [] int {
+    return 52;
+}
+
+pub fn a_not_scalar() -> [] int {
+    return 53;
+}
+
+pub fn a_duplicate() -> [] int {
+    return 54;
+}
+
+pub fn a_nodes() -> [] int {
+    return 55;
+}
+
+// The tally slots, as engine.cho names them.
+fn k_records() -> [] int {
+    return 0;
+}
+
+fn k_abort() -> [] int {
+    return 6;
+}
+
+fn k_stop() -> [] int {
+    return 14;
+}
+
+fn k_err_col() -> [] int {
+    return 15;
+}
+
+fn k_err_fn() -> [] int {
+    return 16;
+}
+
+fn k_err_row() -> [] int {
+    return 17;
+}
+
+fn k_err_cond() -> [] int {
+    return 23;
+}
+
+fn k_err_digits() -> [] int {
+    return 26;
+}
+
+fn fail_with[&a](a: &!a [int], code: int) -> [] int {
+    a[k_abort()] = code;
+    a[k_stop()] = 1;
+    a[k_err_row()] = a[k_records()] + 1;
+    return code;
+}
+
+// A line that begins like a JSON document and not a JSON-lines record: `[`, or a lone `{`.
+fn looks_like_document[&l](line: &l [byte]) -> [] bool {
+    var i = 0;
+    while i < len(line) && (int_of(line[i]) == ' ' || int_of(line[i]) == 9 || int_of(line[i]) == 13) {
+        i = i + 1;
+    }
+    if i >= len(line) {
+        return false;
+    }
+    if int_of(line[i]) == '[' {
+        return true;
+    }
+    if int_of(line[i]) != '{' {
+        return false;
+    }
+    var j = i + 1;
+    while j < len(line) && (int_of(line[j]) == ' ' || int_of(line[j]) == 9 || int_of(line[j]) == 13) {
+        j = j + 1;
+    }
+    return j >= len(line);
+}
+
+// The line copied into the record's buffer, once: what a decoded string or a literal is written after.
+fn load[&h, &l](heap: &!h Heap, rec: buffer.Buffer, line: &l [byte]) -> [heap] buffer.Buffer {
+    var r = rec;
+    borrow mut r as &!rw in {
+        buffer.clear(rw);
+    }
+    return buffer.append(heap, r, line);
+}
+
+// The cell `rec[first..last]` written again at the end of `rec` with every quote doubled, and the cell `i` made that one, flag 1.
+fn quoted_cell[&h, &c](heap: &!h Heap, rec: buffer.Buffer, i: int, first: int, last: int, cells: &!c [int]) -> [heap] buffer.Buffer {
+    var out = rec;
+    var from = 0;
+    borrow out as &rr in {
+        from = buffer.size(rr);
+    }
+    var p = first;
+    while p < last {
+        var found = 0 - 1;
+        borrow out as &rr in {
+            found = index_of_byte(buffer.bytes(rr)[p..last], byte_of(34));
+        }
+        if found < 0 {
+            var piece = buffer.empty(heap, 1);
+            borrow out as &rr in {
+                piece = buffer.append(heap, piece, buffer.bytes(rr)[p..last]);
+            }
+            borrow piece as &pr in {
+                out = buffer.append(heap, out, buffer.bytes(pr));
+            }
+            buffer.drop(heap, piece);
+            p = last;
+        } else {
+            var piece = buffer.empty(heap, 1);
+            borrow out as &rr in {
+                piece = buffer.append(heap, piece, buffer.bytes(rr)[p..p + found + 1]);
+            }
+            borrow piece as &pr in {
+                out = buffer.append(heap, out, buffer.bytes(pr));
+            }
+            buffer.drop(heap, piece);
+            out = buffer.push(heap, out, byte_of(34));
+            p = p + found + 1;
+        }
+    }
+    var to = 0;
+    borrow out as &rr in {
+        to = buffer.size(rr);
+    }
+    cells[3 * i] = from;
+    cells[3 * i + 1] = to;
+    cells[3 * i + 2] = 1;
+    return out;
+}
+
+// The kind of a node as the refusals name it: 0 array, 1 string, 2 number, 3 boolean, 4 null.
+fn kind_code[&t](tape: &t [int], node: int) -> [] int {
+    let k = json.kind(tape, node);
+    if k == 6 {
+        return 0;
+    }
+    if k == 5 {
+        return 1;
+    }
+    if k == 3 || k == 4 {
+        return 2;
+    }
+    if k == 1 || k == 2 {
+        return 3;
+    }
+    return 4;
+}
+
+// Whether the line is blank: nothing but space, tab and CR.
+pub fn blank[&l](line: &l [byte]) -> [] bool {
+    var i = 0;
+    while i < len(line) {
+        let c = int_of(line[i]);
+        if c != ' ' && c != 9 && c != 13 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Parse `line` and take the cell of every field: `table` and `sbytes` are the declaration (jfields.cho), `absent` 1 for `--absent empty`.
+pub fn extract[&h, &s, &t, &q, &p, &b, &c, &a](heap: &!h Heap, line: &s [byte], tape: &!t [int], st: &!q [int], table: &p [int], sbytes: &b [byte], nfields: int, flat: bool, nodes: int, absent: int, qdelim: int, cells: &!c [int], rec0: buffer.Buffer, a: &!a [int]) -> [heap] (int, buffer.Buffer) {
+    var rec = rec0;
+    // The flat scanner first, for a line that is one object of scalars and a plan whose paths are all one key (jflat.cho); any other line, and any refusal, is the tape's.
+    var scanned = false;
+    if flat {
+        scanned = jflat.scan(line, table, sbytes, nfields, nodes, cells) == 0;
+    }
+    if !scanned {
+        let n = json.parse_with(line, tape, st);
+        if n < 0 {
+            let code = json.error_code(n);
+            if code == 8 {
+                return (fail_with(a, a_nodes()), rec);
+            }
+            a[k_err_fn()] = code;
+            a[k_err_digits()] = json.error_position(n);
+            if looks_like_document(line) && a[k_records()] == 0 {
+                a[k_err_cond()] = 1;
+            } else {
+                a[k_err_cond()] = 0;
+            }
+            return (fail_with(a, a_syntax()), rec);
+        }
+        if json.kind(tape, 0) != 7 {
+            a[k_err_fn()] = kind_code(tape, 0);
+            if looks_like_document(line) && a[k_records()] == 0 {
+                a[k_err_cond()] = 1;
+            } else {
+                a[k_err_cond()] = 0;
+            }
+            return (fail_with(a, a_not_object()), rec);
+        }
+    }
+    let base = 2 * nfields;
+    // Phase one: where each field's value is. `cells[3i]` is the node, or -1 (no such key or index), -2 (a step through a scalar), -3 (a key twice, and `cells[3i+1]`
+    // the segment of the path it was at).
+    if !scanned {
+        if flat {
+            // Every path is one key: one pass over the keys of the root object, each compared with the declared names by length first.
+            var i = 0;
+            while i < nfields {
+                cells[3 * i] = 0 - 1;
+                i = i + 1;
+            }
+            var j = 1;
+            var left = tape[1];
+            while left > 0 {
+                let w0 = tape[3 * j];
+                let ks = tape[3 * j + 1];
+                let ke = tape[3 * j + 2];
+                let kl = ke - ks;
+                var f = 0;
+                while f < nfields {
+                    let sg = base + 3 * table[2 * f];
+                    if table[sg + 1] - table[sg] == kl || w0 >> 3 != 0 {
+                        var same = false;
+                        if w0 >> 3 == 0 {
+                            same = bytes.equal(line[ks..ke], sbytes[table[sg]..table[sg + 1]]);
+                        } else {
+                            same = json.string_equals(line, tape, j, sbytes[table[sg]..table[sg + 1]]);
+                        }
+                        if same {
+                            if cells[3 * f] == 0 - 1 {
+                                cells[3 * f] = j + 1;
+                            } else {
+                                cells[3 * f] = 0 - 3;
+                                cells[3 * f + 1] = 0;
+                            }
+                        }
+                    }
+                    f = f + 1;
+                }
+                // the next pair: past the value
+                let vk = tape[3 * (j + 1)] & 7;
+                if vk == 6 || vk == 7 {
+                    j = tape[3 * (j + 1) + 2];
+                } else {
+                    j = j + 2;
+                }
+                left = left - 1;
+            }
+        } else {
+            var i = 0;
+            while i < nfields {
+                let first_seg = table[2 * i];
+                let segs = table[2 * i + 1];
+                var node = 0;
+                var step = 0;
+                var gone = 0 - 1;
+                var twice = 0 - 1;
+                while step < segs && gone < 0 && twice < 0 {
+                    let sg = base + 3 * (first_seg + step);
+                    let k = json.kind(tape, node);
+                    if k == 7 {
+                        let key = sbytes[table[sg]..table[sg + 1]];
+                        var j = node + 1;
+                        var left = tape[3 * node + 1];
+                        var found = 0 - 1;
+                        while left > 0 && twice < 0 {
+                            if json.string_equals(line, tape, j, key) {
+                                if found >= 0 {
+                                    twice = step;
+                                } else {
+                                    found = j + 1;
+                                }
+                            }
+                            j = json.skip(tape, j + 1);
+                            left = left - 1;
+                        }
+                        if twice < 0 {
+                            if found < 0 {
+                                gone = 1;
+                            } else {
+                                node = found;
+                            }
+                        }
+                    } else if k == 6 {
+                        let ix = table[sg + 2];
+                        if ix < 0 || ix >= tape[3 * node + 1] {
+                            gone = 1;
+                        } else {
+                            node = json.at(tape, node, ix);
+                        }
+                    } else {
+                        gone = 2;
+                    }
+                    step = step + 1;
+                }
+                if twice >= 0 {
+                    cells[3 * i] = 0 - 3;
+                    cells[3 * i + 1] = twice;
+                } else if gone >= 0 {
+                    cells[3 * i] = 0 - gone;
+                } else {
+                    cells[3 * i] = node;
+                }
+                i = i + 1;
+            }
+        }
+    }
+    // Phase two: the cell of each field, in the order of the declaration.
+    var copied = false;
+    var status = 0;
+    var i = 0;
+    while i < nfields && status == 0 {
+        let where_at = cells[3 * i];
+        var gone = 0 - 1;
+        if where_at == 0 - 3 {
+            a[k_err_col()] = i;
+            a[k_err_digits()] = table[2 * i] + cells[3 * i + 1];
+            status = fail_with(a, a_duplicate());
+        } else if where_at == 0 - 1 {
+            gone = 0;
+        } else if where_at <= 0 - 10 {
+            // a value the flat scanner found (jflat.cho): 0 - 10 a string, 0 - 11 a number, 0 - 12 true, 0 - 13 false, 0 - 14 null
+            let kind = 0 - 10 - where_at;
+            let v0 = cells[3 * i + 1];
+            let v1 = cells[3 * i + 2];
+            cells[3 * i] = v0;
+            cells[3 * i + 1] = v1;
+            cells[3 * i + 2] = 0;
+            if kind == 0 {
+                if qdelim >= 0 && index_of_byte(line[v0..v1], byte_of(qdelim)) >= 0 {
+                    if !copied {
+                        rec = load(heap, rec, line);
+                        copied = true;
+                    }
+                    rec = quoted_cell(heap, rec, i, v0, v1, cells);
+                }
+            } else if kind == 2 || kind == 3 {
+                if !copied {
+                    rec = load(heap, rec, line);
+                    copied = true;
+                }
+                var at = 0;
+                borrow rec as &rr in {
+                    at = buffer.size(rr);
+                }
+                if kind == 2 {
+                    rec = buffer.append(heap, rec, "true");
+                    cells[3 * i + 1] = at + 4;
+                } else {
+                    rec = buffer.append(heap, rec, "false");
+                    cells[3 * i + 1] = at + 5;
+                }
+                cells[3 * i] = at;
+            } else if kind == 4 {
+                gone = 1;
+            }
+        } else if where_at < 0 {
+            gone = 2;
+        } else {
+            let node = where_at;
+            let k = json.kind(tape, node);
+            if k == 5 {
+                if tape[3 * node] >> 3 == 0 {
+                    cells[3 * i] = tape[3 * node + 1];
+                    cells[3 * i + 1] = tape[3 * node + 2];
+                    cells[3 * i + 2] = 0;
+                    if qdelim >= 0 && index_of_byte(line[tape[3 * node + 1]..tape[3 * node + 2]], byte_of(qdelim)) >= 0 {
+                        if !copied {
+                            rec = load(heap, rec, line);
+                            copied = true;
+                        }
+                        rec = quoted_cell(heap, rec, i, tape[3 * node + 1], tape[3 * node + 2], cells);
+                    }
+                } else {
+                    if !copied {
+                        rec = load(heap, rec, line);
+                        copied = true;
+                    }
+                    let need = json.string_length(line, tape, node);
+                    rec = buffer.reserve(heap, rec, need);
+                    var at = 0;
+                    borrow rec as &rr in {
+                        at = buffer.size(rr);
+                    }
+                    borrow mut rec as &!rw in {
+                        let room = buffer.room(rw);
+                        let wrote = json.string_into(line, tape, node, room[0..need]);
+                        buffer.filled(rw, wrote);
+                    }
+                    cells[3 * i] = at;
+                    cells[3 * i + 1] = at + need;
+                    cells[3 * i + 2] = 0;
+                    if qdelim >= 0 {
+                        var odd = false;
+                        borrow rec as &rr in {
+                            let text = buffer.bytes(rr)[at..at + need];
+                            odd = index_of_byte(text, byte_of(qdelim)) >= 0 || index_of_byte(text, byte_of(10)) >= 0;
+                        }
+                        if odd {
+                            rec = quoted_cell(heap, rec, i, at, at + need, cells);
+                        }
+                    }
+                }
+            } else if k == 3 || k == 4 {
+                cells[3 * i] = tape[3 * node + 1];
+                cells[3 * i + 1] = tape[3 * node + 2];
+                cells[3 * i + 2] = 0;
+            } else if k == 1 || k == 2 {
+                if !copied {
+                    rec = load(heap, rec, line);
+                    copied = true;
+                }
+                var at = 0;
+                borrow rec as &rr in {
+                    at = buffer.size(rr);
+                }
+                if k == 2 {
+                    rec = buffer.append(heap, rec, "true");
+                    cells[3 * i + 1] = at + 4;
+                } else {
+                    rec = buffer.append(heap, rec, "false");
+                    cells[3 * i + 1] = at + 5;
+                }
+                cells[3 * i] = at;
+                cells[3 * i + 2] = 0;
+            } else if k == 0 {
+                gone = 1;
+            } else {
+                a[k_err_col()] = i;
+                a[k_err_fn()] = 0;
+                if k == 6 {
+                    a[k_err_fn()] = 1;
+                }
+                status = fail_with(a, a_not_scalar());
+            }
+        }
+        if status == 0 && gone >= 0 {
+            if absent == 1 {
+                cells[3 * i] = 0;
+                cells[3 * i + 1] = 0;
+                cells[3 * i + 2] = 0;
+            } else {
+                a[k_err_col()] = i;
+                a[k_err_fn()] = gone;
+                status = fail_with(a, a_missing());
+            }
+        }
+        i = i + 1;
+    }
+    if status != 0 {
+        return (status, rec);
+    }
+    if copied {
+        return (1, rec);
+    }
+    return (0, rec);
+}
+
+// The bytes a refusal quotes: for a syntax error the up to 32 around the offset, for a key twice the segment; else nothing.
+pub fn keep_facts[&h, &l, &p, &b, &a](heap: &!h Heap, kept: buffer.Buffer, code: int, line: &l [byte], table: &p [int], sbytes: &b [byte], nfields: int, a: &a [int]) -> [heap] buffer.Buffer {
+    if code == 50 {
+        var lo = a[k_err_digits()] - 16;
+        if lo < 0 {
+            lo = 0;
+        }
+        var hi = a[k_err_digits()] + 16;
+        if hi > len(line) {
+            hi = len(line);
+        }
+        if lo > hi {
+            lo = hi;
+        }
+        return engine.keep_value(heap, kept, line, lo, hi);
+    }
+    if code == 54 {
+        let sg = 2 * nfields + 3 * a[k_err_digits()];
+        return engine.keep_value(heap, kept, sbytes, table[sg], table[sg + 1]);
+    }
+    return kept;
+}
+
+// The first half of `extract` alone, for a read that wants no fields (`--discover`): the line parsed, and a root that is an object. 0, or the abort code (50, 51 or 55).
+pub fn parse_only[&s, &t, &q, &a](line: &s [byte], tape: &!t [int], st: &!q [int], a: &!a [int]) -> [] int {
+    let n = json.parse_with(line, tape, st);
+    if n < 0 {
+        let code = json.error_code(n);
+        if code == 8 {
+            return fail_with(a, a_nodes());
+        }
+        a[k_err_fn()] = code;
+        a[k_err_digits()] = json.error_position(n);
+        if looks_like_document(line) && a[k_records()] == 0 {
+            a[k_err_cond()] = 1;
+        } else {
+            a[k_err_cond()] = 0;
+        }
+        return fail_with(a, a_syntax());
+    }
+    if json.kind(tape, 0) != 7 {
+        a[k_err_fn()] = kind_code(tape, 0);
+        if looks_like_document(line) && a[k_records()] == 0 {
+            a[k_err_cond()] = 1;
+        } else {
+            a[k_err_cond()] = 0;
+        }
+        return fail_with(a, a_not_object());
+    }
+    return 0;
+}
+
+// The record as a CSV record, for the one consumer that reads a held record again with the CSV reader: a sort (`--order-by`) keeps the rows' bytes and splits them
+// when it writes them (finish.finish_sort, psort.make_run). `record` and its `cells` are the JSON line's (or its copy's), the answer is the same cells joined by `delim`,
+// quoted when they must be and their quotes doubled, written to `out` (cleared first) and cut again by `reader.fields`, so that `cells` are what CSV would give for it.
+pub fn csv_record[&h, &r, &c](heap: &!h Heap, out: buffer.Buffer, record: &r [byte], cells: &!c [int], nfields: int, delim: int) -> [heap] buffer.Buffer {
+    var o = out;
+    borrow mut o as &!ow in {
+        buffer.clear(ow);
+    }
+    var i = 0;
+    while i < nfields {
+        if i > 0 {
+            o = buffer.push(heap, o, byte_of(delim));
+        }
+        let first = cells[3 * i];
+        let last = cells[3 * i + 1];
+        let text = record[first..last];
+        var must = nfields == 1 && first == last;
+        if !must {
+            must = index_of_byte(text, byte_of(34)) >= 0 || index_of_byte(text, byte_of(delim)) >= 0 || index_of_byte(text, byte_of(10)) >= 0 || index_of_byte(text, byte_of(13)) >= 0 || cells[3 * i + 2] == 1;
+        }
+        if must {
+            o = buffer.push(heap, o, byte_of(34));
+            if cells[3 * i + 2] == 1 {
+                o = buffer.append(heap, o, text);
+            } else {
+                var p = first;
+                while p < last {
+                    let found = index_of_byte(record[p..last], byte_of(34));
+                    if found < 0 {
+                        o = buffer.append(heap, o, record[p..last]);
+                        p = last;
+                    } else {
+                        o = buffer.append(heap, o, record[p..p + found + 1]);
+                        o = buffer.push(heap, o, byte_of(34));
+                        p = p + found + 1;
+                    }
+                }
+            }
+            o = buffer.push(heap, o, byte_of(34));
+        } else {
+            o = buffer.append(heap, o, text);
+        }
+        i = i + 1;
+    }
+    borrow o as &or in {
+        let (n, open, wrong) = reader.fields(buffer.bytes(or), delim, cells, nfields);
+    }
+    return o;
+}

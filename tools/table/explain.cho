@@ -14,6 +14,7 @@ import std.bytes;
 import std.vec;
 import finish;
 import frame;
+import jfields;
 import query;
 import reader;
 import spec;
@@ -303,7 +304,7 @@ fn note[&h, &d](heap: &!h Heap, o: buffer.Buffer, first: bool, sentence: &d [byt
 
 // The document, `{"explain": {...}}`, for a plan whose header (when it has been read) has been resolved. `resolved` says that `cols` holds, for each name of the plan, the
 // column it is; `head` is the json array of the answer's columns when the plan names columns (`frame.prepare`), and `names` and `ends` the header.
-pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer) -> [heap, args] buffer.Buffer {
+pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let reporting = query.reporting(tree);
     let ns = query.count_of(tree, 0);
@@ -480,13 +481,30 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
         o = text.append_json(heap, o, shown);
         o = buffer.append(heap, o, ",\"reader\":\"file\"");
     }
-    o = buffer.append(heap, o, ",\"block_bytes\":65536,\"format\":\"csv\",\"delimiter\":");
-    if delim == 9 {
-        o = buffer.append(heap, o, "\"\\t\"");
+    if as_json {
+        // JSON lines (docs/readers.md section 12): the header is the declaration, nothing of the input is read for it
+        o = buffer.append(heap, o, ",\"block_bytes\":65536,\"format\":\"jsonl\",\"delimiter\":null,\"fields\":[");
+        k = 0;
+        while k < columns {
+            if k > 0 {
+                o = buffer.push(heap, o, byte_of(','));
+            }
+            o = text.append_json(heap, o, finish.name_of(names, ends, k));
+            k = k + 1;
+        }
+        o = buffer.append(heap, o, "],\"absent\":\"");
+        o = buffer.append(heap, o, cli.text(args, parsed, table, "absent"));
+        o = buffer.append(heap, o, "\",\"max_json_nodes\":");
+        o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "max-json-nodes"));
     } else {
-        o = buffer.append(heap, o, "\"");
-        o = buffer.push(heap, o, byte_of(delim));
-        o = buffer.append(heap, o, "\"");
+        o = buffer.append(heap, o, ",\"block_bytes\":65536,\"format\":\"csv\",\"delimiter\":");
+        if delim == 9 {
+            o = buffer.append(heap, o, "\"\\t\"");
+        } else {
+            o = buffer.append(heap, o, "\"");
+            o = buffer.push(heap, o, byte_of(delim));
+            o = buffer.append(heap, o, "\"");
+        }
     }
     o = buffer.append(heap, o, ",\"size\":");
     if stdin || size < 0 {
@@ -634,7 +652,7 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
         o = buffer.append(heap, o, "json");
     }
     o = buffer.append(heap, o, "\",\"columns\":");
-    if stdin {
+    if stdin && !as_json {
         o = buffer.append(heap, o, "null");
     } else if mode == 0 {
         o = buffer.push(heap, o, byte_of('['));
@@ -697,12 +715,24 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
     }
     // the refusals the data could still raise
     o = buffer.append(heap, o, "}},\"refusals\":{\"possible\":[\"io.read-failed\"");
-    o = rule(heap, o, "parse.csv-ragged-row");
-    o = rule(heap, o, "parse.csv-bad-quote");
-    o = rule(heap, o, "parse.csv-unterminated-quote");
-    o = rule(heap, o, "limit.line-too-long");
-    if mode != 0 {
-        o = rule(heap, o, "limit.record-too-large");
+    if as_json {
+        o = rule(heap, o, "parse.jsonl-syntax");
+        o = rule(heap, o, "parse.jsonl-not-object");
+        if !bytes.equal(cli.text(args, parsed, table, "absent"), "empty") {
+            o = rule(heap, o, "parse.jsonl-missing-field");
+        }
+        o = rule(heap, o, "parse.jsonl-not-scalar");
+        o = rule(heap, o, "parse.jsonl-duplicate-key");
+        o = rule(heap, o, "limit.json-too-many-nodes");
+        o = rule(heap, o, "limit.line-too-long");
+    } else {
+        o = rule(heap, o, "parse.csv-ragged-row");
+        o = rule(heap, o, "parse.csv-bad-quote");
+        o = rule(heap, o, "parse.csv-unterminated-quote");
+        o = rule(heap, o, "limit.line-too-long");
+        if mode != 0 {
+            o = rule(heap, o, "limit.record-too-large");
+        }
     }
     if !got {
         o = rule(heap, o, "limit.header-too-large");
@@ -775,7 +805,13 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
         }
         k = k + 1;
     }
-    if stdin {
+    if stdin && as_json {
+        o = note(heap, o, first_note, "standard input is not read by --explain: its columns are the ones --fields declares");
+        first_note = false;
+        if requested > 1 {
+            o = note(heap, o, first_note, "--threads has no effect on standard input: it is read on one core, in blocks");
+        }
+    } else if stdin {
         o = note(heap, o, first_note, "standard input is not read by --explain: its header is unknown, so the columns are not resolved and a name the header lacks is not reported");
         first_note = false;
         if requested > 1 {
@@ -797,14 +833,35 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
 }
 
 // `--explain` for an input that is open: the header is read (a file) and resolved, a refusal of the run is the refusal, and otherwise the document. `opened` is closed here.
-pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, opened: File, stdin: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree0: query.Query, names_at: int, errs: fail.Errors, payload0: buffer.Buffer) -> [heap, args] (query.Query, fail.Errors, buffer.Buffer) {
+pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, opened: File, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree0: query.Query, names_at: int, errs: fail.Errors, payload0: buffer.Buffer) -> [heap, args] (query.Query, fail.Errors, buffer.Buffer) {
     let table = spec.flag_table();
     var e = errs;
     var file = opened;
     var payload = payload0;
     var size = -1;
     var head = Head { names: buffer.empty(heap, 1), ends: vec.empty(heap, 1, 0), got: false, abort: 0, abort_line: 0, long_length: 0, errno: 0, consumed: 0, bytes_read: 0 };
-    if !stdin {
+    if as_json {
+        // JSON lines: the header is the declaration; a file's size is asked, nothing is read
+        let Head { names, ends, got, abort, abort_line, long_length, errno, consumed, bytes_read } = head;
+        buffer.drop(heap, names);
+        vec.drop(heap, ends);
+        let jfields.Fields { fnames, fends, fsbytes, ftable, fstatus, fat } = jfields.parse(heap, cli.text(args, parsed, table, "fields"));
+        buffer.drop(heap, fsbytes);
+        unbox_slice(heap, ftable);
+        head = Head { names: fnames, ends: fends, got: true, abort: 0, abort_line: 0, long_length: 0, errno: 0, consumed: 0, bytes_read: 0 };
+        if !stdin {
+            borrow mut file as &!handle in {
+                match file_size(handle) {
+                    Done::Ok(n) => {
+                        size = n;
+                    }
+                    Done::Failed(reason) => {
+                        size = -1;
+                    }
+                }
+            }
+        }
+    } else if !stdin {
         let Head { names, ends, got, abort, abort_line, long_length, errno, consumed, bytes_read } = head;
         buffer.drop(heap, names);
         vec.drop(heap, ends);
@@ -886,7 +943,7 @@ pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
                     borrow ends as &er in {
                         borrow shown_head as &hr in {
                             buffer.drop(heap, payload);
-                            payload = document(heap, args, parsed, tq, stdin, shown, delim, mode, as_csv, from, limit, top, size, got, consumed, bytes_read, got && mode != 0, contents(cr), nr, er, hr);
+                            payload = document(heap, args, parsed, tq, stdin, as_json, shown, delim, mode, as_csv, from, limit, top, size, got, consumed, bytes_read, got && mode != 0, contents(cr), nr, er, hr);
                         }
                     }
                 }

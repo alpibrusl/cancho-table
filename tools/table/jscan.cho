@@ -1,0 +1,272 @@
+edition 5;
+
+module jscan;
+
+// A byte range of the records of a JSON-lines file: what a worker thread runs over its chunk, and what the parent runs when a worker's answer cannot be used
+// (docs/readers.md section 12.6). The twin of `scan.scan_range` for a format whose record is a line: a range begins at a line start (`par.align`), no JSON text holds
+// a raw LF, so its first line begins a record and the speculation of the CSV scan is never wrong; the loop has no quote state, no skipped tail and no guess.
+//
+// The parameters are `scan.p_*`, and `p_format` says where the declaration of the fields is in the same array (the tail, below): the worker is handed it in the
+// array it is handed (par.cho copies the tail), and builds its tape and state here, once for its range.
+
+import std.buffer;
+import std.vec;
+import agg;
+import engine;
+import jrec;
+import query;
+import scan;
+import toolbox.lines;
+
+// Where the declaration of the fields starts in the array of parameters: 0 the rows are CSV, else an index.
+pub fn p_format() -> [] int {
+    return 14;
+}
+
+// The tail: `[absent, nodes, bytes, table length, table..., segment bytes one to an int...]`.
+pub fn tail_size(table_len: int, bytes_len: int) -> [] int {
+    return 4 + table_len + bytes_len;
+}
+
+pub fn put_tail[&u, &t, &b](u: &!u [int], at: int, absent: int, nodes: int, table: &t [int], sbytes: &b [byte]) -> [] int {
+    u[at] = absent;
+    u[at + 1] = nodes;
+    u[at + 2] = len(sbytes);
+    u[at + 3] = len(table);
+    var i = 0;
+    while i < len(table) {
+        u[at + 4 + i] = table[i];
+        i = i + 1;
+    }
+    i = 0;
+    while i < len(sbytes) {
+        u[at + 4 + len(table) + i] = int_of(sbytes[i]);
+        i = i + 1;
+    }
+    return 0;
+}
+
+// Scan the records that start in `[start, until)`; the answer is `scan.scan_range`'s: where the next record starts, the lines before it, a status (0 read, 1 a block of
+// csv is pending, 2 stopped because `a` says so), and the buffers and groups. `hint` is not used (nothing is guessed).
+pub fn scan_range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File, par: &p [int], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!a [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, until: int, hint: int) -> [heap, file_read] (int, int, int, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
+    let delim = par[scan.p_delim()];
+    let mode = par[scan.p_mode()];
+    let as_csv = par[scan.p_csv()] == 1;
+    let picked = par[scan.p_picked()];
+    let budget = par[scan.p_budget()];
+    let limit = par[scan.p_limit()];
+    let most = par[scan.p_most()];
+    let from = par[scan.p_from()];
+    let max_groups = par[scan.p_max_groups()];
+    let max_distinct = par[scan.p_max_distinct()];
+    let max_state = par[scan.p_max_state()];
+    let cap = par[scan.p_cap()];
+    let base_line = par[scan.p_base_line()];
+    let yield_at = par[scan.p_yield()];
+    let at0 = par[p_format()];
+    let absent = par[at0];
+    let nodes = par[at0 + 1];
+    let sb_len = par[at0 + 2];
+    let table_len = par[at0 + 3];
+    let table = par[at0 + 4..at0 + 4 + table_len];
+    var sb = box_slice(heap, sb_len + 1, byte_of(0));
+    borrow mut sb as &!sw in {
+        var k = 0;
+        while k < sb_len {
+            contents(sw)[k] = byte_of(par[at0 + 4 + table_len + k]);
+            k = k + 1;
+        }
+    }
+    var tape = box_slice(heap, 3 * nodes, 0);
+    var st = box_slice(heap, 2, 0);
+    let nfields = a[engine.k_columns()];
+    var flat = true;
+    var f = 0;
+    while f < nfields {
+        if table[2 * f + 1] != 1 {
+            flat = false;
+        }
+        f = f + 1;
+    }
+    var qdelim = 0 - 1;
+    if as_csv {
+        qdelim = delim;
+    }
+    let filtering = query.count_of(tree, 1) > 0;
+    let fast_ok = engine.fast_ok(tree);
+    var rows2 = rows;
+    var scratch2 = scratch;
+    var escr2 = escr;
+    var kept2 = kept;
+    var groups2 = groups;
+    var rec = buffer.empty(heap, 256);
+    var crec = buffer.empty(heap, 256);
+    let sorting = query.count_of(tree, 4) > 0 && !query.reporting(tree);
+    a[engine.k_first_at()] = start;
+    var r = lines.start(heap, cap);
+    var going = true;
+    var next_at = par[scan.p_size()];
+    var consumed = 0;
+    var status = 0;
+    while going {
+        var state = 9;
+        borrow mut r as &!rw in {
+            state = scan.next_fast(rw);
+        }
+        if state == 9 {
+            let (stepped, answer) = lines.next(heap, r);
+            r = stepped;
+            state = answer;
+        }
+        if state == lines.need() {
+            r = scan.fill_at(r, file, start);
+        } else if state == lines.done() {
+            borrow r as &rr in {
+                consumed = lines.number(rr);
+                next_at = start + lines.consumed(rr);
+            }
+            going = false;
+        } else if state == lines.long() {
+            a[engine.k_abort()] = 4;
+            borrow r as &rr in {
+                a[engine.k_abort_line()] = base_line + lines.number(rr);
+                a[engine.k_long()] = lines.length(rr);
+            }
+            status = 2;
+            going = false;
+        } else {
+            borrow r as &rr in {
+                let number = lines.number(rr);
+                var line = lines.text(rr);
+                let at = start + lines.offset(rr);
+                if at >= until {
+                    // The next range's, whatever it holds: where this one ends.
+                    consumed = number - 1;
+                    next_at = at;
+                    going = false;
+                } else {
+                    // A byte order mark belongs to the file, not to the first name.
+                    if at == 0 && len(line) >= 3 && int_of(line[0]) == 239 && int_of(line[1]) == 187 && int_of(line[2]) == 191 {
+                        line = line[3..len(line)];
+                    }
+                    if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                        line = line[0..len(line) - 1];
+                    }
+                    if jrec.blank(line) {
+                        // A blank line is not a record.
+                    } else if a[engine.k_records()] >= most {
+                        a[engine.k_capped()] = 1;
+                        status = 2;
+                        going = false;
+                    } else if mode == 1 && !filtering && a[engine.k_records()] >= from && a[engine.k_emitted()] >= limit {
+                        a[engine.k_more()] = 1;
+                        a[engine.k_next()] = a[engine.k_records()];
+                        status = 2;
+                        going = false;
+                    } else {
+                        var shape = 0;
+                        borrow mut tape as &!tw in {
+                            borrow mut st as &!stw in {
+                                borrow sb as &sbr in {
+                                    let (code, rec2) = jrec.extract(heap, line, contents(tw), contents(stw), table, contents(sbr), nfields, flat, nodes, absent, qdelim, cells, rec, a);
+                                    rec = rec2;
+                                    shape = code;
+                                }
+                            }
+                        }
+                        if shape < 50 && sorting {
+                            // a held row is split again by the CSV reader when it is written (jrec.csv_record)
+                            borrow rec as &rcr in {
+                                var record = buffer.bytes(rcr);
+                                if shape == 0 {
+                                    record = line;
+                                }
+                                crec = jrec.csv_record(heap, crec, record, cells, nfields, delim);
+                            }
+                            let swap = rec;
+                            rec = crec;
+                            crec = swap;
+                            shape = 1;
+                        }
+                        if shape >= 50 {
+                            a[engine.k_abort_line()] = base_line + number;
+                            a[engine.k_err_line()] = base_line + number;
+                            borrow sb as &sbr in {
+                                kept2 = jrec.keep_facts(heap, kept2, shape, line, table, contents(sbr), nfields, a);
+                            }
+                            status = 2;
+                            going = false;
+                        } else if engine.count_row(a, nfields, base_line + number, from) {
+                            borrow rec as &rcr in {
+                                var record = buffer.bytes(rcr);
+                                if shape == 0 {
+                                    record = line;
+                                }
+                                if mode == 1 {
+                                    let (r3, s3, e3, k3) = engine.process_rows_buf(heap, rows2, scratch2, escr2, kept2, tree, cols, record, cells, sel, picked, delim, as_csv, budget, base_line + number, limit, a);
+                                    rows2 = r3;
+                                    scratch2 = s3;
+                                    escr2 = e3;
+                                    kept2 = k3;
+                                } else {
+                                    var hot = 1;
+                                    if !fast_ok {
+                                        // a distinct count is not added in place: `process_groups`
+                                    } else if !filtering {
+                                        var got = 1;
+                                        borrow mut groups2 as &!gw in {
+                                            got = engine.group_plain(gw, tree, cols, record, cells);
+                                        }
+                                        if got >= 16 {
+                                            kept2 = engine.group_refused(heap, kept2, tree, cols, record, cells, base_line + number, got, a);
+                                            hot = 0;
+                                        } else {
+                                            hot = got;
+                                        }
+                                    } else {
+                                        borrow mut groups2 as &!gw in {
+                                            let (f2, e2, k2) = engine.group_fast(heap, gw, escr2, kept2, tree, cols, record, cells, base_line + number, a);
+                                            hot = f2;
+                                            escr2 = e2;
+                                            kept2 = k2;
+                                        }
+                                    }
+                                    if hot == 1 || hot == 3 {
+                                        let (g3, e3, k3) = engine.process_groups(heap, groups2, escr2, kept2, tree, cols, record, cells, base_line + number, max_groups, max_distinct, max_state, hot == 3, a);
+                                        groups2 = g3;
+                                        escr2 = e3;
+                                        kept2 = k3;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if a[engine.k_stop()] == 1 && going {
+                    status = 2;
+                    going = false;
+                }
+                // A block of csv is pending: the caller writes it, and resumes after this line.
+                if going && yield_at > 0 {
+                    var held_out = 0;
+                    borrow rows2 as &pr in {
+                        held_out = buffer.size(pr);
+                    }
+                    if held_out >= yield_at {
+                        status = 1;
+                        consumed = number;
+                        next_at = start + lines.consumed(rr);
+                        going = false;
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, rec);
+    buffer.drop(heap, crec);
+    lines.drop(heap, r);
+    unbox_slice(heap, tape);
+    unbox_slice(heap, st);
+    unbox_slice(heap, sb);
+    return (next_at, consumed, status, rows2, scratch2, escr2, kept2, groups2);
+}

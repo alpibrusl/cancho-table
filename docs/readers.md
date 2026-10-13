@@ -529,3 +529,148 @@ Re-measured on the bulk-read build (head of PR #39, `read_bytes`, reads of 512 b
 | authority | the row is main's plus `io_read`, nothing from the pin (`never_touches` is a new member of the report, not a label); `functions` 631 to 638 |
 
 
+
+## 12. R2: JSON lines read (2026-10-13)
+
+Stage R2 of section 8, built as `--input-format jsonl` (and its spelling `ndjson`) with `--fields`, `--absent`, `--max-json-nodes` and `--discover`, for a file and for standard input, on `std.json.parse_with` (cancho #363) with one tape and one state per reader (and per worker thread). This section is the **specification the gates were written from** (sections 5 and 8 say what was designed; this one says what is built, and **where the design was read narrowly**, N1 to N14). The measurements and the gates' results are added at the end of this section when they are in (12.9 to 12.11); a number that is not there was not measured.
+
+### 12.1 Surface
+
+| flag | kind | default | |
+|---|---|---|---|
+| `--input-format` | choice `csv/jsonl/ndjson` | `csv` | never guessed from a name or from content; `ndjson` is `jsonl` |
+| `--fields LIST` | text | none | the columns, by path; required with `jsonl` (below); `args.conflict` with `csv` |
+| `--absent` | choice `refuse/empty` | `refuse` | what a declared path with no value is; `args.conflict` with `csv` |
+| `--max-json-nodes N` | nat | 4096 | the most JSON nodes a line may hold (the tape is 3 ints a node, once per reader); 1 to 1,048,576; `args.conflict` with `csv` |
+| `--discover` | bool | off | the bounded report of 12.7; takes no plan flag |
+| `--discover-lines N` | nat | 1000 | 1 to 1,000,000; needs `--discover` |
+| `--max-fields N` | nat | 256 | 1 to 4096; needs `--discover` |
+
+The flags are the last of the table, and are looked up only when an argument could be one of them, so a CSV run reads the table as far as before. `--delimiter` with JSON lines input only sets the delimiter of CSV *output*. A standard input and a file give the same bytes (but `detail.path`). `--query` works on the columns `--fields` declares (a name with a dot is `"user.name"` in a query). **A plan on JSON lines without `--fields` (and without `--discover`) is `input.fields-required`**, the shape too (N1).
+
+### 12.2 The input, exactly
+
+* Bytes in, lines out by the reader CSV uses (64 KiB chunk, `--max-line-bytes`, `limit.line-too-long` with the same detail). A byte order mark (`EF BB BF`) at the start of the input is dropped and not counted in an offset. A CR before the LF is dropped. A **blank line** (nothing, or only space, tab and CR) is skipped and counted in the line number. A last line without LF is a line.
+* A line is a **record**; the *row* is its 1-based number among records. **line** is the physical line (blank lines counted).
+* The line is parsed by `std.json.parse_with` into a tape of `--max-json-nodes` nodes: strict RFC 8259 (no comments, trailing commas, leading zeros, `NaN`, single quotes; strings valid UTF-8 with no raw control byte and no lone surrogate escape; at most 128 deep). A line that does not parse is `parse.jsonl-syntax`; one whose tape would hold more than `--max-json-nodes` nodes is `limit.json-too-many-nodes`. **Which comes first is the parser's order** (the tape fills as it goes), so a line that is both too big and malformed further on is the node limit's (N12).
+* A line that parses to something other than an object is `parse.jsonl-not-object`.
+* Every declared field is looked up in every record, used by the plan or not (N2); the first refusal is the first field in declaration order.
+
+### 12.3 `--fields`
+
+`LIST` is paths separated by commas. A path is segments separated by dots; a backslash escapes the next byte, which must be one of `,` `\` `#` `.` (anything else, or a backslash at the end, is `input.bad-fields`). An empty path or segment, a path of more than 8 segments, more than 4096 paths, or **the same path twice** (the same text) is `input.bad-fields` naming the item. **The name of the column is the item as written**, but for `\,` written as a comma (N3): the header of the output, `--select`, `--where`, `--group`, `#N` and every refusal's `column` use it. A segment is an object key or, where the value is an array, an index: `0` or digits with no leading zero (`items.0.sku`; `01` is only ever a key, so it finds no index). One rule decides, by the kind of the value at that point: an object looks up keys, an array indices.
+
+### 12.4 What a cell is
+
+| the value at the path | the cell |
+|---|---|
+| string | its decoded text (escapes, `\u0000` included, surrogate pairs; UTF-8) |
+| number | the **exact token text** (`-0`, `1.50`, `1E3`, 40 digits): never through a double. The typed reads of the engine read it as they read a CSV cell (`:int` of `1E3` is `value.not-integer`, `:dec(2)` of `1.50` is fine, `:float` reads any) |
+| `true`, `false` | the word |
+| `null`, no such key, an index past the end or not an index, a step through a scalar | **absent**: `--absent empty` makes it the empty cell; `--absent refuse` (default) is `parse.jsonl-missing-field` with `detail.reason` `missing`, `null` or `not-container` |
+| object, array | `parse.jsonl-not-scalar` (`detail.kind`), whatever `--absent` says |
+| a key that occurs twice at an object step of a declared path (compared decoded, so `"a"` and `"a"` are one key) | `parse.jsonl-duplicate-key`, wherever the second is; keys the plan never looks up may repeat (N5) |
+
+### 12.5 Refusals
+
+Every one names `path` (the input as the others do), `line` and `row` (the record's). `column` is the field's name.
+
+| rule | exit | detail beyond those | repair |
+|---|---:|---|---|
+| `input.fields-required` | 2 | | retry with `--discover` |
+| `input.bad-fields` | 2 | `item` (0-based), `reason` | none |
+| `parse.jsonl-syntax` | 8 | `offset` (0-based in the line, CR dropped, BOM not counted), `code` (`syntax end control escape number utf8 depth trailing`), `reason` (the parser's words), `near` (the up to 32 bytes around the offset); `looks_like: "json-document"` on row 1 when the line starts with `[` or is a lone `{` | none |
+| `parse.jsonl-not-object` | 8 | `kind` (`array string number boolean null`); `looks_like` as above | none |
+| `parse.jsonl-missing-field` | 8 | `column`, `reason` | retry with `--absent empty` |
+| `parse.jsonl-not-scalar` | 8 | `column`, `kind` (`object array`) | none |
+| `parse.jsonl-duplicate-key` | 8 | `column`, `key` (the segment) | none |
+| `limit.json-too-many-nodes` | 8 | `limit` | none (raise `--max-json-nodes`) |
+| `limit.line-too-long` and the engine's `value.*`, `limit.*`, `column.*`, `select.*`, `agg.*` | | | unchanged; `detail.column` is the field's name |
+
+`args.conflict` for `--fields`, `--absent`, `--max-json-nodes` with CSV, and for `--discover` with any plan flag, `--format csv`/`text`, `--report`, `--query`, `--explain`. The first refusal **in file order** is the answer, for a file read by any number of threads and for standard input.
+
+### 12.6 Parallel and standard input
+
+A file is read by ranges (`--threads`, `--chunk-bytes`, `--parallel-min-bytes`) when the CSV file would be. A range begins at a line start (`par.align`) and, because no JSON text holds a raw LF, **its first line begins a record: the guess is never wrong** and nothing is read again for it; the parent still checks `first line == cur` as it does for CSV (it never fails, and the gate runs it with chunks of 1 to 64 bytes and 1 to 64 threads). Everything a range cannot hand back (a refusal, a full page, `--max-rows`) is read again by the parent from where the sequential read would be, so the answer is the sequential one. Standard input is one pass on one core, as for CSV. `--explain` says which.
+
+### 12.7 `--discover`
+
+`table --input-format jsonl --discover [--discover-lines N] [--max-fields N] [FILE|-]` reads the first N records (every line is parsed as above, so a malformed one is the same refusal) and answers `data.discover`:
+`{"fields":[{"path":"id","kinds":{"int":1000},"first_line":1}, ...],"lines_examined":1000,"complete":false,"paths_truncated":false,"undeclarable":0,"arrays":["tags"]}`.
+Paths are flattened through objects to 8 segments, in first-appearance order, written as `--fields` takes them (a dot, comma or backslash in a key escaped; a key that begins with `#` is not escaped, it is a name only a plan reads); `kinds` counts the occurrences by `string`, `int` (a number token with no point or exponent), `number`, `bool`, `null`, `object` (an empty object, or one past 8 segments), `array`, and `missing` (the examined records without the path, never negative); an array is not expanded (its path is in `arrays` too). An object at the eighth segment is the kind `object` and is not expanded (its keys are listed nowhere); a key that cannot be declared (an empty key, with its subtree) is counted in `undeclarable`, once for each occurrence, and not listed. Past `--max-fields` paths no more are listed and `paths_truncated` is true. `complete` is true when there is no record after the N examined (exactly N records and the end of the input is complete). **Nothing from it reaches a plan** (N8).
+
+### 12.8 Where the design was read narrowly
+
+* **N1** The shape (a FILE alone) needs `--fields` too: its headers are the fields, its `row_count` the records, and every line is parsed.
+* **N2** Every declared field is extracted and checked in every record, used or not (the table is what `--fields` declares: declare what the plan uses).
+* **N3** The column name is the item as written but for `\,`; to `--select` a name with a dot escape, write the backslashes the select list needs (`--select 'a\\.b'`).
+* **N4** `--absent` has two values; `null` and a missing key are one cell, with the reason in the refusal.
+* **N5** Duplicate keys are checked on the keys a lookup walks (the first segment in the root object, the second in that value, ...), over the whole object, and refused wherever the second occurrence is.
+* **N6** The records before `--from` are parsed and extracted like the rest (an error in a skipped line is the file's), as a CSV row before `from` is split and counted.
+* **N7** Offsets of `parse.jsonl-syntax` are the parser's (`std.json`'s position and code); Python's differ at places and are not compared by the differential (the verdict, rule, line and row are).
+* **N8** `--discover` answers `data.discover` (the design shows the members at the top); it examines `min(N, records)`; duplicates are counted as occurrences; it is not a plan flag.
+* **N9** `looks_like: "json-document"` is added to both `parse.jsonl-syntax` and `parse.jsonl-not-object` on row 1 under the rule above.
+* **N10** A boolean or an escaped string makes the record copy its line (the tape holds no text for `true`/`false`, and a decoded string needs room): the cost of those lines is the copy.
+* **N11** `--max-json-nodes` is the tape of each reader (per thread); the ceiling of 1,048,576 nodes is 24 MiB per reader.
+* **N12** A line past the node limit and malformed later is the node limit's; the oracle's generator never makes one.
+* **N13** `--format jsonl` (output, R3) is **not** built here.
+* **N14** `--explain` for JSON lines reads nothing (the header is the declaration), so a file and standard input both resolve their columns; it names the format, the fields, `--absent` and `--max-json-nodes`.
+
+* **N15** Smaller readings the gates fixed: a step through a `null` is `not-container` and a null at the end is `null`; a bad array index (not digits, a leading zero, past the end) is `missing`; a root array over the node limit is the node limit's; `looks_like` is judged after trimming blanks; the line limit counts the CR and the BOM, blank lines included, and a line of exactly `--max-line-bytes` is allowed; the record after `--max-rows` is neither parsed nor length-checked; the first bad `--fields` item is the leftmost and its own defects come before "the same path twice"; nesting of 128 (the root counts) is accepted and 129 refused; `--from` counts records and `--where` is not asked of the records before it; `kinds.missing` of a path seen twice in a record is clamped at 0; `--discover` with `--fields` is `args.conflict`; `--discover-lines` or `--max-fields` without `--discover` is `args.required-flag`; `--fields ''` is `args.bad-value` (a flag value cannot be empty); `--discover` with `--format csv` or `text` is `args.conflict`.
+* **N16** **The sort holds a record and splits it again with the CSV reader** (`finish.finish_sort`, `psort.make_run`), which the reader contract of section 2 did not say. For `--order-by` the JSON-lines loops hand the engine the row as a CSV record (the cells joined by the delimiter, quoted when they must be, cut again by `reader.fields`: `jrec.csv_record`). Found by the first differential of `--order-by`, which returned the raw line.
+* **N17** **A flag-0 cell may hold the delimiter or an LF in JSON lines**, which `writer.csv_cell` assumes it does not (an unquoted CSV field holds neither). For csv output a string with the delimiter or an LF is written after the record with its quotes doubled and made a flag-1 cell (`jrec.quoted_cell`).
+
+### 12.9 What it costs (measured: `scripts/bench_jsonl.py`; 1,000,000 lines; the files are `scripts/spikes/jsonl_gen.py`'s)
+
+The reader is parse-bound: `std.json.parse_with` is about two thirds of the time of a line (a `sample` of the wide file on the Mac: 91 of 127 samples in `std.json`, 23 in `jrec.extract`, 9 in `read`). **R2b**, the flat-object scanner (`jflat.cho`), takes a line that is one object of scalars with no tape at all and sends every other line to `std.json`; it took the Linux filter from 0.233 s to 0.196 s in the same session (a run of the build before it and one after, same machine, same load, minimum of 5), and the Mac's from about 0.12 to about 0.10 s. It is never a judge: `test_jsonl_flat.py` runs every line twice, once as it is and once with a nested value that no scanner answers for, and requires the same cells and the same refusals.
+
+Minimum of N runs (N in the header), output thrown away, answers compared with Python's first, in rotation; peak resident set in MB in brackets. **Conditions are the machine's, not a quiet room's**: the Mac (Apple silicon, macOS 26.2, 16 cores) was shared with other sessions, load average 7 to 10 in every run below; `gram` (x86-64, 16 cores, `nice taskset -c 0-5`) was shared, load average 1.8 to 3.0. DuckDB 1.5.6 (`read_ndjson`, `read_json_auto`), Miller 6.x on gram only (not installed on the Mac). `table` is given only the columns the question reads.
+
+**Narrow** (72 bytes a line, `{"id":0,"status":200,"bytes":74606,"path":"/p/867","note":"a,b 0"}`; Mac, 7 runs; gram, 5 runs):
+
+| seconds | Mac filter | Mac count | Mac sum | Mac cut | gram filter | gram count | gram sum | gram cut |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `table` jsonl, file | 0.1095 | 0.1036 | 0.1185 | 0.1083 | 0.2214 | 0.1889 | 0.2207 | 0.2123 |
+| `table` jsonl, `cat \|` stdin | 0.1152 | 0.1073 | 0.1217 | 0.1115 | 0.2176 | 0.1986 | 0.2375 | 0.2464 |
+| `table` jsonl, `--threads 4` | 0.0427 | 0.0340 | 0.0374 | 0.0420 | 0.1443 | 0.1228 | 0.1370 | 0.1587 |
+| `table` jsonl, `--threads 16` | 0.0281 | 0.0259 | 0.0286 | 0.0289 | 0.1465 | 0.1219 | 0.1389 | 0.1585 |
+| `table` csv, the same rows | 0.0474 | 0.0569 | 0.0640 | 0.0548 | 0.1072 | 0.1068 | 0.1207 | 0.0993 |
+| DuckDB 1 thread `read_ndjson` | 0.1175 | 0.1036 | 0.1121 | 0.2525 | 0.3131 | 0.2573 | 0.2625 | 0.4791 |
+| DuckDB 1 thread `read_json_auto` | 0.1195 | 0.1025 | 0.1130 | 0.2526 | 0.2977 | 0.2656 | 0.2760 | 0.5120 |
+| DuckDB 16 threads `read_ndjson` | 0.0671 | 0.0558 | 0.0587 | 0.2429 | 0.1718 | 0.1308 | 0.1236 | 0.3752 |
+| Miller (default threads) | | | | | 6.717 | 7.414 | 8.039 | 7.875 |
+
+**Wide** (330 bytes a line, 24 keys, the two read are the last two; Mac 5 runs, gram 3 runs):
+
+| seconds | Mac filter | Mac count | Mac sum | Mac cut | gram filter | gram count | gram sum | gram cut |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `table` jsonl, file | 0.3269 | 0.3145 | 0.3438 | 0.3404 | 0.5826 | 0.5703 | 0.7392 | 0.7610 |
+| `table` jsonl, `--threads 4` | 0.1029 | 0.0944 | 0.1038 | 0.1034 | 0.3924 | 0.3774 | 0.4510 | 0.4334 |
+| `table` jsonl, `--threads 16` | 0.0560 | 0.0498 | 0.0488 | 0.0555 | 0.3651 | 0.3293 | 0.3767 | 0.3828 |
+| DuckDB 1 thread `read_ndjson` | 0.3527 | 0.3403 | 0.3482 | 0.4938 | 1.1120 | 0.9613 | 1.0237 | 1.2863 |
+| DuckDB 16 threads `read_ndjson` | 0.1127 | 0.1057 | 0.1079 | 0.4071 | 0.4016 | 0.4078 | 0.4209 | 0.9729 |
+| Miller | | | | | 34.25 | 29.80 | 22.05 | 36.55 |
+
+Peak resident set: 2 MB (Mac) and 3 MB (gram) for `table` on one core, against 60 to 94 MB for DuckDB on one thread. What the table says and what it does not:
+
+* **One core, narrow, the filter: `table` jsonl is 2.3x its own CSV on the Mac (0.1095 against 0.0474) and 2.1x on gram in this run (0.2214 against 0.1072; 2.64x, 0.196 against 0.074, in the run just before, when the box was quieter).** The gate of the design (J4, at most 3.0x) is met on both machines, by the scanner, and was not met without it on gram (3.26x, 0.233 against 0.071). The same rows as JSON lines are 2.1 to 2.6 times the CSV file's time, not the same.
+* **One core against DuckDB on one thread, the filter: 1.07x faster on the Mac (0.1095 against 0.1175) and 1.41x on gram.** On `cut` (many rows written) `table` is 2.3x faster on the Mac and 2.3x on gram. The design's J4 bound (at most 1.2x DuckDB's time) is met in the table above.
+* **Against DuckDB on many threads `table` is not ahead on the narrow file on gram** (`--threads 16`: 0.1465 s against DuckDB's 0.1718 s, but `--threads 4` and 16 are the same on gram, whose three physical cores cap every tool: docs/parallel.md section 5); on the Mac `table --threads 16` is 2.4x DuckDB's 16 threads (0.0281 against 0.0671).
+* **Threads:** the filter's speed-up at 4 threads is 2.84 for JSON lines and 2.71 for CSV on the Mac (J5: at least 0.6 of CSV's: 1.05), and 16 threads are never slower than 1 (4.54 against CSV's 4.61). On `std.json.parse` (without #363's `parse_with`) the Mac got slower with threads: that is what the call was added for.
+* Standard input costs what the file does (1.03 to 1.05x on the Mac, 0.98 to 1.16 on gram: the spread of one run).
+* Not measured: DuckDB's peak on a pipe; any machine but these two; `jq` (not asked for); a file whose lines are mostly nested or non-ASCII, which the scanner declines (`std.json` alone: about 20 percent more time per line than with the scanner on the narrow file, from the pair of runs above).
+
+### 12.10 The gates, and where they stand
+
+| gate | what | result |
+|---|---|---|
+| J1 | differential against Python's `json` and a Python implementation of the table semantics (`jsonl_ref.py`, written before the code by an agent that did not see it): 3,000 generated cases, 1,815 named edge files (escapes, big ints, 17-digit floats, exponents, non-ASCII, missing and extra keys, null, booleans, nesting, CRLF, BOM, blank lines, no final newline, chunk edges at 64 KiB), the plans of `test_plan.py`'s generator | `test_jsonl.Differential`: passes |
+| J2 | the same plan on the oracle's cells written as CSV gives the same bytes (`:dec`, `:float`, `--order-by`, `--report types`, paging) | `test_jsonl.Equivalence`: passes after N16 (the sort), which it found |
+| J3 | file, `-`, no operand and `--threads` 1 to 64 with `--chunk-bytes` 1, 7, 64, 1000, 65536: the same bytes, the first refusal in file order | `test_jsonl.Parallel`: passes after the `near` of a worker's refusal was kept (found) |
+| J4 | fuzz: random and mutated bytes never trap; every refusal is a tag of `introspect`; every configuration agrees | `test_jsonl.Fuzz`: passes |
+| J5 / J6 | threads speed-up; memory flat | 12.9; `test_jsonl_memory.py`: 2 MB on 4 MB and on 69 MB of lines, file and standard input, tape 96 KiB |
+| R2b | the scanner equals the tape | `test_jsonl_flat.py`: 600 cases, each run twice, passes |
+| J8 | mutants (`scripts/jsonl_mutants.py`, 103) | gram, nice, cores 0 to 5: 110 mutants, 97 killed on the first run, 6 more killed once a test was written for each (the csv quoting of a decoded string and of a quote, `--discover` with `--fields`, the bytes of `near`, the refusals an explain lists, a flag of the family looked up), 7 equivalent and left out with the reason in the script (the ones about where a range begins change the time, not the bytes: the parent checks every range) |
+| J9 / G6 | the CSV paths unchanged | **the corpus** of 166 plans: md5 `fccb01b66dd7518d74611219a6c5aa29`, `main`'s (bd10c3f), on the Mac. **The instruction counter, Mac** (`gate_regress.py --counter`, bound 1.01, 42 cells, 3 builds a side, against `main` bd10c3f): **0.999 to 1.002, PASS**. **gram** (x86-64): `perf_event_paranoid` is 4 and was not changed, so `perf stat` cannot count there; instructions were counted with `valgrind --tool=callgrind` on 100,000 rows instead (not the gate's counter, and slower to run): `cut status,bytes` 178,114,858 against `main`'s 178,066,871 (+0.03 percent), the filter +0.25 percent of a 15 M-instruction run (startup included), the float min/max grouping 260.45 M against 260.41 M, `count,sum,min,max` 220.06 M against 220.01 M. **The clock form on gram** (`gate_regress.py` without `--counter`, bound 1.02, 21 runs, `--threads 3`, `nice taskset -c 0-5`, 3 builds a side): **FAIL**, and it is reported as it is: 20 of the 42 cells over 1.02 in the last run (1.020 to 1.050, a median of about 1.03; the filter 1.024, `cut` 1.050 and 1.033, `group count,sum,min,max` 1.048), with the same instructions. Its control (three builds of `main`'s sources in other directories, against the same three) was run once, before the last change, and passed (no cell over 1.02); the six builds of `main` alone differ by up to 5 percent in a timing of `cut` on one pinned core (0.0894 to 0.0938 s), and the three builds of this branch are 0.0974 to 0.0981 s: **the branch's builds are 4 to 8 percent slower than the slowest of `main`'s on that cell with the same instructions, which is a placement effect the counter cannot see and I could not remove**. An earlier build of this branch, before the refusals were moved out of `finish.explain`, was 13 instructions a row (0.5 percent) heavier and over the bound on 5 cells; the cause was found with the counter (a call added in `finish.explain`, which `read_file` calls, made the compiler allocate registers differently: `lexs_read_file` 0x6502 bytes against 0x6601, and every one-thread read a row heavier), and `jsonl_refusal` is now called by the JSON-lines loops alone, so `lexs_read_file` and `read_stream` are the sizes of `main`'s (0x6601 and 0x5f4e). What is not known: whether a quiet machine with a working counter would pass the clock form; the Mac, whose counter works, does |
+| surfaces | `manifest.py --check` (the labels are `main`'s: `args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write`; only the list of functions grew, 821 to 897), `mcp.py --check` (the MCP row is `main`'s), `schemas.py --check`, `site.py --check`, `seo_check.py`, `stream.py --check`, the 16 mutant scripts' `--check`, `cancho fmt --check` | pass |
+| suite | `python3 -m unittest discover` on the Mac | 608 tests OK (10 skipped), on the merge of `main` bd10c3f and the last commit |
