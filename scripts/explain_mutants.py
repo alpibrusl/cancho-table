@@ -101,7 +101,6 @@ MUTANTS = [
     ("a group's decimal is not read", E, "        let t = query.gkind_at(tree, k);\n        if t == 1 {\n            has_int = true;\n        } else if t == 21 {\n            has_float = true;\n        } else if t >= 2 {\n            has_dec = true;", "        let t = query.gkind_at(tree, k);\n        if t == 1 {\n            has_int = true;\n        } else if t == 21 {\n            has_float = true;\n        } else if t >= 99 {\n            has_dec = true;"),
     ("an order key's float is not read", E, "        let t = query.order_flags(tree, k) / 2;\n        if t == 1 {\n            has_int = true;\n        } else if t == 21 {\n            has_float = true;", "        let t = query.order_flags(tree, k) / 2;\n        if t == 1 {\n            has_int = true;\n        } else if t == 99 {\n            has_float = true;"),
     ("a float sum cannot overflow", E, "                if f == 1 {\n                    float_sum = true;", "                if f == 99 {\n                    float_sum = true;"),
-    ("a count is read as an integer", E, "        if f != 0 {\n            if t == 1 {", "        if f != 99 {\n            if t == 1 {"),
     ("a csv answer cannot be too many rows", E, "    if as_csv || ordering {\n        o = rule(heap, o, \"limit.too-many-rows\");", "    if ordering {\n        o = rule(heap, o, \"limit.too-many-rows\");"),
     ("a report cannot be too many rows", E, "    if as_csv || ordering {\n        o = rule(heap, o, \"limit.too-many-rows\");", "    if as_csv || ordering && !reporting {\n        o = rule(heap, o, \"limit.too-many-rows\");"),
     ("a csv page can be too large", E, "    if mode != 0 && !as_csv {\n        o = rule(heap, o, \"limit.output-too-large\");", "    if mode != 0 {\n        o = rule(heap, o, \"limit.output-too-large\");"),
@@ -127,6 +126,8 @@ MUTANTS = [
 EQUIVALENT = [
     ("a json sort is split", E, "let psortable = ordering && !reporting && as_csv && wanted == 0", "let psortable = ordering && !reporting && wanted == 0",
      "a whole sort is a sort with no window, no cut, no page and no limit (`unbounded`: a limit of 1e15), and the only answer with no limit is csv: a json answer has the default limit of 1,000 or the one asked for, so `as_csv` is implied by `unbounded`"),
+    ("a count is read as an integer", E, "        if f != 0 {\n            if t == 1 {", "        if f != 99 {\n            if t == 1 {",
+     "a count is added to the plan with the type 0 (`agg.cho` and `plan_body` both write `add_agg(.., 0, -1, 0, 0)`), so reading its type reads nothing"),
     ("--from on a grouping is not split", E, "        } else if mode != 2 && row_from != 0 {", "        } else if row_from != 0 {",
      "`row_from` is zero for a grouping (the groups are paged after all the rows are counted), so the `mode != 2` before it cannot make a difference"),
 ]
