@@ -96,6 +96,70 @@ def document(tool, data):
 
 TB = {"$ref": "#/$defs/text_or_bytes"}
 
+NULLABLE_NAT = {"oneOf": [{"type": "null"}, NAT]}
+RULE = {"type": "string", "pattern": "^[a-z]+\\.[a-z0-9-]+$"}
+
+
+def explain_document():
+    """`--explain` (docs/query.md section 15): the plan, said and not run. Every key is always present (a value that does not apply is null), except `rows_held` (only for
+    sorted rows) and the bounds, which are the ones in force."""
+    column = obj({"ref": TB,
+                  "position": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},
+                  "name": {"oneOf": [{"type": "null"}, TB]}})
+    type_ = {"type": "string", "pattern": "^(text|int|float|dec\\((0|[1-9]|1[0-8])\\))$"}
+    return obj({"explain": obj({
+        "source": obj({
+            "kind": {"enum": ["file", "stdin"]},
+            "path": TB,
+            "reader": {"enum": ["file", "blocks"]},
+            "block_bytes": NAT,
+            "format": {"const": "csv"},
+            "delimiter": {"enum": [",", "\t", ";"]},
+            "size": NULLABLE_NAT,
+            "header_read": {"type": "boolean"},
+            "columns": NULLABLE_NAT,
+            "bytes_read": NAT,
+        }),
+        "plan": obj({
+            "form": {"enum": ["shape", "rows", "groups", "report"]},
+            "select": {"type": "array", "items": column},
+            "where": {"type": "array", "items": obj({
+                "column": column,
+                "type": type_,
+                "op": {"enum": ["=", "!=", "<", "<=", ">", ">=", "contains", "in"]},
+                "values": {"type": "array", "items": TB, "minItems": 1},
+            })},
+            "group": {"type": "array", "items": obj({"column": column, "type": type_})},
+            "aggregates": {"type": "array", "items": obj({
+                "function": {"enum": ["count", "sum", "mean", "min", "max", "distinct"]},
+                "column": {"oneOf": [{"type": "null"}, column]},
+                "type": {"oneOf": [{"type": "null"}, type_]},
+                "scale": NULLABLE_NAT,
+            })},
+            "order_by": {"type": "array", "items": obj({"column": column, "type": type_, "descending": {"type": "boolean"}})},
+            "sort": {"oneOf": [{"type": "null"}, TB]},
+            "top": NULLABLE_NAT,
+            "limit": NULLABLE_NAT,
+            "from": NAT,
+        }),
+        "output": obj({
+            "format": {"enum": ["json", "csv", "text"]},
+            "columns": {"oneOf": [{"type": "null"}, {"type": "array", "items": TB}]},
+        }),
+        "work": obj({
+            "class": {"enum": ["shape", "type report", "grouped single pass", "sorted rows", "stream rows"]},
+            "reads": {"enum": ["all rows", "until the page is full"]},
+            "rows_held": NULLABLE_NAT,
+            "bounds": obj({
+                "max_rows": NAT, "max_line_bytes": NAT, "max_bytes": NAT, "max_groups": NAT, "max_distinct": NAT, "max_sort_rows": NAT, "max_state_bytes": NAT,
+            }, required=["max_rows", "max_line_bytes"]),
+            "threads": obj({"requested": {"type": "integer", "minimum": 1}, "effective": {"type": "integer", "minimum": 1}, "reason": {"oneOf": [{"type": "null"}, {"type": "string"}]}}),
+        }, required=["class", "reads", "bounds", "threads"]),
+        "refusals": obj({"possible": {"type": "array", "items": RULE}}),
+        "notes": {"type": "array", "items": TB},
+    })})
+
+
 SCHEMAS = {
     "table": document("table", {"oneOf": [
         # `table FILE`: the shape.
@@ -116,6 +180,8 @@ SCHEMAS = {
             "truncated": {"type": "boolean"},
             "next": {"oneOf": [{"type": "null"}, obj({"from": NAT})]},
         }, required=["columns", "rows", "row_count", "truncated", "next"]),
+        # `--explain`: the plan, not its answer.
+        explain_document(),
     ]}),
 }
 

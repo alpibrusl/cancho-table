@@ -311,6 +311,632 @@
             "next"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "explain": {
+              "type": "object",
+              "properties": {
+                "source": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "enum": [
+                        "file",
+                        "stdin"
+                      ]
+                    },
+                    "path": {
+                      "$ref": "#/$defs/text_or_bytes"
+                    },
+                    "reader": {
+                      "enum": [
+                        "file",
+                        "blocks"
+                      ]
+                    },
+                    "block_bytes": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "format": {
+                      "const": "csv"
+                    },
+                    "delimiter": {
+                      "enum": [
+                        ",",
+                        "\t",
+                        ";"
+                      ]
+                    },
+                    "size": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    },
+                    "header_read": {
+                      "type": "boolean"
+                    },
+                    "columns": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    },
+                    "bytes_read": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "path",
+                    "reader",
+                    "block_bytes",
+                    "format",
+                    "delimiter",
+                    "size",
+                    "header_read",
+                    "columns",
+                    "bytes_read"
+                  ],
+                  "additionalProperties": false
+                },
+                "plan": {
+                  "type": "object",
+                  "properties": {
+                    "form": {
+                      "enum": [
+                        "shape",
+                        "rows",
+                        "groups",
+                        "report"
+                      ]
+                    },
+                    "select": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "ref": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "position": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "name": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "$ref": "#/$defs/text_or_bytes"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "ref",
+                          "position",
+                          "name"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "where": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "column": {
+                            "type": "object",
+                            "properties": {
+                              "ref": {
+                                "$ref": "#/$defs/text_or_bytes"
+                              },
+                              "position": {
+                                "oneOf": [
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                ]
+                              },
+                              "name": {
+                                "oneOf": [
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/text_or_bytes"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "ref",
+                              "position",
+                              "name"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "type": {
+                            "type": "string",
+                            "pattern": "^(text|int|float|dec\\((0|[1-9]|1[0-8])\\))$"
+                          },
+                          "op": {
+                            "enum": [
+                              "=",
+                              "!=",
+                              "<",
+                              "<=",
+                              ">",
+                              ">=",
+                              "contains",
+                              "in"
+                            ]
+                          },
+                          "values": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/$defs/text_or_bytes"
+                            },
+                            "minItems": 1
+                          }
+                        },
+                        "required": [
+                          "column",
+                          "type",
+                          "op",
+                          "values"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "group": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "column": {
+                            "type": "object",
+                            "properties": {
+                              "ref": {
+                                "$ref": "#/$defs/text_or_bytes"
+                              },
+                              "position": {
+                                "oneOf": [
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                ]
+                              },
+                              "name": {
+                                "oneOf": [
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/text_or_bytes"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "ref",
+                              "position",
+                              "name"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "type": {
+                            "type": "string",
+                            "pattern": "^(text|int|float|dec\\((0|[1-9]|1[0-8])\\))$"
+                          }
+                        },
+                        "required": [
+                          "column",
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "aggregates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "function": {
+                            "enum": [
+                              "count",
+                              "sum",
+                              "mean",
+                              "min",
+                              "max",
+                              "distinct"
+                            ]
+                          },
+                          "column": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "ref": {
+                                    "$ref": "#/$defs/text_or_bytes"
+                                  },
+                                  "position": {
+                                    "oneOf": [
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "type": "integer",
+                                        "minimum": 1
+                                      }
+                                    ]
+                                  },
+                                  "name": {
+                                    "oneOf": [
+                                      {
+                                        "type": "null"
+                                      },
+                                      {
+                                        "$ref": "#/$defs/text_or_bytes"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "ref",
+                                  "position",
+                                  "name"
+                                ],
+                                "additionalProperties": false
+                              }
+                            ]
+                          },
+                          "type": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^(text|int|float|dec\\((0|[1-9]|1[0-8])\\))$"
+                              }
+                            ]
+                          },
+                          "scale": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "function",
+                          "column",
+                          "type",
+                          "scale"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "order_by": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "column": {
+                            "type": "object",
+                            "properties": {
+                              "ref": {
+                                "$ref": "#/$defs/text_or_bytes"
+                              },
+                              "position": {
+                                "oneOf": [
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "type": "integer",
+                                    "minimum": 1
+                                  }
+                                ]
+                              },
+                              "name": {
+                                "oneOf": [
+                                  {
+                                    "type": "null"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/text_or_bytes"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "ref",
+                              "position",
+                              "name"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "type": {
+                            "type": "string",
+                            "pattern": "^(text|int|float|dec\\((0|[1-9]|1[0-8])\\))$"
+                          },
+                          "descending": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "column",
+                          "type",
+                          "descending"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "sort": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "$ref": "#/$defs/text_or_bytes"
+                        }
+                      ]
+                    },
+                    "top": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    },
+                    "limit": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    },
+                    "from": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  },
+                  "required": [
+                    "form",
+                    "select",
+                    "where",
+                    "group",
+                    "aggregates",
+                    "order_by",
+                    "sort",
+                    "top",
+                    "limit",
+                    "from"
+                  ],
+                  "additionalProperties": false
+                },
+                "output": {
+                  "type": "object",
+                  "properties": {
+                    "format": {
+                      "enum": [
+                        "json",
+                        "csv",
+                        "text"
+                      ]
+                    },
+                    "columns": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "format",
+                    "columns"
+                  ],
+                  "additionalProperties": false
+                },
+                "work": {
+                  "type": "object",
+                  "properties": {
+                    "class": {
+                      "enum": [
+                        "shape",
+                        "type report",
+                        "grouped single pass",
+                        "sorted rows",
+                        "stream rows"
+                      ]
+                    },
+                    "reads": {
+                      "enum": [
+                        "all rows",
+                        "until the page is full"
+                      ]
+                    },
+                    "rows_held": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    },
+                    "bounds": {
+                      "type": "object",
+                      "properties": {
+                        "max_rows": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_line_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_groups": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_distinct": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_sort_rows": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_state_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "max_rows",
+                        "max_line_bytes"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "threads": {
+                      "type": "object",
+                      "properties": {
+                        "requested": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "effective": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "reason": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "requested",
+                        "effective",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "class",
+                    "reads",
+                    "bounds",
+                    "threads"
+                  ],
+                  "additionalProperties": false
+                },
+                "refusals": {
+                  "type": "object",
+                  "properties": {
+                    "possible": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z]+\\.[a-z0-9-]+$"
+                      }
+                    }
+                  },
+                  "required": [
+                    "possible"
+                  ],
+                  "additionalProperties": false
+                },
+                "notes": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/text_or_bytes"
+                  }
+                }
+              },
+              "required": [
+                "source",
+                "plan",
+                "output",
+                "work",
+                "refusals",
+                "notes"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "explain"
+          ],
+          "additionalProperties": false
         }
       ]
     }

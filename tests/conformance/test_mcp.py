@@ -220,6 +220,12 @@ CORPUS = [
     {"file": "data.csv", "query": "selct id"},
     {"file": "data.csv", "query": "select id, status where status = 404 or status = 500"},
     {"file": "data.csv", "query": "select id", "select": "id"},
+    # --explain: the plan said and not run, a document that validates against the output schema; its refusals are the run's
+    {"file": "data.csv", "explain": True, "group": "status", "agg": "count,sum:bytes", "threads": 4, "parallel-min-bytes": 0},
+    {"file": "data.csv", "explain": True, "query": "select id, status where status = 404 order by id::int desc limit 5"},
+    {"file": "data.csv", "explain": True, "rows": True},
+    {"file": "data.csv", "explain": True, "select": "nosuch"},
+    {"file": "nope.csv", "explain": True, "select": "id"},
 ]
 
 
