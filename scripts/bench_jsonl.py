@@ -57,6 +57,8 @@ def answer_ok(name, out, truth_):
     # (a csv answer of `table` has a header line, which starts with a letter; duckdb and miller write none)
     lines = [l for l in out.decode().split("\n") if l and (l[0].isdigit() or l[0] == '"')]
     if name == "filter":
+        if truth_.get("wide"):
+            return len(lines) == truth_["filter"][0]      # the wide file has no id: the rows are counted
         return (len(lines), sum(int(x) for x in lines)) == truth_["filter"]
     if name == "cut":
         return len(lines) == truth_["rows"]
@@ -64,10 +66,10 @@ def answer_ok(name, out, truth_):
     return rows == truth_[name]
 
 
-def table_cmds(binary, src, fmt, fields, extra=""):
+def table_cmds(binary, src, fmt, fields, extra="", pick="id"):
     j = "--input-format jsonl --fields %s " % fields if fmt == "jsonl" else ""
     return {
-        "filter": "%s %s%s--where 'status=404 and bytes:int>50000' --select id --format csv %s" % (binary, j, extra and extra + " ", src),
+        "filter": "%s %s%s--where 'status=404 and bytes:int>50000' --select %s --format csv %s" % (binary, j, extra and extra + " ", pick, src),
         "count": "%s %s%s--group status --format csv %s" % (binary, j, extra and extra + " ", src),
         "sum": "%s %s%s--group status --agg sum:bytes --format csv %s" % (binary, j, extra and extra + " ", src),
         "cut": "%s %s%s--select status,bytes --format csv %s" % (binary, j, extra and extra + " ", src),
@@ -92,20 +94,22 @@ def main():
     t["rows"] = a.rows
     # the contenders: label -> {question: command}
     C = {}
-    fields = {"filter": "id,status,bytes", "count": "status", "sum": "status,bytes", "cut": "status,bytes"}
+    t["wide"] = a.wide
+    pick = "status" if a.wide else "id"
+    fields = {"filter": "status,bytes" if a.wide else "id,status,bytes", "count": "status", "sum": "status,bytes", "cut": "status,bytes"}
 
     def per_question(label, make):
         C[label] = {q: make(q) for q in a.questions.split(",")}
 
     if "table" in only:
-        per_question("table jsonl, file", lambda q: table_cmds(a.bin, jl, "jsonl", fields[q])[q])
-        per_question("table jsonl, stdin (cat |)", lambda q: "cat %s | %s" % (jl, table_cmds(a.bin, "-", "jsonl", fields[q])[q]))
+        per_question("table jsonl, file", lambda q: table_cmds(a.bin, jl, "jsonl", fields[q], pick=pick)[q])
+        per_question("table jsonl, stdin (cat |)", lambda q: "cat %s | %s" % (jl, table_cmds(a.bin, "-", "jsonl", fields[q], pick=pick)[q]))
         for th in (4, 16):
-            per_question("table jsonl, --threads %d" % th, lambda q, th=th: table_cmds(a.bin, jl, "jsonl", fields[q], "--threads %d --parallel-min-bytes 0" % th)[q])
+            per_question("table jsonl, --threads %d" % th, lambda q, th=th: table_cmds(a.bin, jl, "jsonl", fields[q], "--threads %d --parallel-min-bytes 0" % th, pick=pick)[q])
         if not a.wide:
             per_question("table csv (same rows), file", lambda q: table_cmds(a.bin, csvf, "csv", "")[q])
     sql = {
-        "filter": "select id from {src} where status = 404 and bytes > 50000",
+        "filter": "select {pick} from {src} where status = 404 and bytes > 50000",
         "count": "select status, count(*) from {src} group by status order by status",
         "sum": "select status, sum(bytes) from {src} group by status order by status",
         "cut": "select status, bytes from {src}",
@@ -113,10 +117,10 @@ def main():
     if "duckdb" in only and shutil.which("duckdb"):
         for th in (1, 16):
             for lab, src in (("read_ndjson", "read_ndjson('%s')" % jl), ("read_json_auto", "read_json_auto('%s')" % jl)):
-                per_question("duckdb %d thr %s" % (th, lab), lambda q, th=th, src=src: "duckdb -csv -noheader -c \"set threads=%d; %s\"" % (th, sql[q].format(src=src + (" limit %d" % a.rows if a.rows != 1000000 else ""))))
+                per_question("duckdb %d thr %s" % (th, lab), lambda q, th=th, src=src: "duckdb -csv -noheader -c \"set threads=%d; %s\"" % (th, sql[q].format(pick=pick, src=src + (" limit %d" % a.rows if a.rows != 1000000 else ""))))
     if "mlr" in only and shutil.which("mlr"):
         m = {
-            "filter": "mlr --ijsonl --ocsv --headerless-csv-output filter '$status==404 && $bytes>50000' then cut -f id %s" % jl,
+            "filter": "mlr --ijsonl --ocsv --headerless-csv-output filter '$status==404 && $bytes>50000' then cut -f %s %s" % (pick, jl),
             "count": "mlr --ijsonl --ocsv --headerless-csv-output count-distinct -f status then sort -f status %s" % jl,
             "sum": "mlr --ijsonl --ocsv --headerless-csv-output stats1 -a sum -f bytes -g status then sort -f status %s" % jl,
             "cut": "mlr --ijsonl --ocsv --headerless-csv-output cut -o -f status,bytes %s" % jl,
