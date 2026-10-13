@@ -11,7 +11,7 @@ The stores are a publication of `tools/table/*.cho` as they are.
 (`Query`: names, conditions, aggregates, meta; ten internal modules import it), and it held `parse_int`, `pow10` and `parse_dec` beside it. A consumer
 that pins it pins an internal interface. The three parsers, and `int_min`, which `parse_int` accumulates towards, now live in `tools/table/cellnum.cho`
 (`module cellnum;`: no imports at all; `query.cho` keeps the plan and `parse_typed`, and imports `cellnum`), and `cellnum` is published instead of `query`. The name
-is not `cells`, which was the provisional one: `cells` is already the name of the slice of field offsets in 14 modules of this program (238 uses), and
+is not `cells`, which was the provisional one: `cells` is already the name of the slice of field offsets in 19 of the modules of this program, and
 `cells.parse_int(record[cells[3 * column]..])` compiles but reads as one object. A pin at the revision of #44 keeps working, because that revision still holds the
 `query` store; a pin at a later revision moves to `cellnum` (`query.parse_int` is `cellnum.parse_int`, `query.parse_dec` is `cellnum.parse_dec`, `query.pow10` is
 `cellnum.pow10`; the signatures and the behaviour are the same, see the golden test below).
