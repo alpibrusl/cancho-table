@@ -82,9 +82,7 @@ MUTANTS = [
     ("a csv sort with --top is split", E, "let psortable = ordering && !reporting && as_csv && wanted == 0 && top == 0 && from == 0 && unbounded;", "let psortable = ordering && !reporting && as_csv && wanted == 0 && from == 0 && unbounded;"),
     ("a csv sort with --from is split", E, "let psortable = ordering && !reporting && as_csv && wanted == 0 && top == 0 && from == 0 && unbounded;", "let psortable = ordering && !reporting && as_csv && wanted == 0 && top == 0 && unbounded;"),
     ("a csv sort with a limit is split", E, "let psortable = ordering && !reporting && as_csv && wanted == 0 && top == 0 && from == 0 && unbounded;", "let psortable = ordering && !reporting && as_csv && wanted == 0 && top == 0 && from == 0;"),
-    ("a json sort is split", E, "let psortable = ordering && !reporting && as_csv && wanted == 0", "let psortable = ordering && !reporting && wanted == 0"),
     ("--from on a selection is split", E, "        } else if mode != 2 && row_from != 0 {", "        } else if false {"),
-    ("--from on a grouping is not split", E, "        } else if mode != 2 && row_from != 0 {", "        } else if row_from != 0 {"),
     ("--from on a sort is a skip", E, "        if mode == 2 || ordering {\n            row_from = 0;", "        if mode == 2 {\n            row_from = 0;"),
     ("a file of exactly the minimum is not split", E, "} else if size - consumed < min_bytes ||", "} else if size - consumed <= min_bytes ||"),
     ("a file of nothing after the header is split", E, "|| size - consumed <= 0 {", "{"),
@@ -125,5 +123,18 @@ MUTANTS = [
     ("explain is only for the flags", "inputs.cho", "has_explain: inp.has_explain, src_file", "has_explain: false, src_file"),
 ]
 
+# mutants proved to change nothing a call can see (not run; their sites are checked, so that a stale entry is not a lie about what was proved)
+EQUIVALENT = [
+    ("a json sort is split", E, "let psortable = ordering && !reporting && as_csv && wanted == 0", "let psortable = ordering && !reporting && wanted == 0",
+     "a whole sort is a sort with no window, no cut, no page and no limit (`unbounded`: a limit of 1e15), and the only answer with no limit is csv: a json answer has the default limit of 1,000 or the one asked for, so `as_csv` is implied by `unbounded`"),
+    ("--from on a grouping is not split", E, "        } else if mode != 2 && row_from != 0 {", "        } else if row_from != 0 {",
+     "`row_from` is zero for a grouping (the groups are paged after all the rows are counted), so the `mode != 2` before it cannot make a difference"),
+]
+
 if __name__ == "__main__":
+    stale = mutlib.check([e[:4] for e in EQUIVALENT])
+    for p in stale:
+        print("!! (equivalent) " + p)
+    if stale:
+        sys.exit(1)
     sys.exit(mutlib.main(MUTANTS, TESTS))

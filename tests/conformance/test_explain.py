@@ -390,6 +390,15 @@ class Never(Base):
         p = can_fail(x)
         for rule in ("select.unknown-column", "column.unknown", "limit.header-too-large", "parse.csv-ragged-row"):
             self.assertIn(rule, p)
+        # what the header would decide is possible only as far as the plan can ask for it
+        y = run("--explain", "--where", "a:int > 1 and b:float < 2", "--group", "a:int", "--sort", "-count", cwd=self.cwd, stdin=b"a\n1\n")
+        for rule in ("column.type-conflict", "sort.unknown-key", "column.unknown", "column.ambiguous"):
+            self.assertIn(rule, can_fail(y), rule)
+        for rule in ("select.unknown-column", "select.ambiguous-column"):
+            self.assertNotIn(rule, can_fail(y), rule)
+        z = run("--explain", "--select", "a", cwd=self.cwd, stdin=b"a\n1\n")
+        for rule in ("column.type-conflict", "sort.unknown-key", "column.unknown", "column.ambiguous"):
+            self.assertNotIn(rule, can_fail(z), rule)
         # the same plan on a file: the header is known, so these are decided and not possible
         y = self.x("--select", "a", "--where", "b = 1")
         for rule in ("select.unknown-column", "column.unknown", "limit.header-too-large"):
@@ -441,6 +450,17 @@ class Threads(Base):
         (["--order-by", "a:int", "--format", "csv", "--threads", "4", "--parallel-min-bytes", "0"], 4, ""),
         (["--order-by", "a:int", "--format", "csv", "--top", "2", "--threads", "4", "--parallel-min-bytes", "0"], 1, "--order-by"),
         (["--order-by", "a:int", "--format", "csv", "--limit", "2", "--threads", "4", "--parallel-min-bytes", "0"], 1, "--order-by"),
+        # a whole sort as csv is split only when it has no window, no page, no cut and no limit; a window too big to hold twice is no window (--max-sort-rows)
+        (["--order-by", "a:int", "--format", "csv", "--top", "600000", "--threads", "4", "--parallel-min-bytes", "0"], 1, "--order-by"),
+        (["--order-by", "a:int", "--format", "csv", "--from", "1", "--threads", "4", "--parallel-min-bytes", "0"], 1, "--order-by"),
+        (["--order-by", "a:int", "--format", "csv", "--limit", "600000", "--threads", "4", "--parallel-min-bytes", "0"], 1, "--order-by"),
+        # --from pages the columns of a report and the groups of a grouping, after the rows: the read is split
+        (["--report", "types", "--from", "1", "--threads", "4", "--parallel-min-bytes", "0"], 4, ""),
+        (["--order-by", "a:int", "--from", "1", "--threads", "4", "--parallel-min-bytes", "0"], 1, "--order-by"),
+        # one thread (asked for, or the default) has nothing to explain, whatever the plan is
+        (["--threads", "1"], 1, ""),
+        (["--order-by", "a:int"], 1, ""),
+        (["--select", "a", "--from", "1"], 1, ""),
     ]
 
     def test_the_decision_and_its_reason(self):
@@ -453,6 +473,27 @@ class Threads(Base):
                     self.assertIn(word, t["reason"])
                 else:
                     self.assertIsNone(t["reason"])
+
+    # the minimum is what is left after the header: the header is 4 bytes and the data 8, so the file is 12
+    BOUNDARY = [(7, 4), (8, 4), (9, 1), (11, 1), (12, 1), (13, 1)]
+
+    def test_the_minimum_is_the_bytes_after_the_header_and_at_least_is_enough(self):
+        self.s.write("m.csv", "a,b\n1,2\n3,4\n")
+        for minimum, effective in self.BOUNDARY:
+            with self.subTest(minimum=minimum):
+                t = explain_of(self.x("--group", "a", "--threads", "4", "--parallel-min-bytes", str(minimum), name="m.csv"))["work"]["threads"]
+                self.assertEqual(t["effective"], effective, t)
+
+    @unittest.skipUnless(LINUX_STRACE, "needs Linux and strace")
+    def test_strace_the_minimum_is_the_runs(self):
+        self.s.write("m.csv", "a,b\n1,2\n3,4\n")
+        for minimum, effective in self.BOUNDARY:
+            with self.subTest(minimum=minimum):
+                log = str(self.s.dir / "strace.log")
+                subprocess.run(["strace", "-f", "-o", log, "-e", "trace=clone,clone3", binary(), "--root", str(self.s.dir), "--group", "a", "--threads", "4", "--parallel-min-bytes", str(minimum), "m.csv"],
+                               capture_output=True, input=b"", check=True)
+                clones = len([l for l in open(log).read().splitlines() if "clone" in l and "resumed" not in l and "= -1" not in l])
+                self.assertEqual(clones > 0, effective > 1, (minimum, clones))
 
     def test_standard_input_is_one_core(self):
         x = run("--explain", "--group", "a", "--threads", "4", "--parallel-min-bytes", "0", cwd=self.cwd, stdin=b"a\n1\n")
@@ -558,6 +599,44 @@ class Document(Base):
         x = self.x()
         for rule in ("value.not-integer", "limit.too-many-groups", "limit.too-many-sort-rows", "limit.output-too-large", "limit.record-too-large", "agg.float-overflow"):
             self.assertNotIn(rule, can_fail(x), rule)
+
+    def test_the_rules_follow_what_the_plan_reads(self):
+        rules = lambda *f: set(can_fail(self.x(*f)))
+        value = lambda r: {x for x in r if x.startswith("value.") or x in ("limit.number-too-long", "agg.float-overflow")}
+        self.assertEqual(value(rules("--group", "b", "--agg", "count")), set())
+        self.assertEqual(value(rules("--group", "b", "--agg", "distinct:c")), set())
+        self.assertEqual(value(rules("--group", "a:dec(2)")), {"value.not-decimal", "value.decimal-scale", "value.decimal-too-wide"})
+        self.assertEqual(value(rules("--group", "a:int")), {"value.not-integer", "value.integer-overflow"})
+        self.assertEqual(value(rules("--group", "a:float")), {"value.not-float", "value.not-finite", "value.float-range", "limit.number-too-long"})
+        self.assertEqual(value(rules("--agg", "sum:a:float")), {"value.not-float", "value.not-finite", "value.float-range", "limit.number-too-long", "agg.float-overflow"})
+        self.assertEqual(value(rules("--agg", "max:a:float")), {"value.not-float", "value.not-finite", "value.float-range", "limit.number-too-long"})
+        self.assertEqual(value(rules("--agg", "sum:a")), {"value.not-integer", "value.integer-overflow"})
+        self.assertEqual(value(rules("--order-by", "-a:float")), {"value.not-float", "value.not-finite", "value.float-range", "limit.number-too-long"})
+        self.assertEqual(value(rules("--where", "a:int > 1 and c:dec(2) > 1")), {"value.not-integer", "value.integer-overflow", "value.not-decimal", "value.decimal-scale", "value.decimal-too-wide"})
+        self.assertEqual(value(rules("--where", "b = x")), set())
+        # the limits
+        self.assertIn("limit.output-too-large", rules("--select", "a"))
+        self.assertNotIn("limit.output-too-large", rules("--select", "a", "--format", "csv"))
+        self.assertNotIn("limit.output-too-large", rules())
+        self.assertNotIn("limit.too-many-distinct", rules("--group", "a"))
+        self.assertIn("limit.too-many-distinct", rules("--group", "a", "--agg", "distinct:b"))
+        self.assertNotIn("limit.too-many-groups", rules("--select", "a"))
+        self.assertNotIn("limit.record-too-large", rules())
+        self.assertIn("limit.record-too-large", rules("--select", "a"))
+        self.assertIn("limit.state-too-large", rules("--order-by", "a"))
+        self.assertNotIn("limit.state-too-large", rules("--select", "a"))
+        self.assertIn("limit.too-many-rows", rules("--select", "a", "--format", "csv"))
+        self.assertNotIn("limit.too-many-rows", rules("--select", "a"))
+
+    def test_forms_and_the_note_of_a_comparison(self):
+        notes = lambda *f: explain_of(self.x(*f))["notes"]
+        for literal in ("''", "'.'", "'-'", "'-.'", "x1", "1x", "1.2.3"):
+            self.assertEqual([n for n in notes("--where", "a > " + literal) if "as text" in n], [], literal)
+        for literal in ("1", "-1", "+1", "1.5", ".5", "5.", "007"):
+            self.assertEqual(len([n for n in notes("--where", "a > " + literal) if "as text" in n]), 1, literal)
+        self.assertEqual(len([n for n in notes("--where", "a > 1 and b <= 2") if "as text" in n]), 2)
+        self.assertEqual([n for n in notes("--where", "a in (1, 2)") if "as text" in n], [])
+        self.assertEqual([n for n in notes("--where", "a contains 1") if "as text" in n], [])
 
     def test_the_forms(self):
         forms = {"shape": [], "rows": ["--select", "a"], "groups": ["--group", "b"], "report": ["--report", "types"]}
@@ -713,6 +792,8 @@ class Fuzz(Base):
                 self.assertIn(rule, json.loads(lines[0])["data"]["explain"]["refusals"]["possible"], label)
             return "explained"
         self.assertIsNotNone(rule, (label, "refused, but the run does not", x.stdout[:300]))
+        tagged = {r["rule"] if isinstance(r, dict) else r for r in introspect()["rules"]}
+        self.assertIn(rule, tagged, label)
         self.assertEqual(norm(x), norm(r), label)
         return "refused"
 
