@@ -9,6 +9,15 @@ the reason, and not left to be found again.
 
 `--check` only verifies that every site still matches (no build; CI runs it). See mutlib.py. Real runs: gram, niced, cores 0-5 (the suite is long).
 
+Equivalent mutants, found by the first real run (gram, 110 mutants: 97 killed, 6 killed after a test was written for each, 7 equivalent) and left out:
+  the scanner takes a plus sign          `number_end` does not skip a `+`, so the line goes to the tape: the same answer
+  a refusal does not stop the read       `fail_with` sets the tally's stop; the loop stops on it
+  the shape is not read by threads...    standard input is a `/dev/null` file of size 0, so `size > 0` keeps it out of the ranges anyway
+  a range does not end at the next range's first line / the ranges are not cut at a line start / a worker guesses how its range starts
+                                         a range read from a wrong place fails on its first line (not JSON) and is not clean, so the parent reads it again from where the
+                                         sequential read is: the answer is the same and only the time differs (the speed is judged by bench_jsonl.py, not by a test of bytes)
+  a range does not stop at the row bound a worker is told no bound (`wide`); the parent applies `--max-rows`
+
 Not here, and why: std.json's own strictness (a leading zero, `NaN`, a lone surrogate, depth 129) is the compiler's `std/json.cho`, whose tests are cancho's; the tests here feed those
 lines and require the refusal. The scanner of jflat.cho is judged by `test_jsonl_flat.py` against the tape on the same lines, and its mutants below are the ways it could answer wrongly.
 """
@@ -58,7 +67,6 @@ MUTANTS = [
     ("the scanner takes a leading zero", "jflat.cho", "    if int_of(line[p]) == '0' {\n        p = p + 1;\n    } else if", "    if int_of(line[p]) == '0' {\n        p = digits(line, p);\n    } else if"),
     ("the scanner takes a bare point", "jflat.cho", "        let q = digits(line, p + 1);\n        if q == p + 1 {\n            return 0 - 1;\n        }", "        let q = digits(line, p + 1);"),
     ("the scanner takes an empty exponent", "jflat.cho", "        let r = digits(line, q);\n        if r == q {\n            return 0 - 1;\n        }", "        let r = digits(line, q);"),
-    ("the scanner takes a plus sign", "jflat.cho", "        } else if c == '-' || c >= '0' && c <= '9' {", "        } else if c == '-' || c == '+' || c >= '0' && c <= '9' {"),
     ("the scanner takes a backslash in a string", "jflat.cho", "        if c < 32 || c == '\\\\' || c >= 128 {", "        if c < 32 || c >= 128 {"),
     ("the scanner takes a control byte in a string", "jflat.cho", "        if c < 32 || c == '\\\\' || c >= 128 {", "        if c == '\\\\' || c >= 128 {"),
     ("the scanner takes a byte past ASCII in a string", "jflat.cho", "        if c < 32 || c == '\\\\' || c >= 128 {", "        if c < 32 || c == '\\\\' {"),
@@ -76,23 +84,17 @@ MUTANTS = [
     ("a blank line is a record", "jsonl.cho", "                                    if jrec.blank(line) {", "                                    if len(line) == 0 {"),
     ("--max-rows is not honoured", "jsonl.cho", "} else if a[engine.k_records()] >= most {\n                                        a[engine.k_capped()] = 1;", "} else if a[engine.k_records()] >= most + 1 {\n                                        a[engine.k_capped()] = 1;"),
     ("a full page is not noticed", "jsonl.cho", "a[engine.k_records()] >= from && a[engine.k_emitted()] >= limit {\n                                        a[engine.k_more()] = 1;", "a[engine.k_records()] >= from && a[engine.k_emitted()] > limit {\n                                        a[engine.k_more()] = 1;"),
-    ("a refusal does not stop the read", "jsonl.cho", "                                        if shape >= 50 {\n                                            a[engine.k_abort_line()] = number;\n                                            a[engine.k_err_line()] = number;\n                                            kept = jrec.keep_facts(heap, kept, shape, line, contents(tbr), buffer.bytes(sbr), nfields, a);\n                                            going = false;", "                                        if shape >= 50 {\n                                            a[engine.k_abort_line()] = number;\n                                            a[engine.k_err_line()] = number;\n                                            kept = jrec.keep_facts(heap, kept, shape, line, contents(tbr), buffer.bytes(sbr), nfields, a);"),
     ("the line of a refusal is the row", "jsonl.cho", "                                            a[engine.k_abort_line()] = number;\n                                            a[engine.k_err_line()] = number;\n                                            kept", "                                            a[engine.k_abort_line()] = a[engine.k_records()] + 1;\n                                            a[engine.k_err_line()] = number;\n                                            kept"),
     ("--from does not skip records", "jsonl.cho", "} else if engine.count_row(a, nfields, number, row_from) && mode != 0 {", "} else if engine.count_row(a, nfields, number, 0) && mode != 0 {"),
     ("standard input is read as a file", "jsonl.cho", "                                if stdin {\n                                    r = bulk.fill_stdin(r, io);", "                                if false {\n                                    r = bulk.fill_stdin(r, io);"),
     ("the tape is one node too big", "jsonl.cho", "    var tape = box_slice(heap, 3 * nodes, 0);", "    var tape = box_slice(heap, 3 * nodes + 3, 0);"),
     ("the tape is one node too big for a worker", "jscan.cho", "    var tape = box_slice(heap, 3 * nodes, 0);", "    var tape = box_slice(heap, 3 * nodes + 3, 0);"),
-    ("the shape is not read by threads' ranges only for files", "jsonl.cho", "if going && mode != 0 && !stdin && threads > 1", "if going && mode != 0 && threads > 1"),
-    ("a range does not end at the next range's first line", "jscan.cho", "                if at >= until {\n                    // The next range's, whatever it holds: where this one ends.", "                if at > until {\n                    // The next range's, whatever it holds: where this one ends."),
     ("a range reads a blank line before it looks at where it is", "jscan.cho", "                    if at == 0 && len(line) >= 3 && int_of(line[0]) == 239", "                    if at == 1 && len(line) >= 3 && int_of(line[0]) == 239"),
-    ("a range does not stop at the row bound", "jscan.cho", "                    } else if a[engine.k_records()] >= most {\n                        a[engine.k_capped()] = 1;", "                    } else if a[engine.k_records()] > most {\n                        a[engine.k_capped()] = 1;"),
     ("a range counts the lines of the next one", "jscan.cho", "                    consumed = number - 1;\n                    next_at = at;", "                    consumed = number;\n                    next_at = at;"),
     ("the declaration is not handed to the workers", "jscan.cho", "    u[at + 3] = len(table);", "    u[at + 3] = 0;"),
     ("the segment bytes are not handed to the workers", "jscan.cho", "        u[at + 4 + len(table) + i] = int_of(sbytes[i]);", "        u[at + 4 + len(table) + i] = 0;"),
     ("a worker finds its declaration at the parent's offset", "par.cho", "            u[jscan.p_format()] = j_size();", "            u[jscan.p_format()] = scan.p_count();"),
     ("the dispatcher always reads csv", "dispatch.cho", "    if par[jscan.p_format()] != 0 {", "    if false {"),
-    ("a worker guesses how its range starts", "par.cho", "if contents(w.par)[j_spec()] == 1 && contents(w.par)[jscan.p_format()] == 0 {", "if contents(w.par)[j_spec()] == 1 {"),
-    ("the ranges are not cut at a line start", "par.cho", "        // Where the ranges begin: `cur`, then the first line start at or after each chunk's worth.\n        borrow mut plan as &!pw in {\n            let pl = contents(pw);\n            pl[0] = cur;\n            var j = 1;\n            while j <= n {\n                var edge = align(heap, file, cur + j * chunk, size);", "        // Where the ranges begin: `cur`, then the first line start at or after each chunk's worth.\n        borrow mut plan as &!pw in {\n            let pl = contents(pw);\n            pl[0] = cur;\n            var j = 1;\n            while j <= n {\n                var edge = cur + j * chunk;"),
     ("a refusal in a worker is taken as it is", "par.cho", "                        wave_bad = true;\n                    }\n                    if agg.get_i64(sl, at) == 0 && first == cur {", "                        wave_bad = true;\n                    }\n                    if first == cur {"),
     # the flags (jflags.cho)
     ("a plan on JSON lines needs no --fields", "jflags.cho", "    if !has_fields {\n        return fields_required(heap, e, args, parsed);", "    if false {\n        return fields_required(heap, e, args, parsed);"),
