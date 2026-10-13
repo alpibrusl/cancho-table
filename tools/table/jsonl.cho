@@ -473,7 +473,11 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
             borrow labels as &lr in {
                 borrow lends as &le in {
                     borrow out_kept as &kr in {
-                        e = finish.explain(heap, args, parsed, tree, nr, er3, lr, le, kr, c, shown, names_at, errno, as_csv, budget, e);
+                        if c.abort >= 50 && c.abort <= 55 {
+                            e = finish.jsonl_refusal(heap, e, args, parsed, nr, er3, kr, c, shown);
+                        } else {
+                            e = finish.explain(heap, args, parsed, tree, nr, er3, lr, le, kr, c, shown, names_at, errno, as_csv, budget, e);
+                        }
                     }
                 }
             }

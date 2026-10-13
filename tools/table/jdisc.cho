@@ -391,7 +391,11 @@ pub fn run[&h, &g, &p, &f, &s, &i](heap: &!h Heap, args: &g Args, parsed: &p cli
         borrow no_ends as &er in {
             borrow kept as &kr in {
                 borrow empty_plan as &qr in {
-                    e = finish.explain(heap, args, parsed, qr, nr, er, nr, er, kr, c, shown, 0 - 1, errno, false, 0, e);
+                    if c.abort >= 50 && c.abort <= 55 {
+                        e = finish.jsonl_refusal(heap, e, args, parsed, nr, er, kr, c, shown);
+                    } else {
+                        e = finish.explain(heap, args, parsed, qr, nr, er, nr, er, kr, c, shown, 0 - 1, errno, false, 0, e);
+                    }
                 }
             }
         }

@@ -527,8 +527,10 @@ fn json_code_name(code: int) -> [] &static [byte] {
     return "full";
 }
 
-// A refusal of a JSON-lines record (docs/readers.md section 12.5, jrec.cho): abort 50 to 55, with the line, the row and the facts the reader left in the tally.
-fn jsonl_refusal[&h, &g, &p, &n, &d, &k, &s](heap: &!h Heap, errs: fail.Errors, args: &g Args, parsed: &p cli.Parsed, names: &n buffer.Buffer, hends: &d vec.Vec[int], kept: &k buffer.Buffer, c: Counts, shown: &s [byte]) -> [heap, args] fail.Errors {
+// A refusal of a JSON-lines record (docs/readers.md section 12.5, jrec.cho): abort 50 to 55. It is not a branch of `explain`: a call added there changed how the compiler
+// allocated registers in `read_file`, which calls `explain`, and cost every one-thread read of a csv file 13 instructions a row on x86-64 (measured with valgrind, docs/readers.md 12.10).
+// Called by the JSON-lines loops, which call `explain` for everything else. with the line, the row and the facts the reader left in the tally.
+pub fn jsonl_refusal[&h, &g, &p, &n, &d, &k, &s](heap: &!h Heap, errs: fail.Errors, args: &g Args, parsed: &p cli.Parsed, names: &n buffer.Buffer, hends: &d vec.Vec[int], kept: &k buffer.Buffer, c: Counts, shown: &s [byte]) -> [heap, args] fail.Errors {
     let table = spec.flag_table();
     var e = errs;
     var rule = "parse.jsonl-syntax";
@@ -646,8 +648,6 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
     } else if c.abort == 4 {
         let over = limit.more(limit.none(), c.abort_line, c.long_length);
         e = limit.too_long(heap, e, args, parsed, table, shown, over, cap, line_ceiling(), "a line is longer than --max-line-bytes; the file was not read past it");
-    } else if c.abort >= 50 && c.abort <= 55 {
-        e = jsonl_refusal(heap, e, args, parsed, names, hends, kept, c, shown);
     } else if c.abort == 3 {
         e = at_line(heap, e, "limit.header-too-large", "the header record holds more than --max-line-bytes bytes", "raise --max-line-bytes, up to the ceiling introspect names", "how large the record is was not read to the end", shown, c.abort_line);
     } else if c.abort == 7 {
