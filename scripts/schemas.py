@@ -113,13 +113,17 @@ def explain_document():
             "path": TB,
             "reader": {"enum": ["file", "blocks"]},
             "block_bytes": NAT,
-            "format": {"const": "csv"},
-            "delimiter": {"enum": [",", "\t", ";"]},
+            "format": {"enum": ["csv", "jsonl"]},
+            "delimiter": {"enum": [",", "\t", ";", None]},
+            # JSON lines only (docs/readers.md section 12): the declared columns, what an absent path is, the tape's nodes
+            "fields": {"type": "array", "items": TB},
+            "absent": {"enum": ["refuse", "empty"]},
+            "max_json_nodes": {"type": "integer", "minimum": 1},
             "size": NULLABLE_NAT,
             "header_read": {"type": "boolean"},
             "columns": NULLABLE_NAT,
             "bytes_read": NAT,
-        }),
+        }, required=["kind", "path", "reader", "block_bytes", "format", "delimiter", "size", "header_read", "columns", "bytes_read"]),
         "plan": obj({
             "form": {"enum": ["shape", "rows", "groups", "report"]},
             "select": {"type": "array", "items": column},
@@ -160,6 +164,19 @@ def explain_document():
     })})
 
 
+def discover_document():
+    """`--discover` (docs/readers.md section 12.7): what the first lines of a JSON-lines input hold. Never a plan."""
+    kinds = obj({k: {"type": "integer", "minimum": 1} for k in ["string", "int", "number", "bool", "null", "object", "array", "missing"]}, required=[])
+    return obj({"discover": obj({
+        "fields": {"type": "array", "items": obj({"path": TB, "kinds": kinds, "first_line": {"type": "integer", "minimum": 1}})},
+        "lines_examined": NAT,
+        "complete": {"type": "boolean"},
+        "paths_truncated": {"type": "boolean"},
+        "undeclarable": NAT,
+        "arrays": {"type": "array", "items": TB},
+    })})
+
+
 SCHEMAS = {
     "table": document("table", {"oneOf": [
         # `table FILE`: the shape.
@@ -182,6 +199,8 @@ SCHEMAS = {
         }, required=["columns", "rows", "row_count", "truncated", "next"]),
         # `--explain`: the plan, not its answer.
         explain_document(),
+        # `--input-format jsonl --discover`: the report.
+        discover_document(),
     ]}),
 }
 

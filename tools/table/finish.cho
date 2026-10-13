@@ -72,7 +72,7 @@ pub struct Counts {
 // The tool's own rules, beside the contract's catalogue: tag, exit code,
 // repairable, summary.
 pub fn extra() -> [] &static [byte] {
-    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.;limit.record-too-large|8|never|a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes. Hint: raise --max-bytes, up to the ceiling introspect names, or select fewer columns. Repair: none.;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread. Hint: raise --max-rows, up to the ceiling introspect names, or page with --limit and --from. Repair: none.;limit.too-many-sort-rows|8|never|--order-by would hold more than --max-sort-rows rows to sort. Hint: ask for the first rows only with --top N or a smaller --limit (they are kept in bounded memory), keep fewer rows with --where, or raise --max-sort-rows, up to the ceiling introspect names. Repair: none.;limit.too-many-groups|8|never|more groups than --max-groups. Hint: raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns. Repair: none.;limit.too-many-distinct|8|never|more distinct values than --max-distinct. Hint: raise --max-distinct, up to the ceiling introspect names. Repair: none.;limit.state-too-large|8|never|the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes. Hint: raise --max-state-bytes, up to the ceiling introspect names, or group by shorter values. Repair: none.;parse.csv-ragged-row|8|never|a row has a different number of fields than the header. Hint: make every row as wide as the header, quoting fields that hold the delimiter. Repair: none.;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record. Hint: double a quote that is text, or put the delimiter after the closing quote. Repair: none.;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input. Hint: close the quote, or double the quotes that are text. Repair: none.;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header. Hint: pick from detail.available. Repair: choose.;select.ambiguous-column|8|never|a name in --select that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.;column.unknown|3|never|a name or position in --where, --group or --agg that is not a column of the header. Hint: pick from detail.available. Repair: none.;column.ambiguous|8|never|a name in --where, --group or --agg that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.;where.syntax|2|never|--where is not an expression of the grammar, at the offset the detail gives. Hint: the grammar is in the help of --where: COLUMN OP VALUE joined by and. Repair: none.;agg.bad-spec|2|never|an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes. Hint: --agg count,sum:bytes,max:bytes,distinct:status, a mean of an integer column needs its scale, mean:bytes@2, a decimal column is declared sum:price:dec(2). Repair: none.;sort.unknown-key|2|never|--sort names no output column of the grouping. Hint: pick from detail.available, with a - before it to sort descending. Repair: none.;value.not-integer|8|never|a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not). Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.;value.integer-overflow|8|never|a cell of an :int column or of sum, min or max does not fit 64 bits. Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.;value.not-decimal|8|never|a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a decimal of this column. Repair: none.;value.decimal-scale|8|sometimes|a cell of a :dec(S) column has more fractional digits than S (it is never rounded). Hint: declare a larger scale, :dec(N) with N the most fractional digits the column holds. Repair: choose.;value.decimal-too-wide|8|never|a cell of a :dec(S) column has 18 or more significant digits once scaled to S. Hint: declare a smaller scale, or compare the column as text. Repair: none.;column.type-conflict|2|never|the plan reads one column as two numeric types: :int, :float, or :dec with two scales, in --where, --group, --agg or --order-by. Hint: give the column one type: the same :int, :float or :dec(N), in every place it is named, --where, --group, --agg and --order-by. Repair: none.;value.not-float|8|never|a cell of a :float column is not a number: an empty cell, a space, a separator, a hex form, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a float of this column. Repair: none.;value.not-finite|8|never|a cell of a :float column is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float > 5). Hint: keep them out with --where first: x != 'NaN' and x:float > 5 never reads the NaN cell as a number. Repair: none.;value.float-range|8|never|a cell of a :float column is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which). Hint: keep out the rows with such a cell with --where first, or compare the column as text. Repair: none.;limit.number-too-long|8|never|a cell of a :float column is longer than 1,100 bytes, the longest cell that can be a double. Hint: a number of this length is not a double, compare the column as text. Repair: none.;agg.float-overflow|8|never|the exact sum of a :float column in a group is beyond the largest double, about 1.8e308 (detail.group names the group). Hint: sum fewer rows with --where, group by more columns, or sum in a smaller unit (the mean of the same group is a number: mean:COL:float). Repair: none.;query.syntax|2|sometimes|a --query that is not a statement of the grammar, or a literal that does not fit the type its column is read as, at the byte offset the detail gives. Hint: detail.expected says what was expected at detail.offset, and the grammar is in the help of --query. Repair: choose.;query.unsupported|2|sometimes|a --query that uses something the language leaves out: an or, a like, a null, an alias, an expression, a join, a typed group by column, an order the flags cannot say. Hint: detail.feature names it, and the hint says what to write instead. Repair: choose.;query.group-mismatch|2|sometimes|a --query whose select list is not its group by columns, in the same order, then at least one aggregate, or whose order by names something the select list does not hold. Hint: a grouping selects its group by columns first, in the same order, then aggregates, and has at least one: select a, count(*) from 'f.csv' group by a. Repair: choose.;query.too-long|2|never|a --query of more than 4096 bytes. Hint: ask the question in fewer bytes, the limit is detail.limit. Repair: none.";
+    return "limit.header-too-large|8|never|the header record holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.;limit.record-too-large|8|never|a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.;limit.output-too-large|8|never|the first row of a page is longer than --max-bytes. Hint: raise --max-bytes, up to the ceiling introspect names, or select fewer columns. Repair: none.;limit.too-many-rows|8|never|--format csv reached --max-rows with rows left unread. Hint: raise --max-rows, up to the ceiling introspect names, or page with --limit and --from. Repair: none.;limit.too-many-sort-rows|8|never|--order-by would hold more than --max-sort-rows rows to sort. Hint: ask for the first rows only with --top N or a smaller --limit (they are kept in bounded memory), keep fewer rows with --where, or raise --max-sort-rows, up to the ceiling introspect names. Repair: none.;limit.too-many-groups|8|never|more groups than --max-groups. Hint: raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns. Repair: none.;limit.too-many-distinct|8|never|more distinct values than --max-distinct. Hint: raise --max-distinct, up to the ceiling introspect names. Repair: none.;limit.state-too-large|8|never|the keys and values kept for groups, or the rows kept to sort, hold more than --max-state-bytes bytes. Hint: raise --max-state-bytes, up to the ceiling introspect names, or group by shorter values. Repair: none.;parse.csv-ragged-row|8|never|a row has a different number of fields than the header. Hint: make every row as wide as the header, quoting fields that hold the delimiter. Repair: none.;parse.csv-bad-quote|8|never|a closing quote is followed by something other than the delimiter or the end of the record. Hint: double a quote that is text, or put the delimiter after the closing quote. Repair: none.;parse.csv-unterminated-quote|8|never|a quoted field is still open at the end of the input. Hint: close the quote, or double the quotes that are text. Repair: none.;select.unknown-column|3|sometimes|a name or position in --select that is not a column of the header. Hint: pick from detail.available. Repair: choose.;select.ambiguous-column|8|never|a name in --select that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.;column.unknown|3|never|a name or position in --where, --group or --agg that is not a column of the header. Hint: pick from detail.available. Repair: none.;column.ambiguous|8|never|a name in --where, --group or --agg that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.;where.syntax|2|never|--where is not an expression of the grammar, at the offset the detail gives. Hint: the grammar is in the help of --where: COLUMN OP VALUE joined by and. Repair: none.;agg.bad-spec|2|never|an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes. Hint: --agg count,sum:bytes,max:bytes,distinct:status, a mean of an integer column needs its scale, mean:bytes@2, a decimal column is declared sum:price:dec(2). Repair: none.;sort.unknown-key|2|never|--sort names no output column of the grouping. Hint: pick from detail.available, with a - before it to sort descending. Repair: none.;value.not-integer|8|never|a cell of an :int column or of sum, min or max is not an exact integer (an empty cell is not). Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.;value.integer-overflow|8|never|a cell of an :int column or of sum, min or max does not fit 64 bits. Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.;value.not-decimal|8|never|a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a decimal of this column. Repair: none.;value.decimal-scale|8|sometimes|a cell of a :dec(S) column has more fractional digits than S (it is never rounded). Hint: declare a larger scale, :dec(N) with N the most fractional digits the column holds. Repair: choose.;value.decimal-too-wide|8|never|a cell of a :dec(S) column has 18 or more significant digits once scaled to S. Hint: declare a smaller scale, or compare the column as text. Repair: none.;column.type-conflict|2|never|the plan reads one column as two numeric types: :int, :float, or :dec with two scales, in --where, --group, --agg or --order-by. Hint: give the column one type: the same :int, :float or :dec(N), in every place it is named, --where, --group, --agg and --order-by. Repair: none.;value.not-float|8|never|a cell of a :float column is not a number: an empty cell, a space, a separator, a hex form, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that is false stops the ones after it), or do not ask for a float of this column. Repair: none.;value.not-finite|8|never|a cell of a :float column is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float > 5). Hint: keep them out with --where first: x != 'NaN' and x:float > 5 never reads the NaN cell as a number. Repair: none.;value.float-range|8|never|a cell of a :float column is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which). Hint: keep out the rows with such a cell with --where first, or compare the column as text. Repair: none.;limit.number-too-long|8|never|a cell of a :float column is longer than 1,100 bytes, the longest cell that can be a double. Hint: a number of this length is not a double, compare the column as text. Repair: none.;agg.float-overflow|8|never|the exact sum of a :float column in a group is beyond the largest double, about 1.8e308 (detail.group names the group). Hint: sum fewer rows with --where, group by more columns, or sum in a smaller unit (the mean of the same group is a number: mean:COL:float). Repair: none.;query.syntax|2|sometimes|a --query that is not a statement of the grammar, or a literal that does not fit the type its column is read as, at the byte offset the detail gives. Hint: detail.expected says what was expected at detail.offset, and the grammar is in the help of --query. Repair: choose.;query.unsupported|2|sometimes|a --query that uses something the language leaves out: an or, a like, a null, an alias, an expression, a join, a typed group by column, an order the flags cannot say. Hint: detail.feature names it, and the hint says what to write instead. Repair: choose.;query.group-mismatch|2|sometimes|a --query whose select list is not its group by columns, in the same order, then at least one aggregate, or whose order by names something the select list does not hold. Hint: a grouping selects its group by columns first, in the same order, then aggregates, and has at least one: select a, count(*) from 'f.csv' group by a. Repair: choose.;query.too-long|2|never|a --query of more than 4096 bytes. Hint: ask the question in fewer bytes, the limit is detail.limit. Repair: none.;input.fields-required|2|sometimes|a plan on JSON lines (--input-format jsonl) with no --fields: JSON lines have no header, so the columns are declared. Hint: --fields id,status,user.name declares them, and --discover reports what the first lines hold. Repair: retry, the same input with --discover.;input.bad-fields|2|never|--fields is not a list of paths: an empty item or segment, a backslash that escapes anything but a comma, a backslash, a # or a dot, a path of more than 8 segments, the same path twice, or more than 4096 paths (detail.item and detail.reason). Hint: paths are keys separated by dots, items are separated by commas: --fields id,user.name,items.0.sku. Repair: none.;parse.jsonl-syntax|8|never|a line is not strict JSON (RFC 8259): detail.code and detail.reason say what the parser met and detail.offset where in the line, detail.near the bytes around it; detail.looks_like is json-document when the first line begins like a document that is not JSON lines. Hint: one JSON object per line, and jq -c '.[]' makes lines of an array. Repair: none.;parse.jsonl-not-object|8|never|a line is JSON that is not an object (detail.kind). Hint: one JSON object per line. Repair: none.;parse.jsonl-missing-field|8|sometimes|a declared path has no value in a line: the key or index is not there, the value is null, or a step goes through something that is not an object or an array (detail.reason). Hint: --absent empty reads such a path as the empty cell. Repair: retry with --absent empty.;parse.jsonl-not-scalar|8|never|a declared path holds an object or an array (detail.kind). Hint: declare a deeper path: user.name, tags.0. Repair: none.;parse.jsonl-duplicate-key|8|never|a key occurs twice at a step of a declared path (detail.key), which parsers read differently. Hint: make the keys of the line unique. Repair: none.;limit.json-too-many-nodes|8|never|a line holds more JSON nodes than --max-json-nodes. Hint: raise --max-json-nodes, up to the ceiling introspect names, or declare shallower lines. Repair: none.";
 }
 
 pub fn line_ceiling() -> [] int {
@@ -498,6 +498,143 @@ pub fn settle_groups[&h, &q, &c, &a](heap: &!h Heap, groups: agg.Groups, kept: b
     return (g, held);
 }
 
+// The name of std.json's error code, as `parse.jsonl-syntax` says it.
+fn json_code_name(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "syntax";
+    }
+    if code == 2 {
+        return "end";
+    }
+    if code == 3 {
+        return "control";
+    }
+    if code == 4 {
+        return "escape";
+    }
+    if code == 5 {
+        return "number";
+    }
+    if code == 6 {
+        return "utf8";
+    }
+    if code == 7 {
+        return "depth";
+    }
+    if code == 9 {
+        return "trailing";
+    }
+    return "full";
+}
+
+// A refusal of a JSON-lines record (docs/readers.md section 12.5, jrec.cho): abort 50 to 55, with the line, the row and the facts the reader left in the tally.
+fn jsonl_refusal[&h, &g, &p, &n, &d, &k, &s](heap: &!h Heap, errs: fail.Errors, args: &g Args, parsed: &p cli.Parsed, names: &n buffer.Buffer, hends: &d vec.Vec[int], kept: &k buffer.Buffer, c: Counts, shown: &s [byte]) -> [heap, args] fail.Errors {
+    let table = spec.flag_table();
+    var e = errs;
+    var rule = "parse.jsonl-syntax";
+    var what = "a line is not strict JSON";
+    var hint = "one JSON object per line, and jq -c '.[]' makes lines of an array";
+    var column = false;
+    if c.abort == 51 {
+        rule = "parse.jsonl-not-object";
+        what = "a line is JSON but not an object";
+    } else if c.abort == 52 {
+        rule = "parse.jsonl-missing-field";
+        what = "a declared path has no value in a line";
+        hint = "--absent empty reads such a path as the empty cell";
+        column = true;
+    } else if c.abort == 53 {
+        rule = "parse.jsonl-not-scalar";
+        what = "a declared path holds an object or an array";
+        hint = "declare a deeper path: user.name, tags.0";
+        column = true;
+    } else if c.abort == 54 {
+        rule = "parse.jsonl-duplicate-key";
+        what = "a key occurs twice at a step of a declared path";
+        hint = "make the keys of the line unique";
+        column = true;
+    } else if c.abort == 55 {
+        rule = "limit.json-too-many-nodes";
+        what = "a line holds more JSON nodes than --max-json-nodes";
+        hint = "raise --max-json-nodes, up to the ceiling introspect names";
+    }
+    var w = fail.open_in(heap, extra(), rule, what, hint);
+    if c.abort == 52 {
+        let at = cli.value_index(parsed, table, "absent");
+        if !cli.has(parsed, table, "absent") {
+            var o = fail.retry_open(heap, w);
+            var i = 0;
+            while i < arg_count(args) {
+                o = json.put_string(heap, o, arg(args, i));
+                i = i + 1;
+            }
+            o = json.put_string(heap, o, "--absent");
+            o = json.put_string(heap, o, "empty");
+            w = fail.retry_close(heap, o);
+        } else if at >= 0 && cli.value_is_whole(parsed, table, "absent") {
+            w = fail.retry_replacing(heap, w, args, at, "empty");
+        } else {
+            w = fail.repair_none(heap, w, "write --absent empty");
+        }
+    } else if c.abort == 55 {
+        w = fail.repair_none(heap, w, "how many nodes the line holds was not counted past the limit");
+    } else if c.abort == 54 {
+        w = fail.repair_none(heap, w, "which of the two was meant is not known");
+    } else if c.abort == 53 {
+        w = fail.repair_none(heap, w, "which deeper path was meant is not known");
+    } else {
+        w = fail.repair_none(heap, w, "what the line was meant to say is not known");
+    }
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_int(heap, w, "line", c.abort_line);
+    w = fail.detail_int(heap, w, "row", c.err_row);
+    if column {
+        w = fail.detail_text(heap, w, "column", name_of(names, hends, c.err_col));
+    }
+    if c.abort == 50 {
+        w = fail.detail_int(heap, w, "offset", c.err_digits);
+        w = fail.detail_str(heap, w, "code", json_code_name(c.err_fn));
+        w = fail.detail_str(heap, w, "reason", json.error_message(c.err_fn));
+        w = fail.detail_text(heap, w, "near", buffer.bytes(kept));
+    } else if c.abort == 51 {
+        var kind = "array";
+        if c.err_fn == 1 {
+            kind = "string";
+        } else if c.err_fn == 2 {
+            kind = "number";
+        } else if c.err_fn == 3 {
+            kind = "boolean";
+        } else if c.err_fn == 4 {
+            kind = "null";
+        }
+        w = fail.detail_str(heap, w, "kind", kind);
+    } else if c.abort == 52 {
+        var reason = "missing";
+        if c.err_fn == 1 {
+            reason = "null";
+        } else if c.err_fn == 2 {
+            reason = "not-container";
+        }
+        w = fail.detail_str(heap, w, "reason", reason);
+    } else if c.abort == 53 {
+        var kind = "object";
+        if c.err_fn == 1 {
+            kind = "array";
+        }
+        w = fail.detail_str(heap, w, "kind", kind);
+    } else if c.abort == 54 {
+        w = fail.detail_text(heap, w, "key", buffer.bytes(kept));
+    } else {
+        w = fail.detail_int(heap, w, "limit", cli.nat(args, parsed, table, "max-json-nodes"));
+    }
+    if (c.abort == 50 || c.abort == 51) && c.err_cond == 1 {
+        w = fail.detail_str(heap, w, "looks_like", "json-document");
+    }
+    e = fail.add(heap, e, w);
+    return e;
+}
+
 // What went wrong in a read, as an error with a rule, or nothing.
 pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, names: &n buffer.Buffer, hends: &d vec.Vec[int], labels: &l buffer.Buffer, lends: &m vec.Vec[int], kept: &k buffer.Buffer, c: Counts, shown: &s [byte], names_at: int, errno: int, as_csv: bool, budget: int, errs: fail.Errors) -> [heap, args] fail.Errors {
     let table = spec.flag_table();
@@ -509,6 +646,8 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
     } else if c.abort == 4 {
         let over = limit.more(limit.none(), c.abort_line, c.long_length);
         e = limit.too_long(heap, e, args, parsed, table, shown, over, cap, line_ceiling(), "a line is longer than --max-line-bytes; the file was not read past it");
+    } else if c.abort >= 50 && c.abort <= 55 {
+        e = jsonl_refusal(heap, e, args, parsed, names, hends, kept, c, shown);
     } else if c.abort == 3 {
         e = at_line(heap, e, "limit.header-too-large", "the header record holds more than --max-line-bytes bytes", "raise --max-line-bytes, up to the ceiling introspect names", "how large the record is was not read to the end", shown, c.abort_line);
     } else if c.abort == 7 {

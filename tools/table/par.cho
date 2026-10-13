@@ -30,7 +30,9 @@ module par;
 import std.buffer;
 import std.vec;
 import agg;
+import dispatch;
 import engine;
+import jscan;
 import psort;
 import query;
 import report;
@@ -129,7 +131,7 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
             let t = contents(aw);
             t[engine.k_columns()] = contents(w.par)[j_columns()];
             var hint = 0;
-            if contents(w.par)[j_spec()] == 1 {
+            if contents(w.par)[j_spec()] == 1 && contents(w.par)[jscan.p_format()] == 0 {
                 var window = buffer.empty(w.heap, 65536);
                 var got = 0;
                 borrow mut window as &!ww in {
@@ -153,7 +155,7 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
                 }
                 buffer.drop(w.heap, window);
             }
-            let (x, l, s, r2, s2, e2, k2, g2) = scan.scan_range(w.heap, w.file, contents(w.par), w.tree, contents(w.cols), contents(w.sel), contents(cw), t, rows, scratch, escr, kept, groups, contents(w.par)[j_start()], contents(w.par)[j_until()], hint);
+            let (x, l, s, r2, s2, e2, k2, g2) = dispatch.range(w.heap, w.file, contents(w.par), w.tree, contents(w.cols), contents(w.sel), contents(cw), t, rows, scratch, escr, kept, groups, contents(w.par)[j_start()], contents(w.par)[j_until()], hint);
             next_at = x;
             lines_read = l;
             status = s;
@@ -386,13 +388,22 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
     let slot_bytes = header_bytes() + payload_cap;
     let wide = 1000000000000000;
     // What every thread is told: the parameters, except that it counts its range alone.
-    var wpar = box_slice(heap, j_size(), 0);
+    var wpar = box_slice(heap, j_size() + len(pp) - scan.p_count(), 0);
     borrow mut wpar as &!wp in {
         let u = contents(wp);
         var k = 0;
         while k < scan.p_count() {
             u[k] = pp[k];
             k = k + 1;
+        }
+        // JSON lines: the declaration of the fields rides after the parameters, and a worker finds it after its own (jscan.cho)
+        if pp[jscan.p_format()] != 0 {
+            u[jscan.p_format()] = j_size();
+            k = scan.p_count();
+            while k < len(pp) {
+                u[j_size() + k - scan.p_count()] = pp[k];
+                k = k + 1;
+            }
         }
         u[scan.p_budget()] = wide;
         u[scan.p_limit()] = wide;
@@ -620,7 +631,7 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                     var again = true;
                     while again {
                         pp[scan.p_base_line()] = lines_before;
-                        let (x2, l2, st, r2, s2, e2, k2, g2) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, until, 0);
+                        let (x2, l2, st, r2, s2, e2, k2, g2) = dispatch.range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, until, 0);
                         rows2 = r2;
                         scratch2 = s2;
                         escr2 = e2;
@@ -682,7 +693,7 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
         // this does not happen; but a loop that cannot be shown to end is one more reason to say so.
         if going && cur == wave_began && cur < size {
             pp[scan.p_base_line()] = lines_before;
-            let (x3, l3, st3, r3, s3, e3, k3, g3) = scan.scan_range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, size, 0);
+            let (x3, l3, st3, r3, s3, e3, k3, g3) = dispatch.range(heap, file, pp, tree, cols, sel, cells, a, rows2, scratch2, escr2, kept2, groups2, cur, size, 0);
             rows2 = r3;
             scratch2 = s3;
             escr2 = e3;
@@ -1654,7 +1665,7 @@ pub fn run[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h Heap, i
     var es = escr;
     var ke = kept;
     var gr = groups;
-    if pp[scan.p_mode()] == 2 && !query.reporting(tree) && query.count_of(tree, 4) == 0 && want <= 100000 {
+    if pp[scan.p_mode()] == 2 && pp[jscan.p_format()] == 0 && !query.reporting(tree) && query.count_of(tree, 4) == 0 && want <= 100000 {
         let (r1, s1, e1, k1, g1, declined) = run_groups(heap, io, file, fs, root, rel, full, tree, cols, sel, cells, a, pp, r, sc, es, ke, gr, start, lines0, size, threads, most_chunk, want, explicit);
         if declined == 0 {
             return (r1, s1, e1, k1, g1);

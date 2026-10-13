@@ -1,0 +1,19 @@
+edition 5;
+
+module dispatch;
+
+// The range scan of the format the read is in (docs/readers.md section 12.6): `scan.scan_range` for CSV, `jscan.scan_range` for JSON lines, told by the parameters
+// (`jscan.p_format`). One call a range, so the choice costs nothing a row; the loops themselves are not edited to serve each other.
+
+import std.buffer;
+import agg;
+import jscan;
+import query;
+import scan;
+
+pub fn range[&h, &f, &p, &q, &c, &s, &w, &a](heap: &!h Heap, file: &!f File, par: &p [int], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], a: &!a [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, groups: agg.Groups, start: int, until: int, hint: int) -> [heap, file_read] (int, int, int, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, agg.Groups) {
+    if par[jscan.p_format()] != 0 {
+        return jscan.scan_range(heap, file, par, tree, cols, sel, cells, a, rows, scratch, escr, kept, groups, start, until, hint);
+    }
+    return scan.scan_range(heap, file, par, tree, cols, sel, cells, a, rows, scratch, escr, kept, groups, start, until, hint);
+}

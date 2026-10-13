@@ -1,0 +1,420 @@
+edition 5;
+
+module jdisc;
+
+// `--discover` (docs/readers.md section 12.7): what the first lines of a JSON-lines input hold, as a bounded report and never as a plan. Every record is parsed as a read parses it
+// (so a malformed one is the same refusal), and its paths are flattened through objects to 8 segments, written as `--fields` takes them, with how many times each held a value of
+// each kind. An array is not expanded; an empty object, or one at the eighth segment, is the kind `object`; a key that cannot be declared (an empty one) is counted apart.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.map;
+import std.vec;
+import bulk;
+import engine;
+import query;
+import spec;
+import finish;
+import jrec;
+import scan;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.lines;
+import toolbox.text;
+
+// The kinds a path is counted under, in the order the report lists them.
+fn kinds() -> [] int {
+    return 7;
+}
+
+res struct Disc {
+    // path text -> the path's number (the order of first appearance)
+    paths: map.Map[int],
+    // `kinds()` counts a path, and the line it first appeared on
+    counts: vec.Vec[int],
+    firsts: vec.Vec[int],
+    // the numbers of the paths that held an array, in order
+    arrays: vec.Vec[int],
+    truncated: bool,
+    undeclarable: int,
+    room: int,
+}
+
+fn start[&h](heap: &!h Heap, room: int) -> [heap] Disc {
+    return Disc { paths: map.empty(heap, 64, 0, 0x5eed), counts: vec.empty(heap, 64, 0), firsts: vec.empty(heap, 8, 0), arrays: vec.empty(heap, 4, 0), truncated: false, undeclarable: 0, room: room };
+}
+
+fn finish_disc[&h](heap: &!h Heap, d: Disc) -> [heap] int {
+    let Disc { paths, counts, firsts, arrays, truncated, undeclarable, room } = d;
+    map.drop(heap, paths);
+    vec.drop(heap, counts);
+    vec.drop(heap, firsts);
+    vec.drop(heap, arrays);
+    return 0;
+}
+
+// Count one value of `kind` at the path `path`, which was first seen at `line`.
+fn note[&h, &k](heap: &!h Heap, d: Disc, path: &k [byte], kind: int, line: int) -> [heap] Disc {
+    let Disc { paths, counts, firsts, arrays, truncated, undeclarable, room } = d;
+    var p = paths;
+    var c = counts;
+    var f = firsts;
+    var a = arrays;
+    var cut = truncated;
+    var id = 0 - 1;
+    borrow p as &pr in {
+        id = map.find(pr, path);
+    }
+    if id < 0 {
+        var n = 0;
+        borrow p as &pr in {
+            n = map.size(pr);
+        }
+        if n >= room {
+            cut = true;
+        } else {
+            id = n;
+            p = map.put(heap, p, path, n);
+            var k = 0;
+            while k < kinds() {
+                c = vec.push(heap, c, 0);
+                k = k + 1;
+            }
+            f = vec.push(heap, f, line);
+        }
+    }
+    if id >= 0 {
+        borrow mut c as &!cw in {
+            vec.set(cw, id * kinds() + kind, vec.get(cw, id * kinds() + kind) + 1);
+            if kind == 6 && vec.get(cw, id * kinds() + kind) == 1 {
+                a = vec.push(heap, a, id);
+            }
+        }
+    }
+    return Disc { paths: p, counts: c, firsts: f, arrays: a, truncated: cut, undeclarable: undeclarable, room: room };
+}
+
+// The key of pair `key_node` as a path segment written at `pbuf[at..]`, escaped as `--fields` wants it (a comma, a backslash and a dot get a backslash): the
+// new length of the path, or -1 for an empty key.
+fn put_segment[&s, &t, &b, &k](src: &s [byte], tape: &t [int], key_node: int, pbuf: &!b [byte], at: int, scratch: &!k [byte]) -> [] int {
+    let n = json.string_length(src, tape, key_node);
+    if n <= 0 {
+        return 0 - 1;
+    }
+    let wrote = json.string_into(src, tape, key_node, scratch[0..n]);
+    var out = at;
+    if at > 0 {
+        pbuf[out] = byte_of('.');
+        out = out + 1;
+    }
+    var i = 0;
+    while i < n {
+        let c = int_of(scratch[i]);
+        if c == ',' || c == '\\' || c == '.' {
+            pbuf[out] = byte_of('\\');
+            out = out + 1;
+        }
+        pbuf[out] = scratch[i];
+        out = out + 1;
+        i = i + 1;
+    }
+    return out;
+}
+
+// The kind slot of a node: 0 string, 1 int, 2 number, 3 bool, 4 null, 5 object, 6 array.
+fn slot_of[&t](tape: &t [int], node: int) -> [] int {
+    let k = json.kind(tape, node);
+    if k == 5 {
+        return 0;
+    }
+    if k == 3 {
+        return 1;
+    }
+    if k == 4 {
+        return 2;
+    }
+    if k == 1 || k == 2 {
+        return 3;
+    }
+    if k == 0 {
+        return 4;
+    }
+    if k == 7 {
+        return 5;
+    }
+    return 6;
+}
+
+fn more_undeclarable(d: Disc) -> [] Disc {
+    let Disc { paths, counts, firsts, arrays, truncated, undeclarable, room } = d;
+    return Disc { paths: paths, counts: counts, firsts: firsts, arrays: arrays, truncated: truncated, undeclarable: undeclarable + 1, room: room };
+}
+
+// A value at the path `pbuf[..plen]` of `depth` segments: counted, and an object with something in it and room for another segment walked.
+fn walk[&h, &s, &t, &b, &k](heap: &!h Heap, d: Disc, src: &s [byte], tape: &t [int], node: int, pbuf: &!b [byte], plen: int, depth: int, line: int, scratch: &!k [byte]) -> [heap] Disc {
+    var dd = d;
+    if json.kind(tape, node) == 7 && tape[3 * node + 1] > 0 && depth < 8 {
+        var j = node + 1;
+        var left = tape[3 * node + 1];
+        while left > 0 {
+            let at = put_segment(src, tape, j, pbuf, plen, scratch);
+            if at < 0 {
+                dd = more_undeclarable(dd);
+            } else {
+                dd = walk(heap, dd, src, tape, j + 1, pbuf, at, depth + 1, line, scratch);
+            }
+            j = json.skip(tape, j + 1);
+            left = left - 1;
+        }
+        return dd;
+    }
+    if depth == 0 {
+        return dd;
+    }
+    return note(heap, dd, pbuf[0..plen], slot_of(tape, node), line);
+}
+
+// The report: `{"discover": {...}}`.
+fn document[&h](heap: &!h Heap, d: Disc, examined: int, complete: bool) -> [heap] (buffer.Buffer, Disc) {
+    var o = buffer.empty(heap, 1024);
+    o = buffer.append(heap, o, "{\"discover\":{\"fields\":[");
+    let Disc { paths, counts, firsts, arrays, truncated, undeclarable, room } = d;
+    borrow paths as &pr in {
+        borrow counts as &cr in {
+            borrow firsts as &fr in {
+                var id = 0;
+                let total = map.entries(pr);
+                while id < total {
+                    if id > 0 {
+                        o = buffer.push(heap, o, byte_of(','));
+                    }
+                    o = buffer.append(heap, o, "{\"path\":");
+                    o = text.append_json(heap, o, map.key_at(pr, id));
+                    o = buffer.append(heap, o, ",\"kinds\":{");
+                    var first = true;
+                    var seen = 0;
+                    var k = 0;
+                    while k < kinds() {
+                        let n = vec.get(cr, id * kinds() + k);
+                        if n > 0 {
+                            if !first {
+                                o = buffer.push(heap, o, byte_of(','));
+                            }
+                            first = false;
+                            o = buffer.push(heap, o, byte_of('"'));
+                            o = buffer.append(heap, o, kind_name(k));
+                            o = buffer.append(heap, o, "\":");
+                            o = buffer.push_nat(heap, o, n);
+                            seen = seen + n;
+                        }
+                        k = k + 1;
+                    }
+                    if examined > seen {
+                        if !first {
+                            o = buffer.push(heap, o, byte_of(','));
+                        }
+                        o = buffer.append(heap, o, "\"missing\":");
+                        o = buffer.push_nat(heap, o, examined - seen);
+                    }
+                    o = buffer.append(heap, o, "},\"first_line\":");
+                    o = buffer.push_nat(heap, o, vec.get(fr, id));
+                    o = buffer.push(heap, o, byte_of('}'));
+                    id = id + 1;
+                }
+            }
+        }
+    }
+    o = buffer.append(heap, o, "],\"lines_examined\":");
+    o = buffer.push_nat(heap, o, examined);
+    if complete {
+        o = buffer.append(heap, o, ",\"complete\":true");
+    } else {
+        o = buffer.append(heap, o, ",\"complete\":false");
+    }
+    if truncated {
+        o = buffer.append(heap, o, ",\"paths_truncated\":true");
+    } else {
+        o = buffer.append(heap, o, ",\"paths_truncated\":false");
+    }
+    o = buffer.append(heap, o, ",\"undeclarable\":");
+    o = buffer.push_nat(heap, o, undeclarable);
+    o = buffer.append(heap, o, ",\"arrays\":[");
+    borrow paths as &pr in {
+        borrow arrays as &ar in {
+            var k = 0;
+            while k < vec.size(ar) {
+                if k > 0 {
+                    o = buffer.push(heap, o, byte_of(','));
+                }
+                o = text.append_json(heap, o, map.key_at(pr, vec.get(ar, k)));
+                k = k + 1;
+            }
+        }
+    }
+    o = buffer.append(heap, o, "]}}");
+    return (o, Disc { paths: paths, counts: counts, firsts: firsts, arrays: arrays, truncated: truncated, undeclarable: undeclarable, room: room });
+}
+
+fn kind_name(k: int) -> [] &static [byte] {
+    if k == 0 {
+        return "string";
+    }
+    if k == 1 {
+        return "int";
+    }
+    if k == 2 {
+        return "number";
+    }
+    if k == 3 {
+        return "bool";
+    }
+    if k == 4 {
+        return "null";
+    }
+    if k == 5 {
+        return "object";
+    }
+    return "array";
+}
+
+// Examine the open input: its first `--discover-lines` records. Answers the errors and the document (empty when there is an error).
+pub fn run[&h, &g, &p, &f, &s, &i](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, stdin: bool, shown: &s [byte], io: &!i Io, errs: fail.Errors) -> [heap, args, file_read, io_read] (fail.Errors, buffer.Buffer) {
+    let table = spec.flag_table();
+    let cap = cli.nat(args, parsed, table, "max-line-bytes");
+    let nodes = cli.nat(args, parsed, table, "max-json-nodes");
+    let wanted = cli.nat(args, parsed, table, "discover-lines");
+    let room = cli.nat(args, parsed, table, "max-fields");
+    var d = start(heap, room);
+    var tape = box_slice(heap, 3 * nodes + 3, 0);
+    var st = box_slice(heap, 2, 0);
+    var pbuf = box_slice(heap, 2 * cap + 64, byte_of(0));
+    var scratch = box_slice(heap, cap + 16, byte_of(0));
+    var tally = box_slice(heap, engine.k_size(), 0);
+    var kept = buffer.empty(heap, 64);
+    var r = lines.start(heap, cap);
+    var examined = 0;
+    var complete = false;
+    var going = true;
+    var c = finish.Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+    borrow mut tally as &!tw in {
+        let a = contents(tw);
+        borrow mut tape as &!tpw in {
+            borrow mut st as &!sw in {
+                borrow mut pbuf as &!pw in {
+                    borrow mut scratch as &!kw in {
+                        while going {
+                            var status = 9;
+                            borrow mut r as &!rw in {
+                                status = scan.next_fast(rw);
+                            }
+                            if status == 9 {
+                                let (stepped, answer) = lines.next(heap, r);
+                                r = stepped;
+                                status = answer;
+                            }
+                            if status == lines.need() {
+                                if stdin {
+                                    r = bulk.fill_stdin(r, io);
+                                } else {
+                                    r = lines.fill_file(r, file);
+                                }
+                            } else if status == lines.done() {
+                                complete = true;
+                                going = false;
+                            } else if status == lines.long() {
+                                if examined >= wanted {
+                                    going = false;
+                                } else {
+                                    a[engine.k_abort()] = 4;
+                                    borrow r as &rr in {
+                                        a[engine.k_abort_line()] = lines.number(rr);
+                                        a[engine.k_long()] = lines.length(rr);
+                                    }
+                                    going = false;
+                                }
+                            } else {
+                                borrow r as &rr in {
+                                    let number = lines.number(rr);
+                                    var line = lines.text(rr);
+                                    if number == 1 && len(line) >= 3 && int_of(line[0]) == 239 && int_of(line[1]) == 187 && int_of(line[2]) == 191 {
+                                        line = line[3..len(line)];
+                                    }
+                                    if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                                        line = line[0..len(line) - 1];
+                                    }
+                                    if jrec.blank(line) {
+                                        // not a record
+                                    } else if examined >= wanted {
+                                        // another record after the last one examined: the report is not of the whole input
+                                        going = false;
+                                    } else {
+                                        let code = jrec.parse_only(line, contents(tpw), contents(sw), a);
+                                        if code != 0 {
+                                            a[engine.k_abort_line()] = number;
+                                            a[engine.k_err_line()] = number;
+                                            kept = jrec.keep_facts(heap, kept, code, line, contents(tpw), line, 0, a);
+                                            going = false;
+                                        } else {
+                                            examined = examined + 1;
+                                            a[engine.k_records()] = examined;
+                                            d = walk(heap, d, line, contents(tpw), 0, contents(pw), 0, 0, number, contents(kw));
+                                        }
+                                    }
+                                }
+                                if a[engine.k_stop()] == 1 {
+                                    going = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        c = finish.Counts { columns: 0, records: a[engine.k_records()], ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: a[engine.k_abort()], abort_line: a[engine.k_abort_line()], long_length: a[engine.k_long()], emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: a[engine.k_err_fn()], err_row: a[engine.k_err_row()], err_line: a[engine.k_err_line()], err_cond: a[engine.k_err_cond()], err_digits: a[engine.k_err_digits()], groups: 0 };
+    }
+    var errno = 0;
+    borrow r as &rr in {
+        errno = lines.failed(rr);
+    }
+    lines.drop(heap, r);
+    var before = 0;
+    borrow errs as &xr in {
+        before = fail.count(xr);
+    }
+    var e = errs;
+    var payload = buffer.empty(heap, 1);
+    let none = buffer.empty(heap, 1);
+    let no_ends = vec.empty(heap, 1, 0);
+    let empty_plan = query.empty(heap);
+    borrow none as &nr in {
+        borrow no_ends as &er in {
+            borrow kept as &kr in {
+                borrow empty_plan as &qr in {
+                    e = finish.explain(heap, args, parsed, qr, nr, er, nr, er, kr, c, shown, 0 - 1, errno, false, 0, e);
+                }
+            }
+        }
+    }
+    query.drop(heap, empty_plan);
+    buffer.drop(heap, none);
+    vec.drop(heap, no_ends);
+    buffer.drop(heap, kept);
+    var refused = false;
+    borrow e as &er in {
+        refused = fail.count(er) > before;
+    }
+    if !refused {
+        let (doc, d2) = document(heap, d, examined, complete);
+        buffer.drop(heap, payload);
+        payload = doc;
+        d = d2;
+    }
+    finish_disc(heap, d);
+    unbox_slice(heap, tape);
+    unbox_slice(heap, st);
+    unbox_slice(heap, pbuf);
+    unbox_slice(heap, scratch);
+    unbox_slice(heap, tally);
+    return (e, payload);
+}

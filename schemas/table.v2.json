@@ -341,14 +341,34 @@
                       "minimum": 0
                     },
                     "format": {
-                      "const": "csv"
+                      "enum": [
+                        "csv",
+                        "jsonl"
+                      ]
                     },
                     "delimiter": {
                       "enum": [
                         ",",
                         "\t",
-                        ";"
+                        ";",
+                        null
                       ]
+                    },
+                    "fields": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/text_or_bytes"
+                      }
+                    },
+                    "absent": {
+                      "enum": [
+                        "refuse",
+                        "empty"
+                      ]
+                    },
+                    "max_json_nodes": {
+                      "type": "integer",
+                      "minimum": 1
                     },
                     "size": {
                       "oneOf": [
@@ -935,6 +955,109 @@
           },
           "required": [
             "explain"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "discover": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "$ref": "#/$defs/text_or_bytes"
+                      },
+                      "kinds": {
+                        "type": "object",
+                        "properties": {
+                          "string": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "int": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "number": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "bool": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "null": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "object": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "array": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "missing": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "required": [],
+                        "additionalProperties": false
+                      },
+                      "first_line": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "kinds",
+                      "first_line"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "lines_examined": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "complete": {
+                  "type": "boolean"
+                },
+                "paths_truncated": {
+                  "type": "boolean"
+                },
+                "undeclarable": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "arrays": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/text_or_bytes"
+                  }
+                }
+              },
+              "required": [
+                "fields",
+                "lines_examined",
+                "complete",
+                "paths_truncated",
+                "undeclarable",
+                "arrays"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "discover"
           ],
           "additionalProperties": false
         }

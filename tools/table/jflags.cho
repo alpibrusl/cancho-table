@@ -1,0 +1,118 @@
+edition 5;
+
+module jflags;
+
+// The flags of the JSON-lines input (docs/readers.md sections 12.1 and 12.5) and what is wrong with them before any byte is read: `--fields` and its grammar, `--absent`,
+// `--max-json-nodes`, `--discover` and its bounds, and the flags that do not go with CSV. Looked up only when an argument could be one of them (`Inputs.jmention`).
+
+import std.buffer;
+import std.json;
+import std.vec;
+import finish;
+import flags;
+import jfields;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+
+pub fn most_nodes() -> [] int {
+    return 1048576;
+}
+
+pub fn most_lines() -> [] int {
+    return 1000000;
+}
+
+// `input.fields-required`: the plan has no columns. The repair that runs is the discovery: the same input, as JSON lines, with `--discover`.
+fn fields_required[&h, &g, &p](heap: &!h Heap, e: fail.Errors, args: &g Args, parsed: &p cli.Parsed) -> [heap, args] fail.Errors {
+    let table = spec.flag_table();
+    var w = fail.open_in(heap, finish.extra(), "input.fields-required", "JSON lines have no header: the columns are declared with --fields", "--fields id,status,user.name declares them; --discover reports what the first lines hold");
+    var o = fail.retry_open(heap, w);
+    o = json.put_string(heap, o, arg(args, 0));
+    if cli.has(parsed, table, "root") {
+        o = json.put_string(heap, o, "--root");
+        o = json.put_string(heap, o, cli.text(args, parsed, table, "root"));
+    }
+    o = json.put_string(heap, o, "--input-format");
+    o = json.put_string(heap, o, cli.text(args, parsed, table, "input-format"));
+    o = json.put_string(heap, o, "--discover");
+    var k = 0;
+    while k < cli.operand_count(parsed) {
+        o = json.put_string(heap, o, arg(args, cli.operand_index(parsed, k)));
+        k = k + 1;
+    }
+    w = fail.retry_close(heap, o);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", "--fields");
+    return fail.add(heap, e, w);
+}
+
+// `input.bad-fields`: the declaration is not a list of paths: the item and why.
+fn bad_fields[&h, &g](heap: &!h Heap, e: fail.Errors, given: &g [byte], item: int, status: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, finish.extra(), "input.bad-fields", "--fields is not a list of paths", "paths are keys separated by dots, items are separated by commas, and a backslash escapes only a comma, a backslash, a # or a dot: --fields id,user.name,items.0.sku");
+    w = fail.repair_none(heap, w, "which paths were meant is not known");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "item", item);
+    w = fail.detail_str(heap, w, "reason", jfields.reason_of(status));
+    w = fail.detail_text(heap, w, "fields", given);
+    return fail.add(heap, e, w);
+}
+
+// What is wrong with the flags of the family, added to `errs`. `jsonl`: the input is JSON lines. `plan`: some flag of a plan was given (a selection, a condition, a
+// grouping, an order, a cut or a page, a report, a query, an explanation, `--rows`), which `--discover` does not take; `csv_out`: the output is csv or text.
+pub fn check[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jsonl: bool, plan: bool, csv_out: bool, errs: fail.Errors) -> [heap, args] fail.Errors {
+    let table = spec.flag_table();
+    var e = errs;
+    let has_fields = cli.has(parsed, table, "fields");
+    let has_absent = cli.has(parsed, table, "absent");
+    let has_nodes = cli.has(parsed, table, "max-json-nodes");
+    let has_discover = cli.has(parsed, table, "discover");
+    let has_lines = cli.has(parsed, table, "discover-lines");
+    let has_paths = cli.has(parsed, table, "max-fields");
+    if !jsonl {
+        if has_fields || has_absent || has_nodes || has_discover || has_lines || has_paths {
+            e = flags.problem(heap, e, "args.conflict", "--fields, --absent, --max-json-nodes, --discover, --discover-lines and --max-fields are for JSON lines", "add --input-format jsonl, or drop them", "--input-format --fields --absent --max-json-nodes --discover");
+        }
+        return e;
+    }
+    if has_nodes {
+        let n = cli.nat(args, parsed, table, "max-json-nodes");
+        if n < 1 || n > most_nodes() {
+            e = flags.problem(heap, e, "args.bad-value", "--max-json-nodes is from 1 to 1048576", "--max-json-nodes 4096", "--max-json-nodes");
+        }
+    }
+    if has_discover {
+        if has_fields || plan || csv_out {
+            e = flags.problem(heap, e, "args.conflict", "--discover reports what the first lines hold: it takes no --fields, no plan and no csv or text output", "drop the other flags, and copy the paths it reports into --fields in a second call", "--discover --fields --select --where --group --agg --order-by --report --query --explain --format");
+        }
+        if has_lines {
+            let n = cli.nat(args, parsed, table, "discover-lines");
+            if n < 1 || n > most_lines() {
+                e = flags.problem(heap, e, "args.bad-value", "--discover-lines is from 1 to 1000000", "--discover-lines 1000", "--discover-lines");
+            }
+        }
+        if has_paths {
+            let n = cli.nat(args, parsed, table, "max-fields");
+            if n < 1 || n > 4096 {
+                e = flags.problem(heap, e, "args.bad-value", "--max-fields is from 1 to 4096", "--max-fields 256", "--max-fields");
+            }
+        }
+        return e;
+    }
+    if has_lines || has_paths {
+        e = flags.problem(heap, e, "args.required-flag", "--discover-lines and --max-fields size the report of --discover, so they need it", "--discover", "--discover-lines --max-fields --discover");
+    }
+    if !has_fields {
+        return fields_required(heap, e, args, parsed);
+    }
+    let given = cli.text(args, parsed, table, "fields");
+    let jfields.Fields { fnames, fends, fsbytes, ftable, fstatus, fat } = jfields.parse(heap, given);
+    buffer.drop(heap, fnames);
+    vec.drop(heap, fends);
+    buffer.drop(heap, fsbytes);
+    unbox_slice(heap, ftable);
+    if fstatus != 0 {
+        e = bad_fields(heap, e, given, fat, fstatus);
+    }
+    return e;
+}
