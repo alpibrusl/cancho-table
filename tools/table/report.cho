@@ -27,6 +27,7 @@ import std.bytes;
 import std.vec;
 import agg;
 import flt;
+import cellnum;
 import query;
 import toolbox.text;
 import writer;
@@ -57,7 +58,7 @@ fn classify[&d](data: &d [byte]) -> [] (int, int, int) {
     if len(data) == 0 {
         return (0, 0, 0);
     }
-    let (v, bad) = query.parse_int(data);
+    let (v, bad) = cellnum.parse_int(data);
     if bad == 0 {
         return (1, 0, digits_before_point(data));
     }
@@ -85,7 +86,7 @@ fn classify[&d](data: &d [byte]) -> [] (int, int, int) {
         at = at + 1;
     }
     if clean && point && digits > 0 && frac <= 18 {
-        let (w, bad2) = query.parse_dec(data, frac);
+        let (w, bad2) = cellnum.parse_dec(data, frac);
         if bad2 == 0 {
             return (2, frac, digits_before_point(data));
         }

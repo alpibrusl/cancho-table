@@ -33,6 +33,7 @@ import std.buffer;
 import std.bytes;
 import std.vec;
 import agg;
+import cellnum;
 import query;
 
 // The value of a key cell of type `kind` (1 `:int`, 2 + S `:dec(S)`, 21 `:float`): an `int` that orders as the value does (a float's is its
@@ -40,7 +41,7 @@ import query;
 // (6 to 13). `--where` and `--agg` read the cell the same way.
 fn key_value[&d](data: &d [byte], kind: int) -> [] (int, int) {
     if kind == 1 {
-        return query.parse_int(data);
+        return cellnum.parse_int(data);
     }
     return query.parse_typed(data, kind);
 }

@@ -1,0 +1,28 @@
+{
+  "entries": {
+    "41c48841271103b5edb4dfe6cbdfa5451b0f66efdc1768df3d9e80f2a8f3c7e1": {
+      "name": "int_min",
+      "stage_id": "8702e4e0ebf810279667643d777204639b9b55bc4f35a38e964d82a2ec16402f",
+      "source_hash": "8d008c090531f78c27bd7e64e9bfb306247bfbb9a15c6244950731e9f758d49d",
+      "uses_std": false
+    },
+    "61e1e3b939876db8380e874d58bb707feafd874780dc40c45088b8e34e8afe99": {
+      "name": "pow10",
+      "stage_id": "d5e4ba6a903c1d456f8c66a8fec117340d7eb302cd8d800355dca5b68b984199",
+      "source_hash": "8d008c090531f78c27bd7e64e9bfb306247bfbb9a15c6244950731e9f758d49d",
+      "uses_std": false
+    },
+    "7f25a93bebcdbb2e0782610eb528693b036bf248391effb84837377977d5d31a": {
+      "name": "parse_dec",
+      "stage_id": "1223607e2200ed3e9aba4a4a7e3892ae46b7481badc16bda55c8cbed3ccd723d",
+      "source_hash": "8d008c090531f78c27bd7e64e9bfb306247bfbb9a15c6244950731e9f758d49d",
+      "uses_std": false
+    },
+    "c6a072e5adde870292efa3c802620294c54cec8df4981ae3f6e99e662e7f0422": {
+      "name": "parse_int",
+      "stage_id": "7c8dcb4261557ef672aa41ff46fdf44ce7ff8a2d0d46068254b34414b95f75d8",
+      "source_hash": "8d008c090531f78c27bd7e64e9bfb306247bfbb9a15c6244950731e9f758d49d",
+      "uses_std": false
+    }
+  }
+}

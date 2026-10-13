@@ -31,6 +31,7 @@ module expr;
 import std.buffer;
 import std.bytes;
 import flt;
+import cellnum;
 import query;
 
 fn is_delimiter(c: int) -> [] bool {
@@ -322,7 +323,7 @@ fn parse_value[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int
         var value = 0;
         if typed == 1 {
             borrow word as &wr in {
-                let (v, bad) = query.parse_int(buffer.bytes(wr));
+                let (v, bad) = cellnum.parse_int(buffer.bytes(wr));
                 value = v;
                 if bad == 1 {
                     what = 5;
@@ -344,7 +345,7 @@ fn parse_value[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int
             }
         } else if typed >= 2 {
             borrow word as &wr in {
-                let (v, bad) = query.parse_dec(buffer.bytes(wr), typed - 2);
+                let (v, bad) = cellnum.parse_dec(buffer.bytes(wr), typed - 2);
                 value = v;
                 if bad == 1 {
                     what = 13;
@@ -478,7 +479,7 @@ fn holds_dec[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many:
         }
         v = key;
     } else {
-        let (d, bad) = query.parse_dec(cell, scale);
+        let (d, bad) = cellnum.parse_dec(cell, scale);
         if bad == 1 {
             return 4;
         }
@@ -518,7 +519,7 @@ fn holds_dec[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many:
 // Whether `cell` satisfies condition `k`: 1 yes, 0 no, 2 the column is :int
 // and the cell is not an integer, 3 it is one that does not fit 64 bits; for a
 // :dec column 4 the cell is not a decimal, 5 it has more fractional digits than
-// the scale, 6 it is too wide (`query.parse_dec`); for a :float column 7 to 11 (`flt.parse_float`'s statuses less two).
+// the scale, 6 it is too wide (`cellnum.parse_dec`); for a :float column 7 to 11 (`flt.parse_float`'s statuses less two).
 fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
     let kind = query.cond_at(plan, k, 0);
     let op = query.cond_at(plan, k, 2);
@@ -529,7 +530,7 @@ fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
         return holds_dec(plan, kind, op, first, many, typed - 2, cell);
     }
     if typed == 1 {
-        let (v, bad) = query.parse_int(cell);
+        let (v, bad) = cellnum.parse_int(cell);
         if bad == 1 {
             return 2;
         }

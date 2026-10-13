@@ -16,8 +16,8 @@ TESTS = ["test_report", "test_skill", "test_float"]
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file.
 MUTANTS = [
     # the classes (report.cho: classify)
-    ("an empty cell is an int", "report.cho", "    if len(data) == 0 {\n        return (0, 0, 0);\n    }\n    let (v, bad) = query.parse_int(data);", "    if len(data) == 0 {\n        return (1, 0, 0);\n    }\n    let (v, bad) = query.parse_int(data);"),
-    ("an int that does not fit 64 bits is an int", "report.cho", "    let (v, bad) = query.parse_int(data);\n    if bad == 0 {", "    let (v, bad) = query.parse_int(data);\n    if bad != 1 {"),
+    ("an empty cell is an int", "report.cho", "    if len(data) == 0 {\n        return (0, 0, 0);\n    }\n    let (v, bad) = cellnum.parse_int(data);", "    if len(data) == 0 {\n        return (1, 0, 0);\n    }\n    let (v, bad) = cellnum.parse_int(data);"),
+    ("an int that does not fit 64 bits is an int", "report.cho", "    let (v, bad) = cellnum.parse_int(data);\n    if bad == 0 {", "    let (v, bad) = cellnum.parse_int(data);\n    if bad != 1 {"),
     ("an int is a dec", "report.cho", "        return (1, 0, digits_before_point(data));\n    }\n    // the decimal grammar", "        return (2, 0, digits_before_point(data));\n    }\n    // the decimal grammar"),
     ("a decimal may have 19 fractional digits", "report.cho", "    if clean && point && digits > 0 && frac <= 18 {", "    if clean && point && digits > 0 && frac <= 19 {"),
     ("a decimal's scale is not counted", "report.cho", "            if point {\n                frac = frac + 1;\n            }", "            if false {\n                frac = frac + 1;\n            }"),

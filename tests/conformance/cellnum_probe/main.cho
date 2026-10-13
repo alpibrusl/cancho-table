@@ -1,4 +1,4 @@
-// The probe of scripts/cells_golden.py: the three cell parsers of the module @MODULE@ (parse_int, parse_dec, pow10), driven from the command line, so that the same
+// The probe of scripts/cellnum_golden.py: the three cell parsers of the module @MODULE@ (parse_int, parse_dec, pow10), driven from the command line, so that the same
 // cases run through the module's sources and through its published store. Arguments come in threes: an operation (I parse_int, D parse_dec, P pow10), a number
 // (D: the scale, P: the exponent, I: ignored) and the cell. One line a case: the value, a space, the status (pow10 has the status 0).
 import std.io as console;

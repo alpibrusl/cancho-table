@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """The golden test of the three exact cell parsers (parse_int, parse_dec, pow10) of tools/table, against Python's integer arithmetic.
 
-    python3 scripts/cells_golden.py --leg binary                         # the built table binary (build/table, or --table): `--agg min:v:int|dec(S)` over a one-cell file
-    python3 scripts/cells_golden.py --leg source                         # the sources of the module, built with the pinned compiler into a scratch probe
-    python3 scripts/cells_golden.py --leg store --rev REV                # the PUBLISHED store: a scratch project that depends on .cancho-vcs/<module> by git, rev and path
-    python3 scripts/cells_golden.py --leg source --control reference     # negative controls: the leg must fail (exit 1)
-    python3 scripts/cells_golden.py --leg source --control source
+    python3 scripts/cellnum_golden.py --leg binary                         # the built table binary (build/table, or --table): `--agg min:v:int|dec(S)` over a one-cell file
+    python3 scripts/cellnum_golden.py --leg source                         # the sources of the module, built with the pinned compiler into a scratch probe
+    python3 scripts/cellnum_golden.py --leg store --rev REV                # the PUBLISHED store: a scratch project that depends on .cancho-vcs/<module> by git, rev and path
+    python3 scripts/cellnum_golden.py --leg source --control reference     # negative controls: the leg must fail (exit 1)
+    python3 scripts/cellnum_golden.py --leg source --control source
 
---module is the module the parsers are in (default: cells; query before they were moved out of it). The expected answers are computed here, from the grammar
+--module is the module the parsers are in (default: cellnum; query before they were moved out of it). The expected answers are computed here, from the grammar
 of docs/numbers.md section 3 and Python's int, never from the code under test: (value, status) with status 0 it is, 1 it is not (empty, sign or point alone,
 a space, an exponent, a letter, trailing junk, a second point), 2 it does not fit (parse_int: 64 bits; parse_dec: 10^18 once scaled), 3 (parse_dec only)
 more fractional digits than the scale. The order of parse_dec's checks is the design's: grammar, then scale, then width.
 
 The binary leg sees the statuses as refusals (value.not-integer, value.integer-overflow, value.not-decimal, value.decimal-too-wide, value.decimal-scale) and
 cannot see an empty cell (an aggregate skips it: the expected answer is no value), nor pow10. The source and store legs see all of them, through
-tests/conformance/cells_probe/main.cho. The store leg needs the revision to be pushed (it is fetched from GitHub); it is not run in CI.
+tests/conformance/cellnum_probe/main.cho. The store leg needs the revision to be pushed (it is fetched from GitHub); it is not run in CI.
 """
 import argparse
 import csv
@@ -166,7 +166,7 @@ def compiler():
 
 
 def probe_source(module):
-    return (ROOT / "tests" / "conformance" / "cells_probe" / "main.cho").read_text().replace("@MODULE@", module)
+    return (ROOT / "tests" / "conformance" / "cellnum_probe" / "main.cho").read_text().replace("@MODULE@", module)
 
 
 def sources_closure(module):
@@ -195,7 +195,7 @@ def probe_leg(args, scratch, exe, pin, cs):
     proj = pathlib.Path(scratch)
     (proj / "src").mkdir()
     (proj / "src" / "main.cho").write_text(probe_source(args.module))
-    toml = f'[package]\nname = "cellsprobe"\ncancho = "{pin}"\n\n'
+    toml = f'[package]\nname = "cellnumprobe"\ncancho = "{pin}"\n\n'
     if args.leg == "source":
         for m in sources_closure(args.module):
             shutil.copy(ROOT / "tools" / "table" / (m + ".cho"), proj / "src")
@@ -266,7 +266,7 @@ def binary_leg(args, scratch, cs):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--leg", choices=["binary", "source", "store"], required=True)
-    ap.add_argument("--module", default="cells")
+    ap.add_argument("--module", default="cellnum")
     ap.add_argument("--rev")
     ap.add_argument("--table")
     ap.add_argument("--control", choices=["reference", "reference-junk", "source"])

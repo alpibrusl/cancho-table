@@ -29,10 +29,10 @@ MUTANTS = [
     ("the magnitude of a negative wide sum is one too large", "dec.cho", "            // the magnitude: 0 - (high * 2^32 + low)\n            if low == 0 {\n                h = 0 - high;\n            } else {\n                h = 0 - high - 1;\n                l = 4294967296 - low;", "            // the magnitude: 0 - (high * 2^32 + low)\n            if low == 0 {\n                h = 0 - high;\n            } else {\n                h = 0 - high;\n                l = 4294967296 - low;"),
     ("a group of nine digits is not padded with zeros", "dec.cho", "        while g < 9 {", "        while g < 8 {"),
     # exact integers
-    ("2^63 is accepted as a positive integer", "query.cho", "    if acc == int_min() {\n        return (0, 2);", "    if false && acc == int_min() {\n        return (0, 2);"),
-    ("a minus sign is a plus", "query.cho", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '-';", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '+';"),
-    ("a sign alone is zero", "query.cho", "    if at >= len(data) {\n        return (0, 1);\n    }", "    if false && at >= len(data) {\n        return (0, 1);\n    }"),
-    ("an integer past 64 bits wraps", "query.cho", "        if acc < (int_min() + digit) / 10 {\n            over = true;", "        if acc < (int_min() + digit) / 10 && false {\n            over = true;"),
+    ("2^63 is accepted as a positive integer", "cellnum.cho", "    if acc == int_min() {\n        return (0, 2);", "    if false && acc == int_min() {\n        return (0, 2);"),
+    ("a minus sign is a plus", "cellnum.cho", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '-';", "if len(data) > 0 && (int_of(data[0]) == '-' || int_of(data[0]) == '+') {\n        negative = int_of(data[0]) == '+';"),
+    ("a sign alone is zero", "cellnum.cho", "    if at >= len(data) {\n        return (0, 1);\n    }", "    if false && at >= len(data) {\n        return (0, 1);\n    }"),
+    ("an integer past 64 bits wraps", "cellnum.cho", "        if acc < (int_min() + digit) / 10 {\n            over = true;", "        if acc < (int_min() + digit) / 10 && false {\n            over = true;"),
     # the grammar
     ("an escaped :int is still a suffix", "expr.cho", "} else if length >= 4 && escaped_last <= length - 4 {", "} else if length >= 4 && escaped_last <= length {"),
     ("= on an :int column is not equality", "expr.cho", "            if kind == 2 || op == 0 {\n                yes = v == w;", "            if kind == 2 {\n                yes = v == w;"),

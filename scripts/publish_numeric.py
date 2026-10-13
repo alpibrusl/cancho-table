@@ -17,12 +17,12 @@ import sys
 import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# the modules another repository reads cells with: the cell parsers (pow5, dec, flt, query), the exact float sum (facc) and RFC 4180 records (reader)
-MODULES = ["pow5", "dec", "flt", "query", "facc", "reader"]
+# the modules another repository reads cells with: the cell parsers (pow5, dec, flt, cellnum), the exact float sum (facc) and RFC 4180 records (reader)
+MODULES = ["pow5", "dec", "flt", "cellnum", "facc", "reader"]
 STORE = ".cancho-vcs"
 # The rule of what may be published (docs/numeric-package.md): a published module is an interface another repository pins, so it imports nothing but
 # `std.*` and other published modules, and it is not the table's own plan. `Query` (names, conditions, aggregates, meta) is what ten internal modules
-# share; a module that declares it is internal whatever else it holds (#44 published `query` for the three cell parsers it then held; they are in `cells`).
+# share; a module that declares it is internal whatever else it holds (#44 published `query` for the three cell parsers it then held; they are in `cellnum`).
 PLAN_STRUCT = re.compile(r"^\s*(?:pub\s+)?(?:res\s+)?struct\s+Query\b", re.M)
 
 

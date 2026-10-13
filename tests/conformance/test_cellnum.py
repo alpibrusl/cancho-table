@@ -1,7 +1,7 @@
-"""The three exact cell parsers (parse_int, parse_dec, pow10) against Python's integer arithmetic: scripts/cells_golden.py.
+"""The three exact cell parsers (parse_int, parse_dec, pow10) against Python's integer arithmetic: scripts/cellnum_golden.py.
 
 The binary leg runs the built `table` on a one-cell file for every case it can observe; the source leg builds the module's sources into the probe of
-tests/conformance/cells_probe and compares every case, empty cells and pow10 included. The leg through the PUBLISHED store needs a pushed revision
+tests/conformance/cellnum_probe and compares every case, empty cells and pow10 included. The leg through the PUBLISHED store needs a pushed revision
 and is run by hand (docs/numeric-package.md). A leg that cannot fail proves nothing: the controls give it a wrong reference, and a wrong source.
 """
 
@@ -11,7 +11,7 @@ import sys
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-GOLDEN = ROOT / "scripts" / "cells_golden.py"
+GOLDEN = ROOT / "scripts" / "cellnum_golden.py"
 
 
 def golden(*args):
