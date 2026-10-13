@@ -65,6 +65,12 @@ jobs:
         working-directory: table
         run: cancho build
 
+      # The six numeric modules are published as stores another repository pins (docs/numeric-package.md): a fresh publish with the pinned
+      # compiler must give the committed .cancho-vcs byte for byte.
+      - name: The committed numeric stores are what the sources publish
+        working-directory: table
+        run: python3 scripts/publish_numeric.py --check
+
       # The loop that reads standard input is the loop that reads a file, made mechanically (scripts/stream.py): the file loop is the one whose cost is held to
       # main's, so it is not edited to serve a pipe.
       - name: The read loop for standard input is the file loop's copy
