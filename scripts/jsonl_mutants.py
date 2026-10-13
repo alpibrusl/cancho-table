@@ -17,7 +17,7 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_jsonl", "test_jsonl_flat", "test_rules", "test_describe"]
+TESTS = ["test_jsonl_csv_out", "test_jsonl", "test_jsonl_flat", "test_rules", "test_describe"]
 
 MUTANTS = [
     # --fields: the grammar (jfields.cho)
