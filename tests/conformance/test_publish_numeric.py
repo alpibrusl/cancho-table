@@ -5,7 +5,7 @@ tree (it passes only when the committed set obeys the rule), and the rule on tex
 """
 
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import unittest
 

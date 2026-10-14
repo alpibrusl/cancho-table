@@ -7,7 +7,7 @@ Found in the sort round (docs/gap-sort.md section 1): `COPY (...) TO '/dev/null'
 import importlib.util
 import pathlib
 import shutil
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import time
 import unittest

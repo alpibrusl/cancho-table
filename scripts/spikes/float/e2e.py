@@ -16,7 +16,8 @@ import io
 import math
 import pathlib
 import shutil
-import subprocess
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import time
 

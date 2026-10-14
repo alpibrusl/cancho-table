@@ -6,7 +6,9 @@ against Python's exact one before timing; the minimum of N interleaved runs is t
 
     python3 scripts/spikes/bench_engines.py [--bin build/table] [--runs 5] [--rows 1000000]
 """
-import argparse, csv, math, os, random, subprocess, sys, time, tempfile
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import argparse, csv, math, os, random, sys, time, tempfile
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 from decimal import Decimal
 from fractions import Fraction
 

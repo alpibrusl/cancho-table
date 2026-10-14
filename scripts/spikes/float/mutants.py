@@ -4,7 +4,8 @@ a mutant is killed when one checksum differs from reference.py's. Not part of an
 
     mutants.py CELLDIR [--only NAME]      CELLDIR holds c_f17.txt c_bits.txt c_d19.txt c_d25.txt c_exp.txt c_lead.txt c_money.txt c_p10.txt c_near.txt c_mid.txt (gen_cells.py kinds, seed 1)"""
 import pathlib
-import subprocess
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 

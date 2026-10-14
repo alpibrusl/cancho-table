@@ -22,7 +22,7 @@ Do not edit tools/table while it runs.
 import os
 import pathlib
 import signal
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -132,7 +132,7 @@ def main(mutants, tests, argv=None):
         for n, text in files.items():
             (SRC / n).write_text(text)
 
-    signal.signal(signal.SIGTERM, lambda *a: (restore(), sys.exit(143)))
+    signal.signal(signal.SIGTERM, lambda *a: (subprocess.kill_all(), restore(), sys.exit(143)))
     verdict, why = build_and_test(tests, compiler, extra)
     print("unmutated:", "pass" if verdict == "SURVIVED" else "%s [%s]" % (verdict, why), flush=True)
     if verdict != "SURVIVED":

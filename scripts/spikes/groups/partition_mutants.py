@@ -7,7 +7,9 @@ fixed set of full-size comparisons. A mutant is killed when the build refuses it
 
 The sources are restored after every mutant. Do not edit tools/table while it runs; rebuild after.
 """
-import os, pathlib, subprocess, sys
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import os, pathlib, sys
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 SRC = ROOT / "tools" / "table"

@@ -23,7 +23,7 @@ import pathlib
 import platform
 import shutil
 import statistics
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 

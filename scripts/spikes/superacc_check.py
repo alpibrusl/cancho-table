@@ -5,7 +5,9 @@ true division, which is correctly rounded) and math.fsum.
 
     python3 scripts/spikes/superacc_check.py BINARY [--big N] [--seed S]
 """
-import json, math, random, struct, subprocess, sys, argparse, time
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import json, math, random, struct, sys, argparse, time
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 from fractions import Fraction
 
 DBL_MAX = sys.float_info.max

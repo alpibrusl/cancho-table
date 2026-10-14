@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import jsonl_out_ref as R
 import numbers_ref as N
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 from harness import TRAPS, binary, introspect, run
 from test_jsonl_out import PAR, ROUNDS, Failures, Gated, agg_tail, exit_of, rule_of

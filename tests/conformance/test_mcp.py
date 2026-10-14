@@ -14,7 +14,7 @@ import pathlib
 import random
 import select
 import shutil
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 import time

@@ -204,7 +204,7 @@ class Rules(unittest.TestCase):
         summaries = {r["rule"]: r["summary"] for r in introspect()["rules"]}
         try:
             for rule, argv, preexec in self.fixtures(s):
-                import subprocess
+                import procs as subprocess
                 p = subprocess.run([binary(), *[str(a) for a in argv]], capture_output=True, preexec_fn=preexec, input=b"")
                 import json
                 try:
@@ -270,7 +270,7 @@ class Rules(unittest.TestCase):
             s.cleanup()
 
     def test_the_skill_lists_the_local_rules_with_their_exit(self):
-        import subprocess
+        import procs as subprocess
         text = subprocess.run([binary(), "skill"], capture_output=True, check=True).stdout.decode()
         for tag in LOCAL:
             self.assertIn(tag, text)

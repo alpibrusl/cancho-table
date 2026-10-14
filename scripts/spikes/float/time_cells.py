@@ -3,7 +3,8 @@
 
     time_cells.py BIN DATADIR [REPS] [KIND ...]      (DATADIR holds c_KIND.txt files; modes l (floor), o (origin/main), n (new))"""
 import os
-import subprocess
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import time
 

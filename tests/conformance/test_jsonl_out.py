@@ -29,7 +29,7 @@ import json
 import os
 import random
 import re
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import traceback
 import unittest
@@ -1077,7 +1077,7 @@ class Threads(Gated):
 
     def test_gate3_standard_input_in_pieces(self):
         # a pipe delivers a few bytes at a time; the output does not depend on where the reads fall
-        import subprocess as sp
+        import procs as sp
         import time
         t = self.mid
         flags = ["--select", "txt,id,w"]

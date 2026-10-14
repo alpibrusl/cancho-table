@@ -9,7 +9,8 @@ the maximum (as doubles), and the number of rows at or below each of 12 threshol
 are the values of 12 cells and their neighbours); and, on the first 2,000,000, the number of distinct doubles (a misrounded cell makes two doubles one or one two).
 Exit 1 on any difference.
 """
-import argparse, os, random, struct, subprocess, sys, tempfile, time
+import argparse, os, random, struct, sys, tempfile, time
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 from fractions import Fraction
 from decimal import Decimal, getcontext
 getcontext().prec = 1300

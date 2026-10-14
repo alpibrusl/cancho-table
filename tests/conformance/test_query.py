@@ -714,7 +714,7 @@ class Fuzz(Base):
 
         # the binary is given the bytes as the operating system holds them
         def runbytes(b):
-            import subprocess
+            import procs as subprocess
             p = subprocess.run([binary(), "--query", b, "--format", "json", "f.csv"], capture_output=True, cwd=self.cwd, input=b"", timeout=60)
             return p.returncode, p.stdout, p.stderr
 
