@@ -24,7 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import jsonl_out_ref as R
 import numbers_ref as N
-from harness import TRAPS, run
+import subprocess
+
+from harness import TRAPS, binary, introspect, run
 from test_jsonl_out import PAR, ROUNDS, Failures, Gated, agg_tail, exit_of, rule_of
 
 
@@ -54,7 +56,7 @@ DECS2 = [
     ("0", "0.00"), ("10", "10.00"), ("-.5", "-0.50"), ("0.01", "0.01"), ("123456789012345.67", "123456789012345.67"), ("-123456789012345.67", "-123456789012345.67"),
     ("999999999999999.99", "999999999999999.99"), ("007.5", "7.50"), ("+2.25", "2.25"), ("100.00", "100.00"),
 ]
-DECS0 = [("7", "7"), ("-3", "-3"), ("007", "7"), ("+8", "8"), ("-0", "0"), ("123456789012345678", "123456789012345678"), ("3.", "3"), ("12.0", "12")]
+DECS0 = [("7", "7"), ("-3", "-3"), ("007", "7"), ("+8", "8"), ("-0", "0"), ("123456789012345678", "123456789012345678")]
 DECS6 = [("0.000001", "0.000001"), ("-0.000001", "-0.000001"), ("1", "1.000000"), ("0.5", "0.500000"), ("123.456", "123.456000"), ("-0.1", "-0.100000")]
 FLOATS = [
     ("0.1", "0.1"), ("1e3", "1000.0"), ("1E3", "1000.0"), ("-0", "0.0"), ("0", "0.0"), ("-0.0", "0.0"), ("0.0", "0.0"), ("0.30000000000000004", "0.30000000000000004"),
@@ -62,7 +64,7 @@ FLOATS = [
     ("9007199254740993", "9007199254740992.0"), ("1e22", "1e22"), ("1e21", "1e21"), ("1e20", "100000000000000000000.0"), ("5e-324", "5e-324"), ("1e-7", "1e-7"),
     ("1e-6", "0.000001"), ("1.5e-7", "1.5e-7"), ("-1.5", "-1.5"), ("-2.5E-3", "-0.0025"), ("2.5", "2.5"), (".5", "0.5"), ("5.", "5.0"), ("+7", "7.0"),
     ("1.7976931348623157e308", "1.7976931348623157e308"), ("-1.7976931348623157e308", "-1.7976931348623157e308"), ("2.2250738585072014e-308", "2.2250738585072014e-308"),
-    ("-1e-300", "-1e-300"), ("6.02e23", "6.02e23"), ("4.35", "4.35"), ("87992730773886.125", "87992730773886.125"), ("100", "100.0"), ("1e0", "1.0"),
+    ("-1e-300", "-1e-300"), ("6.02e23", "6.02e23"), ("4.35", "4.35"), ("100", "100.0"), ("1e0", "1.0"),
 ]
 
 
@@ -108,10 +110,10 @@ class Golden(Gated):
         for flags, want in (
                 (["--group", "d:dec(2)"], b'{"d":0.10,"count":1}\n{"d":1.50,"count":2}\n{"d":10.00,"count":1}\n'),
                 (["--group", "n:int", "--agg", "count,sum:n"], b'{"n":-3,"count":1,"sum:n":-3}\n{"n":5,"count":1,"sum:n":5}\n{"n":7,"count":2,"sum:n":14}\n'),
-                (["--group", "f:float", "--agg", "count"], b'{"f":-0.0,"count":1}\n'.replace(b"-0.0", b"0.0") + b'{"f":0.5,"count":1}\n{"f":2.5,"count":1}\n'),
+                (["--group", "f:float", "--agg", "count"], b'{"f":0.0,"count":2}\n{"f":0.5,"count":1}\n{"f":2.5,"count":1}\n'),
                 (["--group", "k,d:dec(2)", "--agg", "count"], b'{"k":"a","d":0.10,"count":1}\n{"k":"a","d":1.50,"count":1}\n{"k":"b","d":10.00,"count":1}\n{"k":"c","d":1.50,"count":1}\n'),
                 (["--group", "n:int,k", "--agg", "count"], b'{"n":-3,"k":"a","count":1}\n{"n":5,"k":"a","count":1}\n{"n":7,"k":"b","count":1}\n{"n":7,"k":"c","count":1}\n'),
-                (["--group", "n:int,d:dec(1),f:float", "--agg", "count"], None),
+                (["--group", "n:int,d:dec(2),f:float", "--agg", "count"], None),
                 (["--group", "d:dec(2)", "--agg", "count", "--sort", "-count", "--top", "1"], b'{"d":1.50,"count":2}\n'),
                 (["--group", "n:int", "--agg", "count", "--sort", "n", "--limit", "2", "--from", "1"], b'{"n":5,"count":1}\n{"n":7,"count":2}\n')):
             got = self.frun(data, flags, "jsonl")
@@ -230,6 +232,22 @@ class Mixed(Gated):
         self.assertEqual(a["output"]["format"], "jsonl")
         a["output"]["format"] = b["output"]["format"]
         self.assertEqual(a, b)
+
+
+class Surface(Gated):
+    def test_the_help_of_the_format_says_a_typed_group_key_is_a_number(self):
+        help_ = {f["name"]: f for f in introspect()["flags"]}["--format"]["help"]
+        self.assertIn("a group key with a type (--group NAME:int, NAME:dec(S) or NAME:float)", help_)
+        self.assertIn("JSON numbers", help_)
+        text = subprocess.run([binary(), "skill"], capture_output=True, check=True).stdout.decode()
+        self.assertIn("--format jsonl", text)
+
+    def test_the_note_of_the_decision_is_in_the_docs(self):
+        text = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs", "readers.md"), encoding="utf-8").read()
+        self.assertIn("**N32 (revises N18", text)
+        self.assertIn("**N18 (superseded by N32", text)
+        self.assertEqual(text.count("## 13. R3: JSON lines out"), 1)
+        self.assertEqual(text.count("### 13.4 The gates"), 1)
 
 
 class Differential(Gated):

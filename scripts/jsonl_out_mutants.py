@@ -13,9 +13,12 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_jsonl_out", "test_jsonl_out_more", "test_report", "test_rules", "test_authority"]
+TESTS = ["test_jsonl_out", "test_jsonl_out_more", "test_jsonl_out_keys", "test_report", "test_rules", "test_authority"]
 
 ROW = "        let to = sel[picked + 2 + j];\n        o = buffer.append(heap, o, tmpl[from..to]);\n        from = to;\n        let at = 3 * sel[j];\n        o = writer.json_cell(heap, o, record, cells[at], cells[at + 1], cells[at + 2]);\n        j = j + 1;\n    }\n    o = buffer.push(heap, o, byte_of(125));\n    return buffer.push(heap, o, byte_of(10));\n}\n"
+
+GK = "            if query.gkind_at(tree, m) != 0 {\n                o = agg.put_key(heap, o, groups, tree, x, m);\n            } else {\n"
+QK = "                o = buffer.push(heap, o, byte_of(34));\n                o = agg.put_key(heap, o, groups, tree, x, m);\n                o = buffer.push(heap, o, byte_of(34));\n"
 
 MUTANTS = [
     # a row of a selection
@@ -29,8 +32,20 @@ MUTANTS = [
     # a group
     ("a group's aggregate is a string", "jout.cho", "            o = agg.put_value(heap, o, groups, tree, x, m - ng);\n",
      "            o = buffer.push(heap, o, byte_of(34));\n            o = agg.put_value(heap, o, groups, tree, x, m - ng);\n            o = buffer.push(heap, o, byte_of(34));\n"),
-    ("a typed group key is not quoted", "jout.cho", "                o = buffer.push(heap, o, byte_of(34));\n                o = agg.put_key(heap, o, groups, tree, x, m);\n                o = buffer.push(heap, o, byte_of(34));\n",
-     "                o = agg.put_key(heap, o, groups, tree, x, m);\n"),
+    # a typed group key is a number (docs/readers.md N32): the branch of group_row and the writer it calls
+    ("a typed group key is a string again (N18)", "jout.cho", GK, GK.replace("                o = agg.put_key(heap, o, groups, tree, x, m);\n", QK)),
+    ("a decimal group key is a string", "jout.cho", GK, GK.replace("                o = agg.put_key(heap, o, groups, tree, x, m);\n", "                if query.gkind_at(tree, m) >= 2 && query.gkind_at(tree, m) != 21 {\n                    o = buffer.push(heap, o, byte_of(34));\n                }\n                o = agg.put_key(heap, o, groups, tree, x, m);\n                if query.gkind_at(tree, m) >= 2 && query.gkind_at(tree, m) != 21 {\n                    o = buffer.push(heap, o, byte_of(34));\n                }\n")),
+    ("a float group key is a string", "jout.cho", GK, GK.replace("                o = agg.put_key(heap, o, groups, tree, x, m);\n", "                if query.gkind_at(tree, m) == 21 {\n                    o = buffer.push(heap, o, byte_of(34));\n                }\n                o = agg.put_key(heap, o, groups, tree, x, m);\n                if query.gkind_at(tree, m) == 21 {\n                    o = buffer.push(heap, o, byte_of(34));\n                }\n")),
+    ("an integer group key is a string", "jout.cho", GK, GK.replace("                o = agg.put_key(heap, o, groups, tree, x, m);\n", "                if query.gkind_at(tree, m) == 1 {\n                    o = buffer.push(heap, o, byte_of(34));\n                }\n                o = agg.put_key(heap, o, groups, tree, x, m);\n                if query.gkind_at(tree, m) == 1 {\n                    o = buffer.push(heap, o, byte_of(34));\n                }\n")),
+    ("a typed group key is written as a text key", "jout.cho", GK, GK.replace("!= 0 {", "== 7 {")),
+    ("a text group key is written through the typed writer", "jout.cho", GK, GK.replace("!= 0 {", ">= 0 {")),
+    ("every group key has the type of the first", "jout.cho", GK, GK.replace("gkind_at(tree, m)", "gkind_at(tree, 0)")),
+    ("every group key has the type of the next", "jout.cho", GK, GK.replace("gkind_at(tree, m)", "gkind_at(tree, m + 1)")),
+    ("every typed group key is the first key's value", "jout.cho", GK, GK.replace("tree, x, m);", "tree, x, 0);")),
+    ("a float group key is written as an integer", "agg.cho", "    if kind == 21 {\n        return flt.put_float(heap, out, v);\n    }\n", "    if kind == 21 {\n        return append_int(heap, out, v);\n    }\n"),
+    ("a decimal group key has one decimal too few", "agg.cho", "    return dec.put_scaled(heap, out, v, kind - 2);\n}\n\npub fn put_int", "    return dec.put_scaled(heap, out, v, kind - 3);\n}\n\npub fn put_int"),
+    ("a decimal group key has no decimals", "agg.cho", "    return dec.put_scaled(heap, out, v, kind - 2);\n}\n\npub fn put_int", "    return dec.put_scaled(heap, out, v, 0);\n}\n\npub fn put_int"),
+    ("the help of --format does not say a typed group key is a number", "spec.cho", " and a group key with a type (--group NAME:int, NAME:dec(S) or NAME:float), which are JSON numbers written as csv writes them (a key is its value: 007 is 7).", ", which are JSON numbers written as csv writes them."),
     ("a text group key is written raw", "jout.cho", "                o = text.append_json(heap, o, agg.key_field(groups, x, m));", "                o = buffer.append(heap, o, agg.key_field(groups, x, m));"),
     ("a group's keys are those of the aggregates", "jout.cho", "        let to = sel[2 + m];", "        let to = sel[2 + m + ng];"),
     # the keys
