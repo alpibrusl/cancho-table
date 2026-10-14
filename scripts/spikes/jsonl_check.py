@@ -9,7 +9,9 @@ it to `jsonl_scan show`, and requires:
      except the class listed in KNOWN: a lone surrogate escape, which Python's json accepts and std.json refuses;
   3. the flat scanner accepts a line only if Python accepts it and its object holds the two keys' values as the cells say.
 Prints the counts and the disagreements (none is expected)."""
-import json, os, random, subprocess, sys
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import json, os, random, sys
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 SCAN = os.environ.get("JSONL_SCAN", "jsonl_scan")
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 20000

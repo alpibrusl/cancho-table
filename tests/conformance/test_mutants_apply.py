@@ -6,7 +6,7 @@ itself: a pattern that is missing, one that occurs twice, and a mutant that chan
 """
 
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 import unittest

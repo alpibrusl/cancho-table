@@ -5,7 +5,9 @@
 
 Minimum of the runs, interleaved, standard output to /dev/null; DuckDB and csvtk get the same thread counts.
 """
-import argparse, pathlib, platform, shlex, shutil, subprocess, sys, time
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import argparse, pathlib, platform, shlex, shutil, sys, time
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 A, B = ROOT / "build/adv", ROOT / "build/bench"

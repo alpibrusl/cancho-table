@@ -6,7 +6,7 @@ and is run by hand (docs/numeric-package.md). A leg that cannot fail proves noth
 """
 
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import unittest
 

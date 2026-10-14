@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """bigcheck.py --bin PATH --base PATH: full-size plans on build/adv/f2.csv (and build/g4.csv when present), csv and json, at several thread counts with
 the default chunk size (so that ranges grow, docs/gap-groups.md 3.2) and with explicit ones; every answer must equal the base's one-thread answer."""
-import argparse, hashlib, os, subprocess, sys
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import argparse, hashlib, os, sys
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 BIG = ["--max-groups", "1000000", "--max-state-bytes", "1073741824", "--max-distinct", "10000000"]
 PLANS = [["--group", "k1m"], ["--group", "k1m", "--agg", "count,sum:v,min:v,max:v"], ["--group", "k100k,s", "--agg", "distinct:u"], ["--group", "s", "--agg", "distinct:id,sum:v:float"],

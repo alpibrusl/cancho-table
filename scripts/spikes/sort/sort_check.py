@@ -8,7 +8,9 @@ end, keys with a NUL, bytes above 127, heavy duplicates), the integer keys from 
 Every (keys: one or two, either direction, text or integer; top 0, 1, 3 or 100; threads in {1,2,3,5,8,16}; sort variant m/r; rows in the run or
 read back by offset) gives the same bytes as Python's stable sorts, last key first, each `sorted(..., reverse=desc)` (which keeps ties in order).
 """
-import random, subprocess, sys, tempfile, os, argparse
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import random, sys, tempfile, os, argparse
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 POOL = [b"", b"a", b"b", b"ab", b"abc", b"a\x00", b"a\x00\x00", b"\xff", b"\xc3\xa9", b"A", b"Z", b"0", b"10", b"9",
         b"commonprefix-0000-a", b"commonprefix-0000-b", b"commonprefix-0000", b"commonprefix-0001",

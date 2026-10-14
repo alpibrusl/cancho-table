@@ -1,6 +1,8 @@
 """SPIKE: ns per cell of the readers of numparse.cho, by the difference between 21 rounds and 1, minimum of 3.
 Needs S (a directory holding the built `numparse` and the cell files c_int.txt, c_price.txt, c_f17.txt, c_exp.txt: one cell per line, 1,000,000 lines)."""
-import subprocess,time,os,sys
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import time, os, sys
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 S=os.environ['S']
 def run(mode,rounds,f):
     best=9e9

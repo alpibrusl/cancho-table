@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """t.py [-n RUNS] [-b bin1,bin2] cell... : min wall time, interleaved. cells: name:file:threads:args
    usage: t.py -n 5 -b build/table.base,build/table big:count:1,4,8"""
-import argparse, subprocess, time, pathlib, shlex, os
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import argparse, time, pathlib, shlex, os
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 R = pathlib.Path(__file__).resolve().parents[3]
 A, B = R/"build/adv", R/"build/bench"
 BIG = ["--max-groups","1000000","--max-state-bytes","1073741824"]

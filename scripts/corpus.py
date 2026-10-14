@@ -10,7 +10,7 @@ run sequentially and with threads and tiny ranges, so the parallel path and its 
 import hashlib
 import os
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent

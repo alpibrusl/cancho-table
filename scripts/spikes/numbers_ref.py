@@ -9,7 +9,9 @@ A cell is bytes; ASCII digits only.  The functions answer ("ok", value) or ("ref
   flt(cell): the cell as the nearest double (Python's float() is correctly rounded: it is the oracle), no
              infinity, no NaN, no negative zero.
 """
-import re, sys, math, subprocess, json, struct
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import re, sys, math, json, struct
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 from decimal import Decimal, InvalidOperation
 
 DEC = re.compile(rb'^([+-]?)([0-9]*)(?:\.([0-9]*))?$')

@@ -39,7 +39,7 @@ The compiler is $CANCHO, or `cancho` on PATH. Run `cancho build` (or
 import json
 import os
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tomllib
 

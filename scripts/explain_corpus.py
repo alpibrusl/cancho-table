@@ -13,7 +13,7 @@ Exit 0 when every pair agreed, 1 when one did not, 2 when a required file is mis
 import argparse
 import json
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent

@@ -3,7 +3,7 @@ once: 96 KiB for the default 4096 nodes) and the page; with threads, a few range
 37 MB, from a file and through standard input, and on one line a megabyte long."""
 
 import os
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import unittest
 
