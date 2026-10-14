@@ -10,7 +10,7 @@ and run against tests/conformance/test_mcp.py. A mutant is killed when the build
 """
 import os
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 

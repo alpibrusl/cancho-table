@@ -9,7 +9,9 @@ dec: the status must match (ok / not-decimal / decimal-scale / decimal-too-wide)
 answers 0 (decided by Clinger's path: bits must equal float()), 4 (valid, not decided: float() must accept it and the
 cell goes to the exact reader) or 1 (not a number: reference must refuse).
 """
-import argparse, random, struct, subprocess, sys, os
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import argparse, random, struct, sys, os
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 sys.path.insert(0, os.path.dirname(__file__))
 import numbers_ref as ref
 TAG = {0: None, 1: "value.not-decimal", 2: "value.decimal-too-wide", 3: "value.decimal-scale"}

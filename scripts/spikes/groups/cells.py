@@ -6,7 +6,9 @@
 Per cell and thread count it prints, for each binary, min wall, min cpu, peak RSS. With --check the stdout md5 of every binary
 is compared with the first one's (the same bytes). DuckDB (with and without ORDER BY) and csvtk run at the same time.
 """
-import argparse, hashlib, os, platform, shlex, subprocess, sys, time, shutil
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import argparse, hashlib, os, platform, shlex, sys, time, shutil
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 ADV = os.path.join(ROOT, "build", "adv")

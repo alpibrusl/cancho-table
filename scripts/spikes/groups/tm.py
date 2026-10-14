@@ -2,7 +2,9 @@
 """tm.py: time commands, interleaved, N rounds. Prints min wall, min cpu (user+sys), peak RSS MB.
 usage: tm.py [-n N] [--out] 'label=cmd args' ...   (cmd is split with shlex; output goes to /dev/null)
 """
-import os, sys, shlex, subprocess, time, resource, platform
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import os, sys, shlex, time, resource, platform
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 args = sys.argv[1:]
 n = 5
 if args and args[0] == "-n":

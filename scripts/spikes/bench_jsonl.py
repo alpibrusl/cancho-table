@@ -6,7 +6,9 @@ DuckDB (read_ndjson, read_json_auto; the CSV for reference), jq, and Miller when
 DIR holds bench.csv, bench.jsonl, truth.json (jsonl_gen.py). Every contender's answer is compared with Python's before it
 is timed (the filter by its ids' count and sum, the groupings by their rows), and a disagreement stops the run. Output of
 every command is thrown away after that, as in scripts/bench.py. Peak resident set is `/usr/bin/time -l` (Mac) or `-v` (Linux)."""
-import csv, json, os, platform, re, shutil, subprocess, sys, time
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import csv, json, os, platform, re, shutil, sys, time
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 D = os.path.abspath(sys.argv[1])
 REPS = int(sys.argv[sys.argv.index("--reps") + 1]) if "--reps" in sys.argv else 5

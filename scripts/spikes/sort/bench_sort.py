@@ -14,7 +14,9 @@ tests check against Python's sort): sortpar byte for byte; DuckDB, csvtk and sor
 (their tie order is their own). Times are the minimum of --runs, wall and CPU (user+sys of the children); the peak resident set
 from `/usr/bin/time`.
 """
-import argparse, hashlib, os, platform, re, resource, shutil, subprocess, sys, time
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import argparse, hashlib, os, platform, re, resource, shutil, sys, time
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 def md5(argv):
     p = subprocess.run(argv, capture_output=True)

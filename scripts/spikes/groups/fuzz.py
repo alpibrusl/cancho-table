@@ -4,7 +4,9 @@ byte for byte (stdout, stderr, status), and the one-thread answer must equal the
 
     fuzz.py --bin PATH --base PATH [--cases 300] [--seed 1]
 """
-import argparse, os, random, subprocess, sys, tempfile
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import argparse, os, random, sys, tempfile
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 def run(argv):
     p = subprocess.run(argv, capture_output=True)

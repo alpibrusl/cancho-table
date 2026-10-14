@@ -15,7 +15,7 @@ Exit 0 when every run agreed, 1 when one did not, 2 when a required file is miss
 import argparse
 import hashlib
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent

@@ -1,6 +1,8 @@
 """SPIKE: ns per element of the sum loops of superacc.cho (plain f64, checked i64, pair, superacc), by the difference between 41 rounds and 1.
 Needs S (a directory holding the built `superacc` and prices.json / wide.json: 1,000,000 JSON numbers) in the environment."""
-import subprocess,sys,time,os
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import sys, time, os
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 S=os.environ['S']
 def run(mode,rounds,f):
     best=9e9

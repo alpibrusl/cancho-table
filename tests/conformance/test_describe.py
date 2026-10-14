@@ -1,6 +1,6 @@
 """D11 -- the tool describes itself from the tables it runs on."""
 
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import unittest
 
 from harness import binary, introspect

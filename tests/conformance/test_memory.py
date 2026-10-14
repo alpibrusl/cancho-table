@@ -2,7 +2,7 @@
 the header. Peak resident set of the child, from wait4, on files of 2 MB and 37 MB and on one record that spans 200,000 lines."""
 
 import os
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 import unittest

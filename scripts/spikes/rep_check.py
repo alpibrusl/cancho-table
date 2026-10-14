@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """SPIKE: the carry threshold.  Adds one double R times with the all-ones mantissa (every limb piece at its largest)
 and compares with R * x exactly.  usage: rep_check.py BINARY [R]"""
-import struct, subprocess, sys
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import struct, sys
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 from fractions import Fraction
 b = sys.argv[1]; R = int(sys.argv[2]) if len(sys.argv) > 2 else 1_200_000_000
 def bits(x): return struct.unpack('<q', struct.pack('<d', x))[0]

@@ -29,7 +29,7 @@ model sends reaches the directory: there is one name.
 import argparse
 import json
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 import tomllib

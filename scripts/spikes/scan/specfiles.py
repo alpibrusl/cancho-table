@@ -6,7 +6,9 @@
 Each file is generated (seeded) under build/adv/spec_*.csv; then for every file, plan, thread count and chunk size the two
 binaries must write the same bytes, the same standard error and the same exit status.
 """
-import argparse, os, pathlib, random, subprocess, sys
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import argparse, os, pathlib, random, sys
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
 rng = random.Random(5)

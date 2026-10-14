@@ -8,10 +8,11 @@ Python's float() (reference.py), the checksums of every file of 1M cells compare
 The mix (share of the cells): f17 20, bits 20, d19 14, exp 10, d25 6, lead 6, money 5, price 5, p10 4, long 5, near 5 (a double's midpoint cut at 17 to 40 digits, a hair above or below),
 mid 3 (exact midpoints, up to 767 digits, and the digit string +-1), edge 1 (mantissas at the powers where a rule changes), hard 2 (the 640 cells of tests/conformance/test_float.py, drawn again with other seeds)."""
 import argparse
-import multiprocessing
+import concurrent.futures
 import os
 import pathlib
-import subprocess
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import time
 
@@ -60,8 +61,9 @@ def main():
     t0 = time.time()
     done = bad = 0
     per_kind = {}
-    with multiprocessing.Pool(a.workers) as pool:
-        for kind, seed, cells, ok, path in pool.imap_unordered(task, tasks):
+    # threads, not worker processes: a task is a child (procs.run) that its thread waits for, and a worker process of a Pool is orphaned by a killed parent
+    with concurrent.futures.ThreadPoolExecutor(a.workers) as pool:
+        for kind, seed, cells, ok, path in (f.result() for f in concurrent.futures.as_completed([pool.submit(task, t) for t in tasks])):
             done += cells
             per_kind[kind] = per_kind.get(kind, 0) + cells
             if not ok:

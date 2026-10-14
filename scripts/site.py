@@ -49,7 +49,7 @@ import html
 import json
 import os
 import shlex
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 from pathlib import Path

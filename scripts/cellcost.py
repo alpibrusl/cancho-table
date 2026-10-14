@@ -9,7 +9,7 @@ scripts/corpus.py, not here.
 """
 import argparse
 import pathlib
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent

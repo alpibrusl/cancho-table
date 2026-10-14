@@ -3,7 +3,9 @@
 
     S=DIR_WITH_w_and_data [BIN=jsonl_scan_x] jsonl_time.py MODE:FILE ... [--threads N]      (env REPS, ROUNDS)
 """
-import os, subprocess, sys, time
+import os as _os, sys as _sys; _sys.path.append(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))
+import os, sys, time
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 S = os.environ["S"]
 REPS = int(os.environ.get('REPS', '3'))
 ROUNDS = int(os.environ.get('ROUNDS', '11'))
