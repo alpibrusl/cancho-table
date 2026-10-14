@@ -24,7 +24,7 @@ import argparse
 import os
 import random
 import struct
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 from decimal import Decimal, getcontext
