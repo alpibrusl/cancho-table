@@ -35,9 +35,10 @@ MUTANTS = [
     ("a number that rounds to zero is read as zero", "flt.cho", "    if bits == 0 {\n        return (0, 12);", "    if bits == 0 {\n        return (0, 0);"),
     ("a zero with a huge exponent goes the long way", "flt.cho", "    if !nonzero {\n        return (0, 0);\n    }", "    if false && !nonzero {\n        return (0, 0);\n    }"),
     ("the rounding of a subnormal is dropped (Eisel-Lemire)", "flt.cho", "        mant = mant + (mant & 1);\n        return mant >> 1;", "        return mant >> 1;"),
-    ("an exact halfway of the exact tier rounds up always", "flt.cho", "if round_bit == 1 && (low || kept & 1 == 1) {", "if round_bit == 1 {"),
-    ("an exact halfway of the exact tier rounds down always", "flt.cho", "if round_bit == 1 && (low || kept & 1 == 1) {", "if round_bit == 1 && low {"),
-    ("the remainder of the exact tier's division by a power of ten is forgotten", "flt.cho", "                    if dec.div_small(a, nl, p) != 0 {\n                        sticky = true;\n                    }", "                    dec.div_small(a, nl, p);"),
+    ("the exact tier keeps the leading zeros of the cell", "flt.cho", "            if c >= '0' && c <= '9' && (started || c != '0') {", "            if c >= '0' && c <= '9' {"),
+    ("the exact tier's exponent forgets the digits after the point", "flt.cho", "        var x10 = exponent - fraction;", "        var x10 = exponent;"),
+    ("the exact tier's negative exponent is written positive", "flt.cho", "            text[n] = byte_of('-');\n            n = n + 1;\n            x10 = 0 - x10;", "            text[n] = byte_of('+');\n            n = n + 1;\n            x10 = 0 - x10;"),
+    ("the exact tier's answer is one unit high", "flt.cho", "            answer = bits_of(json.to_float(text[0..n], tape, 0));", "            answer = bits_of(json.to_float(text[0..n], tape, 0)) + 1;"),
     ("the window of 19 digits is 20 (the accumulator wraps)", "flt.cho", "            if nd < 19 {", "            if nd < 20 {"),
     ("the bits of a normal double are one too many", "flt.cho", "    return (mant & 4503599627370495) + (power2 << 52);", "    return (mant & 4503599627370495) + (power2 << 52) + 1;"),
     # writing

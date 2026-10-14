@@ -33,11 +33,8 @@ M = [
     ("Clinger past 2^53", "m <= 9007199254740992 &&", "m <= 9007199254740993 &&"),
     ("Clinger takes 19-digit patterns", "!dropped && m >= 0 && m <=", "!dropped && m <="),
     ("overflow at 2047 -> 2048", "    if power2 >= 2047 {\n        return 9218868437227405312;", "    if power2 >= 2048 {\n        return 9218868437227405312;"),
-    ("exact: sticky from division lost", "                    if dec.div_small(a, nl, p) != 0 {\n                        sticky = true;\n                    }", "                    dec.div_small(a, nl, p);"),
-    ("exact: sticky of low limbs lost", "                    if a[j] != 0 {\n                        sticky = true;\n                    }", "                    j = j;"),
-    ("exact: round half up", "if round_bit == 1 && (low || kept & 1 == 1) {", "if round_bit == 1 {"),
-    ("exact: field 2047 -> 2048", "            if field >= 2047 {", "            if field >= 2048 {"),
-    ("exact: t one smaller", "k10 * 33220 / 10000 + 66 - bit_length(a, nl)", "k10 * 33220 / 10000 + 60 - bit_length(a, nl)"),
+    ("exact: exponent forgets the fraction", "        var x10 = exponent - fraction;", "        var x10 = exponent;"),
+    ("exact: negative exponent written positive", "            text[n] = byte_of('-');\n            n = n + 1;\n            x10 = 0 - x10;", "            text[n] = byte_of('+');\n            n = n + 1;\n            x10 = 0 - x10;"),
     ("window of 18 digits", "if nd < 19 {", "if nd < 18 {"),
 ]
 
@@ -50,8 +47,6 @@ NOTES = {
     "subnormal cutoff 64 -> 63": "equivalent: mant has at most 55 bits, so mant >> 63 is 0 and the rounding of 0 is 0, the same as the early return.",
     "Clinger takes 19-digit patterns": "equivalent in effect: a 19-digit m >= 2^63 is negative, float_of(m) is negative, bits_of(x) is negative, and the cell falls to the exact tier (slower, same answer).",
     "overflow at 2047 -> 2048": "equivalent: a result with power2 == 2047 has bits >= 0x7ff0000000000000, which parse_float turns into status 11 exactly as for the early return.",
-    "exact: field 2047 -> 2048": "equivalent for the same reason (the clamp after the rounding, and parse_float's test).",
-    "exact: t one smaller": "equivalent: the quotient still has at least 58 bits and rounding needs 55 (53 + round + sticky from the remainder flag).",
     "window of 18 digits": "equivalent: a 19-digit cell then has a dropped digit and goes through the m / m + 1 test or the exact tier: correct, slower.",
 }
 

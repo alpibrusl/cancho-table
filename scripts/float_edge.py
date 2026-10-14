@@ -12,10 +12,12 @@ deterministic from `--seed`; the first three families do not use it):
     (the last digit lowered by one and a 9 string after it), the midpoints also in scientific form;
   * the named ties: 5e-324, 2.5e-324, 4.94e-324, 4.9406564584124654e-324, 7.4e-324, 1e-323, 2.2250738585072014e-308 and its neighbours, 2.225073858507201e-308;
   * exponents -330..-300 with 1..30 significant digits (17, 18 and 19 and the 20 to 30 above them at length), random digits;
+  * printing: 20,000 numbers n.125-style (exact binary fractions near 2^43..2^53, where two shortest decimals can be equally close) and 20,000 random bit patterns' repr;
   * `--random` midpoints n * 2^-1074 + 2^-1075 with n of a random bit length 1..53 (these include the normal cell just above 2^-1022 that docs/gap-float.md
     reports `std.json.to_float` of the old pin misread), in the same four forms.
 
 A cell Python reads as zero (below half of 2^-1074) is not a number to the table (status 12), so those are run one at a time and must be refused with exit 8.
+The printed text is compared too, exactly, with the layout of Python's repr (`numbers_ref.float_text`): since cancho#361 `std.fmt.float_into` prints the shortest, then the closest, then the even digit string, as repr does.
 Exit 1 on any difference. `--list` prints the number of cells per family and runs nothing.
 """
 import argparse
@@ -27,6 +29,9 @@ import sys
 import tempfile
 from decimal import Decimal, getcontext
 from fractions import Fraction
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "conformance"))
+import numbers_ref as ref  # noqa: E402
 
 getcontext().prec = 1400
 LOW = Fraction(1, 2 ** 1074)
@@ -96,6 +101,18 @@ def random_cells(rng, count):
     return cells
 
 
+def printing_cells(rng, count):
+    """exact binary fractions near 2^43..2^53 (n + 1/8, 3/8, 5/8, 7/8 and 1/16 steps), where two shortest decimals can be equally close (`87992730773886.125`), and the repr of random bit patterns"""
+    cells = []
+    for _ in range(count):
+        n = rng.randint(2 ** 43, 2 ** 53)
+        cells.append("%d.%s" % (n, rng.choice(["125", "375", "625", "875", "0625", "1875", "3125"])))
+        x = struct.unpack(">d", struct.pack(">Q", rng.getrandbits(63)))[0]
+        if x == x and x != float("inf"):
+            cells.append(repr(x))
+    return cells
+
+
 def bits_of(x):
     return struct.unpack(">Q", struct.pack(">d", x))[0]
 
@@ -112,7 +129,7 @@ def main():
     ap.add_argument("--list", action="store_true")
     a = ap.parse_args()
     rng = random.Random(a.seed)
-    families = [("boundaries", boundary_cells()), ("named", NAMED), ("exponents -330..-300", exponent_cells(rng)), ("random midpoints", random_cells(rng, a.random))]
+    families = [("boundaries", boundary_cells()), ("named", NAMED), ("exponents -330..-300", exponent_cells(rng)), ("random midpoints", random_cells(rng, a.random)), ("printing ties", printing_cells(rng, 20000))]
     if a.list:
         for name, cells in families:
             print("%-22s %d" % (name, len(cells)))
@@ -144,11 +161,18 @@ def main():
     if len(got) != len(ok):
         bad += 1
         print("DIFFERENT number of answers", len(got), len(ok))
+    text = 0
     for i, c in enumerate(ok):
         if i not in got or bits_of(float(got[i])) != bits_of(float(c)):
             bad += 1
             if bad <= 20:
                 print("DIFFERENT", c[:70], "table", got.get(i), "python", repr(float(c)))
+        elif got[i] != ref.float_text(float(c)):
+            # the double is right; the text is not the one Python's repr gives in the layout of docs/numbers.md 4.6 (since cancho#361 it must be)
+            text += 1
+            if text <= 20:
+                print("DIFFERENT TEXT", c[:70], "table", got[i], "python", ref.float_text(float(c)))
+    bad += text
     for c in refused:
         with open(os.path.join(d, "f.csv"), "w") as f:
             f.write("k,x\n1,%s\n" % c)
@@ -156,7 +180,7 @@ def main():
         if q.returncode != 8:
             bad += 1
             print("DIFFERENT a cell below half of 2^-1074 is not refused", c[:70], q.returncode)
-    print("%d cells read (+%d refused), %d differences" % (len(ok), len(refused), bad))
+    print("%d cells read (+%d refused), %d differences (%d of them in the printed text of a right double)" % (len(ok), len(refused), bad, text))
     return 1 if bad else 0
 
 
