@@ -18,11 +18,10 @@ MUTANTS = [
     # the key and its inverse (flt.cho)
     ("the key of a negative double is not flipped", "flt.cho", "    if bits < 0 {\n        return bits ^ 0x7fffffffffffffff;\n    }\n    return bits;", "    if bits < 0 {\n        return bits;\n    }\n    return bits;"),
     # (Not here: `key_of` answering 0 for a zero. It is only called with a non-zero double: a cell of only zeros is answered as key 0 before it, which is how -0 is 0.)
+    ("the key of a negative double is not flipped back", "flt.cho", "        bits = key ^ 0x7fffffffffffffff;\n    }\n    return float_of_bits(bits);", "        bits = key;\n    }\n    return float_of_bits(bits);"),
+    ("the sign of a double is lost on the way back", "flt.cho", "    return float_of_bits(bits);", "    return float_of_bits(bits & 0x7fffffffffffffff);"),
+    ("the double a key stands for is one unit high", "flt.cho", "    return float_of_bits(bits);", "    return float_of_bits(bits + 1);"),
     ("a cell of only zeros goes the long way", "flt.cho", "    if !nonzero {\n        return (0, 0);\n    }", "    if !nonzero {\n        return (0, 12);\n    }"),
-    ("a subnormal is built from the wrong power of two", "flt.cho", "        x = math.ldexp(float_of(f), 0 - 1074);", "        x = math.ldexp(float_of(f), 0 - 1073);"),
-    ("a normal double is built without its hidden bit", "flt.cho", "float_of(f | 0x10000000000000), e - 1075);", "float_of(f), e - 1075);"),
-    ("a normal double is built with the wrong bias", "flt.cho", "float_of(f | 0x10000000000000), e - 1075);", "float_of(f | 0x10000000000000), e - 1074);"),
-    ("the sign of a double is lost on the way back", "flt.cho", "    if bits < 0 {\n        return 0.0 - x;\n    }\n    return x;", "    return x;"),
     # reading
     ("a cell of 1,101 bytes is read", "flt.cho", "    if n > 1100 {", "    if n > 1101 {"),
     ("nan is not finite only in lower case", "flt.cho", "        return word_is(data, at, \"inf\") || word_is(data, at, \"nan\");", "        return word_is(data, at, \"inf\") || word_is(data, at, \"nax\");"),

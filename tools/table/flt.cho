@@ -1,4 +1,4 @@
-edition 5;
+edition 7;
 
 module flt;
 
@@ -6,7 +6,7 @@ module flt;
 // as the shortest decimal that reads back to the same double.
 //
 // **Reading.** `[+-]? digits? [. digits?] ([eE] [+-]? digits)?` with at least one digit in the mantissa, ASCII only, no space, no separator, no `inf`, no
-// `nan`, at most 1,100 bytes (a decimal exactly halfway between two doubles has at most 768 significant digits). Two ways to the double, both correctly rounded:
+// `nan`, at most 1,100 bytes (a decimal exactly halfway between two doubles has at most 767 significant digits). Two ways to the double, both correctly rounded:
 // Clinger's fast path inline when the mantissa has at most 15 digits and the power of ten is within 10^-22..10^22 (both are doubles, so one multiplication or
 // one division rounds once), and otherwise the exact reader of `std.json` (`to_float`: bignum arithmetic with the remainder as the sticky bit), fed the same number
 // rewritten in the grammar of JSON (digits without leading zeros, `e`, the exponent): about a microsecond a cell, the cost of an exact answer until a reader that
@@ -15,13 +15,12 @@ module flt;
 // **The key.** There is no negative zero (`-0` is `0`) and no NaN, so the doubles are totally ordered, and the 64 bits of a double, with the low 63 flipped when
 // the sign bit is set, are an `int` whose signed order is the numeric order. min, max, the comparisons of `--where` and the distinct set all work on that `int`.
 //
-// **Writing.** `float_of_key` builds the double back (there is no `float_of_bits`: the mantissa times a power of two, which `std.math.ldexp` makes exactly), and
+// **Writing.** `float_of_key` builds the double back with `float_of_bits` (edition 7; the file was edition 5 and rebuilt the mantissa times a power of two with `std.math.ldexp`, for want of it), and
 // `put_float` lays out the digits of `std.fmt.float_into` positionally from 1e-6 to 1e21 (always with a point: `3.0`) and leaves them scientific outside (`1e21`).
 
 import std.buffer;
 import std.fmt;
 import std.json;
-import std.math;
 import pow5;
 
 static pow10_float: [float] {
@@ -44,25 +43,13 @@ pub fn key_of(x: float) -> [] int {
     return bits;
 }
 
-// The double a key stands for.
+// The double a key stands for: the bits back (the low 63 flipped again when the key is negative), as a double.
 pub fn float_of_key(key: int) -> [] float {
     var bits = key;
     if key < 0 {
         bits = key ^ 0x7fffffffffffffff;
     }
-    let magnitude = bits & 0x7fffffffffffffff;
-    let e = magnitude >> 52;
-    let f = magnitude & 0xfffffffffffff;
-    var x = 0.0;
-    if e == 0 {
-        x = math.ldexp(float_of(f), 0 - 1074);
-    } else {
-        x = math.ldexp(float_of(f | 0x10000000000000), e - 1075);
-    }
-    if bits < 0 {
-        return 0.0 - x;
-    }
-    return x;
+    return float_of_bits(bits);
 }
 
 // Whether `data` is `inf`, `infinity` or `nan` in any case, with an optional sign: the words that are refused as not finite, not as not numbers.
