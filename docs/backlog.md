@@ -150,6 +150,9 @@ otherwise said to be inferred.
 8. ~~**stdin** as an input.~~ **Built** (stage R1 of `docs/readers.md`, section 11): `table -` and `table` with no file, one pass on one core, read with `read_bytes` (cancho #363, merged), a pipe within a few percent of the file's time on one core.
 9. **Joins**, a hash join with the build side bounded by `--max-state-bytes` and a refusal past it. This is the first
    feature where DuckDB's shape is the model; it needs its own design, the memory bound is the whole difficulty.
+   **Designed, not built: [docs/joins.md](joins.md)** (the surface, the key equality, the accounted bytes of the build side against
+   `--max-state-bytes`, the defined output order, the threads question, the gates and the slices J0 to J9, a measured baseline against
+   DuckDB and csvtk on the Mac; its open questions are in section 13).
 10. **Parquet, a read-only subset**: plain, dictionary and run-length encodings, uncompressed and snappy only; every
     other encoding or codec a tagged refusal. Not before a user has a file they need: it needs a Thrift decoder, none
     of snappy/zstd/gzip is in cancho's `std`, and its gain over CSV (column pruning) implies a column-wise engine.
