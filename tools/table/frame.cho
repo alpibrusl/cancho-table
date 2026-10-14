@@ -13,6 +13,7 @@ import std.buffer;
 import std.bytes;
 import std.json;
 import std.vec;
+import jout;
 import plan;
 import query;
 import toolbox.text;
@@ -238,6 +239,47 @@ pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n b
                 if query.agg_at(tree, found - ng, 3) != 0 && query.agg_at(tree, found - ng, 2) != 21 {
                     // a mean sorts by its exact value (agg.before): the sum's slot, plus 1,000,000
                     sort_slot = sort_slot + 1000000;
+                }
+            }
+        }
+    }
+    let jsonl = jout.jsonl(tree);
+    if jsonl {
+        // no header line: `start_output` writes this mark and a line feed, and `engine.flush` leaves the mark out of what it writes (jout.mark)
+        borrow mut lead as &!ldw in {
+            buffer.clear(ldw);
+        }
+        lead = jout.mark(heap, lead);
+    }
+    if jsonl && abort == 0 {
+        // `--format jsonl` (jout.cho): the keys are the names of the answer's columns. A selection names them from the header (they are kept in `labels`, as a grouping's already are);
+        var named = 0;
+        if mode == 2 {
+            borrow lends as &er in {
+                named = vec.size(er);
+            }
+        } else if !query.reporting(tree) {
+            named = picked;
+            borrow sel as &sr in {
+                var m = 0;
+                while m < picked {
+                    labels = buffer.append(heap, labels, header_name(names, ends, contents(sr)[m]));
+                    var size = 0;
+                    borrow labels as &lbr in {
+                        size = buffer.size(lbr);
+                    }
+                    lends = vec.push(heap, lends, size);
+                    m = m + 1;
+                }
+            }
+        }
+        borrow labels as &lbr in {
+            borrow lends as &ler in {
+                let (s2, status, at) = jout.with_template(heap, sel, picked, lbr, ler, named);
+                sel = s2;
+                if status != 0 {
+                    abort = status;
+                    bad = at;
                 }
             }
         }

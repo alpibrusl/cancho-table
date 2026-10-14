@@ -30,6 +30,7 @@ import query;
 import report;
 import sorter;
 import toolbox.out;
+import jout;
 import writer;
 
 pub fn k_records() -> [] int {
@@ -192,6 +193,43 @@ pub fn flush[&i](io: &!i Io, pending: buffer.Buffer) -> [io_write] (buffer.Buffe
     return (held, ok);
 }
 
+// A row of the selection as a JSON line (jout.cho): a budget below 0 says so (`table.plan_body`; a page budget is never below 1, and csv never reads it), and `scratch` is made the text of the keys by the first row of each reader, thread and sorted run. A function of its own, so that
+// the csv row above has none of it (docs/readers.md section 13.2).
+fn emit_jsonl[&h, &d, &c, &s, &a](heap: &!h Heap, rows: buffer.Buffer, scratch: buffer.Buffer, record: &d [byte], cells: &c [int], sel: &s [int], picked: int, a: &!a [int]) -> [heap] (buffer.Buffer, buffer.Buffer) {
+    var pending = jout.drop_mark(heap, rows);
+    var row = scratch;
+    var keyed = 0;
+    borrow row as &kr in {
+        keyed = buffer.size(kr);
+    }
+    if keyed == 0 {
+        row = jout.template(heap, row, sel, picked);
+    }
+    borrow row as &tr in {
+        pending = jout.row(heap, pending, buffer.bytes(tr), record, cells, sel, picked);
+    }
+    a[k_emitted()] = a[k_emitted()] + 1;
+    return (pending, row);
+}
+
+// The last write of a read: `flush`, but a JSON-lines answer's mark of the header line it does not have (jout.mark) is not written when it is all there is, which is when no row was written (the
+// rows that were, took the mark off before them: `emit_jsonl`, `finish_groups`, `par.run`). Written with the check in a function of its own and nothing but the call in `flush_last`: the other formulations measured
+// 2 to 19 instructions a row more in the read loops, which inline it (docs/readers.md section 13.2).
+pub fn flush_last[&i](io: &!i Io, pending: buffer.Buffer) -> [io_write] (buffer.Buffer, bool) {
+    var ok = true;
+    var held = pending;
+    borrow held as &r in {
+        let all = buffer.bytes(r);
+        if !jout.is_mark(all) {
+            ok = out.emit(io, all);
+        }
+    }
+    borrow mut held as &!w in {
+        buffer.clear(w);
+    }
+    return (held, ok);
+}
+
 // One row of the selection, from the record `record` whose fields are in
 // `cells`, as csv or json appended to `rows` (writing nothing out: see `emit_row`), through `scratch` so that a row that does not fit the
 // budget is not half in. Updates the tally: `emitted`, and `stop` with
@@ -200,6 +238,9 @@ pub fn emit_buf[&h, &d, &c, &s, &a](heap: &!h Heap, rows: buffer.Buffer, scratch
     var pending = rows;
     var row = scratch;
     if as_csv {
+        if budget < 0 {
+            return emit_jsonl(heap, pending, row, record, cells, sel, picked, a);
+        }
         var begun = 0;
         borrow pending as &br in {
             begun = buffer.size(br);

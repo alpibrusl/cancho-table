@@ -140,6 +140,8 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `parse.jsonl-not-scalar` | 8 | never | a declared path holds an object or an array (detail.kind). Hint: declare a deeper path: user.name, tags.0. Repair: none. |
 | `parse.jsonl-duplicate-key` | 8 | never | a key occurs twice at a step of a declared path (detail.key), which parsers read differently. Hint: make the keys of the line unique. Repair: none. |
 | `limit.json-too-many-nodes` | 8 | never | a line holds more JSON nodes than --max-json-nodes. Hint: raise --max-json-nodes, up to the ceiling introspect names. Repair: none. |
+| `output.duplicate-column` | 2 | never | two columns of the answer of --format jsonl have the same name, and an object whose key occurs twice is read differently by different parsers (detail.column, and detail.first and detail.second, the 1-based places in the answer). Hint: name each column once: select it once, and each aggregate once. Repair: none. |
+| `output.not-representable` | 2 | never | the name of a column of the answer of --format jsonl is not valid UTF-8, which cannot be the key of a JSON object (detail.column holds it as text_or_bytes does). Hint: write the answer as --format csv, which carries any bytes. Repair: none. |
 <!-- /gen:rules -->
 
 The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other cancho-tools; the rest are `table`'s own.

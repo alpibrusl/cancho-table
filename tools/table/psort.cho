@@ -415,6 +415,11 @@ pub fn make_run[&h, &s, &c, &l, &o](heap: &!h Heap, g: &s agg.Groups, cells: &!c
     var tally = box_slice(heap, engine.k_size(), 0);
     var fmt = buffer.empty(heap, 256);
     var scratch = buffer.empty(heap, 16);
+    // JSON lines (jout.cho): the budget below 0 that `emit_buf` takes for it
+    var jsonl_budget = 0;
+    if sel[picked] != 0 {
+        jsonl_budget = -1;
+    }
     var cur = 0;
     var fits = true;
     var flags_or = 0;
@@ -432,7 +437,7 @@ pub fn make_run[&h, &s, &c, &l, &o](heap: &!h Heap, g: &s agg.Groups, cells: &!c
                 borrow mut fmt as &!fw in {
                     buffer.clear(fw);
                 }
-                let (f2, s2) = engine.emit_buf(heap, fmt, scratch, record, cells, sel, picked, delim, true, 0, contents(tw));
+                let (f2, s2) = engine.emit_buf(heap, fmt, scratch, record, cells, sel, picked, delim, true, jsonl_budget, contents(tw));
                 fmt = f2;
                 scratch = s2;
                 var rl = 0;

@@ -22,6 +22,7 @@ import toolbox.cli;
 import toolbox.fail;
 import toolbox.lines;
 import toolbox.text;
+import jout;
 
 // The header of a file, read as `read_file` reads it, and nothing more. `abort` is the run's code for what went wrong with it (4 a line past the bound, 3 a header past it, 1 a
 // closing quote followed by something other than the delimiter, 2 a quote open at the end, 5 no header at all when the plan names columns), `consumed` the bytes up to the end of
@@ -644,7 +645,9 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
     o = buffer.push_nat(heap, o, from);
     // the answer
     o = buffer.append(heap, o, "},\"output\":{\"format\":\"");
-    if as_csv {
+    if jout.jsonl(tree) {
+        o = buffer.append(heap, o, "jsonl");
+    } else if as_csv {
         o = buffer.append(heap, o, "csv");
     } else if text_mode {
         o = buffer.append(heap, o, "text");
@@ -924,6 +927,13 @@ pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
         }
     }
     buffer.drop(heap, none);
+    if abort_now == 60 || abort_now == 61 {
+        borrow flabels as &lr in {
+            borrow flends as &le in {
+                e = finish.output_refusal(heap, e, lr, le, abort_now, bad);
+            }
+        }
+    }
     var refused = false;
     borrow e as &er in {
         refused = fail.count(er) > 0;

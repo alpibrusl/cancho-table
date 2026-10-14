@@ -273,6 +273,7 @@
     "is_identifier",
     "is_letter",
     "is_loop",
+    "is_mark",
     "is_num",
     "is_position",
     "is_sym",
@@ -294,6 +295,7 @@
     "j_start",
     "j_until",
     "json_code_name",
+    "jsonl",
     "k_abort",
     "k_abort",
     "k_abort_line",
@@ -546,6 +548,7 @@
     "typed_mention",
     "under",
     "uneven_neighbours",
+    "unmarked",
     "valid",
     "value_index",
     "value_is_whole",
@@ -573,7 +576,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 210,
+  "folded_operators": 211,
   "folded_calls": 0,
-  "functions": 897
+  "functions": 911
 }

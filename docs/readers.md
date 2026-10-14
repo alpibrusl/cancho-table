@@ -1,6 +1,6 @@
 # Readers, standard input, JSON lines and more outputs: a design
 
-> **Status: a design, and stage R1 (standard input, section 11) is built.** Sections 0 to 10 were written before the code, as `docs/numbers.md`
+> **Status: a design; stage R1 (standard input, section 11), R2 (JSON lines read, section 12) and R3 (JSON lines out, section 13) are built.** Sections 0 to 10 were written before the code, as `docs/numbers.md`
 > was: the decisions, the numbers that decided them, the gates that must be able to fail, and the questions for the
 > maintainer. [`docs/query.md`](query.md) is its twin (the `--query` front end, `--explain`, the surface). The throwaway spikes behind the
 > numbers are in `scripts/spikes/` (`jsonl_scan.cho`, `jsonl_scan_x.cho` + `make_jsonx.py`, `stdin_read.cho`, `jsonl_gen.py`, `jsonl_time.py`, `jsonl_check.py`,
@@ -674,3 +674,142 @@ Peak resident set: 2 MB (Mac) and 3 MB (gram) for `table` on one core, against 6
 | J9 / G6 | the CSV paths unchanged | **the corpus** of 166 plans: md5 `fccb01b66dd7518d74611219a6c5aa29`, `main`'s (bd10c3f), on the Mac. **The instruction counter, Mac** (`gate_regress.py --counter`, bound 1.01, 42 cells, 3 builds a side, against `main` bd10c3f): **0.999 to 1.002, PASS**. **gram** (x86-64): `perf_event_paranoid` is 4 and was not changed, so `perf stat` cannot count there; instructions were counted with `valgrind --tool=callgrind` on 100,000 rows instead (not the gate's counter, and slower to run): `cut status,bytes` 178,114,858 against `main`'s 178,066,871 (+0.03 percent), the filter +0.25 percent of a 15 M-instruction run (startup included), the float min/max grouping 260.45 M against 260.41 M, `count,sum,min,max` 220.06 M against 220.01 M. **The clock form on gram** (`gate_regress.py` without `--counter`, bound 1.02, 21 runs, `--threads 3`, `nice taskset -c 0-5`, 3 builds a side): **FAIL**, and it is reported as it is: 20 of the 42 cells over 1.02 in the last run (1.020 to 1.050, a median of about 1.03; the filter 1.024, `cut` 1.050 and 1.033, `group count,sum,min,max` 1.048), with the same instructions. Its control (three builds of `main`'s sources in other directories, against the same three) was run once, before the last change, and passed (no cell over 1.02); the six builds of `main` alone differ by up to 5 percent in a timing of `cut` on one pinned core (0.0894 to 0.0938 s), and the three builds of this branch are 0.0974 to 0.0981 s: **the branch's builds are 4 to 8 percent slower than the slowest of `main`'s on that cell with the same instructions, which is a placement effect the counter cannot see and I could not remove**. An earlier build of this branch, before the refusals were moved out of `finish.explain`, was 13 instructions a row (0.5 percent) heavier and over the bound on 5 cells; the cause was found with the counter (a call added in `finish.explain`, which `read_file` calls, made the compiler allocate registers differently: `lexs_read_file` 0x6502 bytes against 0x6601, and every one-thread read a row heavier), and `jsonl_refusal` is now called by the JSON-lines loops alone, so `lexs_read_file` and `read_stream` are the sizes of `main`'s (0x6601 and 0x5f4e). What is not known: whether a quiet machine with a working counter would pass the clock form; the Mac, whose counter works, does |
 | surfaces | `manifest.py --check` (the labels are `main`'s: `args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write`; only the list of functions grew, 821 to 897), `mcp.py --check` (the MCP row is `main`'s), `schemas.py --check`, `site.py --check`, `seo_check.py`, `stream.py --check`, the 16 mutant scripts' `--check`, `cancho fmt --check` | pass |
 | suite | `python3 -m unittest discover` on the Mac | 608 tests OK (10 skipped), on the merge of `main` bd10c3f and the last commit |
+
+
+## 13. R3: JSON lines out (2026-10-13)
+
+Stage R3 of section 8, built as `--format jsonl`. This section is what is built and **where the design (section 7, decision 2 of section 10) was read narrowly**, N18 to N31. Numbers are at the end (13.5); a number that is not there was not measured.
+
+### 13.1 What it writes
+
+`--format jsonl` streams the answer as csv does (no page, no envelope, no `truncated`/`next`; `--limit`, `--from`, `--top` apply as for csv; it needs `--select`, `--where`, `--order-by`, `--group`, `--agg`, or `--rows` as csv does; `--report types` is refused, N22) and writes **one object per output row, then an LF**, compact (`{"status":"200","bytes":"74606"}`). The keys are the output columns in order: the header's spelling for a selection, `count`, `sum:NAME`... as csv's header names them for a grouping.
+
+| the value | is |
+|---|---|
+| a cell, a group key (typed or not), a report value | a JSON **string**: `"`, `\`, `\n \r \t \b \f` and `\u00xx` (lower-case hex) for the other bytes below 0x20 escaped; everything else as it is (DEL and non-ASCII raw, `/` not escaped). An empty cell is `""` |
+| a cell whose bytes are not UTF-8 | the object `{"b64":"..."}` (padded base64), the `text_or_bytes` of the pages: the output is always valid UTF-8 |
+| an aggregate (`count`, `sum`, `min`, `max`, `mean`, `distinct`) | a bare JSON **number**, the text csv writes (`166893`, `7.850`, `6.75`, `2.5`; a `:dec(S)` aggregate has exactly its S decimals, a `:float` one the shortest decimal that reads back, `flt.put_float`). They are never empty: a grouping with no rows writes no row |
+
+A refusal is what it is for csv: one sentence on standard error (`table: RULE: message`), the exit status of the rule, and the rows already written stand (O5). A plan that is refused before a row (`select.unknown-column`...) writes nothing. Zero rows write nothing at all (no header line). Two refusals are new, both before any row, exit 2, repair none: **`output.duplicate-column`** (two output columns of one name: `--select a,a`, `--select a,#1`, `--agg sum:x,sum:x`; `detail.column`, `first`, `second`, 1-based places) and **`output.not-representable`** (the name of an output column is not UTF-8, so it cannot be a key). `--format csv` still accepts both.
+
+### 13.2 How it is built (and why)
+
+* **The keys ride in the tail of `sel`** (`jout.cho`): the array of the answer's columns that every read, thread and writer already has gets, after its `picked` entries, a flag, the number of keys, where each key's fragment (`{"name":` or `,"name":`) ends, and the text of the fragments, one byte to an integer. `emit_buf` sees the flag (`sel[picked]`, one load a row) and makes `scratch` the text of the keys on the first row of each reader, thread and sorted run (`jout.template`). A row is then a copy of a fragment and a cell for each column, `}` and LF.
+* **How the readers and threads are told, with the read loops untouched.** `git diff` of `read_file` and `read_stream` is one word (`engine.flush_last` for `engine.flush` at the last write, the same call). The plan carries "JSON lines" (`jout.set_jsonl`: one more element at the end of `gkinds`, which nothing reads; `query.cho` is a published store and is not edited), as it already carries `--top` and `--from` for the same reason, and `frame.prepare` and the group writers ask `jout.jsonl(tree)`. The row writers are told by a **budget below 0** (`plan_body` sets `-1`; a page budget is never below 1 and csv never reads it; `par.run_ranges` keeps it for the threads and `psort.make_run` makes it from `sel`), which is a register `emit_buf` already has. **The header line**: `finish.start_output` and `report_lead` are the code that writes a csv header and are not edited; the frame gives them a mark for the line (`"`, NUL, `"`, NUL: no csv header line begins so), `start_output` writes it and a line feed, and the mark is taken off the first rows kept (`jout.drop_mark` in `emit_jsonl`, `finish_groups` and `par.run`) and, when no row was written, off the last write (`flush_last`).
+* **Why so roundabout: measured.** A first build handed the format to the readers by a block in `read_file` (a call of `start_output` with more arguments): **+15 instructions a row on x86-64** (callgrind, `cut status,bytes`, 100,000 and 200,000 rows, the difference; `main` is 1,168 a row; +1.3 percent, over G6's 1.01), with the Mac's counter passing. A second build, with `start_output` and `report_lead` changed to say "no header" themselves, was **+16 to +24 instructions a row on the Mac** (`gate_regress.py --counter`: 1.010 to 1.015 on eight one-thread cells) with `read_file` untouched, and +150 a row when the same test was put in `engine.flush`: a change to a function that the compiler inlines into the read loop changes the loop, wherever it is written. The build here changes none of the three.
+* **Groups** are written by `finish_groups` (`jout.group_row`); the partitioned grouping of `par.run` that writes whole csv answers in its merge threads is not taken for JSON lines (`!query.jsonl(tree)`) (the groups come back to `finish_groups`, which gives the same bytes: tested with `--threads`). The sorted answer is written by the same `emit_row` as a selection, by the threads of `psort` too. 
+* **The refusals of the keys** are made by `frame.prepare` (abort 60 and 61), checked with `gmap` (not quadratic), and said by `finish.output_refusal`, called by `table.settle` and `explain.settle`: not a branch of `finish.explain`, for the reason of 12.10.
+
+### 13.3 Where the design was read narrowly
+
+* **N18** The values of section 7 are read as written: strings but for the aggregate columns. The task text said "typed from the plan"; a `:int`, `:dec(S)` or `:float` **group key stays a string** (`"1.50"`), as do `--report types` counts, because decision 2 lists the aggregates only and section 9 lists "typed output beyond the aggregate columns of `jsonl`" as what the tool lacks. Making a typed key a number is one branch of `jout.group_row`.
+* **N19** The empty cell is `""`, not `null`: every cell is a string. An aggregate is never empty.
+* **N20** Invalid UTF-8 is `{"b64":...}` as section 7 says (not a refusal, not U+FFFD).
+* **N21** Only `jsonl` is a value of `--format`; `ndjson` is `args.bad-value` there (decision 6 was about `--input-format`).
+* **N22** `--report types --format jsonl` is **refused** (`args.conflict`, before any row, exit 2): the report is a table of its own whose counts and suggestions are strings, `--format json` and `csv` give it, and the object form would be a second writer (`report.put_row`) for a table nobody pipes. A first build supported it (all values strings); it was taken out with the header mark (13.2), which the report's own header line could not share.
+* **N23** A header name that is not UTF-8 is `output.not-representable` only when that column is in the answer.
+* **N24** The two rule names: `output.duplicate-column` is the design's; `output.not-representable` is the name section 7 gave `md`'s similar refusal.
+* **N25** `--explain` says `output.format: "jsonl"`; a duplicate-column plan is refused by `--explain` as by the run.
+* **N26** The partitioned grouping is not used for JSON lines (13.2); the rows of a selection are written by the threads as for csv.
+* **N27** `--discover` and a plan with no columns are refused for `jsonl` as for csv (`args.conflict`, `args.required-flag`).
+* **N28** `--from` pages the rows of the file for a selection, as for csv.
+* **N29** `--query` has no `to jsonl`: `--format` is a flag, not query (docs/query.md), and MCP offers `jsonl` through the flag table's choice; the answer is text only there, as csv's.
+* **N30** No `jsonl` for `--format text` plans; `limit.too-many-rows` and the other csv rules apply unchanged.
+* **N31** The header of `--format csv` of an empty answer is written; an empty JSON-lines answer is empty.
+
+### 13.4 The gates, and where they stand
+
+| gate | what | result |
+|---|---|---|
+| gates before code | `tests/conformance/test_jsonl_out.py`, `test_jsonl_out_more.py`, `jsonl_out_ref.py`, written by an agent that did not see the code, against a build without the feature (r2's): 20 of 22 of the second file fail on "the tool does not know `--format jsonl`", and the oracle's cells equal `--format csv` there | failed as they must |
+| O1 oracle | Python's `json` (strict: no NaN, no duplicate key, compact, re-encoded bytes equal) of every line equals the oracle's expected objects: about 520 small, 40 mid-size and 6 big generated plans, the 64 KiB and 128 KiB edges, a 100 KB cell, every byte value, invalid UTF-8 of every kind, big ints, `:dec` with trailing zeros, 17-digit floats, `-0`, empty cells, report types | pass |
+| O2, O3 | `csv -> jsonl -> csv` byte-identical (newline, NUL, quote, backslash...), `jsonl -> jsonl` with scalar fields (values come back as strings) | pass |
+| O4 | the two rules, exit 2, empty stdout, through threads and stdin | pass |
+| O5 | 14 refusals after rows (about 2 MB files): rows equal csv's, same exit and rule | pass |
+| threads, chunks, stdin | 1, 2, 3, 7, 16, 64 threads x chunks 1, 7, 64, 1000, 65536, `--order-by` included, `-` and no operand | pass |
+| fuzz | 340 random or mutated inputs x 2 plans x file, threads, stdin | pass |
+| existing outputs | `scripts/corpus.py`, 166 plans: md5 `fccb01b66dd7518d74611219a6c5aa29`, main's (29d5892), on the Mac and on gram | identical |
+| G6 existing outputs | **corpus** of 166 plans: md5 `fccb01b66dd7518d74611219a6c5aa29` on the Mac and on gram, `main`'s (29d5892). **Mac instruction counter** (`gate_regress.py --counter`, bound 1.01, 42 cells, 3 builds a side, against `main` 29d5892): **0.987 to 1.005, PASS**. **gram**: `perf_event_paranoid` is 4 and was not changed, so `perf stat` cannot count; instructions a row by `valgrind --tool=callgrind`, the difference of a 100,000-row and a 200,000-row file (not the gate's counter): `main` / this branch, `cut status,bytes` 1,168 / 1,170; filter 1,039 / 1,040; `count,sum,min` grouping 1,516 / 1,515; `:int` filter 1,294 / 1,295; `--order-by` 3,527 / 3,530; `--report types` 3,487 / 3,487. **The clock form on gram** (`gate_regress.py`, 21 runs, `--threads 3`, `nice taskset -c 0-5`, 3 builds a side): **FAIL**: 2 of 42 cells over 1.02, both `report types` (1.026 at one thread, 1.034 at three), whose instruction count is identical (3,487 a row, 371,374,302 against 371,386,292 for 100,000 rows); the control (three other builds of `main`'s sources against the same three) passed in this run (no cell over 1.02) and failed in an earlier one (2 cells), so the clock form cannot be said to pass or to be a placement effect with certainty: it is reported as a fail with equal instructions |
+| mutants | `scripts/jsonl_out_mutants.py`, 46 mutants, `--check` in CI; gram, nice, cores 0 to 5: **46 of 46 killed** on the final design. (Earlier runs, on builds that differed, left survivors that were fixed by a test or removed with the reason in the script: a refusal's `first` and `second` are in no surface a sentence on standard error shows, and the `going = false` after a failed write of the groups is equivalent) |
+| surfaces | `manifest.py --check` (the labels are `main`'s: `args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write`; only the list of functions grew, 821 to 897), `mcp.py --check` (the MCP row is `main`'s), `schemas.py --check`, `site.py --check`, `seo_check.py`, `stream.py --check`, the 16 mutant scripts' `--check`, `cancho fmt --check` | pass |
+| suite | `python3 -m unittest discover` on the Mac | 608 tests OK (10 skipped), on the merge of `main` bd10c3f and the last commit |
+
+
+## 13. R3: JSON lines out (2026-10-13)
+
+Stage R3 of section 8, built as `--format jsonl`. This section is what is built and **where the design (section 7, decision 2 of section 10) was read narrowly**, N18 to N31. Numbers are at the end (13.5); a number that is not there was not measured.
+
+### 13.1 What it writes
+
+`--format jsonl` streams the answer as csv does (no page, no envelope, no `truncated`/`next`; `--limit`, `--from`, `--top` apply as for csv; it needs `--select`, `--where`, `--order-by`, `--group`, `--agg`, or `--rows` as csv does; `--report types` is refused, N22) and writes **one object per output row, then an LF**, compact (`{"status":"200","bytes":"74606"}`). The keys are the output columns in order: the header's spelling for a selection, `count`, `sum:NAME`... as csv's header names them for a grouping.
+
+| the value | is |
+|---|---|
+| a cell, a group key (typed or not), a report value | a JSON **string**: `"`, `\`, `\n \r \t \b \f` and `\u00xx` (lower-case hex) for the other bytes below 0x20 escaped; everything else as it is (DEL and non-ASCII raw, `/` not escaped). An empty cell is `""` |
+| a cell whose bytes are not UTF-8 | the object `{"b64":"..."}` (padded base64), the `text_or_bytes` of the pages: the output is always valid UTF-8 |
+| an aggregate (`count`, `sum`, `min`, `max`, `mean`, `distinct`) | a bare JSON **number**, the text csv writes (`166893`, `7.850`, `6.75`, `2.5`; a `:dec(S)` aggregate has exactly its S decimals, a `:float` one the shortest decimal that reads back, `flt.put_float`). They are never empty: a grouping with no rows writes no row |
+
+A refusal is what it is for csv: one sentence on standard error (`table: RULE: message`), the exit status of the rule, and the rows already written stand (O5). A plan that is refused before a row (`select.unknown-column`...) writes nothing. Zero rows write nothing at all (no header line). Two refusals are new, both before any row, exit 2, repair none: **`output.duplicate-column`** (two output columns of one name: `--select a,a`, `--select a,#1`, `--agg sum:x,sum:x`; `detail.column`, `first`, `second`, 1-based places) and **`output.not-representable`** (the name of an output column is not UTF-8, so it cannot be a key). `--format csv` still accepts both.
+
+### 13.2 How it is built (and why)
+
+* **The keys ride in the tail of `sel`** (`jout.cho`): the array of the answer's columns that every read, thread and writer already has gets, after its `picked` entries, a flag, the number of keys, where each key's fragment (`{"name":` or `,"name":`) ends, and the text of the fragments, one byte to an integer. `emit_buf` sees the flag (`sel[picked]`, one load a row) and makes `scratch` the text of the keys on the first row of each reader, thread and sorted run (`jout.template`). A row is then a copy of a fragment and a cell for each column, `}` and LF.
+* **How the readers and threads are told, with the read loops untouched.** `git diff` of `read_file` and `read_stream` is one word (`engine.flush_last` for `engine.flush` at the last write, the same call). The plan carries "JSON lines" (`jout.set_jsonl`: one more element at the end of `gkinds`, which nothing reads; `query.cho` is a published store and is not edited), as it already carries `--top` and `--from` for the same reason, and `frame.prepare` and the group writers ask `jout.jsonl(tree)`. The row writers are told by a **budget below 0** (`plan_body` sets `-1`; a page budget is never below 1 and csv never reads it; `par.run_ranges` keeps it for the threads and `psort.make_run` makes it from `sel`), which is a register `emit_buf` already has. **The header line**: `finish.start_output` and `report_lead` are the code that writes a csv header and are not edited; the frame gives them a mark for the line (`"`, NUL, `"`, NUL: no csv header line begins so), `start_output` writes it and a line feed, and the mark is taken off the first rows kept (`jout.drop_mark` in `emit_jsonl`, `finish_groups` and `par.run`) and, when no row was written, off the last write (`flush_last`).
+* **Why so roundabout: measured.** A first build handed the format to the readers by a block in `read_file` (a call of `start_output` with more arguments): **+15 instructions a row on x86-64** (callgrind, `cut status,bytes`, 100,000 and 200,000 rows, the difference; `main` is 1,168 a row; +1.3 percent, over G6's 1.01), with the Mac's counter passing. A second build, with `start_output` and `report_lead` changed to say "no header" themselves, was **+16 to +24 instructions a row on the Mac** (`gate_regress.py --counter`: 1.010 to 1.015 on eight one-thread cells) with `read_file` untouched, and +150 a row when the same test was put in `engine.flush`: a change to a function that the compiler inlines into the read loop changes the loop, wherever it is written. The build here changes none of the three.
+* **Groups** are written by `finish_groups` (`jout.group_row`); the partitioned grouping of `par.run` that writes whole csv answers in its merge threads is not taken for JSON lines (`!query.jsonl(tree)`) (the groups come back to `finish_groups`, which gives the same bytes: tested with `--threads`). The sorted answer is written by the same `emit_row` as a selection, by the threads of `psort` too. 
+* **The refusals of the keys** are made by `frame.prepare` (abort 60 and 61), checked with `gmap` (not quadratic), and said by `finish.output_refusal`, called by `table.settle` and `explain.settle`: not a branch of `finish.explain`, for the reason of 12.10.
+
+### 13.3 Where the design was read narrowly
+
+* **N18** The values of section 7 are read as written: strings but for the aggregate columns. The task text said "typed from the plan"; a `:int`, `:dec(S)` or `:float` **group key stays a string** (`"1.50"`), as do `--report types` counts, because decision 2 lists the aggregates only and section 9 lists "typed output beyond the aggregate columns of `jsonl`" as what the tool lacks. Making a typed key a number is one branch of `jout.group_row`.
+* **N19** The empty cell is `""`, not `null`: every cell is a string. An aggregate is never empty.
+* **N20** Invalid UTF-8 is `{"b64":...}` as section 7 says (not a refusal, not U+FFFD).
+* **N21** Only `jsonl` is a value of `--format`; `ndjson` is `args.bad-value` there (decision 6 was about `--input-format`).
+* **N22** `--report types --format jsonl` is **refused** (`args.conflict`, before any row, exit 2): the report is a table of its own whose counts and suggestions are strings, `--format json` and `csv` give it, and the object form would be a second writer (`report.put_row`) for a table nobody pipes. A first build supported it (all values strings); it was taken out with the header mark (13.2), which the report's own header line could not share.
+* **N23** A header name that is not UTF-8 is `output.not-representable` only when that column is in the answer.
+* **N24** The two rule names: `output.duplicate-column` is the design's; `output.not-representable` is the name section 7 gave `md`'s similar refusal.
+* **N25** `--explain` says `output.format: "jsonl"`; a duplicate-column plan is refused by `--explain` as by the run.
+* **N26** The partitioned grouping is not used for JSON lines (13.2); the rows of a selection are written by the threads as for csv.
+* **N27** `--discover` and a plan with no columns are refused for `jsonl` as for csv (`args.conflict`, `args.required-flag`).
+* **N28** `--from` pages the rows of the file for a selection, as for csv.
+* **N29** `--query` has no `to jsonl`: `--format` is a flag, not query (docs/query.md), and MCP offers `jsonl` through the flag table's choice; the answer is text only there, as csv's.
+* **N30** No `jsonl` for `--format text` plans; `limit.too-many-rows` and the other csv rules apply unchanged.
+* **N31** The header of `--format csv` of an empty answer is written; an empty JSON-lines answer is empty.
+
+### 13.4 The gates, and where they stand
+
+| gate | what | result |
+|---|---|---|
+| gates before code | `tests/conformance/test_jsonl_out.py`, `test_jsonl_out_more.py`, `jsonl_out_ref.py`, written by an agent that did not see the code, against a build without the feature (r2's): 20 of 22 of the second file fail on "the tool does not know `--format jsonl`", and the oracle's cells equal `--format csv` there | failed as they must |
+| O1 oracle | Python's `json` (strict: no NaN, no duplicate key, compact, re-encoded bytes equal) of every line equals the oracle's expected objects: about 520 small, 40 mid-size and 6 big generated plans, the 64 KiB and 128 KiB edges, a 100 KB cell, every byte value, invalid UTF-8 of every kind, big ints, `:dec` with trailing zeros, 17-digit floats, `-0`, empty cells, report types | pass |
+| O2, O3 | `csv -> jsonl -> csv` byte-identical (newline, NUL, quote, backslash...), `jsonl -> jsonl` with scalar fields (values come back as strings) | pass |
+| O4 | the two rules, exit 2, empty stdout, through threads and stdin | pass |
+| O5 | 14 refusals after rows (about 2 MB files): rows equal csv's, same exit and rule | pass |
+| threads, chunks, stdin | 1, 2, 3, 7, 16, 64 threads x chunks 1, 7, 64, 1000, 65536, `--order-by` included, `-` and no operand | pass |
+| fuzz | 340 random or mutated inputs x 2 plans x file, threads, stdin | pass |
+| existing outputs | `scripts/corpus.py`, 166 plans: md5 `fccb01b66dd7518d74611219a6c5aa29`, main's (29d5892), on the Mac and on gram | identical |
+| G6 | see 13.5 | |
+| mutants | `scripts/jsonl_out_mutants.py`, 46 mutants, `--check` in CI; real run on gram, nice, cores 0 to 5: see 13.5 | |
+| surfaces | `manifest.py --check` (labels unchanged, only the function list grew), `mcp.py --check`, `schemas.py --check`, `site.py --check`, `seo_check.py`, `stream.py --check`, every mutant script's `--check`, `cancho fmt --check` | see the PR |
+
+### 13.5 What it costs (`scripts/bench_jsonl_out.py`; 1,000,000 rows)
+
+Answers first: every line `table` writes is parsed by Python's `json` and compared with the cells the csv module reads (strings), and DuckDB's lines (`read_csv(all_varchar=true)`, `COPY (SELECT ...) TO '/dev/stdout' (FORMAT JSON)`, DuckDB 1.5.6) are compared the same way. Seconds, output to `/dev/null`, minimum of N runs, rotation. Narrow is `scripts/bench.py`'s file (5 columns, 31.7 MB), wide 24 columns (22 numeric, `status`, `bytes`; `cut` reads the last two). `cut2` is `--select status,bytes`, `filter` is `--where status=200 --select status,bytes` (about half the rows), `all` is `--rows`.
+
+**gram** (x86-64, `nice taskset -c 0-5`, load average 1.1 to 1.3; narrow 5 runs, wide 3):
+
+| seconds | narrow cut2 | narrow filter | narrow all | wide cut2 | wide filter | wide all |
+|---|---:|---:|---:|---:|---:|---:|
+| `table --format jsonl` | 0.0777 | 0.0791 | 0.1275 | 0.2316 | 0.2301 | 0.5506 |
+| `table --format csv` | 0.0675 | 0.0758 | 0.0961 | 0.2113 | 0.2251 | 0.4427 |
+| jsonl / csv | **1.151** | 1.043 | 1.326 | 1.096 | 1.022 | 1.244 |
+| `table --format jsonl --threads 4` | 0.1370 | 0.0516 | 0.1755 | 0.1234 | 0.1088 | 0.7762 |
+| DuckDB 1 thread, strings | 0.2713 | 0.2269 | 0.3922 | 0.5927 | 0.5294 | 1.7066 |
+| DuckDB default threads, strings | 0.2827 | 0.2248 | 0.4337 | 0.5993 | 0.5432 | 1.7906 |
+
+**Mac** (Apple silicon, 16 cores; **load average 11 to 12 from other sessions during this run**, 5.5 in an earlier run of the same script on an earlier build; narrow 5 runs, wide 3): `cut2` narrow jsonl 0.0660 s, csv 0.0531 (1.243; 1.210 at load 5.5); filter 0.0619 / 0.0554 (1.117); `all` 0.1057 / 0.0753 (1.404). Wide: `cut2` 0.1857 / 0.1778 (1.044), filter 0.1810 / 0.1785 (1.014), `all` 0.4945 / 0.3451 (1.433). DuckDB 1 thread: narrow 0.2500, 0.2124, 0.3963; wide 0.7558, 0.7195, 1.8630.
+
+* **O6** (a `--select` as jsonl at most 1.3x csv): **met on both machines** for `cut2` and `filter` (gram 1.151 and 1.043; Mac 1.243 and 1.117 under load). `--rows` (every column, including the quoted one: 1.33 to 1.43) is over 1.3 on the Mac and at 1.33 narrow on gram; the gate names `--select`, and this is what it costs to write a key and a quoted value for every cell.
+* **Against DuckDB** writing JSON lines of strings on one thread: `table` is 3.8x (narrow cut2) and 3.4x (narrow filter) faster on the Mac, 3.5x and 2.9x on gram; on the wide file 4.1x and 4.0x on the Mac, 2.6x and 2.3x on gram (ratios of the minimums above). DuckDB's default threads give the same time as one thread here, because `COPY ... TO '/dev/stdout'` writes serially; **a DuckDB file write or `-json` of the CLI, and DuckDB's typed values (`read_csv` with type detection, numbers as numbers), were not measured**.
+* `--threads 4` is **slower** than one thread for `cut2` (narrow: 0.137 against 0.078 on gram; 0.084 against 0.066 on the Mac) (csv with threads was not measured here); it is faster for the filter (gram 0.0516, Mac 0.0267) and the wide file. Not examined further.
+* Not measured: peak resident set of the output, standard input through a pipe at this size, `--order-by` and groupings at 1,000,000 rows as JSON lines, a quiet Mac.

@@ -406,9 +406,11 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
             }
             if a[engine.k_abort()] == 0 {
                 borrow groups as &gr in {
-                    let (r2, s2) = finish.finish_groups(heap, io, finished, spare, gr, tree, as_csv, delim, from, limit, top, budget, a);
-                    finished = r2;
-                    spare = s2;
+                    borrow sel as &sr0 in {
+                        let (r2, s2) = finish.finish_groups(heap, io, finished, spare, gr, tree, contents(sr0), as_csv, delim, from, limit, top, budget, a);
+                        finished = r2;
+                        spare = s2;
+                    }
                     if a[engine.k_total()] > 0 {
                         a[engine.k_groups()] = a[engine.k_total()];
                     }
@@ -462,7 +464,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     }
     lines.drop(heap, r);
     if as_csv && c.abort != 9 {
-        let (after, ok) = engine.flush(io, out_rows);
+        let (after, ok) = engine.flush_last(io, out_rows);
         out_rows = after;
         if !ok {
             c = finish.Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: c.groups };
