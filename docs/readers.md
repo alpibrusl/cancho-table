@@ -337,7 +337,7 @@ slower than DuckDB. On Linux `table`'s CSV filter is 0.124 s; `jsonx` adds about
 
 | format | decision | why |
 |---|---|---|
-| **`jsonl`**: one JSON object per row, `{"col": "value", ...}` | **yes (R3)** | composes (`table ... --format jsonl \| table --input-format jsonl --fields ...`), streams like CSV (written as read, no page, no envelope; a refusal after rows is the stderr verdict and a non-zero exit, exactly as for CSV), and carries a cell that holds newlines, a NUL or non-UTF-8 (`{"b64": "..."}`, as pages do) through a pipe without CSV quoting. **Keys are the output columns in order; two columns of one name (`--select a,a`) are `output.duplicate-column` (exit 2, before any row)**, because an object with a repeated key is the ambiguity section 5.1 refuses on input. **Values:** every cell is a JSON *string*, **except the columns of aggregates (`count`, `sum`, `min`, `max`, `mean`, `distinct`), which are JSON numbers written as the exact text the table writes** (`166893`, `49991975303`, `7.850`), so a count is a count. Decision 2 of section 10 (decided; the alternative, all strings, was not taken) |
+| **`jsonl`**: one JSON object per row, `{"col": "value", ...}` | **yes (R3)** | composes (`table ... --format jsonl \| table --input-format jsonl --fields ...`), streams like CSV (written as read, no page, no envelope; a refusal after rows is the stderr verdict and a non-zero exit, exactly as for CSV), and carries a cell that holds newlines, a NUL or non-UTF-8 (`{"b64": "..."}`, as pages do) through a pipe without CSV quoting. **Keys are the output columns in order; two columns of one name (`--select a,a`) are `output.duplicate-column` (exit 2, before any row)**, because an object with a repeated key is the ambiguity section 5.1 refuses on input. **Values:** every cell is a JSON *string*, **except the columns of aggregates (`count`, `sum`, `min`, `max`, `mean`, `distinct`), which are JSON numbers written as the exact text the table writes** (`166893`, `49991975303`, `7.850`), so a count is a count. Decision 2 of section 10 (decided; the alternative, all strings, was not taken). **Revised 2026-10-14 (N32, 13.3): a group key typed `:int`, `:dec(S)` or `:float` is a JSON number too** |
 | `md`: an aligned markdown table | **not now** (R3b, only on request) | it is for a person reading a terminal or a chat; an agent reads JSON. It also needs a rule for a cell it cannot hold (a newline, `\|`), a buffered page to align, and its own tests and mutants. If built: pipe table, `\|` escaped, a cell with a newline or a control byte refused (`output.not-representable`), the page bounds (`--limit`, `--max-bytes`), a last line saying whether rows remain |
 | TSV | **already there**: `--delimiter tab` writes the input's delimiter | |
 | a JSON array of objects | no | unbounded in one document; a page is the bounded form |
@@ -383,7 +383,7 @@ Language and `std` (cancho): **(1)** ~~no bulk read of standard input (`getchar`
 
 The contract package (cancho-tools): `describe.Tool` has no grammar section (so [docs/query.md](query.md) puts the query grammar in the flag's help, where `;` and `|` cannot appear), allows one `schema` string (so the `explain` and `discover` documents join `table.v2`'s `oneOf` by hand in `scripts/schemas.py`), and has no per-subcommand description (so `explain` is a flag, not a subcommand).
 
-`table`: joins; `or`; a computed or renamed column; Parquet; compressed input; typed output beyond the aggregate columns of `jsonl`; grouping and sorting by `:dec` and `:float` are built (N5), the type report is not (N6); JSON arrays and nested paths past a declared dotted path.
+`table`: joins; `or`; a computed or renamed column; Parquet; compressed input; typed output beyond the aggregate columns and the typed group keys of `jsonl` (the cells of a selection are strings; N32); grouping and sorting by `:dec` and `:float` are built (N5), the type report is not (N6); JSON arrays and nested paths past a declared dotted path.
 
 ## 10. Decisions of the maintainer (2026-10-07: "go with the recommendations")
 
@@ -686,7 +686,8 @@ Stage R3 of section 8, built as `--format jsonl`. This section is what is built 
 
 | the value | is |
 |---|---|
-| a cell, a group key (typed or not), a report value | a JSON **string**: `"`, `\`, `\n \r \t \b \f` and `\u00xx` (lower-case hex) for the other bytes below 0x20 escaped; everything else as it is (DEL and non-ASCII raw, `/` not escaped). An empty cell is `""` |
+| a cell, an untyped group key, a report value | a JSON **string**: `"`, `\`, `\n \r \t \b \f` and `\u00xx` (lower-case hex) for the other bytes below 0x20 escaped; everything else as it is (DEL and non-ASCII raw, `/` not escaped). An empty cell is `""` |
+| a **typed group key** (`--group NAME:int`, `NAME:dec(S)`, `NAME:float`), N32 | a bare JSON **number**, the value of the key written as the csv writer writes it (`7`, `-9223372036854775808`; `1.50`, `-0.05`; `0.1`, `1000.0`, `5e-324`). An untyped key next to it stays a string |
 | a cell whose bytes are not UTF-8 | the object `{"b64":"..."}` (padded base64), the `text_or_bytes` of the pages: the output is always valid UTF-8 |
 | an aggregate (`count`, `sum`, `min`, `max`, `mean`, `distinct`) | a bare JSON **number**, the text csv writes (`166893`, `7.850`, `6.75`, `2.5`; a `:dec(S)` aggregate has exactly its S decimals, a `:float` one the shortest decimal that reads back, `flt.put_float`). They are never empty: a grouping with no rows writes no row |
 
@@ -702,7 +703,7 @@ A refusal is what it is for csv: one sentence on standard error (`table: RULE: m
 
 ### 13.3 Where the design was read narrowly
 
-* **N18** The values of section 7 are read as written: strings but for the aggregate columns. The task text said "typed from the plan"; a `:int`, `:dec(S)` or `:float` **group key stays a string** (`"1.50"`), as do `--report types` counts, because decision 2 lists the aggregates only and section 9 lists "typed output beyond the aggregate columns of `jsonl`" as what the tool lacks. Making a typed key a number is one branch of `jout.group_row`.
+* **N18 (superseded by N32, 2026-10-14; the text as it stood, kept)** ~~The values of section 7 are read as written: strings but for the aggregate columns. The task text said "typed from the plan"; a `:int`, `:dec(S)` or `:float` **group key stays a string** (`"1.50"`), as do `--report types` counts, because decision 2 lists the aggregates only and section 9 lists "typed output beyond the aggregate columns of `jsonl`" as what the tool lacks. Making a typed key a number is one branch of `jout.group_row`.~~
 * **N19** The empty cell is `""`, not `null`: every cell is a string. An aggregate is never empty.
 * **N20** Invalid UTF-8 is `{"b64":...}` as section 7 says (not a refusal, not U+FFFD).
 * **N21** Only `jsonl` is a value of `--format`; `ndjson` is `args.bad-value` there (decision 6 was about `--input-format`).
@@ -716,6 +717,14 @@ A refusal is what it is for csv: one sentence on standard error (`table: RULE: m
 * **N29** `--query` has no `to jsonl`: `--format` is a flag, not query (docs/query.md), and MCP offers `jsonl` through the flag table's choice; the answer is text only there, as csv's.
 * **N30** No `jsonl` for `--format text` plans; `limit.too-many-rows` and the other csv rules apply unchanged.
 * **N31** The header of `--format csv` of an empty answer is written; an empty JSON-lines answer is empty.
+* **N32 (revises N18; the maintainer's decision of 2026-10-14: a typed group key is a number, as a typed aggregate is)** In `--format jsonl` a group key typed `:int`, `:dec(S)` or `:float` is a bare JSON number; an untyped (text) key stays a string. It is one branch of `jout.group_row` (the `"` before and after `agg.put_key` are gone for a typed key); `agg.put_key` is the writer `--format csv` and `--format json` use, so the digits are csv's. The rules:
+    * **`:int`**: the integer in exact text, every `int` (`9223372036854775807`, `-9223372036854775808`). It is the **value** of the key, not the text of the first cell that had it: `007`, `+7` and `7` are one group written `7`; `-0` is `0`; so a leading zero never reaches the output (it would not be a JSON number), as for the typed aggregates and as csv writes it.
+    * **`:dec(S)`**: exactly S decimals, from the exact scaled integer (`dec.put_scaled`, never a double): `1.50`, `-0.05`, `0.00` (a `-0.00` cell is the value 0), `10.00`; with S = 0 the integer with no point (`7`). A value below 1 has its `0` (`0.05`): always a JSON number. Wider than 17 digits once scaled is `value.decimal-too-wide` on the read, as for csv.
+    * **`:float`**: `flt.put_float`, the text csv writes and the float aggregates have: the shortest decimal that reads back to the same double, positional from 1e-6 up to 1e21 and always with a point (`0.1`, `100000.0`, `0.30000000000000004`, `9007199254740992.0`), scientific outside (`1e21`, `1.5e-7`, `5e-324`, `1.7976931348623157e308`: lower-case `e`, no `+`, no leading zero in the exponent), `0.0` for zero. Every such text is a JSON number (checked by a strict parser in the tests). **`-0` is `0.0`**: the key has no negative zero (docs/numbers.md section 4), so `-0`, `0` and `-0.0` are one group.
+    * **Non-finite: there is none to write.** A `:float` cell that is `inf`, `nan` or past the range is refused when it is read (`value.not-finite`, `value.float-range`, exit 8), so no key holds one; a float aggregate beyond the largest double is `agg.float-overflow`. No new rule, and no `output.not-representable` for a number: that rule stays the name of a column that is not UTF-8.
+    * **An empty or absent cell cannot be a typed key**: it is refused when it is read, whatever the format (`value.not-integer`, `value.not-decimal`, `value.not-float`, "an empty cell is not one", exit 8), and a grouping is written when the read is over, so the answer is that refusal and no row (a `--absent empty` JSON-lines input is the same). N19 (the empty cell is `""`) is for cells, which stay strings.
+    * **Not affected**: `--order-by` (it sorts the rows of a selection; its typed names do not type the cells of the output, which are strings as N19 says: `007` stays `"007"`), `--sort`, `--top`, `--limit` and `--from` (they choose and order the groups before they are written; the order of a typed key is numeric as before), `--threads`, `--report types` (refused, N22), `--format json` (an array of strings as before), `--format csv`, and `--explain`. The typed aggregates are as they were.
+    * **What a reader needs to know**: the bytes are exact; a JSON consumer that reads every number as a double reads `9223372036854775807` and a 17-digit decimal key as the nearest double, as it reads the aggregates. `table --input-format jsonl` reads a number as its exact text (12.4), so `jsonl -> jsonl` keeps the key.
 
 ### 13.4 The gates, and where they stand
 
@@ -734,63 +743,6 @@ A refusal is what it is for csv: one sentence on standard error (`table: RULE: m
 | surfaces | `manifest.py --check` (the labels are `main`'s: `args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write`; only the list of functions grew, 821 to 897), `mcp.py --check` (the MCP row is `main`'s), `schemas.py --check`, `site.py --check`, `seo_check.py`, `stream.py --check`, the 16 mutant scripts' `--check`, `cancho fmt --check` | pass |
 | suite | `python3 -m unittest discover` on the Mac | 608 tests OK (10 skipped), on the merge of `main` bd10c3f and the last commit |
 
-
-## 13. R3: JSON lines out (2026-10-13)
-
-Stage R3 of section 8, built as `--format jsonl`. This section is what is built and **where the design (section 7, decision 2 of section 10) was read narrowly**, N18 to N31. Numbers are at the end (13.5); a number that is not there was not measured.
-
-### 13.1 What it writes
-
-`--format jsonl` streams the answer as csv does (no page, no envelope, no `truncated`/`next`; `--limit`, `--from`, `--top` apply as for csv; it needs `--select`, `--where`, `--order-by`, `--group`, `--agg`, or `--rows` as csv does; `--report types` is refused, N22) and writes **one object per output row, then an LF**, compact (`{"status":"200","bytes":"74606"}`). The keys are the output columns in order: the header's spelling for a selection, `count`, `sum:NAME`... as csv's header names them for a grouping.
-
-| the value | is |
-|---|---|
-| a cell, a group key (typed or not), a report value | a JSON **string**: `"`, `\`, `\n \r \t \b \f` and `\u00xx` (lower-case hex) for the other bytes below 0x20 escaped; everything else as it is (DEL and non-ASCII raw, `/` not escaped). An empty cell is `""` |
-| a cell whose bytes are not UTF-8 | the object `{"b64":"..."}` (padded base64), the `text_or_bytes` of the pages: the output is always valid UTF-8 |
-| an aggregate (`count`, `sum`, `min`, `max`, `mean`, `distinct`) | a bare JSON **number**, the text csv writes (`166893`, `7.850`, `6.75`, `2.5`; a `:dec(S)` aggregate has exactly its S decimals, a `:float` one the shortest decimal that reads back, `flt.put_float`). They are never empty: a grouping with no rows writes no row |
-
-A refusal is what it is for csv: one sentence on standard error (`table: RULE: message`), the exit status of the rule, and the rows already written stand (O5). A plan that is refused before a row (`select.unknown-column`...) writes nothing. Zero rows write nothing at all (no header line). Two refusals are new, both before any row, exit 2, repair none: **`output.duplicate-column`** (two output columns of one name: `--select a,a`, `--select a,#1`, `--agg sum:x,sum:x`; `detail.column`, `first`, `second`, 1-based places) and **`output.not-representable`** (the name of an output column is not UTF-8, so it cannot be a key). `--format csv` still accepts both.
-
-### 13.2 How it is built (and why)
-
-* **The keys ride in the tail of `sel`** (`jout.cho`): the array of the answer's columns that every read, thread and writer already has gets, after its `picked` entries, a flag, the number of keys, where each key's fragment (`{"name":` or `,"name":`) ends, and the text of the fragments, one byte to an integer. `emit_buf` sees the flag (`sel[picked]`, one load a row) and makes `scratch` the text of the keys on the first row of each reader, thread and sorted run (`jout.template`). A row is then a copy of a fragment and a cell for each column, `}` and LF.
-* **How the readers and threads are told, with the read loops untouched.** `git diff` of `read_file` and `read_stream` is one word (`engine.flush_last` for `engine.flush` at the last write, the same call). The plan carries "JSON lines" (`jout.set_jsonl`: one more element at the end of `gkinds`, which nothing reads; `query.cho` is a published store and is not edited), as it already carries `--top` and `--from` for the same reason, and `frame.prepare` and the group writers ask `jout.jsonl(tree)`. The row writers are told by a **budget below 0** (`plan_body` sets `-1`; a page budget is never below 1 and csv never reads it; `par.run_ranges` keeps it for the threads and `psort.make_run` makes it from `sel`), which is a register `emit_buf` already has. **The header line**: `finish.start_output` and `report_lead` are the code that writes a csv header and are not edited; the frame gives them a mark for the line (`"`, NUL, `"`, NUL: no csv header line begins so), `start_output` writes it and a line feed, and the mark is taken off the first rows kept (`jout.drop_mark` in `emit_jsonl`, `finish_groups` and `par.run`) and, when no row was written, off the last write (`flush_last`).
-* **Why so roundabout: measured.** A first build handed the format to the readers by a block in `read_file` (a call of `start_output` with more arguments): **+15 instructions a row on x86-64** (callgrind, `cut status,bytes`, 100,000 and 200,000 rows, the difference; `main` is 1,168 a row; +1.3 percent, over G6's 1.01), with the Mac's counter passing. A second build, with `start_output` and `report_lead` changed to say "no header" themselves, was **+16 to +24 instructions a row on the Mac** (`gate_regress.py --counter`: 1.010 to 1.015 on eight one-thread cells) with `read_file` untouched, and +150 a row when the same test was put in `engine.flush`: a change to a function that the compiler inlines into the read loop changes the loop, wherever it is written. The build here changes none of the three.
-* **Groups** are written by `finish_groups` (`jout.group_row`); the partitioned grouping of `par.run` that writes whole csv answers in its merge threads is not taken for JSON lines (`!query.jsonl(tree)`) (the groups come back to `finish_groups`, which gives the same bytes: tested with `--threads`). The sorted answer is written by the same `emit_row` as a selection, by the threads of `psort` too. 
-* **The refusals of the keys** are made by `frame.prepare` (abort 60 and 61), checked with `gmap` (not quadratic), and said by `finish.output_refusal`, called by `table.settle` and `explain.settle`: not a branch of `finish.explain`, for the reason of 12.10.
-
-### 13.3 Where the design was read narrowly
-
-* **N18** The values of section 7 are read as written: strings but for the aggregate columns. The task text said "typed from the plan"; a `:int`, `:dec(S)` or `:float` **group key stays a string** (`"1.50"`), as do `--report types` counts, because decision 2 lists the aggregates only and section 9 lists "typed output beyond the aggregate columns of `jsonl`" as what the tool lacks. Making a typed key a number is one branch of `jout.group_row`.
-* **N19** The empty cell is `""`, not `null`: every cell is a string. An aggregate is never empty.
-* **N20** Invalid UTF-8 is `{"b64":...}` as section 7 says (not a refusal, not U+FFFD).
-* **N21** Only `jsonl` is a value of `--format`; `ndjson` is `args.bad-value` there (decision 6 was about `--input-format`).
-* **N22** `--report types --format jsonl` is **refused** (`args.conflict`, before any row, exit 2): the report is a table of its own whose counts and suggestions are strings, `--format json` and `csv` give it, and the object form would be a second writer (`report.put_row`) for a table nobody pipes. A first build supported it (all values strings); it was taken out with the header mark (13.2), which the report's own header line could not share.
-* **N23** A header name that is not UTF-8 is `output.not-representable` only when that column is in the answer.
-* **N24** The two rule names: `output.duplicate-column` is the design's; `output.not-representable` is the name section 7 gave `md`'s similar refusal.
-* **N25** `--explain` says `output.format: "jsonl"`; a duplicate-column plan is refused by `--explain` as by the run.
-* **N26** The partitioned grouping is not used for JSON lines (13.2); the rows of a selection are written by the threads as for csv.
-* **N27** `--discover` and a plan with no columns are refused for `jsonl` as for csv (`args.conflict`, `args.required-flag`).
-* **N28** `--from` pages the rows of the file for a selection, as for csv.
-* **N29** `--query` has no `to jsonl`: `--format` is a flag, not query (docs/query.md), and MCP offers `jsonl` through the flag table's choice; the answer is text only there, as csv's.
-* **N30** No `jsonl` for `--format text` plans; `limit.too-many-rows` and the other csv rules apply unchanged.
-* **N31** The header of `--format csv` of an empty answer is written; an empty JSON-lines answer is empty.
-
-### 13.4 The gates, and where they stand
-
-| gate | what | result |
-|---|---|---|
-| gates before code | `tests/conformance/test_jsonl_out.py`, `test_jsonl_out_more.py`, `jsonl_out_ref.py`, written by an agent that did not see the code, against a build without the feature (r2's): 20 of 22 of the second file fail on "the tool does not know `--format jsonl`", and the oracle's cells equal `--format csv` there | failed as they must |
-| O1 oracle | Python's `json` (strict: no NaN, no duplicate key, compact, re-encoded bytes equal) of every line equals the oracle's expected objects: about 520 small, 40 mid-size and 6 big generated plans, the 64 KiB and 128 KiB edges, a 100 KB cell, every byte value, invalid UTF-8 of every kind, big ints, `:dec` with trailing zeros, 17-digit floats, `-0`, empty cells, report types | pass |
-| O2, O3 | `csv -> jsonl -> csv` byte-identical (newline, NUL, quote, backslash...), `jsonl -> jsonl` with scalar fields (values come back as strings) | pass |
-| O4 | the two rules, exit 2, empty stdout, through threads and stdin | pass |
-| O5 | 14 refusals after rows (about 2 MB files): rows equal csv's, same exit and rule | pass |
-| threads, chunks, stdin | 1, 2, 3, 7, 16, 64 threads x chunks 1, 7, 64, 1000, 65536, `--order-by` included, `-` and no operand | pass |
-| fuzz | 340 random or mutated inputs x 2 plans x file, threads, stdin | pass |
-| existing outputs | `scripts/corpus.py`, 166 plans: md5 `fccb01b66dd7518d74611219a6c5aa29`, main's (29d5892), on the Mac and on gram | identical |
-| G6 | see 13.5 | |
-| mutants | `scripts/jsonl_out_mutants.py`, 46 mutants, `--check` in CI; real run on gram, nice, cores 0 to 5: see 13.5 | |
-| surfaces | `manifest.py --check` (labels unchanged, only the function list grew), `mcp.py --check`, `schemas.py --check`, `site.py --check`, `seo_check.py`, `stream.py --check`, every mutant script's `--check`, `cancho fmt --check` | see the PR |
 
 ### 13.5 What it costs (`scripts/bench_jsonl_out.py`; 1,000,000 rows)
 
