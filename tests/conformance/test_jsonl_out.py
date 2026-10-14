@@ -77,11 +77,16 @@ def rule_of(stderr):
 
 
 def agg_tail(flags):
-    """How many of the last columns of a plan's answer are aggregates (numbers): the items of --agg, or the count of a --group alone."""
+    """How many of the last columns of a plan's answer are aggregates (numbers): the items of --agg, or the count of a --group alone. It also says which of the
+    first ones are typed group keys (numbers as well: readers.md N32)."""
     flags = [str(f) for f in flags]
     if "--agg" in flags:
-        return len(flags[flags.index("--agg") + 1].split(","))       # no item of the plans here holds a comma
-    return 1 if "--group" in flags else 0
+        t = R.Tail(len(flags[flags.index("--agg") + 1].split(",")))       # no item of the plans here holds a comma
+    else:
+        t = R.Tail(1 if "--group" in flags else 0)
+    if "--group" in flags:
+        t.typed = R.typed_places(flags[flags.index("--group") + 1])
+    return t
 
 
 def exit_of(rule):
@@ -523,7 +528,7 @@ class Golden(Gated):
         got = self.frun(b"a,,c\n1,2,3\n", ["--rows"], "jsonl")
         self.assertEqual((got.status, got.stdout), (0, b'{"a":"1","":"2","c":"3"}\n'))
 
-    def test_aggregates_are_numbers_and_group_keys_are_strings(self):
+    def test_aggregates_are_numbers_and_untyped_group_keys_are_strings(self):
         data = b"k,n,d,f\na,5,1.50,2.5\na,-3,0.1,0.5\nb,007,10,0\n"
         got = self.frun(data, ["--group", "k", "--agg", "count,sum:n,min:n,max:n,mean:n@2,distinct:d,sum:d:dec(2),min:d:dec(2),max:d:dec(2),mean:d:dec(2),sum:f:float,min:f:float,max:f:float,mean:f:float"], "jsonl")
         want = (b'{"k":"a","count":2,"sum:n":2,"min:n":-3,"max:n":5,"mean:n":1.00,"distinct:d":2,"sum:d":1.60,"min:d":0.10,"max:d":1.50,"mean:d":0.80,"sum:f":3.0,"min:f":0.5,"max:f":2.5,"mean:f":1.5}\n'
@@ -537,11 +542,13 @@ class Golden(Gated):
         c = self.frun(data, ["--group", "k", "--agg", "count,sum:n,mean:n@2"], "csv")
         self.assertEqual(c.stdout, b"k,count,sum:n,mean:n\na,2,2,1.00\nb,1,7,7.00\n")
 
-    def test_typed_group_keys_are_strings(self):
+    def test_typed_group_keys_are_numbers(self):
+        # readers.md N32 (N18, which made them strings, is superseded): the value of the key, as csv writes it, bare
         data = b"k,n,d,f\na,5,1.50,2.5\na,-3,0.1,0.5\nb,007,10,0\nc,7,1.5,2.50\n"
-        for flags, want in ((["--group", "d:dec(2)", "--agg", "count"], b'{"d":"0.10","count":1}\n{"d":"1.50","count":2}\n{"d":"10.00","count":1}\n'),
-                            (["--group", "n:int"], b'{"n":"-3","count":1}\n{"n":"5","count":1}\n{"n":"7","count":2}\n'),
-                            (["--group", "f:float", "--agg", "count"], b'{"f":"0.0","count":1}\n{"f":"0.5","count":1}\n{"f":"2.5","count":2}\n')):
+        for flags, want in ((["--group", "d:dec(2)", "--agg", "count"], b'{"d":0.10,"count":1}\n{"d":1.50,"count":2}\n{"d":10.00,"count":1}\n'),
+                            (["--group", "n:int"], b'{"n":-3,"count":1}\n{"n":5,"count":1}\n{"n":7,"count":2}\n'),
+                            (["--group", "f:float", "--agg", "count"], b'{"f":0.0,"count":1}\n{"f":0.5,"count":1}\n{"f":2.5,"count":2}\n'),
+                            (["--group", "k,n:int"], b'{"k":"a","n":-3,"count":1}\n{"k":"a","n":5,"count":1}\n{"k":"b","n":7,"count":1}\n{"k":"c","n":7,"count":1}\n')):
             got = self.frun(data, flags, "jsonl")
             self.assertEqual((got.status, got.stderr, got.stdout), (0, b"", want), flags)
 
@@ -998,6 +1005,8 @@ PLANS = [
     ["--agg", "count,sum:n,sum:big,distinct:w"],
     ["--select", "id,txt,k", "--from", "17", "--limit", "23"],
     ["--where", "id:int >= 5", "--group", "n:int", "--agg", "count", "--sort", "n", "--limit", "5", "--from", "2"],
+    ["--group", "big:int,f:float", "--agg", "count,sum:d:dec(2)"],
+    ["--group", "f:float", "--agg", "count", "--sort", "-count", "--top", "6"],
 ]
 
 

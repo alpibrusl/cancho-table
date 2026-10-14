@@ -65,9 +65,11 @@ CSV_PLANS = [
     ["--where", "#2 contains a", "--select", "#2"], ["--group", "#1"], ["--group", "#1", "--agg", "count,distinct:#2"], ["--agg", "sum:#1,min:#1"], ["--order-by", "#1"],
     ["--order-by", "-#1:int", "--top", "3"], ["--group", "#1:float", "--agg", "mean:#1:float"], ["--select", "#1", "--limit", "3", "--from", "1"],
     ["--group", "#2:dec(2)", "--agg", "sum:#1:dec(2),count"], ["--agg", "count,max:#1"],
+    # typed group keys are numbers (readers.md N32)
+    ["--group", "#1:int", "--agg", "count"], ["--group", "#1:dec(2),#2", "--agg", "count"], ["--group", "#2:float,#1:int"], ["--group", "#1:dec(0)", "--agg", "count,min:#2:float", "--sort", "-count"],
 ]
 JSONL_PLANS = [["--rows"], ["--select", "a"], ["--select", "b,a"], ["--select", "a,a"], ["--where", "a != zzz", "--select", "b"], ["--group", "a", "--agg", "count"], ["--order-by", "a"],
-               ["--agg", "count,distinct:b"]]
+               ["--agg", "count,distinct:b"], ["--group", "a:dec(2)", "--agg", "count"], ["--group", "b:int,a:float"], ["--group", "a:int", "--agg", "sum:b:dec(2)"]]
 
 
 def fuzz_input(rng, pool):

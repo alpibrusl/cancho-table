@@ -116,7 +116,8 @@ pub fn row[&h, &t, &d, &c, &s](heap: &!h Heap, out: buffer.Buffer, tmpl: &t [byt
     return buffer.push(heap, o, byte_of(10));
 }
 
-// One group as an object: its keys are strings (a typed key as the text it is written as, `1.50`), its aggregates the numbers the csv output writes. `sel` is the tail of a
+// One group as an object: its keys are strings but for a typed key (`:int`, `:dec(S)`, `:float`), which is the number csv writes for it, bare (`1.50`; docs/readers.md N32: the value of
+// the key, so no leading zero, `-0` is `0.0`, and no key is not finite, because such a cell is refused when it is read), its aggregates the numbers the csv output writes. `sel` is the tail of a
 // grouping (`picked` is 0), whose n is the group columns and the aggregates.
 pub fn group_row[&h, &g, &q, &t, &s](heap: &!h Heap, out: buffer.Buffer, groups: &g agg.Groups, tree: &q query.Query, x: int, tmpl: &t [byte], sel: &s [int]) -> [heap] buffer.Buffer {
     let ng = query.count_of(tree, 2);
@@ -130,9 +131,7 @@ pub fn group_row[&h, &g, &q, &t, &s](heap: &!h Heap, out: buffer.Buffer, groups:
         from = to;
         if m < ng {
             if query.gkind_at(tree, m) != 0 {
-                o = buffer.push(heap, o, byte_of(34));
                 o = agg.put_key(heap, o, groups, tree, x, m);
-                o = buffer.push(heap, o, byte_of(34));
             } else {
                 o = text.append_json(heap, o, agg.key_field(groups, x, m));
             }

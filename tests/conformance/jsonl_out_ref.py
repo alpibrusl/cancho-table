@@ -240,9 +240,21 @@ def csv_records(stdout):
     return recs
 
 
+class Tail(int):
+    """How many of the last columns of an answer are aggregates (an `int`), and which of the first ones are typed group keys (`typed`: their places), which are
+    numbers as the aggregates are (readers.md N32)."""
+    typed = ()
+
+
+def typed_places(group):
+    """The places among the items of a `--group` value (`a,b:dec(2),#3:float`) that carry a type."""
+    return tuple(i for i, item in enumerate(group.split(",")) if re.search(r":(int|float|dec\(\d+\))$", item))
+
+
 def from_csv_out(stdout, numeric_tail=0):
     """What `--format jsonl` writes for the plan whose `--format csv` wrote `stdout`: ("ok", bytes), or ("not-representable"|"duplicate", None).
-    The first record is the header; the last `numeric_tail` columns are the aggregates."""
+    The first record is the header; the last `numeric_tail` columns are the aggregates, and the places in `numeric_tail.typed` (when it has them) are typed
+    group keys, which are numbers too."""
     recs = csv_records(stdout)
     if not recs:
         return ("ok", b"")
@@ -259,6 +271,8 @@ def from_csv_out(stdout, numeric_tail=0):
     if len(set(keys)) != len(keys):
         return ("duplicate", None)
     numeric = [False] * (width - numeric_tail) + [True] * numeric_tail
+    for i in getattr(numeric_tail, "typed", ()):
+        numeric[i] = True
     out = []
     for r in rows:
         assert len(r) == width, "a csv record of %d cells under a header of %d: %r" % (len(r), width, r[:5])
@@ -676,7 +690,8 @@ def evaluate_groups(header, kept, plan):
     start = plan.frm or 0
     rows = rows[start:(start + plan.limit) if plan.limit else None]
     names = out_names(header, plan)
-    return Out(names, rows, [False] * len(plan.group) + [True] * len(plan.aggs))
+    # a typed group key is a number (readers.md N32), an untyped one a string; an aggregate is a number
+    return Out(names, rows, [ty is not None for _, ty in plan.group] + [True] * len(plan.aggs))
 
 
 # ---- generating plans ---------------------------------------------------------------------------------------------------------------------------
@@ -943,4 +958,6 @@ def random_case(rng, rows=None, mode="small"):
 
 
 def numeric_tail(plan):
-    return len(plan.aggs) if plan.form in ("group", "agg") else 0
+    t = Tail(len(plan.aggs) if plan.form in ("group", "agg") else 0)
+    t.typed = tuple(i for i, (_, ty) in enumerate(plan.group) if ty is not None)
+    return t
