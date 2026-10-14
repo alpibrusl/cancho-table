@@ -128,6 +128,8 @@ below the smallest subnormal is 12. The exponent is read with the same clip at 1
 
 ### 2.6 Tier 3: the exact way, and why it is not `std.json`
 
+> **Update (issue #36):** this section is the reasoning at N3b and is kept as written. `alpibrusl/cancho#361` has since fixed `std.json.to_float` (the subnormal ties; the digit cap 768), `exact_bits` is gone and tier 3 is `std.json.to_float` again, with 0 differences on `scripts/float_edge.py` and on the differential of section 13.7 (before and after). See `docs/numbers.md` section 4, "The three ways to a double". `float_of_key` now uses `float_of_bits` too (section 2.7).
+
 The old fallback wrote the cell as JSON into a `region`, built the tape, and called `std.json.to_float`; for anything below 2.3e-308 a second function, `subnormal_of`, recomputed it exactly because `to_float` was
 known to misround. **The differential found a cell in the normal range that `to_float` of the pinned compiler also gets wrong**: `0.000...2522753946247637179...` (an exact midpoint a hair above, 1,077 bytes, value 3.4e-308, just above the
 smallest normal) reads one unit low through `std.json` (2 cells in 30,000 of the `mid` shape), and `subnormal_of` is only called below 2.3e-308. (`alpibrusl/cancho#361` fixes a subnormal case of the same function; I did not test
