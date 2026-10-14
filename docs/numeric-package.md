@@ -3,7 +3,7 @@
 `table` is a binary repository: no commit of it holds a package, so another repository cannot pin its exact readers. Six modules of
 `tools/table` are published as stores, one per module, at `.cancho-vcs/<module>` (the way cancho-tools commits `.cancho-vcs/toolbox.*`):
 `pow5`, `dec`, `flt`, `cellnum`, `facc`, `reader`: the cell parsers (`pow5`, `dec`, `flt`, `cellnum`), the exact float sum (`facc`) and RFC 4180 records (`reader`). A consumer writes `[dependencies.flt] git = ..., rev = ..., path = ".cancho-vcs/flt"`
-and `cancho install` fetches it; the stores a module imports are reached through its `requires/` (so `flt` brings `dec` and `pow5`).
+and `cancho install` fetches it; the stores a module imports are reached through its `requires/` (so `flt` brings `pow5`; it brought `dec` too until issue #36, when its exact reader became `std.json.to_float`).
 
 The stores are a publication of `tools/table/*.cho` as they are.
 

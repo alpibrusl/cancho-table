@@ -5,7 +5,7 @@ module facc;
 // The exact sum of doubles (docs/numbers.md, 4.4; the spike is scripts/spikes/superacc.cho): a sum kept as an integer multiple of 2^-1074 (every finite double
 // is one) in 72 limbs of 32 bits, limb `i` of weight 2^(32 i - 1074), plus a counter, in 73 consecutive integers of the group's row at `at`.
 //
-// **Adding** a double is its sign, exponent and 53-bit mantissa (from the bits: `float_of_bits` does not exist) shifted by `p mod 32` into three pieces of at most
+// **Adding** a double is its sign, exponent and 53-bit mantissa (from the bits of the key, by integers) shifted by `p mod 32` into three pieces of at most
 // 2^33 added to (or, for a negative double, taken from) limbs `p/32`, `+1`, `+2`. There is no carry and **nothing rounds**: every 2^27 additions a carry pass
 // brings every limb but the top into [0, 2^32), and the top limb holds the sign. A limb is therefore at most 2^27 * 2^33 = 2^60 before a carry, and a sum of
 // two accumulators (limb by limb) cannot leave 64 bits: **the merge of ranges read by threads is exact, so it is order-independent**, and so is the answer.

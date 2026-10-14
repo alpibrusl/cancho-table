@@ -18,11 +18,10 @@ MUTANTS = [
     # the key and its inverse (flt.cho)
     ("the key of a negative double is not flipped", "flt.cho", "    if bits < 0 {\n        return bits ^ 0x7fffffffffffffff;\n    }\n    return bits;", "    if bits < 0 {\n        return bits;\n    }\n    return bits;"),
     # (Not here: `key_of` answering 0 for a zero. It is only called with a non-zero double: a cell of only zeros is answered as key 0 before it, which is how -0 is 0.)
+    ("the key of a negative double is not flipped back", "flt.cho", "        bits = key ^ 0x7fffffffffffffff;\n    }\n    return float_of_bits(bits);", "        bits = key;\n    }\n    return float_of_bits(bits);"),
+    ("the sign of a double is lost on the way back", "flt.cho", "    return float_of_bits(bits);", "    return float_of_bits(bits & 0x7fffffffffffffff);"),
+    ("the double a key stands for is one unit high", "flt.cho", "    return float_of_bits(bits);", "    return float_of_bits(bits + 1);"),
     ("a cell of only zeros goes the long way", "flt.cho", "    if !nonzero {\n        return (0, 0);\n    }", "    if !nonzero {\n        return (0, 12);\n    }"),
-    ("a subnormal is built from the wrong power of two", "flt.cho", "        x = math.ldexp(float_of(f), 0 - 1074);", "        x = math.ldexp(float_of(f), 0 - 1073);"),
-    ("a normal double is built without its hidden bit", "flt.cho", "float_of(f | 0x10000000000000), e - 1075);", "float_of(f), e - 1075);"),
-    ("a normal double is built with the wrong bias", "flt.cho", "float_of(f | 0x10000000000000), e - 1075);", "float_of(f | 0x10000000000000), e - 1074);"),
-    ("the sign of a double is lost on the way back", "flt.cho", "    if bits < 0 {\n        return 0.0 - x;\n    }\n    return x;", "    return x;"),
     # reading
     ("a cell of 1,101 bytes is read", "flt.cho", "    if n > 1100 {", "    if n > 1101 {"),
     ("nan is not finite only in lower case", "flt.cho", "        return word_is(data, at, \"inf\") || word_is(data, at, \"nan\");", "        return word_is(data, at, \"inf\") || word_is(data, at, \"nax\");"),
@@ -35,9 +34,10 @@ MUTANTS = [
     ("a number that rounds to zero is read as zero", "flt.cho", "    if bits == 0 {\n        return (0, 12);", "    if bits == 0 {\n        return (0, 0);"),
     ("a zero with a huge exponent goes the long way", "flt.cho", "    if !nonzero {\n        return (0, 0);\n    }", "    if false && !nonzero {\n        return (0, 0);\n    }"),
     ("the rounding of a subnormal is dropped (Eisel-Lemire)", "flt.cho", "        mant = mant + (mant & 1);\n        return mant >> 1;", "        return mant >> 1;"),
-    ("an exact halfway of the exact tier rounds up always", "flt.cho", "if round_bit == 1 && (low || kept & 1 == 1) {", "if round_bit == 1 {"),
-    ("an exact halfway of the exact tier rounds down always", "flt.cho", "if round_bit == 1 && (low || kept & 1 == 1) {", "if round_bit == 1 && low {"),
-    ("the remainder of the exact tier's division by a power of ten is forgotten", "flt.cho", "                    if dec.div_small(a, nl, p) != 0 {\n                        sticky = true;\n                    }", "                    dec.div_small(a, nl, p);"),
+    ("the exact tier keeps the leading zeros of the cell", "flt.cho", "            if c >= '0' && c <= '9' && (started || c != '0') {", "            if c >= '0' && c <= '9' {"),
+    ("the exact tier's exponent forgets the digits after the point", "flt.cho", "        var x10 = exponent - fraction;", "        var x10 = exponent;"),
+    ("the exact tier's negative exponent is written positive", "flt.cho", "            text[n] = byte_of('-');\n            n = n + 1;\n            x10 = 0 - x10;", "            text[n] = byte_of('+');\n            n = n + 1;\n            x10 = 0 - x10;"),
+    ("the exact tier's answer is one unit high", "flt.cho", "            answer = bits_of(json.to_float(text[0..n], tape, 0));", "            answer = bits_of(json.to_float(text[0..n], tape, 0)) + 1;"),
     ("the window of 19 digits is 20 (the accumulator wraps)", "flt.cho", "            if nd < 19 {", "            if nd < 20 {"),
     ("the bits of a normal double are one too many", "flt.cho", "    return (mant & 4503599627370495) + (power2 << 52);", "    return (mant & 4503599627370495) + (power2 << 52) + 1;"),
     # writing
