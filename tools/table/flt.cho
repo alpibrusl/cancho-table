@@ -6,7 +6,7 @@ module flt;
 // as the shortest decimal that reads back to the same double.
 //
 // **Reading.** `[+-]? digits? [. digits?] ([eE] [+-]? digits)?` with at least one digit in the mantissa, ASCII only, no space, no separator, no `inf`, no
-// `nan`, at most 1,100 bytes (a decimal exactly halfway between two doubles has at most 767 significant digits). Two ways to the double, both correctly rounded:
+// `nan`, at most 1,100 bytes (a decimal exactly halfway between two doubles has at most 768 significant digits). Two ways to the double, both correctly rounded:
 // Clinger's fast path inline when the mantissa has at most 15 digits and the power of ten is within 10^-22..10^22 (both are doubles, so one multiplication or
 // one division rounds once), and otherwise the exact reader of `std.json` (`to_float`: bignum arithmetic with the remainder as the sticky bit), fed the same number
 // rewritten in the grammar of JSON (digits without leading zeros, `e`, the exponent): about a microsecond a cell, the cost of an exact answer until a reader that
@@ -20,8 +20,8 @@ module flt;
 
 import std.buffer;
 import std.fmt;
+import std.json;
 import std.math;
-import dec;
 import pow5;
 
 static pow10_float: [float] {
@@ -97,200 +97,56 @@ fn word_is[&d](data: &d [byte], at: int, word: &static [byte]) -> [] bool {
 // ---- the exact way, for what Eisel-Lemire cannot decide (more than 19 significant digits whose window and window + 1 round differently) ----
 
 // The bits (exponent field and fraction, no sign; 0 when it rounds to zero, 0x7ff0000000000000 past the range) of the double nearest to the decimal in `data`,
-// ties to even, by exact integer arithmetic in limbs of 32 bits (`dec.mul_small`, `dec.div_small`), whatever the exponent: D, the digits of the mantissa
-// without leading zeros, times 10^e, e = `exponent` - `fraction`. For e >= 0 the integer D * 10^e; for e < 0 the quotient floor(D * 2^t / 10^-e) (steps of 10^9, a
-// flag remembering whether any left a remainder), t chosen so that the quotient has 64 bits or more. Either way the value is (Q + f) * 2^p with Q an integer
-// and 0 <= f < 1 known only as "zero or not": the top 63 bits of Q and a sticky flag are all that rounding needs. About 30 microseconds for a cell of a
-// thousand digits, nothing for the cells that get here by hand (halfway cases to the last digit): the work is the cell's digits times its limbs.
+// ties to even, by the exact reader of `std.json` (`to_float`): the cell is rewritten in the grammar of JSON, the digits of the mantissa without leading zeros,
+// `e`, and the decimal exponent that goes with them (`exponent` - `fraction`), parsed into a tape of one number, and read. `to_float` rounds every case
+// correctly since alpibrusl/cancho#361 (the exact subnormal ties, a digit cap of 768 where it was 767); the differential of scripts/float_edge.py and
+// scripts/float_bulk.py is what says so for this tool. One region of a few words per call, a cost only for the cells that get here.
 fn exact_bits[&d](data: &d [byte], fraction: int, exponent: int) -> [] int {
     var answer = 0;
     region r {
-        let a = alloc_slice[r](200, 0);
-        var nl = 1;
-        var nd = 0;
-        var chunk = 0;
-        var chunk_digits = 0;
+        let text = alloc_slice[r](len(data) + 16, byte_of(0));
+        let tape = alloc_slice[r](12, 0);
+        var n = 0;
+        var started = false;
         var i = 0;
-        // D, nine digits at a time
+        // the mantissa digits, skipping the sign and the point and the leading zeros, up to the exponent
         while i < len(data) && int_of(data[i]) != 'e' && int_of(data[i]) != 'E' {
             let c = int_of(data[i]);
+            if c >= '0' && c <= '9' && (started || c != '0') {
+                started = true;
+                text[n] = data[i];
+                n = n + 1;
+            }
             i = i + 1;
-            if c >= '0' && c <= '9' && (nd > 0 || c != '0') {
-                nd = nd + 1;
-                chunk = chunk * 10 + c - '0';
-                chunk_digits = chunk_digits + 1;
-                if chunk_digits == 9 {
-                    nl = scale_add(a, nl, 1000000000, chunk);
-                    chunk = 0;
-                    chunk_digits = 0;
-                }
-            }
         }
-        if chunk_digits > 0 {
-            var p = 1;
-            var k = 0;
-            while k < chunk_digits {
-                p = p * 10;
-                k = k + 1;
-            }
-            nl = scale_add(a, nl, p, chunk);
+        if !started {
+            text[n] = byte_of('0');
+            n = n + 1;
         }
-        let e = exponent - fraction;
-        if nd + e <= 0 - 325 {
-            answer = 0;
-        } else if nd + e - 1 >= 309 {
-            answer = 9218868437227405312;
-        } else {
-            // the value as (Q + f) * 2^p0
-            var p0 = 0;
-            var sticky = false;
-            if e >= 0 {
-                var left = e;
-                while left > 0 {
-                    var step = left;
-                    if step > 9 {
-                        step = 9;
-                    }
-                    var p = 1;
-                    var k = 0;
-                    while k < step {
-                        p = p * 10;
-                        k = k + 1;
-                    }
-                    nl = scale_add(a, nl, p, 0);
-                    left = left - step;
-                }
-            } else {
-                let k10 = 0 - e;
-                var t = k10 * 33220 / 10000 + 66 - bit_length(a, nl);
-                if t < 0 {
-                    t = 0;
-                }
-                p0 = 0 - t;
-                // D * 2^t
-                var left = t;
-                while left > 0 {
-                    var step = left;
-                    if step > 30 {
-                        step = 30;
-                    }
-                    nl = scale_add(a, nl, 1 << step, 0);
-                    left = left - step;
-                }
-                // / 10^k10
-                left = k10;
-                while left > 0 {
-                    var step = left;
-                    if step > 9 {
-                        step = 9;
-                    }
-                    var p = 1;
-                    var k = 0;
-                    while k < step {
-                        p = p * 10;
-                        k = k + 1;
-                    }
-                    if dec.div_small(a, nl, p) != 0 {
-                        sticky = true;
-                    }
-                    while nl > 1 && a[nl - 1] == 0 {
-                        nl = nl - 1;
-                    }
-                    left = left - step;
-                }
-            }
-            // the top 63 bits of Q and what is below them
-            let bl = bit_length(a, nl);
-            var top = 0;
-            var power = p0;
-            if bl <= 63 {
-                top = (a[0] | a[1] << 32) << 63 - bl;
-                power = p0 - (63 - bl);
-            } else {
-                let shift = bl - 63;
-                let w = shift / 32;
-                let off = shift % 32;
-                if off == 0 {
-                    top = a[w] | a[w + 1] << 32;
-                } else {
-                    top = a[w] >> off | a[w + 1] << 32 - off | a[w + 2] << 64 - off;
-                }
-                top = top & 0x7fffffffffffffff;
-                var j = 0;
-                while j < w {
-                    if a[j] != 0 {
-                        sticky = true;
-                    }
-                    j = j + 1;
-                }
-                if off > 0 && a[w] & (1 << off) - 1 != 0 {
-                    sticky = true;
-                }
-                power = p0 + shift;
-            }
-            // value = (top + f) * 2^power, top in [2^62, 2^63); its leading bit is 2^(62 + power)
-            let field = 62 + power + 1023;
-            if field >= 2047 {
-                answer = 9218868437227405312;
-            } else {
-                var drop = 10;
-                if field < 1 {
-                    drop = 10 + 1 - field;
-                }
-                if drop < 64 {
-                    let kept = top >> drop;
-                    let round_bit = top >> drop - 1 & 1;
-                    var low = sticky;
-                    if top & (1 << drop - 1) - 1 != 0 {
-                        low = true;
-                    }
-                    var m = kept;
-                    if round_bit == 1 && (low || kept & 1 == 1) {
-                        m = m + 1;
-                    }
-                    var biased = field;
-                    if biased < 1 {
-                        biased = 1;
-                    }
-                    answer = (biased - 1 << 52) + m;
-                    if answer > 9218868437227405312 {
-                        answer = 9218868437227405312;
-                    }
-                }
-            }
+        text[n] = byte_of('e');
+        n = n + 1;
+        var x10 = exponent - fraction;
+        if x10 < 0 {
+            text[n] = byte_of('-');
+            n = n + 1;
+            x10 = 0 - x10;
+        }
+        // the exponent's digits, most significant first
+        var p = 1;
+        while p * 10 <= x10 {
+            p = p * 10;
+        }
+        while p > 0 {
+            text[n] = byte_of('0' + x10 / p % 10);
+            n = n + 1;
+            p = p / 10;
+        }
+        let nodes = json.parse(text[0..n], tape);
+        if nodes > 0 {
+            answer = bits_of(json.to_float(text[0..n], tape, 0));
         }
     }
     return answer;
-}
-
-// limbs * m + add, in place over the first `n` limbs; answers the new count. m below 2^31 + 1 and add below m, so that a limb times m plus a carry fits an `int`.
-fn scale_add[&a](limbs: &!a [int], n: int, m: int, add: int) -> [] int {
-    var carry = add;
-    var i = 0;
-    while i < n {
-        let p = limbs[i] * m + carry;
-        limbs[i] = p & 0xffffffff;
-        carry = p >> 32;
-        i = i + 1;
-    }
-    var count = n;
-    if carry > 0 {
-        limbs[count] = carry;
-        count = count + 1;
-    }
-    return count;
-}
-
-// The number of bits of the number in the first `n` limbs (0 for zero).
-fn bit_length[&a](limbs: &a [int], n: int) -> [] int {
-    var top = n - 1;
-    while top > 0 && limbs[top] == 0 {
-        top = top - 1;
-    }
-    if limbs[top] == 0 {
-        return 0;
-    }
-    return 32 * top + 64 - clz64(limbs[top]);
 }
 
 // ---- Eisel-Lemire (docs/gap-float.md): the nearest double of w * 10^q, w an unsigned 64-bit number (kept as the bit pattern of an `int`), without a bignum ----
