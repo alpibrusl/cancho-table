@@ -148,7 +148,7 @@ the offset of each. `and` mixed with `or` at one level is `where.mixed-and-or`, 
 
 ## Groups
 
-`--group NAMES` (a list like `--select`'s) and `--agg LIST`, items `count`, `sum:COL`,
+`--group NAMES` (a list like `--select`'s, of any number of columns: the grouping has no limit of its own on them, and a column may be named more than once; the bounds are the group, state and line limits below) and `--agg LIST`, items `count`, `sum:COL`,
 `min:COL`, `max:COL`, `mean:COL[@N]`, `distinct:COL` separated by commas (default `count`). `COL` is a
 name or `#N`; a name with a comma is written `\,` as in a list. `sum`, `min` and `max`
 read their cell as an exact integer (same refusals, with `context` naming the
