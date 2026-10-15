@@ -8,6 +8,10 @@
 > time in it an upper-ish figure for each contender alike. The Linux box (`gram`) was down and was not used: every gram
 > measurement is listed as NOT RUN.
 >
+> **Update 2026-10-15 (the pull request that adds section 15): the spikes S0 and S1 were run; their results are section 15, and where they correct
+> this document the sentence says "Corrected by section 15" in place.** Still no tool code: the spikes are throwaway programs under
+> `scripts/spikes/join/`.
+>
 > References to code are to `origin/main` at `072ce15` (`file:line`). The branch that adds columns renaming
 > (`docs/or-and-columns.md` in the request) **does not exist**: there is no such file and `gh pr list` shows no open pull
 > request on 2026-10-14, so section 4 defines the minimal prefixing rule itself and says what a rename feature would replace.
@@ -28,7 +32,7 @@
 | the bound | the **accounted** bytes of the build, counted by a stated formula, against `--max-state-bytes`; **one budget** shared with the groups or the sort rows that the same call holds; past it `limit.state-too-large` with the build's facts and, when the files are both on disk and the join is inner, a `choose` repair that swaps the sides | the flag keeps its meaning (accounted bytes, **not** resident memory) (section 6.3) |
 | duplicates | all matches are output; the output is bounded by `--max-join-rows` (default 10,000,000) and refused past it with `limit.too-many-join-rows`; **no per-key fan-out limit** | a hot key that no probe row has costs nothing; the output is what costs (section 6.5) |
 | output order | **probe order, then build order** within a probe row; unmatched probe rows (left join) in their place; the same bytes at any thread count | one definition, checkable against a SQL oracle with explicit row numbers (section 7) |
-| threads | the build is single-threaded; the probe is sequential in the first slices, then split by the existing speculative range scan **if and only if** a spike shows a worker can read the parent's build table (section 7.2); until then `--threads` is accepted and reads on one core with the same bytes, as `--order-by` and standard input do | the build table cannot be copied to every thread within a stated bound; the language question is open (section 7.2) |
+| threads | the build is single-threaded; the probe is sequential in the first slices, then split by the existing speculative range scan **if and only if** a spike shows a worker can read the parent's build table (section 7.2) **(Corrected by section 15: a worker can read it, but cannot also hold its own output; the parallel probe waits for one change in cancho, section 15.3)**; until then `--threads` is accepted and reads on one core with the same bytes, as `--order-by` and standard input do | the build table cannot be copied to every thread within a stated bound; the language question is open (section 7.2) |
 | `--where` | evaluated on the joined row, left to right, stopping at the first false, as everywhere; **the leading run of text-only conditions** that name one side is applied to that side first (probe side always; build side only for inner and semi); `--join-where` filters the build side before it is built (the SQL `ON` clause) | defined, visible in `--explain`, and equal to the unpushed evaluation except for which cells a typed key read can refuse (section 8.1) |
 | `--group`, `--agg`, `--order-by`, `--top`, `--limit`, `--from`, `--format` | work on the joined row unchanged; the build state and the groups/sort rows **share** `--max-state-bytes` | the engine sees one more kind of record, not a new plan (section 8.2) |
 | `--report types` | refused with a join in v1 (`args.conflict`); `table ... --join ... --format csv \| table --report types` does it | a report over padded rows needs its own design (section 8.5) |
@@ -315,7 +319,7 @@ field costs its quotes); rows kept out by `--join-where` or by a pushed text con
 is present or not), so a build that is mostly duplicates is small. The formula is **a statement of what the join holds in its arrays; it is not resident memory**: `gmap`
 doubles its storage when it fills (`gmap.cho:136-164` allocates the new storage before the old is freed), the allocator keeps what it freed, and the group-by's 14,000,000 accounted bytes against
 170 MB resident (`docs/gap-groups.md:191-193`) is the size of the gap this kind of flag has. The first slice **measures** accounted against peak resident set on the
-files of section 12 and publishes the ratio, as `docs/gap-groups.md` section 3.4 does; no multiple is claimed before then.
+files of section 12 and publishes the ratio, as `docs/gap-groups.md` section 3.4 does; no multiple is claimed before then. (Measured in section 15.1: 1.65 to 2.26 times on eight build files of a spike, 1.0 to 1.3 when the table is made at its final size.)
 
 The same formula applied to the baseline files of section 12 (**computed**, from the files' bytes, not measured allocation):
 
@@ -401,16 +405,23 @@ What is not settled is how a worker **reads the build table**:
 | option | memory | cost | verdict |
 |---|---|---|---|
 | (a) copy the table into every thread (as the plan is copied, `docs/parallel.md:26`) | `T` times the accounted build, and not within the flag (the flag would count one) | a copy of up to 1 GiB per thread per wave (every wave opens a file, forks a heap and zero-fills a slot, `docs/gap-scan.md:333`) | refused for tables beyond a small cap; at most a fallback for a build under a stated size (a choice: 1 MiB) |
-| (b) a shared read-only `&` of the table crossing `spawn` | one table | none | **spike S0 decides**: `lex-sys/docs/threads.md` section 3 lets a shared `&` reference cross a `spawn` if the thread is joined first, but the payload is one reference, and a worker's own state (`&!`: its buffers, its slot) is another. If one payload cannot hold both, the build table and the job go in one struct reached by `&!` and the workers must not write the table (the language would have to say so), or a cancho change is asked for (the user's standing goal is to fix such gaps upstream) |
+| (b) a shared read-only `&` of the table crossing `spawn` | one table | none | **spike S0 decided (section 15.2): reading works, the join does not fit.** Before the spike: `lex-sys/docs/threads.md` section 3 lets a shared `&` reference cross a `spawn` if the thread is joined first, but the payload is one reference, and a worker's own state (`&!`: its buffers, its slot) is another. If one payload cannot hold both, the build table and the job go in one struct reached by `&!` and the workers must not write the table (the language would have to say so), or a cancho change is asked for (the user's standing goal is to fix such gaps upstream) |
 | (c) a partitioned join: each thread owns `1/T` of the build and the probe rows are routed to the thread that owns the key's hash | one table (partitioned) | the probe is read by every thread, or by one that routes; the output is merged back to probe order by a probe row number | a different algorithm with its own proof of order; only if (b) fails |
 
 **Decision:** no parallel probe in the first slices; J6 builds (b) **if S0 passes**, with the gates of section 10 (same bytes at 2, 3, 4, 8, 16, 64 threads and 1, 7, 64, 1000-byte ranges, a join split at every record). If S0
 fails, J6 is (a) for builds under the cap and the request upstream, and the doc is updated; (c) is not designed here.
 
+**Corrected by section 15.2 (S0 ran).** Half passes. A worker **can** read a table the parent built, concurrently with other workers and with no copy (one `&r` of a struct that holds the
+table is the whole payload of each `spawn`; 5.4 to 6.2 times faster at 8 threads on a 4,000,000-key probe, resident memory unchanged). It **cannot** also be given its own output box or heap:
+a payload is one reference, a struct cannot hold a reference (`a type declaration has no region parameters`), a tuple payload is refused, a `&!` that holds the table cannot go to two
+workers, and the table cannot be copied out of a reference. So (b) is not buildable for a join whose workers write rows, until cancho accepts a payload of one shared and one unique reference
+(the request is drafted in 15.3; it is not filed). The fallback written above applies: J6 is (a) for builds under a cap, or waits. Option (a) was measured too (15.2): it costs 107 MB of resident
+memory per extra thread at 1,000,000 rows and its time stops improving after 4 threads.
+
 **The build.** Single-threaded in v1: a parent inserts rows in file order. Measured proxy (section 12): inserting 1,000,000 distinct keys into `table`'s group map is about 0.2 s on the Mac (a proxy that also sorts and writes the groups), which is more than half of DuckDB's whole 1M x 1M join at one thread (0.35 s), so the build is a large share of a 1M x 1M join and a threaded probe alone will not make that case fast. A **partitioned build** (J8, optional) follows the
 model of `docs/gap-groups.md` section 3.2: workers parse and hash their ranges of the build file, cut their rows into `P` blobs by `hash mod P`, and `P` threads each insert the blobs of their partition **in range order**
 into a table of its own; chains are therefore in build file order, the bytes are unchanged, the build's accounted bytes are the sum of the partitions', and the refusal is the sequential one because a
-partition passing the bound alone means the whole does (`docs/gap-groups.md:160-166`, the decline-and-reread rule). It needs (b) to share the `P` tables with probe workers.
+partition passing the bound alone means the whole does (`docs/gap-groups.md:160-166`, the decline-and-reread rule). It needs (b) to share the `P` tables with probe workers. **Corrected by section 15.1:** a build of the section 6.2 table, with the reading of the file included, took 70 to 74 ms for 1,000,000 rows (min of 5, loaded Mac), not the 0.2 to 0.3 s of the group-count proxy, which sorted and wrote 1,000,000 groups; the spike's reader is simpler than the tool's (no quotes, no ragged rows), so this is a lower bound for the build and not its time, but the argument above that the build is "as large as the probe" is not supported by it, and J8 is worth less than 7.2 says until a real J1 build is timed.
 
 ## 8. Interaction with the rest
 
@@ -503,7 +514,7 @@ row, line and both keys; the check costs nothing). The files can be sorted by `t
 | **AU: authority** | `scripts/manifest.py --check`: the committed manifest, the embedded one and the ceiling in `tools.toml` equal to `main`'s; on Linux the conformance suite runs under `strace` and requires no socket and no write on disk (`docs/architecture.md:73-78`) | a label appears, which would stop the work and be reported |
 | **MCP** | the 14 path forms for `join` (`..`, absolute inside and outside the root, links, empty, over-long); `join: "--root=/"` is a file name; `join: "-"` is `args.bad-value`; `stdin` + `join` works; the `stdin` text never reaches the build side | |
 | **M: mutants** | `scripts/join_mutants.py`, with `test_mutants_apply` checking that each applies. Sites: key equality (bytes vs value), the typed sign of `-0`, the empty rule, the chain order (head vs tail), the left padding width, semi duplicating, anti inverted, USING dropping the wrong column, the prefix, the order of columns, the bound off by one (`>` vs `>=`), the build counted twice, the shared budget not subtracted, `--join-where` applied to the probe, the pushdown of a build condition for `left`, a typed condition pushed, `max-join-rows` off by one, the build refusal before the probe, the swap repair offered for `left` | a mutant survives |
-| **S: spikes** | S0: can a worker thread read a table the parent built (section 7.2). S1: accounted against resident for a `gmap` of 1M keys with side arrays. Both are scripts under `scripts/spikes/` with their numbers in this document before J6 and J1 are merged | |
+| **S: spikes** | S0: can a worker thread read a table the parent built (section 7.2). S1: accounted against resident for a `gmap` of 1M keys with side arrays. Both are scripts under `scripts/spikes/` with their numbers in this document before J6 and J1 are merged | (done: section 15) |
 
 Gram (Linux x86-64) counterparts of EQ, IB, A, ST (with `strace`) and TH are required before merge and are **NOT RUN** here.
 
@@ -511,14 +522,14 @@ Gram (Linux x86-64) counterparts of EQ, IB, A, ST (with `strace`) and TH are req
 
 | slice | what | what it proves |
 |---|---|---|
-| **J0** | this document; spikes S0 and S1 | the design is falsifiable: the table can be shared, and the accounted bytes can be related to the resident |
+| **J0** | this document; spikes S0 and S1 (section 15: run, results below) | the design is falsifiable: the table can be shared, and the accounted bytes can be related to the resident |
 | **J1** | `--join`, `--on` (text keys, no suffix), `--join-type inner`, `--join-prefix`, `join.column-collision`, csv x csv, rows out, `--max-join-rows`, the build bound with `limit.state-too-large` (no repair yet), `--threads` accepted and ignored | the semantics against the oracle (O), the defined order, the formula and the exact bound (A), the shared loops untouched (EQ, IB), the authority unchanged (AU) |
 | **J2** | `left`, `semi`, `anti`; typed keys; composite keys; USING; padding | the null-free semantics: padded cells and typed refusals (O-shapes), `anti` as the answer to "no match" |
 | **J3** | `--where` split (probe/build/after), `--join-where`; `--group`, `--agg`, `--order-by`, `--top`, `--limit`, `--from` over joined rows with the shared budget; `--explain` | the pushdown definition equals the unpushed one except for the key read (a test pair for each), the shared budget (A), the plan document (EXPL) |
 | **J3b** | the query form, `semi`/`anti` contextual, the `query.unsupported` features | Q-EQ, and that no query valid before changes |
 | **J4** | standard input as the probe (the generated copy of the loop, `scripts/stream.py --check`), MCP `join` and `stdin` | ST, MCP |
 | **J5** | jsonl on either side, `--join-delimiter` | the reader contract holds for a join (O with jsonl sides) |
-| **J6** | threaded probe, if S0 passes | TH |
+| **J6** | threaded probe, if S0 passes. **Corrected by section 15:** S0 passes for reading and fails for a worker's own output; J6 waits for the cancho change of 15.3, or is built as option (a) under a cap | TH |
 | **J7** | the swap repair; the build keeps only the columns the plan names | the repair is mechanical and tested; the pruned build is byte-identical (a pair of runs per plan) and measures the memory saved |
 | **J8** (optional) | partitioned build | the same bytes, a faster 1M x 1M |
 | **J9** (later) | `--join-sorted` merge join | the route past memory, a different order, its own gates |
@@ -560,7 +571,7 @@ the `cut` proxy does (0.056 to 0.017 s).
 | **Q2** | **Semi and anti in v1?** They are not SQL join keywords in every dialect (DuckDB and Spark have them), and they widen the surface by two words. | Yes. Without `is null`, `anti` is the only way to ask which rows have no counterpart, and both are cheaper than the others (no fan-out; keys only). |
 | **Q3** | **A per-key fan-out limit (`--max-fanout`) as well as `--max-join-rows`?** | No in v1 (6.5); add it if a hot key in an unused build turns out to matter. It is additive. |
 | **Q4** | **One budget (`--max-state-bytes` for build + groups + sort rows) or a second flag, and a higher default for joins?** The default 64 MiB refuses a 1M-row build (computed in 6.2, 91 to 103 MiB). | One budget (the flag stays one number to reason about). Keep the default; the refusal gives the number. Raise the default only after J1 publishes accounted against resident. |
-| **Q5** | **Is a parallel probe worth waiting for the spike (S0)?** If a worker cannot read the parent's table, the options are a copy per thread (bounded to small builds), a cancho change, or the partitioned join. | Run S0 in J0 before J1 is reviewed. Recommend the cancho change if (b) fails: a read-only shared table is the shape of every future parallel lookup (a dictionary, a join, a `--in-file`). |
+| **Q5** | **Is a parallel probe worth waiting for the spike (S0)?** If a worker cannot read the parent's table, the options are a copy per thread (bounded to small builds), a cancho change, or the partitioned join. | Run S0 in J0 before J1 is reviewed. Recommend the cancho change if (b) fails: a read-only shared table is the shape of every future parallel lookup (a dictionary, a join, a `--in-file`). **Answered by section 15.2: (b) fails for the join; the change is drafted in 15.3 (a payload of one `&r` and one `&!r`).** |
 | **Q6** | **A self-join, or any join where a file changes between the two opens.** The build is read, then the probe; nothing guarantees they see the same bytes. | State it in the help (done in 3.1); no mitigation, as for `--explain`. |
 | **Q7** | **Unseeded hash and crafted keys.** `gmap.hash` has constants and no seed (`gmap.cho:67`), on purpose, for same bytes. A crafted build can make chains long. | Accept: the time of a pass is not a bounded resource anywhere in `table`; the group-by has the same property. Not mitigated in v1; say so in the skill. |
 | **Q8** | **The probe side is the operand, so `table --join big.csv small.csv` (inner) builds the big file.** The tool never swaps; it refuses past the bound and offers the swap. | Keep; the alternative is an order that depends on file sizes. |
@@ -578,5 +589,162 @@ the `cut` proxy does (0.056 to 0.017 s).
   `007/7/-0/0/+7`, its refusal of an empty `:int` cell, its grouping of an empty text cell, and its skipping of a blank line in a one-column file; the current `args.unknown-flag` and `query.unsupported` answers to `--join` and `join`.
 * **Computed:** the accounted bytes of section 6.2 from the files' bytes.
 * **Estimate or choice:** every default (`--max-join-rows`, the 60 and 16 bytes, the cap of option (a), the 8 pairs), the 0.15 to 0.50 s expectations, the targets.
-* **NOT RUN:** every Linux x86-64 measurement (gram was down): DuckDB is not installed there per `docs/bench-linux-duckdb.md`, but csvtk, the proxies, the thread scaling, the instruction counters, the `strace` gates, and the soak are all NOT RUN; no Linux claim is made. Also NOT RUN: any join in `table` (none exists), spikes S0 and S1, the resident-to-accounted ratio of a join build, the oracle itself (it is specified in section 10 and
+* **NOT RUN:** every Linux x86-64 measurement (gram was down): DuckDB is not installed there per `docs/bench-linux-duckdb.md`, but csvtk, the proxies, the thread scaling, the instruction counters, the `strace` gates, and the soak are all NOT RUN; no Linux claim is made. Also NOT RUN: any join in `table` (none exists; the spikes of section 15 are not a join), the oracle itself (it is specified in section 10 and
   written with J1), DuckDB's join with `all_varchar` on the timing files (the timing used type detection, as its default does), and a measurement under a quiet machine.
+
+## 15. Spike results (S0 and S1, 2026-10-15)
+
+> The two spikes of section 10 (row S) and 11 (J0), run before any join code. Programs, drivers and the raw output are in `scripts/spikes/join/` (`README` row in `scripts/spikes/README.md`):
+> `jtab.cho` (the build table of 6.2, on `tools/table/gmap.cho`), `gen.py`, `s1_build.cho` + `s1.py` (S1), `s0/` + `s0.py` (S0), `results/s0.txt|json` and `results/s1.txt|json` (the committed runs).
+> They are throwaway and are not part of the tool. Every figure below is **measured** unless it says *computed* or *reading*.
+
+**Conditions (all of section 15).** One Mac: Apple M4 Max, 16 cores, 64 GB, macOS 26.2 (arm64). **Loaded by other sessions' work**: load average 6.8 to 8.5 on 16 cores during these runs (7.0 before S0, 6.8 before S1), so every time is an upper-ish
+figure and the thread-scaling cells are noisy. Compiler `cancho` rev `e47d647` (the pin of `cancho.toml`, built from `../cancho-compiler-e47d647`), programs built with `--std`, edition 5 (as `gmap.cho`). Resident memory is the kernel's
+`maximum resident set size` from `/usr/bin/time -l` (bytes), one process at a time. **Gram (Linux x86-64) was down: every Linux counterpart is NOT RUN and no Linux claim is made** (the allocator is different there; see 15.1).
+
+### 15.1 S1: the accounted bytes of the build table against the resident set
+
+**What was built.** `jtab.cho` is the table of 6.2 as written: a `gmap.Tab` of the distinct keys, per key `head` and `tail`, the held records concatenated in one buffer, per row `start` and `next`, every array growing by doubling
+(as `gmap` does: a build does not know its row count). It counts `held` as it adds, by the formula of 6.2: for each row `record bytes + 16`, for each new key `key bytes + 60`. `s1_build.cho` streams a CSV file in 1 MiB chunks (the file is never held), takes
+the key as the text before the first comma and the record as the whole line, and adds every data row. Three modes of the program were timed as separate processes: `scan` (read and split the lines, hold nothing: the **floor** of the reader), `build` (the table grown by doubling),
+`presize` (the table made with room for exactly the keys, rows and record bytes of the file, so nothing grows). `verify` re-reads the file and probes every row's key: it must find its own row in its chain (all eight files: every row found).
+
+**Files** (`gen.py`, seed 7, not committed; the same seed gives the same bytes): `k,a,b,c` with the key and three text columns of 18 to 22 bytes; unique keys in random order: `int_*` (a decimal integer, which is a *text* key at this slice: typed keys are J2), `text_*`
+(`u%08x-%d`, about 14 bytes); 100,000 and 1,000,000 rows. Four more to find the worst case: `text_pow2` (2^20 rows: the row-indexed arrays have just filled), `text_pow2p1` (2^20 + 1 rows: every one of them has just doubled and is half empty), `wide_pow2` (100,000 rows
+of 671 bytes whose records total 2^26 + 36 bytes, so the record buffer must double at the very end), `dup_100k` (100,000 rows over 10,000 keys: chains of 10).
+
+**Accounted = the formula, checked.** `s1.py` computes the formula from the file in Python (sum of `record bytes + 16` over rows and `key bytes + 60` over distinct keys) and **stops if the program's own counter differs: they were equal on all eight files**, and so were the row and key counts.
+
+**Minimum of 5 runs** per cell (processes, one thread; the spread of the five peak resident sets was under 0.13 percent on six files and about 2 percent on `text_pow2` and `dup_100k`). Reader floor (`scan`): 2.52 to 2.54 MB on every file.
+
+| file | rows | accounted (bytes) | peak resident, grown by doubling | / accounted | peak resident, pre-sized | / accounted | build ms (incl. reading) | pre-sized ms |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `int_100k` | 100,000 | 15,076,063 | 26,689,536 | **1.77** | 17,809,408 | 1.18 | 6 | 4 |
+| `int_1m` | 1,000,000 | 152,765,177 | 283,557,888 | **1.86** | 152,272,896 | 1.00 | 74 | 60 |
+| `text_100k` | 100,000 | 16,874,484 | 27,803,648 | **1.65** | 19,611,648 | 1.16 | 6 | 5 |
+| `text_1m` | 1,000,000 | 170,766,714 | 293,650,432 | **1.72** | 170,295,296 | 1.00 | 70 | 55 |
+| `text_pow2` | 1,048,576 | 179,166,180 | 298,663,936 | **1.67** | 177,684,480 | 0.99 | 73 | 58 |
+| `text_pow2p1` | 1,048,577 | 179,170,606 | 357,515,264 | **2.00** | 194,527,232 | 1.09 | 83 | 67 |
+| `wide_pow2` | 100,000 | 76,197,790 | 146,096,128 | **1.92** | 78,954,496 | 1.04 | 16 | 11 |
+| `dup_100k` | 100,000 | 9,157,215 | 20,692,992 | **2.26** | 11,812,864 | 1.29 | 5 | 4 |
+
+(Ratios are of the resident set as it is, floor included. Net of the 2.5 MB floor: the grown tables are 1.50 to 1.98 times the accounted bytes and the pre-sized ones 0.98 to 1.07.)
+
+**What the numbers say.**
+
+1. **The formula describes what the arrays hold.** When nothing grows, resident memory net of the reader is 0.98 to 1.07 times the accounted bytes on all eight files (1.00 to 1.01 on the four 100,000-row files, where 2.5 MB is a large part of the total): the constants 16 and 60 of 6.2 are right
+   for this layout, and gate A (the allocation held to the formula) is a gate that can be written and passed.
+2. **The accounted bytes are not the resident set, and the gap is the doubling.** A build that grows its arrays by doubling peaks at **1.65 to 2.26 times** the accounted bytes (1.50 to 1.98 net of the floor), on these shapes. The excess is the half-empty arrays and the old copy
+   alive while the new one is filled (resident peaks when an array doubles). The edge file shows how much one doubling boundary can cost: `text_pow2p1` has 4.4 KB more accounted bytes than `text_pow2` and 58.9 MB more resident (357.5 against 298.7 MB). The worst case measured is `dup_100k` at 2.26,
+   a small, row-heavy table, where the 2.5 MB floor and the record buffer's doubling dominate. A worse case than the eight files may exist: the worst ratio was not searched for beyond these shapes.
+3. **For comparison**, the group-by's gap in `docs/gap-groups.md:191-193` (14,000,000 accounted against 170 MB resident, 12 times) is much wider than this table's (at most 2.26 times here): the join build holds nearly all of its bytes in arrays the formula counts.
+4. **A build is cheap.** The whole build of 1,000,000 rows, reading the file included, took 70 to 74 ms (min of 5); reading and splitting alone (`scan`) took 12 to 13 ms. This is a spike's reader (no quoted fields, no ragged rows, no `--join-where`), so it is a lower bound for a real build, not its time, but it is
+   not the 0.2 to 0.3 s of the group-count proxy of section 12, which sorted and wrote 1,000,000 groups (correction noted in 7.2). Probing every row of the same file again (`verify`, a probe of all 1,000,000 keys plus the reading) took 36 to 39 ms on the 1M files.
+
+**Verdict S1.** `--max-state-bytes` **is a usable guard and is not a bound on memory.** Usable: the count is exact (equal to an independent computation of the formula on eight files), deterministic, grows by the row, and so the refusal is at one byte at every thread count and is
+the place `--explain` can name. Not a bound: on these eight builds the resident set was **1.65 to 2.26 times** the flag's number (and at the default 64 MiB, which is 67,108,864 accounted bytes, a build that stops just under it would hold something like 111 to 152 MB resident at those ratios:
+*computed* from the measured ratios, not measured at that size). The flag's meaning stays what 6.3 says ("the accounted bytes the call holds in tables and rows"); **the help, the refusal's hint and the skill must say that resident memory can be about twice the number while the build grows**, and no document may
+say the flag bounds resident memory. What would close the gap is a growth policy (not doubling every array; not measured here). **Not measured:** Linux (`glibc` malloc returns large blocks differently from macOS's, so the transient of a doubling may differ: NOT RUN on gram), keys longer than 16 bytes,
+records over 700 bytes, builds over 1,048,577 rows, and any build through the real reader.
+
+### 15.2 S0: can a worker thread read a table the parent built?
+
+**Answer: yes to reading, and no to a worker that also holds its own state. The design's option (b) is not buildable for a join today.**
+
+**The mechanism that works** (`s0/s0_shared.cho`). The parent builds the `JTab` of 15.1 (1,000,000 or 100,000 rows of a 16-byte key and a short record) and puts it in a `res struct Shared { tab, probe, n, threads }`; the probe keys (4,000,000 of 16 bytes, half of them in the build) are in a box of
+the same struct. `borrow sh as &sr in { ... spawn(sr, f) ... }`: **one shared reference `&r Shared` is the entire payload of each `spawn`** (`threads.md` section 3: a shared reference may cross, and may cross to several threads at once;
+`atomics.md` section 1.1 had measured the same for a struct with a box and a capability). The worker reads `sh.tab` through the reference (`contents(sh.tab.head)`, `gmap.find_h(sh.tab.keys, ...)`: the field of a shared reference is a shared reference) and answers one integer
+(matches in the high bits, the sum of the build row numbers it found in the low 40). The parent adds the answers up and **every run compares them with its own sequential probe of the whole range: all equal** (7 repetitions in each of 5 processes per cell, 16 cells; the program counts the equal ones and the driver stops on any difference).
+Writes through the shared reference are refused by the compiler (n4 below), so a data race on the table cannot be written. No copy is made: resident memory does not change with the number of threads.
+
+The workers are eight functions, `w0` to `w7`, because the payload is one reference and carries no worker number: a worker's range can come only from its code (a thread count fixed in the program text). That is a limit of the mechanism, not of the measurement.
+
+**Time and memory, 4,000,000 probe keys, minimum of 7 repetitions inside a process and then of 5 processes; ms; resident in MB (peak, build included); load average 7.0 to 8.5.**
+
+| build rows | threads | shared `&r`: probe ms | speedup | resident | option (a), a copy in each job: total ms | speedup | resident |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100,000 | 1 | 56 | 1.00 | 81 | 72 | 1.00 | 199 |
+| 100,000 | 2 | 29 | 1.93 | 81 | 45 | 1.60 | 212 |
+| 100,000 | 4 | 14 | 4.00 | 82 | 32 | 2.25 | 259 |
+| 100,000 | 8 | 9 | 6.22 | 82 | 25 | 2.88 | 313 |
+| 1,000,000 | 1 | 81 | 1.00 | 232 | 104 | 1.00 | 422 |
+| 1,000,000 | 2 | 52 | 1.56 | 232 | 78 | 1.33 | 532 |
+| 1,000,000 | 4 | 28 | 2.89 | 232 | 54 | 1.93 | 753 |
+| 1,000,000 | 8 | 15 | 5.40 | 232 | 61 | 1.70 | 1,174 |
+
+The parent's own sequential probe of the same keys took 56 to 57 ms (100,000 rows) and 82 to 104 ms (1,000,000 rows) in the same runs; the build took 4 ms and 50 to 53 ms. The 2- and 4-thread cells at 1,000,000 are noisy under this load: **an earlier run of the same script, not committed, gave 42 and 22 ms** for the shared
+probe there (1.98 and 3.77 times), the same 15 ms at 8 threads. Read those two cells as a range, not a point; the 8-thread cells agreed in the two runs. The probe here is a bare loop over fixed 16-byte keys, so these are the speed-ups of the table read alone, **not of a join**: a join's workers also scan, split and write rows.
+
+**What does not work** (`s0/neg/`, each must fail to compile or `s0.py` stops; the compiler's first error, as printed):
+
+| program | what it tries | refusal |
+|---|---|---|
+| `n1_ref_field` | a job struct `Job[&f] { sh: &f Shared, out: Box[[int]] }` holding the shared table beside the worker's own box | `a type declaration has no region parameters; only a function can take one` |
+| `n2_ref_field_no_param` | the same field without declaring the region | `` `f` is not a region in scope; a region comes from a `[&f]` parameter or a `borrow` block `` |
+| `n3_tuple_payload` | `spawn((sh, job), f)`: a payload of `&r Shared` and `&!s Job` | `` `spawn`'s payload has type `(&r Shared, &!s Job)`, which cannot cross to a real thread yet `` |
+| `n4_write_through_shared` | a worker holding `&r Shared` writes into a box of the struct (to return rows) | `this is a shared slice `&`, which promises its elements will not change` |
+| `n5_move_table_out_of_ref` | build a `Job` that owns the table from the reference (a second owner of the same boxes) | `expected `JTab`, found `&r JTab`` |
+| `n6_slice_payload` | `spawn(contents(sh.probe)[0..16], f)`: the worker's own range as a slice payload | `` `spawn`'s payload has type `&r [byte]`, which cannot cross to a real thread yet `` |
+| `n7_two_unique_one_table` | the table in a `Job` reached by `&!`, two workers on it | `the `&!` reference `j` reaches is lent to a thread that has not been joined, so it cannot be used again here; a `&!` is the only way to write its object, and two threads writing through copies of it race. Join the first thread before using it again` |
+| `n8_deref_copy_of_res` | `let t = sh.tab;` as a value (a shallow copy of a `res`) | `expected `JTab`, found `&r JTab`` |
+
+So the ways 7.2 left open for *one* payload to hold both the table and the worker's state are closed: a struct cannot hold the reference (n1, n2), a tuple cannot carry two (n3), a slice cannot be the payload (n6), the shared reference cannot carry the worker's output (n4), the
+table cannot be duplicated by handle (n5, n8), and "the build table and the job in one struct reached by `&!`" gives one worker (n7). `thread-payloads.md` (compiler checkout) is the document that designs the missing piece, T-P1 (a tuple payload of leaves), and says it is not built; n3 is that
+refusal.
+
+**What does work today, and its cost.** (i) **A worker answers one integer** (the join result of a thread is one leaf): enough for a count, an existence test or a checksum of a join, not for rows. Each `spawn` and `join` costs **12.7 us** (`s0_spawn`: 100,000 in a row, minimum of 5 runs, one worker that probes one key),
+so a design that returns one answer per probe row through the result is not an option (at 4,000,000 probe keys it would be 51 seconds). (ii) **Option (a), a copy of the table in each worker's job** (`s0/s0_copy.cho`, written as `par.cho` gives a worker its state: a `res struct Job` by one `&!`, one thread per level of a recursion, the job holds a deep
+copy of the table, its range of the keys and its own output box, which only that worker writes): it works and every answer matched, with the columns of the table above. It costs resident memory per extra thread: (313 - 199) / 7 = **16 MB** at 100,000 rows and (1,174 - 422) / 7 = **107 MB** at 1,000,000 rows, against
+none for the shared reference, and its speed-up flattens at 4 threads for the larger table (1.93 at 4, 1.70 at 8) while the shared read reaches 5.4. The 1 MiB cap of 7.2 was a choice and was not measured. (iii) **A partitioned join, option (c), is expressible today** (each worker's `Job` would own its `1/T` of the build and its output box, which `s0_copy` shows
+a job can hold); it was not built or measured, and it needs the probe routed by hash and the output merged back into probe order, which 7.2 did not design.
+
+**Verdict S0.** *Reading: PASS. Join (b) as 7.2 wrote it: FAIL.* J6 as `if S0 passes` does not pass; the fallback written in 7.2 applies (J6 is option (a) under a cap, and the request to cancho). Recommendation (unchanged from Q5, now with evidence): ask cancho for the change in 15.3, and do not build J6 until it exists or until
+a real J1 build and probe say that the threaded probe is worth option (a)'s memory.
+
+### 15.3 The request to cancho (a DRAFT; not filed upstream)
+
+> **Title:** `spawn`: a payload of one shared and one unique reference (`thread-payloads.md` T-P1, with reference leaves)
+>
+> **What a program needs.** A parallel scan with a read-only lookup structure: `cancho-table` builds a hash table (a `res struct` of boxes) in the parent, then wants N workers that each (1) read that table, and (2) own a unique job of their own (a box to write their output into, a forked heap, a range).
+> Today a thread's payload is one reference, so a worker gets either the shared table or its own state, never both. Measured on `e47d647` (`cancho-table` `docs/joins.md` section 15.2, `scripts/spikes/join/s0/`): one `&r Shared` as the payload reads the table from 8 threads with no copy and the
+> right answers (5.4 times faster than one thread on 4,000,000 probes of a 1,000,000-row table); a job that owns a deep copy of the table works but costs 107 MB per extra thread; the combination is refused (`spawn`'s payload has type `(&r Shared, &!s Job)`, which cannot cross to a real thread yet; a type declaration has no region parameters).
+>
+> **Smallest change.** Let `spawn` take a **tuple of references** `(&r A, &!s B)` as its payload: at most one `&!` and any number of `&`, each region held until `join` as today (`threads.md` section 3, `aliasing.md` section 6.1). It is `thread-payloads.md` T-P1 with the reference leaves it already lists, no slices (T-P2) and no disjoint split (T-P3).
+> The trampoline T-P1 describes unpacks the tuple; the result stays one leaf.
+>
+> ```
+> fn work[&r, &s](p: (&r Shared, &!s Job)) -> [] int {
+>     let (sh, job) = p;               // sh: &r Shared (read-only, many threads), job: &!s Job (only this thread)
+>     contents(job.out)[0] = contents(sh.keys)[0];
+>     return 0;
+> }
+> borrow sh as &r in {
+>     borrow mut job as &!s in {
+>         let f = work;
+>         let t = spawn((r, s), f);    // r may be given to other spawns too; s to no other
+>         ...
+>         join(t);
+>     }
+> }
+> ```
+>
+> **Why it is sound** (no new rule): the shared leaf is the case `spawn_thread_ids.cho` already accepts for several threads, the unique leaf is `spawn_struct_ref.cho`'s; they refer to different values, so the two lent regions are independent. **Gates to ask for:** accept: four workers share one `&r Shared` and each owns a different `&!` job box, results byte-identical to one thread; reject: a write through the `&r` (exists today: n4); reject: one `&!` in two spawns (exists: `spawn_two_copies_of_unique`); reject: a tuple with two `&!` of the same value; reject: the tuple's regions escaping `join`.
+>
+> **Alternatives, bigger:** region parameters on type declarations (`res struct Job[&f]`; `aliasing.md` section 3 route 2: refused today with the n1 message), which also lets one job carry the shared table; or a `frozen` read-only view of a `Box` that is `val` and can sit in any job until it is thawed after the join. Either is a larger language change than the tuple.
+>
+> **Not asked:** shared mutable memory, atomics, a queue (`atomics.md`).
+
+### 15.4 What this changes in the plan, and the recommendation for J1
+
+* **J1 is not blocked and needs no change to its design.** The flags, the formula (6.2), the exact bound (6.3), the order, the single budget (Q4) and `--threads` read on one core (7.2) stand. S1 confirms the constants 16 and 60 and gives the gap; S0 touches only J6.
+* **Add to J1's gates:** gate A compares the program's counter with an independent computation of the formula on a set of files that includes the edges of the arrays' growth (`2^20` and `2^20 + 1` rows, a record buffer that doubles at the end of the file, a build of repeated keys), as `s1.py` does; and measures the peak resident set of the same
+  builds and **publishes the ratio** (1.65 to 2.26 on the eight files of the spike, to be re-measured on the real build). The default (`--max-state-bytes` 64 MiB) is **kept** (Q4): the measured ratios do not argue for a different number, and a join on 1,000,000 rows of 70-byte records needs `--max-state-bytes` of about 153 to 171 million (*computed* by the formula, equal to the spike's counter).
+* **Say it in the words the user reads:** the help for `--max-state-bytes`, the refusal's hint and the skill state that the number counts the bytes the join holds and that resident memory can be about twice that while the build grows.
+* **Do not file the cancho request** without the maintainer's yes (the draft in 15.3 is text only). **J6** waits for it, or is built as option (a) under a cap if J1's measurements say the threaded probe is worth 16 to 107 MB per thread; **J8** (a partitioned build) is worth less than 7.2 said until a real build is timed (15.1, point 4).
+* **Not changed:** the staging order, the gates, the defaults, Q1 to Q4 and Q6 to Q12.
+
+### 15.5 What was measured, and what was not (section 15)
+
+* **Measured:** everything marked as such above, on one loaded Mac, one compiler revision, minimum of 5 processes (S1) and of 7 repetitions in each of 5 processes (S0), one thread unless it says threads. The raw output of the committed runs is `scripts/spikes/join/results/`.
+* **Computed:** the 111 to 152 MB at the default bound (the measured ratios applied to 67,108,864), the 153 to 171 million for 1,000,000 rows, the 51 seconds, the per-thread memory differences.
+* **Not measured, or NOT RUN:** every Linux x86-64 measurement (gram was down); any real join, any build through the tool's reader (quotes, ragged rows, `--join-where`), typed keys; a growth policy other than doubling; a partitioned join; the option (a) cap of 1 MiB; thread counts above 8; a quiet machine; the worst ratio of resident to accounted over shapes other than the eight files.

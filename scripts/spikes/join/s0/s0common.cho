@@ -1,0 +1,83 @@
+edition 5;
+
+module s0common;
+
+// SPIKE S0 (throwaway, docs/joins.md section 15): what the experiments share. A build table in the parent (the table of section 6.2, jtab.cho,
+// on gmap), the probe keys in a box, and the one struct (`Shared`) a worker is given a read-only reference to.
+
+import std.buffer;
+import jtab;
+
+// 16 lower-case hex digits of a 64-bit bijective mix of `i`: the key of build row i, or of a key that is not in the build.
+pub fn key_of[&d](dst: &!d [byte], i: int) -> [] int {
+    var x = wrapping_mul(i + 1, 0x9e3779b9 << 32 | 0x7f4a7c15);
+    x = x ^ x >> 33 & 0x7fffffff;
+    x = wrapping_mul(x, 0xff51afd7 << 32 | 0xed558ccd);
+    x = x ^ x >> 33 & 0x7fffffff;
+    var d = 0;
+    while d < 16 {
+        let nib = x >> 4 * d & 15;
+        if nib < 10 {
+            dst[d] = byte_of(48 + nib);
+        } else {
+            dst[d] = byte_of(87 + nib);
+        }
+        d = d + 1;
+    }
+    return 0;
+}
+
+pub res struct Shared {
+    tab: jtab.JTab,
+    probe: Box[[byte]],
+    n: int,
+    threads: int,
+}
+
+// The build: `n` rows, row i = key_of(i) with a short record.
+pub fn build[&h](heap: &!h Heap, n: int) -> [heap] jtab.JTab {
+    var tab = jtab.empty(heap, 1024);
+    var key = box_slice(heap, 18, byte_of(44));
+    var i = 0;
+    while i < n {
+        borrow mut key as &!kw in {
+            key_of(contents(kw)[0..16], i);
+        }
+        borrow key as &kr in {
+            tab = jtab.add(heap, tab, contents(kr)[0..16], contents(kr)[0..18]);
+        }
+        i = i + 1;
+    }
+    unbox_slice(heap, key);
+    return tab;
+}
+
+// The probe keys: row p asks for key_of((p * 7 + 3) mod 2n), so that a bit under half of them are in the build (a key in n..2n is not).
+pub fn probe_keys[&h](heap: &!h Heap, rows: int, n: int) -> [heap] Box[[byte]] {
+    let out = box_slice(heap, rows * 16, byte_of(0));
+    var o = out;
+    borrow mut o as &!ow in {
+        let all = contents(ow);
+        var p = 0;
+        while p < rows {
+            key_of(all[p * 16..p * 16 + 16], (p * 7 + 3) % (2 * n));
+            p = p + 1;
+        }
+    }
+    return o;
+}
+
+// Probe rows lo..hi against the table, read-only: matches in the high bits, the sum of the build row numbers found in the low 40.
+pub fn probe_range[&t](sh: &t Shared, lo: int, hi: int) -> [] int {
+    var matches = 0;
+    var sum = 0;
+    let all = contents(sh.probe);
+    var p = lo;
+    while p < hi {
+        let (c, s) = jtab.probe(sh.tab, all[p * 16..p * 16 + 16]);
+        matches = matches + c;
+        sum = sum + s;
+        p = p + 1;
+    }
+    return matches << 40 | sum & 0xffffffffff;
+}

@@ -1,0 +1,217 @@
+edition 5;
+
+// SPIKE S1 (throwaway, docs/joins.md section 15): the build table of section 6.2 built from a CSV file, and its accounted bytes
+// (the formula of section 6.2, counted as rows are added) printed beside the build time, so that a driver can set them against the
+// peak resident set the process reports. The file is streamed in 1 MiB chunks (never held whole).
+//
+//     s1_build scan   FILE    read and split the lines, hold nothing: the floor of the reader
+//     s1_build build  FILE    read, and add every data row (key = the text before the first comma, record = the line) to the table
+//     s1_build presize FILE KEYS ROWS BYTES   as build, into a table made with room for that many keys, rows and record bytes (nothing grows)
+//     s1_build verify FILE    as build, then read the file again and probe every row's key: it must find its own row in its chain
+// Prints one line: mode rows distinct accounted build_ms probe_ms probe_ok
+
+import std.buffer;
+import std.bytes;
+import std.io;
+import jtab;
+
+// One pass over the file. `what`: 0 split lines only, 1 add rows to `t`, 2 probe rows against `t`.
+// Answers (table, data rows seen, probe rows that found themselves in their chain).
+fn pass[&h, &f](heap: &!h Heap, file: &!f File, t: jtab.JTab, what: int) -> [heap, file_read] (jtab.JTab, int, int) {
+    var tab = t;
+    var acc = buffer.empty(heap, 1052672);
+    var rest = buffer.empty(heap, 4096);
+    var rows = 0;
+    var line_no = 0;
+    var found = 0;
+    var going = true;
+    while going {
+        borrow mut acc as &!aw in {
+            match file_read(file, buffer.room(aw)) {
+                Read::Got(n) => {
+                    buffer.filled(aw, n);
+                }
+                Read::End => {
+                    going = false;
+                }
+                Read::Failed(reason) => {
+                    going = false;
+                }
+            }
+        }
+        var used = 0;
+        borrow acc as &ar in {
+            let all = buffer.bytes(ar);
+            var at = 0;
+            var more = true;
+            while more {
+                let nl = index_of_byte(all[at..len(all)], byte_of(10));
+                if nl < 0 {
+                    more = false;
+                } else {
+                    let line = all[at..at + nl];
+                    if line_no > 0 {
+                        let comma = index_of_byte(line, byte_of(44));
+                        if comma >= 0 {
+                            let key = line[0..comma];
+                            if what == 1 {
+                                tab = jtab.add(heap, tab, key, line);
+                            } else if what == 2 {
+                                var hit = false;
+                                borrow tab as &tr in {
+                                    var r = jtab.first(tr, key);
+                                    while r >= 0 {
+                                        if r == rows {
+                                            hit = true;
+                                        }
+                                        r = jtab.next_row(tr, r);
+                                    }
+                                }
+                                if hit {
+                                    found = found + 1;
+                                }
+                            }
+                            rows = rows + 1;
+                        }
+                    }
+                    line_no = line_no + 1;
+                    at = at + nl + 1;
+                }
+            }
+            used = at;
+        }
+        // keep the part of a line that is not complete
+        borrow mut rest as &!rw in {
+            buffer.clear(rw);
+        }
+        borrow acc as &ar in {
+            let all = buffer.bytes(ar);
+            rest = buffer.append(heap, rest, all[used..len(all)]);
+        }
+        borrow mut acc as &!aw in {
+            buffer.clear(aw);
+        }
+        borrow rest as &rr in {
+            acc = buffer.append(heap, acc, buffer.bytes(rr));
+        }
+    }
+    buffer.drop(heap, acc);
+    buffer.drop(heap, rest);
+    return (tab, rows, found);
+}
+
+fn open_pass[&h, &x, &p](heap: &!h Heap, fs: &x Fs(""), path: &p [byte], t: jtab.JTab, what: int) -> [heap, file_read, fs_read("")] (jtab.JTab, int, int) {
+    match open_read(fs, path) {
+        Opened::Ok(file) => {
+            var fl = file;
+            var tab = t;
+            var rows = 0;
+            var found = 0;
+            borrow mut fl as &!fw in {
+                let (t2, r2, f2) = pass(heap, fw, tab, what);
+                tab = t2;
+                rows = r2;
+                found = f2;
+            }
+            file_close(fl);
+            return (tab, rows, found);
+        }
+        Opened::Failed(reason) => {
+            return (t, 0 - 1, 0);
+        }
+    }
+}
+
+fn parse_nat[&p](text: &p [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + int_of(text[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    var what = 0;
+    var verify = false;
+    var sized = false;
+    var sk = 0;
+    var sr = 0;
+    var sb = 0;
+    borrow args as &g in {
+        let a1 = arg(g, 1);
+        if int_of(a1[0]) == 'b' {
+            what = 1;
+        } else if int_of(a1[0]) == 'v' {
+            what = 1;
+            verify = true;
+        } else if int_of(a1[0]) == 'p' {
+            // pre-sized: s1_build presize FILE KEYS ROWS RECORD_BYTES
+            what = 1;
+            sized = true;
+            sk = parse_nat(arg(g, 3));
+            sr = parse_nat(arg(g, 4));
+            sb = parse_nat(arg(g, 5));
+        }
+    }
+    var rows = 0;
+    var distinct = 0;
+    var accounted = 0;
+    var build_ms = 0;
+    var probe_ms = 0;
+    var found = 0;
+    borrow mut heap as &!h in {
+        borrow clock as &c in {
+            borrow fs as &x in {
+                borrow args as &g2 in {
+                    var tab = jtab.empty(h, 1024);
+                    if sized {
+                        jtab.drop(h, tab);
+                        tab = jtab.sized(h, sk, sr, sb);
+                    }
+                    let t0 = clock_ms(c);
+                    let (t2, r2, f2) = open_pass(h, x, arg(g2, 2), tab, what);
+                    tab = t2;
+                    rows = r2;
+                    build_ms = clock_ms(c) - t0;
+                    if verify {
+                        let t1 = clock_ms(c);
+                        let (t3, r3, f3) = open_pass(h, x, arg(g2, 2), tab, 2);
+                        tab = t3;
+                        found = f3;
+                        probe_ms = clock_ms(c) - t1;
+                    }
+                    borrow tab as &tr in {
+                        distinct = jtab.distinct(tr);
+                        accounted = jtab.held_of(tr);
+                    }
+                    jtab.drop(h, tab);
+                }
+            }
+        }
+        borrow mut io as &!i in {
+            io.print_int(i, rows);
+            io.space(i);
+            io.print_int(i, distinct);
+            io.space(i);
+            io.print_int(i, accounted);
+            io.space(i);
+            io.print_int(i, build_ms);
+            io.space(i);
+            io.print_int(i, probe_ms);
+            io.space(i);
+            io.print_int(i, found);
+            io.newline(i);
+        }
+    }
+    release(clock);
+    release(args);
+    release(fs);
+    release(heap);
+    release(io);
+    return 0;
+}

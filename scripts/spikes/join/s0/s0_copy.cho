@@ -1,0 +1,162 @@
+edition 5;
+
+// SPIKE S0, option (a) of docs/joins.md section 7.2 (a copy of the table in every thread), the way `par.cho` gives a worker its own state: a `res struct Job`
+// reached by one `&!` reference, one thread per level of a recursion. The job holds a deep copy of the build table (jtab.clone), its range of the probe keys and
+// a box for its output (the build row each probe row found, or -1), which only that worker writes. Prints what that costs:
+//
+//     s0_copy BUILD_ROWS PROBE_ROWS THREADS REPS     prints: build_ms clone_ms_one total_ms matches ok     (total_ms = clones + probes, the minimum of REPS)
+
+import std.io;
+import jtab;
+import s0common;
+
+res struct Job {
+    tab: jtab.JTab,
+    probe: Box[[byte]],
+    out: Box[[int]],
+    result: int,
+}
+
+fn work[&r](w: &!r Job) -> [] int {
+    var matches = 0;
+    var sum = 0;
+    let keys = contents(w.probe);
+    let out = contents(w.out);
+    var p = 0;
+    while p < len(out) {
+        let row = jtab.first(w.tab, keys[p * 16..p * 16 + 16]);
+        out[p] = row;
+        if row >= 0 {
+            matches = matches + 1;
+            sum = sum + row;
+        }
+        p = p + 1;
+    }
+    w.result = matches << 40 | sum & 0xffffffffff;
+    return 0;
+}
+
+fn add_up(a: int, b: int) -> [] int {
+    return (a >> 40) + (b >> 40) << 40 | (a & 0xffffffffff) + (b & 0xffffffffff) & 0xffffffffff;
+}
+
+fn fan[&p, &t](parent: &!p Heap, sh: &t s0common.Shared, k: int, n: int) -> [heap, conc] int {
+    if k >= n {
+        return 0;
+    }
+    let lo = sh.n / n * k;
+    var hi = lo + sh.n / n;
+    if k == n - 1 {
+        hi = sh.n;
+    }
+    let range = box_slice(parent, (hi - lo) * 16, byte_of(0));
+    var rg = range;
+    borrow mut rg as &!rw in {
+        let to = contents(rw);
+        let from = contents(sh.probe);
+        var i = 0;
+        while i < (hi - lo) * 16 {
+            to[i] = from[lo * 16 + i];
+            i = i + 1;
+        }
+    }
+    var job = Job { tab: jtab.clone(parent, sh.tab), probe: rg, out: box_slice(parent, hi - lo, 0), result: 0 };
+    var rest = 0;
+    borrow mut job as &!kj in {
+        let body = work;
+        let thread = spawn(kj, body);
+        rest = fan(parent, sh, k + 1, n);
+        join(thread);
+    }
+    let Job { tab, probe, out, result } = job;
+    jtab.drop(parent, tab);
+    unbox_slice(parent, probe);
+    unbox_slice(parent, out);
+    return add_up(result, rest);
+}
+
+fn parse_nat[&p](text: &p [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + int_of(text[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    var build_rows = 0;
+    var probe_rows = 0;
+    var threads = 1;
+    var reps = 1;
+    borrow args as &g in {
+        build_rows = parse_nat(arg(g, 1));
+        probe_rows = parse_nat(arg(g, 2));
+        threads = parse_nat(arg(g, 3));
+        reps = parse_nat(arg(g, 4));
+    }
+    release(args);
+    var build_ms = 0;
+    var clone_ms = 0;
+    var total_ms = 1000000000;
+    var matches = 0;
+    var ok = 0;
+    borrow mut heap as &!h in {
+        borrow clock as &c in {
+            let t0 = clock_ms(c);
+            let tab = s0common.build(h, build_rows);
+            build_ms = clock_ms(c) - t0;
+            let probe = s0common.probe_keys(h, probe_rows, build_rows);
+            var sh = s0common.Shared { tab: tab, probe: probe, n: probe_rows, threads: threads };
+            var want = 0;
+            borrow sh as &sr in {
+                want = s0common.probe_range(sr, 0, probe_rows);
+                let tc = clock_ms(c);
+                let copy = jtab.clone(h, sr.tab);
+                clone_ms = clock_ms(c) - tc;
+                jtab.drop(h, copy);
+            }
+            var r = 0;
+            while r < reps {
+                var got = 0;
+                let tp = clock_ms(c);
+                borrow sh as &sr in {
+                    got = fan(h, sr, 0, threads);
+                }
+                let tq = clock_ms(c);
+                if tq - tp < total_ms {
+                    total_ms = tq - tp;
+                }
+                if got == want {
+                    ok = ok + 1;
+                }
+                r = r + 1;
+            }
+            matches = want >> 40;
+            let s0common.Shared { tab, probe, n, threads } = sh;
+            jtab.drop(h, tab);
+            unbox_slice(h, probe);
+        }
+        borrow mut io as &!i in {
+            io.print_int(i, build_ms);
+            io.space(i);
+            io.print_int(i, clone_ms);
+            io.space(i);
+            io.print_int(i, total_ms);
+            io.space(i);
+            io.print_int(i, matches);
+            io.space(i);
+            io.print_int(i, ok);
+            io.newline(i);
+        }
+    }
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}

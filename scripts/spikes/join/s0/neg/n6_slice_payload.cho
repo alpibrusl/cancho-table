@@ -1,0 +1,26 @@
+edition 5;
+
+// NEGATIVE: a payload that is a slice of the shared probe keys (the worker's own range): `threads.md` section 2, one pointer-width leaf, `thread-payloads.md` T-P2.
+import s0common;
+
+fn work[&r](keys: &r [byte]) -> [] int {
+    return len(keys);
+}
+
+fn start[&r](sh: &r s0common.Shared) -> [conc] int {
+    let f = work;
+    let t = spawn(contents(sh.probe)[0..16], f);
+    return join(t);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    release(heap);
+    return 0;
+}

@@ -1,0 +1,26 @@
+edition 5;
+
+// NEGATIVE: build a job that owns the table from a reference to the shared struct (a second worker's copy of the handles without a deep copy).
+import s0common;
+import jtab;
+
+res struct Job {
+    tab: jtab.JTab,
+    out: Box[[int]],
+}
+
+fn make[&r, &h](heap: &!h Heap, sh: &r s0common.Shared) -> [heap] Job {
+    return Job { tab: sh.tab, out: box_slice(heap, 8, 0) };
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    release(heap);
+    return 0;
+}

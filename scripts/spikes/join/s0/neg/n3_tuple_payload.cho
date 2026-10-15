@@ -1,0 +1,30 @@
+edition 5;
+
+// NEGATIVE: a payload of two leaves, the shared table and the worker's own output: `thread-payloads.md` T-P1, designed and not built.
+import s0common;
+
+res struct Job {
+    out: Box[[int]],
+}
+
+fn work[&r, &s](p: (&r s0common.Shared, &!s Job)) -> [] int {
+    return 0;
+}
+
+fn start[&r, &s](sh: &r s0common.Shared, job: &!s Job) -> [conc] int {
+    let f = work;
+    let t = spawn((sh, job), f);
+    return join(t);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    release(heap);
+    return 0;
+}

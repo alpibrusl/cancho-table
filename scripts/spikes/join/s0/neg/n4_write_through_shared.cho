@@ -1,0 +1,21 @@
+edition 5;
+
+// NEGATIVE: a worker that holds the table by `&r` and writes its answer into a box that lives in the same struct (what a shared payload would need to carry its own output).
+import s0common;
+
+fn work[&r](sh: &r s0common.Shared) -> [] int {
+    contents(sh.probe)[0] = byte_of(1);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    release(heap);
+    return 0;
+}
