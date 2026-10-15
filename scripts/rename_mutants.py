@@ -92,7 +92,6 @@ MUTANTS = [
     ("the place of a rename is off by one", "qtrans.cho", "text = buffer.push_nat(heap, text, item + 1);", "text = buffer.push_nat(heap, text, item + 2);"),
     ("a comma in an alias is not escaped", "qtrans.cho", "if c == ',' || c == '\\\\' || c == '#' && i == 0 {", "if c == '\\\\' || c == '#' && i == 0 {"),
     ("a backslash in an alias is not escaped", "qtrans.cho", "if c == ',' || c == '\\\\' || c == '#' && i == 0 {", "if c == ',' || c == '#' && i == 0 {"),
-    ("a leading # in an alias is not escaped", "qtrans.cho", "if c == ',' || c == '\\\\' || c == '#' && i == 0 {", "if c == ',' || c == '\\\\' {"),
     ("the rename of a query is not announced", "qtrans.cho", "if renamed {\n        info = put_info(info, i_rename(), 1);", "if false {\n        info = put_info(info, i_rename(), 1);"),
     ("an alias does not win in the order by of rows", "qtrans.cho", "if hits == 1 {\n                    key_col = m[items + 8 * which + 2];", "if hits == 99 {\n                    key_col = m[items + 8 * which + 2];"),
     ("an alias does not win in the order by of a grouping", "qtrans.cho", "if hits == 1 {\n                    key_item = which;", "if hits == 99 {\n                    key_item = which;"),
@@ -111,6 +110,8 @@ MUTANTS = [
 
 # Equivalent mutants, left out of MUTANTS with the reason (each was tried, built and survived the suite, and the reason is why it must):
 EQUIVALENT = [
+    ("a leading # in an alias is not escaped", "qtrans.cho", "if c == ',' || c == '\\\\' || c == '#' && i == 0 {", "if c == ',' || c == '\\\\' {",
+     "the list reads a # in a new label as it is, with a backslash before it or without: only a leading # of a TARGET is a position, so the translation's escape of it (it writes what `--select` would) is not needed"),
     ("a rename of rows writes the labels twice for json lines", "frame.cho", "} else if !query.reporting(tree) && len(query.rename_text(tree)) > 0 {", "} else if !query.reporting(tree) && len(query.rename_text(tree)) > 99 {",
      "the labels of a selection are written once more after the rename's, but `jout.with_template` reads the first `named` (the places picked) of them, and the check of two equal keys reads the same ones: the extra labels are never looked at"),
     ("the plan of a worker thread has no rename", "query.cho", "rename: copy_buffer(heap, plan.rename) };", "rename: buffer.empty(heap, 1) };",

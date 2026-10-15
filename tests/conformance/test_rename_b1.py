@@ -436,14 +436,34 @@ class Refusals(Base):
         self.assertEqual((len(d["available"]), d["available_truncated"]), (50, False), r)
 
     def test_the_repair_of_a_grouping_keeps_the_alias_of_an_aggregate(self):
-        r = self.r("--query", "select region, count(*) as n from 'sales.csv' group by units")
+        r = self.r("--query", "select region, count(*) as n from 'sales.csv' group by region order by sum(units)")
         self.assertEqual(r.first_rule(), "query.group-mismatch", r)
-        hint = json.dumps(r.error())
-        self.assertIn("count(*) as n", hint)
+        argv = r.error()["repair"]["options"][0]["argv"]
+        self.assertIn("--rename", argv)
+        self.assertEqual(argv[argv.index("--rename") + 1], "#2=n", argv)
+        again = run_argv(argv + ["--format", "csv"])
+        self.assertEqual(again.status, 0, again)
+        self.assertEqual(again.stdout.decode().splitlines()[0], "region,n,sum:units", again)
+
+    def test_the_repair_of_a_mix_keeps_the_aliases(self):
+        r = self.r("--query", "select region as r, units as u from 'sales.csv' where region = 'north' or units = '3' and price = '1.50'")
+        self.assertEqual(r.first_rule(), "query.mixed-and-or", r)
+        for option in r.error()["repair"]["options"]:
+            argv = option["argv"]
+            self.assertEqual(argv[argv.index("--rename") + 1], "#1=r,#2=u", argv)
+            self.assertEqual(run_argv(argv + ["--format", "csv"]).stdout.decode().splitlines()[0], "r,u")
+
+    def test_fifty_one_labels_are_truncated(self):
+        names = ["c%d" % i for i in range(51)]
+        self.s.write("w51.csv", ",".join(names) + "\n" + ",".join("1" for _ in names) + "\n")
+        r = self.r("--rows", "--rename", "zz=x", "w51.csv")
+        d = r.error()["detail"]
+        self.assertEqual((len(d["available"]), d["available_truncated"], d["columns"]), (50, True, 51), r)
 
     def test_discover_takes_no_rename(self):
         r = self.r("--input-format", "jsonl", "--discover", "--rename", "a=b", stdin=b'{"a":1}\n')
         self.assertEqual((r.first_rule(), r.status), ("args.conflict", 2), r)
+        self.assertTrue(r.error()["detail"]["flags"].startswith("--discover"), r)          # --discover's conflict, not only the shape's
 
     def test_the_syntax_error_reports_the_list_and_the_offset(self):
         r = self.r("--select", "a,b", "--rename", "a=x,b", "f.csv")
@@ -684,6 +704,30 @@ class QueryPinned(Base):
             rows = parse_csv(r.stdout)
             self.assertEqual(rows[0], header, q)
             self.assertEqual([row[0] for row in rows[1:]], first, q)
+
+    def test_awkward_aliases_round_trip_through_the_rename_the_query_writes(self):
+        for alias in ("\\", "a\\b", "#5", "#", ",", "x,y", "x=y", "=", "'", "é", "a b", "\\,", "#\\"):
+            name = '"' + alias.replace('"', '""') + '"'
+            q = self.r("--query", "select units as %s, region from 'sales.csv' limit 1" % name, "--format", "csv")
+            self.assertEqual(q.status, 0, (alias, q))
+            rows = parse_csv(q.stdout)
+            self.assertEqual(rows[0], [alias, "region"], (alias, q))
+            self.assertEqual(rows[1], ["3", "north"], (alias, q))
+
+    def test_two_aggregates_of_one_label_and_no_alias_are_main_s_first_match(self):
+        # the golden of A1 holds this to main's bytes; here the answer: --sort finds the first column of the label (sum:units, the typed one), as it always did
+        q = self.r("--query", "select region, sum(units::int), sum(units) from 'sales.csv' group by region order by sum(units)", "--format", "csv")
+        f = self.r("--group", "region", "--agg", "sum:units:int,sum:units", "--sort", "sum:units", "--format", "csv", "sales.csv")
+        self.assertEqual((q.status, q.stdout), (0, f.stdout), q)
+        # with an alias on either it is ambiguous, and refused
+        q = self.r("--query", "select region, sum(units::int) as t, sum(units) as t from 'sales.csv' group by region order by t")
+        self.assertEqual(q.first_rule(), "query.group-mismatch", q)
+        text = "select region, sum(units::int), sum(units) as \"sum:units\" from 'sales.csv' group by region order by sum(units)"
+        q = self.r("--query", text)
+        with self.assertRaises(query_ref.QueryError) as caught:
+            query_ref.translate(text)
+        self.assertEqual((q.first_rule(), q.error()["detail"]["offset"]), ("query.group-mismatch", caught.exception.offset), q)
+        self.assertEqual(caught.exception.expected, query_ref.WHAT_SORT_AMBIGUOUS)
 
     def test_an_alias_is_not_seen_by_where_or_group_by(self):
         r = self.r("--query", "select units as u from 'sales.csv' where u = 3")
