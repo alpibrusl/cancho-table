@@ -539,7 +539,7 @@ WHERE_HAND = [
   + [" and ".join(["a = 1"] * 64) + " or a = 2", " and ".join(["a = 1"] * 64) + " and a = 2 or a = 3"]
 WHERE_HAND += [e for e, _ in REPAIRS] + NO_REPAIR
 
-QUERY_HAND = [q[0] for q in query_cases.REFUSALS] + [q for q, _ in QUERY_REPAIRS] + QUERY_NO_REPAIR \
+QUERY_HAND = [q[0] for q in query_cases.PINNED] + [q for q, _ in QUERY_REPAIRS] + QUERY_NO_REPAIR \
     + [query_ceiling(kind, n)[0] for kind, n in CEILING_OFFERED + CEILING_REFUSED] \
     + ["select a from 't.csv' where " + " and ".join("a = %d" % k for k in range(n)) + " or a = 1" for n in (63, 64, 65)] \
     + ["select a from 't.csv' where " + " and ".join("a = %d" % k for k in range(n)) for n in (64, 65)]

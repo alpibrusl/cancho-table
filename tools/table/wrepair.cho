@@ -6,8 +6,11 @@ module wrepair;
 // offers the two ways to read it as whole invocations: by precedence (`and` before `or`, as SQL does) and left to right. A reading is offered only if `--where` takes it whole.
 
 import std.buffer;
+import std.bytes;
 import std.json;
+import expr;
 import orparse;
+import query;
 import toolbox.fail;
 import finish;
 
@@ -56,4 +59,68 @@ fn option[&h, &g, &t](heap: &!h Heap, w: json.Writer, args: &g Args, where_at: i
         buffer.drop(heap, joined);
     }
     return o;
+}
+
+// ---- `not COND`: the repair of the refusal where.syntax says "( after not" (docs/or-and-columns.md section 3.1) ----------------------------------------------------------
+
+// The expression with every `not COND` that the grammar refuses rewritten as the condition's exact complement (`not a < 1` is `a >= 1`, `not a in (1, 2)` is `a not in (1, 2)`; `expr.complement`),
+// one at a time, each time where the grammar's refusal is. Answers it and true when the grammar then takes it whole; else an empty buffer and false (another fault is in the text, or
+// the `not` is not the bare word the grammar read).
+pub fn not_repair[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] (buffer.Buffer, bool) {
+    var cur = buffer.append(heap, buffer.empty(heap, len(src) + 16), src);
+    var rounds = 0;
+    var state = 0;
+    while state == 0 && rounds < 70 {
+        var next = buffer.empty(heap, 1);
+        borrow cur as &cr in {
+            let text = buffer.bytes(cr);
+            let (p, w, at) = orparse.parse(heap, query.empty(heap), text);
+            query.drop(heap, p);
+            if w == 0 {
+                state = 1;
+            } else if w != 23 {
+                state = 2;
+            } else {
+                // the `not` is the word before the one the refusal is at
+                var k = at;
+                while k > 0 && (int_of(text[k - 1]) == 32 || int_of(text[k - 1]) == 9 || int_of(text[k - 1]) == 10 || int_of(text[k - 1]) == 13) {
+                    k = k - 1;
+                }
+                if k < 3 || !bytes.equal(text[k - 3..k], "not") || k >= 4 && int_of(text[k - 4]) == '\\' {
+                    state = 2;
+                } else {
+                    let (comp, end, ok) = expr.complement(heap, text, at);
+                    if ok {
+                        next = buffer.append(heap, next, text[0..k - 3]);
+                        borrow comp as &kr in {
+                            next = buffer.append(heap, next, buffer.bytes(kr));
+                        }
+                        next = buffer.append(heap, next, text[end..len(text)]);
+                    } else {
+                        state = 2;
+                    }
+                    buffer.drop(heap, comp);
+                }
+            }
+        }
+        if state == 0 {
+            buffer.drop(heap, cur);
+            cur = next;
+        } else {
+            buffer.drop(heap, next);
+        }
+        rounds = rounds + 1;
+    }
+    if state == 1 && rounds > 1 {
+        return (cur, true);
+    }
+    buffer.drop(heap, cur);
+    return (buffer.empty(heap, 1), false);
+}
+
+// The invocation with `--where` replaced by `fixed`, as the one option of a choice.
+pub fn offer[&h, &g, &f](heap: &!h Heap, w: json.Writer, args: &g Args, where_at: int, whole: bool, fixed: &f [byte]) -> [heap, args] json.Writer {
+    var o = fail.choose_open(heap, w);
+    o = option(heap, o, args, where_at, whole, fixed);
+    return fail.choose_close(heap, o);
 }

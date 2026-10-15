@@ -19,10 +19,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-for key, value in (("OR_A1_SQL", "500"), ("OR_A1_REF", "500"), ("OR_A1_PROGRAM", "700"), ("OR_A1_SOUPS", "2500"), ("OR_A1_FUZZ", "2000"), ("OR_A1_QSOUPS", "2500")):
+for key, value in (("NOT_A2_SQL", "400"), ("NOT_A2_REF", "400"), ("NOT_A2_PROGRAM", "500"), ("NOT_A2_SOUPS", "2000"), ("NOT_A2_FUZZ", "1500"), ("NOT_A2_QSOUPS", "1500"), ("NOT_A2_QPLANS", "150"), ("OR_A1_SQL", "500"), ("OR_A1_REF", "500"), ("OR_A1_PROGRAM", "700"), ("OR_A1_SOUPS", "2500"), ("OR_A1_FUZZ", "2000"), ("OR_A1_QSOUPS", "2500")):
     os.environ.setdefault(key, value)
 
-TESTS = ["test_or_a1_query", "test_or_a1", "test_or_a1_compat"]
+TESTS = ["test_not_a2_query", "test_not_a2", "test_or_a1_query", "test_or_a1", "test_not_a2_compat", "test_or_a1_compat"]
 
 MUTANTS = [
     # ---- the grammar of --where (orparse.cho)
@@ -37,8 +37,8 @@ MUTANTS = [
     ("a group needs no closing parenthesis", "orparse.cho", "if i < len(src) && int_of(src[i]) == ')' {\n                        i = i + 1;", "if true {\n                        i = i + 1;"),
     ("a stray ) after the expression is accepted", "orparse.cho", "if i < len(src) {\n            what = 4;\n            at = i;\n        }\n    }\n    plan = query.bump", "if false {\n            what = 4;\n            at = i;\n        }\n    }\n    plan = query.bump"),
     ("the words after a unit inside a group are the end of the expression's", "orparse.cho", "if depth == 0 {\n                        what = 4;\n                    } else {\n                        what = 22;\n                    }", "what = 4;"),
-    ("an or inside a group is not noticed (the plan is a conjunction)", "orparse.cho", "hasor = o2;", "hasor = hasor;"),
-    ("a plan with an or carries no program", "orparse.cho", "if what == 0 && hasor {", "if what == 0 && false {"),
+    ("an or inside a group is not noticed (the plan is a conjunction)", "orparse.cho", "flowed = o2 || group_kind == 6;", "flowed = flowed || group_kind == 6;"),
+    ("a plan with an or carries no program", "orparse.cho", "if what == 0 && flowed {", "if what == 0 && false {"),
     # ---- the compiler of the program
     ("the exits of a leaf are swapped", "orparse.cho", "vec.set(flow, 2 * leaf, t);\n        vec.set(flow, 2 * leaf + 1, f);", "vec.set(flow, 2 * leaf, f);\n        vec.set(flow, 2 * leaf + 1, t);"),
     ("an or is compiled as an and", "orparse.cho", "        if kind == 1 {\n            if j + 1 < count {\n                emit(tr, flow, kid, next, f);", "        if kind != 1 {\n            if j + 1 < count {\n                emit(tr, flow, kid, next, f);"),
@@ -84,12 +84,11 @@ MUTANTS = [
     ("the note about an in lists the first value only", "explainor.cho", "written = written + 1;\n                    v = v + 1;", "written = written + 1;\n                    v = v + 100;"),
     ("a note is made for a run of one", "explainor.cho", "if starts && length >= 2 && values <= 1024 {", "if starts && length >= 1 && values <= 1024 {"),
     # ---- the query form (qparse.cho, qtrans.cho, qrepair.cho)
-    ("the query's ceiling of parentheses is 9", "qparse.cho", "if depth >= 8 {\n                return qarena.fail(m, 1, 29, at);", "if depth >= 9 {\n                return qarena.fail(m, 1, 29, at);"),
+    ("the query's ceiling of parentheses is 9", "qparse.cho", "if depth >= 8 {\n            return qarena.fail(m, 1, 29, at);\n        }\n        step(m);", "if depth >= 9 {\n            return qarena.fail(m, 1, 29, at);\n        }\n        step(m);"),
     ("the query's mix is not noticed", "qparse.cho", "} else if kind != connective && m[qarena.s_mix()] == 0 {", "} else if false {"),
     ("the query's mix is noticed at its end", "qparse.cho", "m[qarena.s_mix()] = here + 1;", "m[qarena.s_mix()] = start_of(m, 0) + 1;"),
-    ("the query's group is not closed", "qparse.cho", "if expect_sym(m, qlex.y_close(), 8) != 0 {\n                return 1;\n            }\n            structure(m, 0 - 2, close);", "structure(m, 0 - 2, close);"),
-    ("the query's ceiling of conditions is 65", "qparse.cho", "if m[qarena.s_cond_count()] >= 64 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    let (c, t) = typed", "if m[qarena.s_cond_count()] >= 65 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    let (c, t) = typed"),
-    ("a group does not count its conditions at its start", "qparse.cho", "if m[qarena.s_cond_count()] >= 64 {\n                return qarena.fail(m, 1, 27, at);\n            }\n            if depth", "if false {\n                return qarena.fail(m, 1, 27, at);\n            }\n            if depth"),
+    ("the query's group is not closed", "qparse.cho", "if expect_sym(m, qlex.y_close(), 8) != 0 {\n            return 1;\n        }\n        structure(m, 0 - 2, close);", "structure(m, 0 - 2, close);"),
+    ("a unit does not count its conditions at its start (a group or a not is the 65th unit)", "qparse.cho", "if m[qarena.s_cond_count()] >= 64 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    if is_word(q, m, 0, \"not\") {", "if false {\n        return qarena.fail(m, 1, 27, at);\n    }\n    if is_word(q, m, 0, \"not\") {"),
     ("an or after the where clause is still the feature or", "qparse.cho", "if qarena.tok_kind(m, i) == qlex.t_id() && in_list(q, a, qarena.tok_end(m, i), \"union intersect except\") {", "if qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, a, qarena.tok_end(m, i), \"or\") {\n            return qarena.fail(m, 2, 71, a);\n        }\n        if qarena.tok_kind(m, i) == qlex.t_id() && in_list(q, a, qarena.tok_end(m, i), \"union intersect except\") {"),
     ("an or is translated as an and", "qtrans.cho", "text = buffer.append(heap, text, \" or \");", "text = buffer.append(heap, text, \" and \");"),
     ("an opening parenthesis is not translated", "qtrans.cho", "if col == 0 - 1 {\n                text = buffer.push(heap, text, byte_of('('));", "if col == 0 - 1 {\n                text = buffer.push(heap, text, byte_of(' '));"),
@@ -102,10 +101,84 @@ MUTANTS = [
     ("the mix repair is offered for a rest that does not translate", "qrepair.cho", "if qtrans.info_at(t, qtrans.i_tolerant()) != 1 ||", "if false ||"),
 ]
 
+# ---- slice A2: `not` (docs/or-and-columns.md section 17)
+A2_MUTANTS = [
+    # the grammar of --where: where `not` is a keyword
+    ("not before in is the keyword (a column called not)", "orparse.cho", "!(bytes.equal(buffer.bytes(wr), \"in\") || bytes.equal(buffer.bytes(wr), \"contains\")", "!(bytes.equal(buffer.bytes(wr), \"i\") || bytes.equal(buffer.bytes(wr), \"contains\")"),
+    ("not before contains is the keyword (a column called not)", "orparse.cho", "|| bytes.equal(buffer.bytes(wr), \"contains\") || bytes.equal(buffer.bytes(wr), \"not\"));", "|| bytes.equal(buffer.bytes(wr), \"c\") || bytes.equal(buffer.bytes(wr), \"not\"));"),
+    ("not before not is the keyword (not not in)", "orparse.cho", "|| bytes.equal(buffer.bytes(wr), \"not\"));", "|| bytes.equal(buffer.bytes(wr), \"n\"));"),
+    ("not before a quoted operator word is a column", "orparse.cho", "refuse = quoted2 == 1 || !(", "refuse = !("),
+    ("not ( is not a unit", "orparse.cho", "if c == '(' {\n        return (1, j);", "if c == '(' {\n        return (0, 0);"),
+    ("a quoted not is the keyword", "orparse.cho", "is_not = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), \"not\");", "is_not = status == 0 && bytes.equal(buffer.bytes(wr), \"not\");"),
+    ("not at the end is refused as a word after not", "orparse.cho", "let j = expr.skip_space(src, after);\n    if j >= len(src) {\n        return (0, 0);", "let j = expr.skip_space(src, after);\n    if j >= len(src) {\n        return (2, j);"),
+    ("the refusal of not COND is at the not", "orparse.cho", "what = 23;\n            at = refused_at;", "what = 23;\n            at = i;"),
+    ("the refusal of not COND says the other words", "orparse.cho", "what = 23;\n            at = refused_at;", "what = 4;\n            at = refused_at;"),
+    ("the ceiling of parentheses is not checked at the parenthesis of a not", "orparse.cho", "what = 21;\n                at = paren;", "what = 21;\n                at = i;"),
+    ("a not group is a plain group (its exits are not swapped)", "orparse.cho", "paren = np;\n                group_kind = 6;", "paren = np;\n                group_kind = 3;"),
+    ("a plan with a not group has no program unless it has an or", "orparse.cho", "flowed = o2 || group_kind == 6;", "flowed = o2;"),
+    ("a plan with a not in has no program unless it has an or", "orparse.cho", "leaf_kind = 5;\n                    flowed = true;", "leaf_kind = 5;"),
+    ("a negated condition is compiled as a plain one", "orparse.cho", "var leaf_kind = 0;\n                if negated {\n                    leaf_kind = 5;", "var leaf_kind = 0;\n                if false {\n                    leaf_kind = 5;"),
+    ("the exits of a negated condition are not swapped", "orparse.cho", "// `not in`, `not contains`: the condition's own exits, swapped\n        let leaf = vec.get(tr, node + 1);\n        vec.set(flow, 2 * leaf, f);\n        vec.set(flow, 2 * leaf + 1, t);", "// `not in`, `not contains`: the condition's own exits, swapped\n        let leaf = vec.get(tr, node + 1);\n        vec.set(flow, 2 * leaf, t);\n        vec.set(flow, 2 * leaf + 1, f);"),
+    ("the exits of a not group are not swapped", "orparse.cho", "return emit(tr, flow, vec.get(tr, node + 1), f, t);", "return emit(tr, flow, vec.get(tr, node + 1), t, f);"),
+    ("the exits of a not group are doubly swapped (a not inside a not is lost)", "orparse.cho", "return emit(tr, flow, vec.get(tr, node + 1), f, t);", "return emit(tr, flow, vec.get(tr, node + 1), 0 - 2, 0 - 1);"),
+    ("the first condition of a negated condition is not its own", "orparse.cho", "if kind == 0 || kind == 5 {\n        return vec.get(tr, node + 1);\n    }\n    if kind == 3 || kind == 6 {", "if kind == 0 {\n        return vec.get(tr, node + 1);\n    }\n    if kind == 3 || kind == 6 {"),
+    ("the first condition of a not group is not its child's", "orparse.cho", "if kind == 3 || kind == 6 {\n        return first_leaf(", "if kind == 3 {\n        return first_leaf("),
+    ("a reading writes a not group as a plain group", "orparse.cho", "o = buffer.append(heap, o, \"not (\");", "o = buffer.append(heap, o, \"(\");"),
+    ("a reading writes a negated condition as its own text but without its not", "orparse.cho", "if kind == 0 || kind == 5 {\n        return buffer.append(heap, o, src[vec.get(tr, node + 2)..vec.get(tr, node + 3)]);", "if kind == 0 {\n        return buffer.append(heap, o, src[vec.get(tr, node + 2)..vec.get(tr, node + 3)]);"),
+    # a condition (expr.cho)
+    ("not contains is allowed on a typed column", "expr.cho", "if not_contains && typed != 0 {", "if false {"),
+    ("not contains on a typed column is refused at the not", "expr.cho", "return (0, 0, at, 6, at, false);", "return (0, 0, from, 6, from, false);"),
+    ("not in is the plain in", "expr.cho", "return (2, 0, after2, 0, 0, true);", "return (2, 0, after2, 0, 0, false);"),
+    ("not contains is the plain contains", "expr.cho", "return (1, 0, after2, 0, 0, true);", "return (1, 0, after2, 0, 0, false);"),
+    ("a not before neither in nor contains is refused with the words of the operator", "expr.cho", "return (0, 0, at, 24, at, false);", "return (0, 0, at, 2, at, false);"),
+    ("a not before neither in nor contains is refused at the not", "expr.cho", "return (0, 0, at, 24, at, false);", "return (0, 0, from, 24, from, false);"),
+    # the repair of not COND
+    ("the complement of = is =", "expr.cho", "if c == '=' {\n        instead = \"!=\";", "if c == '=' {\n        instead = \"=\";"),
+    ("the complement of != is !=", "expr.cho", "} else if c == '!' {\n        instead = \"=\";", "} else if c == '!' {\n        instead = \"!=\";"),
+    ("the complement of < is >", "expr.cho", "} else if c == '<' {\n            instead = \">=\";", "} else if c == '<' {\n            instead = \">\";"),
+    ("the complement of <= is >=", "expr.cho", "if c == '<' && or_equal {\n            instead = \">\";", "if c == '<' && or_equal {\n            instead = \">=\";"),
+    ("the complement of > is >", "expr.cho", "} else {\n            instead = \"<=\";", "} else {\n            instead = \">\";"),
+    ("the complement of >= is <=", "expr.cho", "} else if or_equal {\n            instead = \"<\";", "} else if or_equal {\n            instead = \"<=\";"),
+    ("the complement of in is in", "expr.cho", "} else if first_in {\n            instead = \"not in\";", "} else if first_in {\n            instead = \"in\";"),
+    ("the complement of contains is contains", "expr.cho", "} else {\n            instead = \"not contains\";", "} else {\n            instead = \"contains\";"),
+    ("the complement of not in is not in", "expr.cho", "if second_in {\n                instead = \"in\";", "if second_in {\n                instead = \"not in\";"),
+    ("the complement of not contains is not contains", "expr.cho", "} else {\n                instead = \"contains\";\n            }\n        } else if first_in {", "} else {\n                instead = \"not contains\";\n            }\n        } else if first_in {"),
+    ("the complement drops the rest of the condition", "expr.cho", "out = buffer.append(heap, out, src[op_end..end]);", "out = buffer.append(heap, out, src[end..end]);"),
+    ("the complement drops the column", "expr.cho", "var out = buffer.append(heap, buffer.empty(heap, end - from + 16), src[from..at]);", "var out = buffer.append(heap, buffer.empty(heap, end - from + 16), src[at..at]);"),
+    ("the repair rewrites the expression once and offers it", "wrepair.cho", "while state == 0 && rounds < 70 {", "while state == 0 && rounds < 1 {"),
+    ("the repair is offered though it is not whole", "wrepair.cho", "if w == 0 {\n                state = 1;\n            } else if w != 23 {\n                state = 2;", "if w == 0 {\n                state = 1;\n            } else if w != 23 {\n                state = 1;"),
+    ("the repair does not look back over the space before the word", "wrepair.cho", "while k > 0 && (int_of(text[k - 1]) == 32 ||", "while k > 0 && false && (int_of(text[k - 1]) == 32 ||"),
+    ("the repair takes an escaped not for the word", "wrepair.cho", " || k >= 4 && int_of(text[k - 4]) == '\\\\' {", " {"),
+    ("the repair keeps the not", "wrepair.cho", "next = buffer.append(heap, next, text[0..k - 3]);", "next = buffer.append(heap, next, text[0..k]);"),
+    ("the repair is offered on the wrong argument", "wrepair.cho", "o = option(heap, o, args, where_at, whole, fixed);", "o = option(heap, o, args, where_at + 1, whole, fixed);"),
+    ("the repair mistakes the form of the flag", "wrepair.cho", "o = option(heap, o, args, where_at, whole, fixed);", "o = option(heap, o, args, where_at, !whole, fixed);"),
+    ("the repair of not COND is never offered", "table.cho", "if what == 23 && where_at >= 0 {", "if what == 2300 && where_at >= 0 {"),
+    # --explain
+    ("the note about an in is given for a run that leaves by reject", "explainor.cho", "var starts = single(tree, k) && query.flow_at(tree, k, 0) != 0 - 2;", "var starts = single(tree, k);"),
+    # the query form
+    ("the query's not is not written", "qtrans.cho", "text = buffer.append(heap, text, \"not \");", "text = buffer.append(heap, text, \"\");"),
+    ("the query's not in is written as in", "qtrans.cho", "text = buffer.append(heap, text, \"not in (\");", "text = buffer.append(heap, text, \"in (\");"),
+    ("the query's not contains is written as contains", "qtrans.cho", "text = buffer.append(heap, text, \"not contains \");", "text = buffer.append(heap, text, \"contains \");"),
+    ("the query's not in is not closed", "qtrans.cho", "if op == 7 || op == 8 {", "if op == 7 {"),
+    ("the query's not in is the operator in", "qparse.cho", "m[r + 2] = 8;", "m[r + 2] = 7;"),
+    ("the query's not contains is the operator contains", "qparse.cho", "contains_value(q, m, r, t, word, 9)", "contains_value(q, m, r, t, word, 6)"),
+    ("the query's typed not contains is accepted", "qparse.cho", "if t != 0 {\n        return qarena.fail(m, 1, 15, qarena.tok_start(m, word));", "if false {\n        return qarena.fail(m, 1, 15, qarena.tok_start(m, word));"),
+    ("the query's typed not contains is refused at the not", "qparse.cho", "contains_value(q, m, r, t, word, 9)", "contains_value(q, m, r, t, here, 9)"),
+    ("the query's not like is the feature between", "qparse.cho", "return qarena.fail(m, 2, 73, qarena.tok_start(m, word));", "return qarena.fail(m, 2, 74, qarena.tok_start(m, word));"),
+    ("the query's not = is refused at the not", "qparse.cho", "return qarena.fail(m, 1, 30, qarena.tok_start(m, word));", "return qarena.fail(m, 1, 30, qarena.tok_start(m, here));"),
+    ("the query's not = says the words of the operator", "qparse.cho", "return qarena.fail(m, 1, 30, qarena.tok_start(m, word));", "return qarena.fail(m, 1, 13, qarena.tok_start(m, word));"),
+    ("the query's not before a condition is not parenthesised", "qparse.cho", "structure(m, 0 - 1, at);\n        if unit(q, m, depth + 1) != 0 {\n            return 1;\n        }\n        structure(m, 0 - 2, start_of(m, 0));", "if unit(q, m, depth + 1) != 0 {\n            return 1;\n        }"),
+    ("the query's not before a condition is parenthesised twice", "qparse.cho", "if is_sym(m, 0, qlex.y_open()) {\n            return unit(q, m, depth);\n        }\n        if depth >= 8 {", "if depth >= 8 {"),
+    ("the query's not before a condition does not count a level", "qparse.cho", "if unit(q, m, depth + 1) != 0 {\n            return 1;\n        }\n        structure(m, 0 - 2, start_of(m, 0));", "if unit(q, m, depth) != 0 {\n            return 1;\n        }\n        structure(m, 0 - 2, start_of(m, 0));"),
+    ("the query's ceiling for a not before a condition is 9", "qparse.cho", "if depth >= 8 {\n            return qarena.fail(m, 1, 29, at);\n        }\n        structure(m, 0 - 1, at);", "if depth >= 9 {\n            return qarena.fail(m, 1, 29, at);\n        }\n        structure(m, 0 - 1, at);"),
+    ("the query's ceiling for a not before a condition is refused at the condition", "qparse.cho", "if depth >= 8 {\n            return qarena.fail(m, 1, 29, at);\n        }\n        structure(m, 0 - 1, at);", "if depth >= 8 {\n            return qarena.fail(m, 1, 29, start_of(m, 0));\n        }\n        structure(m, 0 - 1, at);"),
+    ("the query's not is a keyword in any spelling but its own (a quoted name)", "qparse.cho", "if is_word(q, m, 0, \"not\") {\n        step(m);\n        structure(m, 0 - 5, at);", "if is_word(q, m, 0, \"nota\") {\n        step(m);\n        structure(m, 0 - 5, at);"),
+]
+
 A0_MUTANTS = [
     # ---- the flag form: what may be merged
-    ("or_in: != is merged into the in", "expr.cho", "if w2 != 0 || kind == 1 || kind == 0 && op != 0 {", "if w2 != 0 || kind == 1 {"),
-    ("or_in: contains is merged into the in", "expr.cho", "if w2 != 0 || kind == 1 || kind == 0 && op != 0 {", "if w2 != 0 || kind == 0 && op != 0 {"),
+    ("or_in: != is merged into the in", "expr.cho", "if w2 != 0 || kind == 1 || kind == 0 && op != 0 || negated {", "if w2 != 0 || kind == 1 || negated {"),
+    ("or_in: contains is merged into the in", "expr.cho", "if w2 != 0 || kind == 1 || kind == 0 && op != 0 || negated {", "if w2 != 0 || kind == 0 && op != 0 || negated {"),
     ("or_in: another column is merged into the in", "expr.cho",
      "} else if after_column - begins != col_b - col_a || !bytes.equal(src[begins..after_column], src[col_a..col_b]) {", "} else if false {"),
     ("or_in: only the length of the column is compared", "expr.cho",
@@ -153,6 +226,9 @@ EQUIVALENT = [e + (UNREACHED,) for e in A0_MUTANTS] + [
      "the corrected expression is parsed again by `parse`, with the column's type, and that is where a literal the type does not take is refused (the tests kill the mutant that skips that parse); the first reading only finds where each value ends, which the type does not change"),
     ("or_chain: one condition is a chain", "qparse.cho", "if leaves < 2 || is_word(q, m, 0, \"and\") {", "if leaves < 1 || is_word(q, m, 0, \"and\") {",
      "`or_chain` is asked only for a query refused at an `or` after a condition, so the clause has two conditions by the time its first `or` is met, and a clause of one condition is never asked"),
+    ("the query's ceiling of conditions is 65", 'qparse.cho', 'if m[qarena.s_cond_count()] >= 64 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    let (c, t) = typed', 'if m[qarena.s_cond_count()] >= 65 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    let (c, t) = typed', '`unit` tests the count of conditions before it calls `condition`, and `condition` is called from `unit` only, so the test inside `condition` (kept from slice A1, where a group had a test of its own beside it) can never be the one that fires; the mutants of the test in `unit` are killed'),
+    ('not before = is the keyword (a column called not)', 'orparse.cho', "if c == '=' || c == '!' || c == '<' || c == '>' {\n        return (0, 0);\n    }", 'if false {\n        return (0, 0);\n    }', 'after `not`, a word that starts with `=`, `!`, `<` or `>` is not a word at all (`read_word` answers status 1 for a delimiter), so `refuse` stays false and the answer is the same; the branch says it in one line and the mutant that removes it cannot change an answer'),
+    ('the conjunction reader of A0 takes a negated condition', 'expr.cho', 'if what == 0 && negative {', 'if what == 0 && false {', '`expr.parse` (the reader of `COND { and COND }` of slice A0) is called only by `expr.or_in` on its own output (`COLUMN in (...)`, never negated) and by the repair of a query that A1 made unreachable (docs/or-and-columns.md section 16 note 8): no input of the binary reaches it with a negated condition'),
 ]
 
 if __name__ == "__main__":
@@ -162,4 +238,4 @@ if __name__ == "__main__":
         print("!! (equivalent) " + p)
     if stale:
         sys.exit(1)
-    sys.exit(mutlib.main(MUTANTS, TESTS))
+    sys.exit(mutlib.main(MUTANTS + A2_MUTANTS, TESTS))

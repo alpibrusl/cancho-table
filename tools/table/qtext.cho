@@ -94,6 +94,9 @@ pub fn expected(code: int) -> [] &static [byte] {
     if code == 29 {
         return "fewer nested parentheses: the ceiling is 8";
     }
+    if code == 30 {
+        return "in or contains after not";
+    }
     if code == 40 {
         return "the group columns then the aggregates, not *";
     }
@@ -159,9 +162,6 @@ pub fn feature(code: int) -> [] &static [byte] {
     if code == 75 {
         return "is-null";
     }
-    if code == 76 {
-        return "not";
-    }
     if code == 77 {
         return "having";
     }
@@ -214,9 +214,6 @@ pub fn hint(code: int) -> [] &static [byte] {
     }
     if code == 75 {
         return "there is no null: an empty cell is the empty text, x = ''";
-    }
-    if code == 76 {
-        return "write the opposite comparison: != for =, in has no negation";
     }
     if code == 77 {
         return "there is no having; filter the groups' rows with where, or order and limit the groups";

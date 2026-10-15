@@ -76,21 +76,26 @@ def holds(cond, cell):
 
 
 def leaf_count(node):
-    return 1 if node[0] == "leaf" else sum(leaf_count(k) for k in node[1])
+    return 1 if node[0] == "leaf" else sum(leaf_count(k) for k in node[1])      # ("not", [x]) has one kid
 
 
 def eval_tree(node, cell_of, counter=None):
-    """The `--where` of docs/or-and-columns.md as a tree: ("leaf", cond) or ("and" | "or", [nodes]). True or False, or ("refuse", rule, column, the leaf's number, leaves in text order):
-    left to right, stopping at the first unit that decides its level (the first false of an `and`, the first true of an `or`); a cell is read as its type only when its leaf is reached,
-    so a bad cell that no path reaches is not an error (section 5.1). `cell_of(column)` is the cell of the record."""
+    """The `--where` of docs/or-and-columns.md as a tree: ("leaf", cond), ("not", [node]) or ("and" | "or", [nodes]). True or False, or ("refuse", rule, column, the leaf's number, leaves in
+    text order): left to right, stopping at the first unit that decides its level (the first false of an `and`, the first true of an `or`); a cell is read as its type only when its leaf is
+    reached, so a bad cell that no path reaches is not an error (section 5.1). A `not` (slice A2, section 17) is the opposite of its unit's answer and changes nothing about which leaves are
+    reached or which cells are read: a leaf whose condition has "neg" (`a not in (...)`, `a not contains x`) is its condition's opposite, and a refusal is a refusal either way.
+    `cell_of(column)` is the cell of the record."""
     counter = [0] if counter is None else counter
     if node[0] == "leaf":
         n = counter[0]
         counter[0] += 1
         v = holds(node[1], cell_of(node[1]["column"]))
         if v is True or v is False:
-            return v
+            return (not v) if node[1].get("neg") else v
         return ("refuse", v, node[1]["column"], n)
+    if node[0] == "not":
+        v = eval_tree(node[1][0], cell_of, counter)
+        return v if isinstance(v, tuple) else (not v)
     decides = node[0] == "or"
     for k, kid in enumerate(node[1]):
         v = eval_tree(kid, cell_of, counter)

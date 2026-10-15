@@ -303,12 +303,36 @@ class P:
                 vals.append(self.literal())
             self.expect_sym(")", ", or )")
             self.conds.append({"col": e, "op": "in", "vals": vals, "at": at})
-        elif w in ("like", "ilike", "between", "is", "not"):
-            feat = {"like": "like", "ilike": "like", "between": "between", "is": "is-null", "not": "not"}[w]
+        elif w == "not":
+            # COLUMN not in (...) and COLUMN not contains V (docs/or-and-columns.md section 3.4); anything else after `not` is a refusal at the word after it
+            nt = self.peek(1)
+            nw = nt[1].lower() if nt[0] == "ID" else None
+            if nw == "in":
+                self.k += 2
+                self.expect_sym("(", "( and a list of values")
+                vals = [self.literal()]
+                while self.eat_sym(","):
+                    if len(vals) >= MAX_VALUES:
+                        raise QueryError("syntax", self.peek()[2], expected=WHAT_CEILING)
+                    vals.append(self.literal())
+                self.expect_sym(")", ", or )")
+                self.conds.append({"col": e, "op": "not in", "vals": vals, "at": at})
+            elif nw == "contains":
+                self.k += 2
+                if e[1] is not None:
+                    raise QueryError("syntax", nt[2], expected="a typed column is compared with = != < <= > >= or in, not contains")
+                self.conds.append({"col": e, "op": "not contains", "vals": [self.literal()], "at": at})
+            elif nw in ("like", "ilike"):
+                raise QueryError("unsupported", nt[2], feature="like", hint="contains 'text' finds a substring; there are no patterns")
+            elif nw == "between":
+                raise QueryError("unsupported", nt[2], feature="between", hint="write two conditions: x >= a and x <= b")
+            else:
+                raise QueryError("syntax", nt[2], expected="in or contains after not")
+        elif w in ("like", "ilike", "between", "is"):
+            feat = {"like": "like", "ilike": "like", "between": "between", "is": "is-null"}[w]
             hints = {"like": "contains 'text' finds a substring; there are no patterns",
                      "between": "write two conditions: x >= a and x <= b",
-                     "is-null": "there is no null: an empty cell is the empty text, x = ''",
-                     "not": "write the opposite comparison: != for =, in has no negation"}
+                     "is-null": "there is no null: an empty cell is the empty text, x = ''"}
             raise QueryError("unsupported", t[2], feature=feat, hint=hints[feat])
         else:
             raise QueryError("syntax", t[2], expected="= != <> < <= > >= contains in")
@@ -318,7 +342,20 @@ class P:
         at = self.peek()[2]
         if len(self.conds) >= MAX_CONDITIONS:
             raise QueryError("syntax", at, expected=WHAT_CEILING)
-        if self.peek()[:2] == ("SYM", "("):
+        if self.word() == "not":
+            # `not UNIT` (section 3.4): `not` binds a condition, a group or another `not`. The flag form has `not (` only, so the translation writes `not (cond)` for a condition, and the parenthesis
+            # it adds is a level of the ceiling of 8, like one the query wrote; `not (group)` is written as it stands.
+            self.k += 1
+            self.wh.append("not")
+            if self.peek()[:2] == ("SYM", "("):
+                self.unit(depth)
+            else:
+                if depth >= MAX_DEPTH:
+                    raise QueryError("syntax", at, expected=WHAT_DEPTH)
+                self.wh.append("(")
+                self.unit(depth + 1)
+                self.wh.append(")")
+        elif self.peek()[:2] == ("SYM", "("):
             if depth >= MAX_DEPTH:
                 raise QueryError("syntax", at, expected=WHAT_DEPTH)
             self.k += 1
@@ -544,13 +581,15 @@ def _translate(ast):
         for c in ast["where"]:
             if c in ("(", ")"):
                 text += c
+            elif c == "not":
+                text += "not "
             elif isinstance(c, str):
                 text += " %s " % c
             else:
                 col, ty = c["col"]
                 w = where_word(col) + type_suffix(ty)
-                if c["op"] == "in":
-                    text += w + " in (" + ", ".join(where_value(v) for v in c["vals"]) + ")"
+                if c["op"] in ("in", "not in"):
+                    text += w + " %s (" % c["op"] + ", ".join(where_value(v) for v in c["vals"]) + ")"
                 else:
                     text += "%s %s %s" % (w, c["op"], where_value(c["vals"][0]))
         argv += ["--where", text]

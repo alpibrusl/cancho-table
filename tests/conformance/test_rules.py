@@ -31,7 +31,7 @@ LOCAL = {
     "limit.state-too-large": (8, "never", "--max-state-bytes"),
     "column.unknown": (3, "never", "--where, --group, --agg or --on"),
     "column.ambiguous": (8, "never", "more than one column"),
-    "where.syntax": (2, "never", "offset"),
+    "where.syntax": (2, "sometimes", "offset"),
     "where.mixed-and-or": (2, "sometimes", "parentheses"),
     "agg.bad-spec": (2, "never", "count, sum:COL"),
     "sort.unknown-key": (2, "never", "no output column"),
@@ -162,7 +162,7 @@ class Rules(unittest.TestCase):
             ("limit.state-too-large", root + ["--group", "a", "--max-state-bytes", "1", "many.csv"], None),
             ("column.unknown", root + ["--where", "zz = 1", "ok.csv"], None),
             ("column.ambiguous", root + ["--where", "a = 1", "dup.csv"], None),
-            ("where.syntax", root + ["--where", "a = 1 and", "ok.csv"], None),
+            ("where.syntax", root + ["--where", "not a = 1", "ok.csv"], None),
             ("where.mixed-and-or", root + ["--where", "a = 1 or b = 2 and a = 3", "ok.csv"], None),     # the one whose repair is a choose (slice A1)
             ("agg.bad-spec", root + ["--group", "a", "--agg", "avg:a", "ok.csv"], None),
             ("sort.unknown-key", root + ["--group", "a", "--sort", "zz", "ok.csv"], None),

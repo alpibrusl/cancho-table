@@ -64,7 +64,8 @@ def main():
                     extra = [] if "--limit" in plan or fmt == ["--format", "csv"] else ["--limit", "1000"]
                     if fmt == [] and "--limit" not in plan:
                         extra = ["--limit", "1000"]
-                    argv = [str(TABLE), "--root", str(path.parent), *plan, *fmt, *extra, *var, path.name]
+                    explain = ["--explain"] if os.environ.get("CORPUS_EXPLAIN") else []      # CORPUS_EXPLAIN=1: the same 166 runs, explained (the gate G-EXPLAIN-SAME)
+                    argv = [str(TABLE), "--root", str(path.parent), *plan, *fmt, *extra, *var, *explain, path.name]
                     r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                     h = hashlib.md5(r.stdout + r.stderr + bytes([r.returncode])).hexdigest()
                     print(h, r.returncode, key, " ".join(plan + fmt + extra + var))

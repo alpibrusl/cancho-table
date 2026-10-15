@@ -6,7 +6,7 @@ data and not computed, so that a change to either parser that moves an offset is
 """
 
 # (query, kind, offset, expected or feature[, select, group_by])
-REFUSALS = [
+PINNED = [
     (' ', 'syntax', 1, 'select'),
     ('select', 'syntax', 6, 'a column, *, or an aggregate: count(*), sum(x), min(x), max(x), mean(x), count(distinct x)'),
     ('select a from', 'syntax', 13, "a 'file name' in quotes, or stdin"),
@@ -177,8 +177,44 @@ REFUSALS = [
     ("select a, count(distinct b) from 'f' group by a order by sum(b)", 'group-mismatch', 57, 'an aggregate that is in the select list', 'a, count(distinct b)', 'a'),
 ]
 
+# Slice A2 (`not`, docs/or-and-columns.md section 17) turned this row into an answer. It stays in PINNED because the goldens of the earlier slices name their cases by the text of the query
+# (or_a0.QUERY_HAND), and it is listed under ACCEPTED below as what it is now.
+RETIRED = [row for row in PINNED if row[0] == "select a from 'f' where b not in (1)"]
+
+# The places the grammar of `not` can fail (slice A2), each pinned: the rule, the byte offset, the words or the feature. The offsets are the reference front end's and were read by hand.
+NOT_PINNED = [
+    ("select a from 'f' where b not = 1", 'syntax', 30, 'in or contains after not'),
+    ("select a from 'f' where b not", 'syntax', 29, 'in or contains after not'),
+    ("select a from 'f' where b not like 'x'", 'unsupported', 30, 'like'),
+    ("select a from 'f' where b not ilike 'x'", 'unsupported', 30, 'like'),
+    ("select a from 'f' where b not between 1 and 2", 'unsupported', 30, 'between'),
+    ("select a from 'f' where b::int not contains 'x'", 'syntax', 35, 'a typed column is compared with = != < <= > >= or in, not contains'),
+    ("select a from 'f' where not", 'syntax', 27, 'a column'),
+    ("select a from 'f' where not = 1", 'syntax', 28, 'a column'),
+    ("select a from 'f' where not (", 'syntax', 29, 'a column'),
+    ("select a from 'f' where not ()", 'syntax', 29, 'a column'),
+    ("select a from 'f' where not not", 'syntax', 31, 'a column'),
+    ("select a from 'f' where not (a = 1", 'syntax', 34, ')'),
+    ("select a from 'f' where not a = 1)", 'syntax', 33, 'the end of the query (one statement)'),
+    ("select a from 'f' where " + "not " * 9 + "a = 1", 'syntax', 56, 'fewer nested parentheses: the ceiling is 8'),
+    ("select a from 'f' where " + "not (" * 9 + "a = 1" + ")" * 9, 'syntax', 68, 'fewer nested parentheses: the ceiling is 8'),
+    ("select a from 'f' where a = 1 or not b = 2 and c = 3", 'mixed', 43, None),
+    ("select a from 'f' where not a = 1 or b = 2 and c = 3", 'mixed', 43, None),
+    ("select a from 'f' where a = 1 not (b = 2)", 'syntax', 30, 'the end of the query (one statement)'),
+    ("select a from 'f' where not a = b", 'unsupported', 32, 'column-comparison'),
+    ("select a from 'f' where b not in ()", 'syntax', 34, "a value: a number or a 'quoted string'"),
+    ("select a from 'f' where b not in (1", 'syntax', 35, ', or )'),
+    ("select a from 'f' order by not a", 'syntax', 27, 'a column (a name that is a keyword is written "like this")'),
+]
+REFUSALS = [row for row in PINNED if row not in RETIRED]
+ALL_REFUSALS = REFUSALS + NOT_PINNED          # what test_query.py pins; the fuzz tests of the other modules seed from REFUSALS, whose size sets the mix they draw
+
 # (query, the flags it translates to, the source)
 ACCEPTED = [
+    ("select a from 'f' where b not in (1)", ['--select', 'a', '--where', 'b not in (1)'], ('file', 'f')),
+    ("select a from 'f' where not b = 1", ['--select', 'a', '--where', 'not (b = 1)'], ('file', 'f')),
+    ("select a from 'f' where not (b = 1 or c = 2) and d not contains 'x'", ['--select', 'a', '--where', 'not (b = 1 or c = 2) and d not contains \'x\''], ('file', 'f')),
+    ("select a from 'f' where not not (b::int not in (1, 2))", ['--select', 'a', '--where', 'not (not (b:int not in (1, 2)))'], ('file', 'f')),
     ("select mean(a, 18) from 'f'", ['--agg', 'mean:a@18'], ('file', 'f')),
     ("select a from 'f' limit 123456789012345678", ['--select', 'a', '--limit', '123456789012345678'], ('file', 'f')),
     ("select a from 'f';", ['--select', 'a'], ('file', 'f')),

@@ -421,13 +421,15 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
     while at < m[qarena.s_conds_end()] {
         let col = m[at];
         if col < 0 {
-            // the structure: ( ) and or, as the query wrote them
+            // the structure: ( ) and or not, as the query wrote them (and the parenthesis a `not` before a condition needs)
             if col == 0 - 1 {
                 text = buffer.push(heap, text, byte_of('('));
             } else if col == 0 - 2 {
                 text = buffer.push(heap, text, byte_of(')'));
             } else if col == 0 - 3 {
                 text = buffer.append(heap, text, " and ");
+            } else if col == 0 - 5 {
+                text = buffer.append(heap, text, "not ");
             } else {
                 text = buffer.append(heap, text, " or ");
             }
@@ -441,6 +443,10 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
             text = buffer.push(heap, text, byte_of(32));
             if op == 7 {
                 text = buffer.append(heap, text, "in (");
+            } else if op == 8 {
+                text = buffer.append(heap, text, "not in (");
+            } else if op == 9 {
+                text = buffer.append(heap, text, "not contains ");
             } else if op == 6 {
                 text = buffer.append(heap, text, "contains ");
             } else if op == 0 {
@@ -479,7 +485,7 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
                 text = buffer.append(heap, text, q[qarena.tok_start(m, tok)..qarena.tok_end(m, tok)]);
                 v = v + 1;
             }
-            if op == 7 {
+            if op == 7 || op == 8 {
                 text = buffer.push(heap, text, byte_of(')'));
             }
             at = at + 8 + nv;

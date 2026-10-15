@@ -1,5 +1,8 @@
 """G-COMPAT of slice A1 of docs/or-and-columns.md: every call that is valid today means the same, and every refusal of today is the same bytes except where the grammar is new.
 
+Slice A2 (`not`) came after this file: the "grammar now" below is the grammar of slice A1 (or_a1.parse, query_ref_a1.py, frozen), and a case that slice A2 reads differently from slice A1 is
+not asserted here but deferred to test_not_a2_compat.py, which lists it in not_a2_compat_changes.json (this file's own list, or_a1_compat_changes.json, is unchanged by A2).
+
 Three things are held here, against `main` as it was when the slice started (62d60ad, slice A0 merged):
 
 * the golden of main (or_a1_main_golden.json: its answer, refusal or not, to each of the 2,892 cases of or_a0.golden_cases(): the hand lists, the pinned refusals of query_cases.py,
@@ -18,10 +21,12 @@ import os
 import pathlib
 import unittest
 
+import not_a2 as N
 import or_a0
 import or_a1 as O
 import query_ref
 import query_ref_a0
+import query_ref_a1
 from harness import Scratch, binary, run, run_argv
 
 CHANGES = pathlib.Path(__file__).resolve().parent / "or_a1_compat_changes.json"
@@ -45,6 +50,18 @@ def expression_of(argv):
 def reading_where(text, legacy):
     r = O.parse_result(text, legacy=legacy)
     return r if r[0] != "ok" else ("ok",)
+
+
+def reading_where_a2(text):
+    """The grammar now (slice A2, `not`): a case that this reading moves is the business of test_not_a2_compat.py, which lists it."""
+    r = N.parse_result(text.encode("utf-8").decode("latin-1"))
+    return r if r[0] != "ok" else ("ok",)
+
+
+def reading_a2(expr):
+    if expr[0] == "where":
+        return reading_where_a2(expr[1])
+    return reading_query(expr[1].encode("utf-8").decode("latin-1"), query_ref)
 
 
 def reading_query(text, module):
@@ -120,16 +137,27 @@ class Compat(unittest.TestCase):
         a0 = json.loads(or_a0.GOLDEN.read_text())["cases"]
         changes = []
         same = 0
+        self.deferred = []
         for kind, argv in self.cases:
             cid = or_a0.case_id(kind, argv)
             row = self.now[cid]
             expr = expression_of(argv)
-            r_old = r_new = None
+            r_old = r_new = r_a2 = None
             if expr is not None and expr[0] == "where":
                 r_old, r_new = reading_where(expr[1], True), reading_where(expr[1], False)
             elif expr is not None:
-                r_old, r_new = reading_query(expr[1], query_ref_a0), reading_query(expr[1], query_ref)
+                r_old, r_new = reading_query(expr[1], query_ref_a0), reading_query(expr[1], query_ref_a1)
+            if expr is not None:
+                r_a2 = reading_a2(expr)
             g_status, g_rule, g_sha = main[cid]
+            if r_new != r_a2:
+                # slice A2 reads this expression differently from slice A1: the tool follows A2, and test_not_a2_compat.py checks it against the reference of A2
+                self.deferred.append(cid)
+                if r_old == r_new:
+                    same += 1
+                else:
+                    changes.append([cid, kind, expr[1], list(r_old), list(r_new)])
+                continue
             if r_old == r_new:
                 same += 1
                 self.assertEqual((row[1], row[2], row[3]), (g_status, g_rule, g_sha), "%s %r: read the same by both grammars, so main's bytes" % (cid, expr))
@@ -169,13 +197,15 @@ class Compat(unittest.TestCase):
             old = run_argv([base, *args])
             new = run(*args)
             if expr is not None:
-                r_old, r_new = (reading_where(expr[1], True), reading_where(expr[1], False)) if expr[0] == "where" else (reading_query(expr[1], query_ref_a0), reading_query(expr[1], query_ref))
+                r_old, r_new = (reading_where(expr[1], True), reading_where(expr[1], False)) if expr[0] == "where" else (reading_query(expr[1], query_ref_a0), reading_query(expr[1], query_ref_a1))
             else:
                 r_old = r_new = None
             same = (old.status, old.stdout, old.stderr) == (new.status, new.stdout.replace(binary().encode(), base.encode()), new.stderr)
             if not same:
                 normal = lambda r, b: r.stdout.replace(b.encode(), b"{BIN}") + r.stderr.replace(b.encode(), b"{BIN}")
                 same = old.status == new.status and normal(old, base) == normal(new, binary())
+            if expr is not None and r_new != reading_a2(expr):
+                continue            # slice A2 reads it differently: test_not_a2_compat.py
             if r_old == r_new:
                 self.assertTrue(same, "%r: read the same by both grammars and answered differently\n main: %r\n here: %r" % (argv, old.stdout[:400], new.stdout[:400]))
             elif same:

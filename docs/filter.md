@@ -28,8 +28,9 @@ rows (a `--where` alone returns every column). `--group` and/or `--agg`: groups
 EXPR   := ALL | ANY | UNIT
 ALL    := UNIT "and" UNIT { "and" UNIT }
 ANY    := UNIT "or" UNIT { "or" UNIT }
-UNIT   := COND | "(" EXPR ")"
+UNIT   := COND | "(" EXPR ")" | "not" "(" EXPR ")"
 COND   := COLUMN OP VALUE | COLUMN "contains" VALUE | COLUMN "in" "(" VALUE { "," VALUE } ")"
+        | COLUMN "not" "contains" VALUE | COLUMN "not" "in" "(" VALUE { "," VALUE } ")"
 OP     := "=" | "!=" | "<" | "<=" | ">" | ">="
 COLUMN := WORD [":int" | ":dec(" N ")" | ":float"]     a header name, or #N the Nth column (1-based); N is a scale, 0 to 18
 VALUE  := WORD
@@ -38,11 +39,30 @@ WORD   := bare | 'quoted'
 
 A bare word runs to whitespace or one of `' ( ) , = ! < >`; a backslash makes the next
 byte part of it, whatever it is. A quoted word is between single quotes with `''` for a
-quote. `and`, `or`, `in` and `contains` are lower case and are keywords only where the
+quote. `and`, `or`, `not`, `in` and `contains` are lower case and are keywords only where the
 grammar expects them: after a complete unit `and` and `or` are the connectives, at the start
 of a unit they are a column (a column may be called `and` or `or`: `or = x` is a condition,
-`a = 1 or or = 2` has both), and a quoted `'or'` is never a keyword. No expressions, no
-functions, no `not` yet (slice A2 of [`or-and-columns.md`](or-and-columns.md)).
+`a = 1 or or = 2` has both), and a quoted `'or'` is never a keyword. `not` is a keyword in three
+places only: before a `(` at the start of a unit (`not (a = 1)`), and between a column and `in` or
+`contains` (`a not in (1, 2)`, `a not contains x`). A column called `not` is a column everywhere else
+(`not = 1`, `not in (1)`, `not contains x`, `not not in (1)`, `a = 1 and not != 2`). No expressions, no
+functions.
+
+**`not`** (slice A2 of [`or-and-columns.md`](or-and-columns.md)). `not (EXPR)` is the opposite of
+what is in the parentheses, `COLUMN not in (...)` the opposite of `in`, `COLUMN not contains VALUE`
+the opposite of `contains` (there was no way to say "does not contain"; a typed column is `not in` as it is `in`,
+and `contains` on one is refused as it is, `not contains` too). A `not` changes the answer of a unit
+and nothing else: **which conditions are tried, and so which typed cells are read, is the same with or
+without it** (`not (c:int > 5)` and `c:int <= 5` refuse the same cells, and `not (a = x or c:int > 5)`
+reads `c` for the rows where `a` is not `x`, as `a = x or c:int > 5` does). In the plan it is a swap of the
+two exits of the condition or of the group (`--explain` shows `if_true` and `if_false` of `a not in (1)` as
+`reject` and `accept`), so a plan with a `not` has a branch program even when it has no `or`. A `not` in front of a
+bare condition is not offered (`not a = 1` would need a second look ahead to tell it from a column called `not`): it is
+`where.syntax` at the `a`, "( after not", and the repair is the same command with each such condition
+rewritten as its exact opposite (`a != 1`; `not a < 1` is `a >= 1`, `not a in (1, 2)` is `a not in (1, 2)`,
+`not a contains x` is `a not contains x`), offered only if the grammar then takes the whole expression.
+After a column, `not` must be followed by `in` or `contains`: anything else is "in or contains after not". A
+`not (` is one of the 8 levels of parentheses.
 
 **`or` and parentheses** (slice A1 of [`or-and-columns.md`](or-and-columns.md)). A level of an
 expression is all `and` or all `or`: `a = 1 and b = 2 or c = 3` is **not read either way**, it is
@@ -62,7 +82,7 @@ nothing after it are "a column", a `)` with no group to close is "and, or the en
 **Evaluation.** The conditions are tried **in the order they are written**; a condition is tried
 only when the run reaches it, and **a typed cell is read as its type only when its condition is tried**.
 A level stops at the first unit that decides it: the first false unit of an `and`, the first true unit of an
-`or`. The plan is a conjunction when it has no `or` (and then it is the loop it always was), and
+`or`. The plan is a conjunction when it has no `or` and no `not` (and then it is the loop it always was), and
 otherwise a branch program (`--explain` shows it: `if_true` and `if_false` on each condition, the index of
 the condition run next, or `accept` or `reject`). The consequences, as the tests have them
 (`c` has empty cells, `a` is `x` on row 1):
@@ -75,6 +95,9 @@ the condition run next, or `accept` or `reject`). The consequences, as the tests
 | `a = 'x' or c:int > 5` | `a` is `x`, `c` is `abc` | kept: `c` is never read |
 | `a = 'y' or c:int > 5` | `a` is `x`, `c` is `abc` | refused at `c`, naming the row and the column |
 | `(a = 'x' or b = 'x') and c:int > 5` | `a` is `x` | `b` is never read; `c` is |
+| `not (c:int > 5)` | `c` is empty | **refused**, as `c:int <= 5` is: the read is made before the comparison |
+| `not (a = 'x') and c:int > 5` | `a` is `x`, `c` is `abc` | dropped: the `not` is false, `c` is never read |
+| `not (c = '' or c:int > 5)` | `c` is empty | dropped: the guard of the `or` decides, `c:int` is not tried |
 
 A cell that no path reaches is not an error, as the cell to the right of a false `and` never was; the
 rule is a function of the row and the expression alone, so the same row is refused or kept in the same way
@@ -143,7 +166,7 @@ offset into the expression), `detail.expected` (what would have been right there
 words) and `detail.expression`: an empty expression, a missing operator or value, a
 `!` without `=`, `==`, `<>`, a missing `and`, `in` without `(` or with `()`, an unclosed
 quote, a trailing backslash, an `:int` literal that is not an integer or does not fit,
-`contains` on an `:int` column, more than 64 conditions, 1024 values or 8 levels of parentheses. The tests pin
+`contains` or `not contains` on an `:int` column, `not` before a condition or after a column where it does not belong, more than 64 conditions, 1024 values or 8 levels of parentheses. The tests pin
 the offset of each. `and` mixed with `or` at one level is `where.mixed-and-or`, above.
 
 ## Groups
