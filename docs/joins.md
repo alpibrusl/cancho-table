@@ -871,7 +871,7 @@ Written before the code; on `main`'s binary (J1, `0105a87`) `tests/conformance/t
 * **EXPL, MCP, AU**: `--explain` refuses what the run refuses before a row, with the same errors; the MCP corpus has 9 join calls more (all four types, a typed pair, USING, two pairs, the refusals), compared with the CLI byte for byte; `scripts/manifest.py --check` and the embedded manifest are unchanged in labels (`args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write`).
 * **M, mutants** (`scripts/join_mutants.py`, 147 mutants: the 63 of J1 re-anchored where the code moved, and 84 of the typed read and its rules, the composite key, padding, semi, anti, the keys-only build and its bound, USING, the grammar of `--on` and the explain; `--check` in CI): see 17.5 for what ran.
 
-### 17.4 Throughput (`scripts/join_bench.py --type`, min of 7 interleaved rounds, median in brackets, output to /dev/null, every contender's whole output checked against a Python join first; Mac, load average 11 to 12 on 16 cores; `table` selects `id,k,v,b_name` at `--max-state-bytes 1073741824`; one probe key in five is in no build row for left and anti)
+### 17.4 Throughput (taken on the branch before the merge of A1, whose edits are to `--where` and `--query` and leave the join loops as they were: the counters of 17.3 were re-taken after it; `scripts/join_bench.py --type`, min of 7 interleaved rounds, median in brackets, output to /dev/null, every contender's whole output checked against a Python join first; Mac, load average 11 to 12 on 16 cores; `table` selects `id,k,v,b_name` at `--max-state-bytes 1073741824`; one probe key in five is in no build row for left and anti)
 
 | case | `table` | DuckDB, 1 thread | DuckDB, default | csvtk |
 |---|---:|---:|---:|---:|
