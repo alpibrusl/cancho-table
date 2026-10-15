@@ -19,8 +19,10 @@ module qrepair;
 import std.buffer;
 import std.bytes;
 import std.json;
+import expr;
 import qarena;
 import qlex;
+import query;
 import qparse;
 import qtrans;
 import toolbox.fail;
@@ -174,9 +176,41 @@ fn regrouped[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], code: int) -
     return (corrected, true);
 }
 
-// The corrected query for the refusal (kind, code, offset), if the document has a correction for it.
-fn corrected[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], kind: int, code: int, offset: int) -> [heap] (buffer.Buffer, bool) {
+// A where clause that is `COND or COND { or COND }` of one column (docs/or-and-columns.md section 7, slice A0) is one `in`: the query with the chain replaced by `column in (v1, v2,
+// ...)`, the values as written. Answers it, and whether there is one; the caller offers it only if it translates (a literal the cast does not take, a select list that is not the grouping).
+fn or_to_in[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int]) -> [heap] (buffer.Buffer, bool) {
     let none = buffer.empty(heap, 1);
+    let base = m[qarena.s_rec_base()];
+    let begins = m[m[qarena.s_conds()] + 4];
+    let (leaves, col_a, col_b, chain_end, values) = qparse.or_chain(q, m);
+    if leaves < 2 {
+        return (none, false);
+    }
+    var out = buffer.append(heap, buffer.empty(heap, len(q) + 16), q[0..begins]);
+    out = buffer.append(heap, out, q[col_a..col_b]);
+    out = buffer.append(heap, out, " in (");
+    var k = 0;
+    while k < values {
+        if k > 0 {
+            out = buffer.append(heap, out, ", ");
+        }
+        let tok = m[base + k];
+        out = buffer.append(heap, out, q[qarena.tok_start(m, tok)..qarena.tok_end(m, tok)]);
+        k = k + 1;
+    }
+    out = buffer.push(heap, out, byte_of(41));
+    out = buffer.append(heap, out, q[chain_end..len(q)]);
+    buffer.drop(heap, none);
+    return (out, true);
+}
+
+// The corrected query for the refusal (kind, code, offset), if the document has a correction for it.
+fn corrected[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], kind: int, code: int, offset: int) -> [heap] (buffer.Buffer, bool) {
+    let none = buffer.empty(heap, 1);
+    if kind == 2 && code == 71 {
+        buffer.drop(heap, none);
+        return or_to_in(heap, q, m);
+    }
     if kind == 3 {
         if code == 40 || code == 41 || code == 42 || code == 43 {
             buffer.drop(heap, none);
@@ -376,7 +410,14 @@ pub fn repair[&h, &q, &t, &g](heap: &!h Heap, w: json.Writer, q: &q [byte], t: &
             let t2 = qtrans.translate(heap, buffer.bytes(fr), false);
             borrow t2 as &tr in {
                 // a `from 'file'` is the operand, and an operand the call already has would make two
-                if qtrans.status(tr) == 0 && !(qtrans.info_at(tr, qtrans.i_source()) == 1 && operands > 0) && query_at > 0 {
+                // the translation does not read the literals of a typed condition (the engine does, when it runs): the `in` that replaces an `or` is offered only if --where takes it
+                var literals_fit = true;
+                if kind == 2 && code == 71 && qtrans.status(tr) == 0 && qtrans.info_at(tr, qtrans.i_where()) == 1 {
+                    let (p5, w5, a5) = expr.parse(heap, query.empty(heap), qtrans.section(tr, 1));
+                    query.drop(heap, p5);
+                    literals_fit = w5 == 0;
+                }
+                if qtrans.status(tr) == 0 && literals_fit && !(qtrans.info_at(tr, qtrans.i_source()) == 1 && operands > 0) && query_at > 0 {
                     var flag_at = query_at;
                     if whole {
                         flag_at = query_at - 1;
