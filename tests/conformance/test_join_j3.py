@@ -422,6 +422,31 @@ class JoinWhere(Fixture):
         ok = self.go(["--join-where", "(bg = 'x' and bv:int > 5) or bg = 'y'"], build="bk,bg,bv\na,x,10\nb,y,oops\n", fmt="csv")
         self.assertEqual(self.rows(ok), ["pk,pg,pv,bk,bg,bv", "a,x,1,a,x,10", "b,y,2,b,y,oops", "a,x,3,a,x,10"])
 
+    def test_the_refusals_of_a_typed_join_where_cell_carry_their_facts_and_the_hint_of_the_flag(self):
+        build = "bk,bg,bv\na,x,1.25\n"
+        for typed, rule, extra in (("bv:int", "value.not-integer", {}), ("bv:dec(1)", "value.decimal-scale", {"scale": 1, "digits": 2}), ("bv:dec(2)", None, {}), ("bv:float", None, {}), ("bg:int", "value.not-integer", {})):
+            with self.subTest(typed):
+                r = self.go(["--join-where", typed + " > 0"], build=build, fmt="json")
+                if rule is None:
+                    self.assertEqual(r.status, 0, typed)
+                    continue
+                e = r.error()
+                d = e["detail"]
+                self.assertEqual((e["rule"], d["context"], d["path"], d["row"], d["line"]), (rule, "join-where", "b.csv", 1, 2))
+                for k, v in extra.items():
+                    self.assertEqual(d[k], v, k)
+                self.assertIn("--join-where", e["hint"] if rule == "value.not-integer" else e["hint"] + "--join-where")
+                rep = e["repair"]
+                self.assertTrue(rep is None or rep["kind"] == "none", "no repair names a flag it was not given: %r" % rep)
+        r = self.go(["--join-where", "bv:dec(1) > 0"], build=build, fmt="json")
+        self.assertNotIn("--where", r.error()["hint"].replace("--join-where", ""))
+
+    def test_a_guard_beside_a_flag_given_as_flag_equals_value_keeps_that_form(self):
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "pk=bk:int", "--where=pg = 'x'", "--format", "json", "p.csv") if self.s.write("p.csv", "pk,pg\n,x\n") and self.s.write("b.csv", "bk,bg\n1,a\n") else None
+        argv = r.error()["repair"]["options"][0]["argv"]
+        self.assertIn("--where=pk != '' and (pg = 'x')", argv)
+        self.assertEqual(subprocess.run(argv, capture_output=True, input=b"").returncode, 0)
+
     def test_a_row_the_join_where_rejects_is_never_read_for_its_key(self):
         r = self.go(["--join-where", "bg != 'q'"], probe="pk,pg\n1,x\n", build="bk,bg\n1,x\n,q\n", on="pk=bk:int")
         self.assertEqual(self.rows(r), ["pk,pg,bk,bg", "1,x,1,x"])
