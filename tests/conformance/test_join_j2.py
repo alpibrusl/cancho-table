@@ -19,6 +19,7 @@ import json
 import os
 import random
 import re
+import shutil
 import sys
 import unittest
 from collections import Counter
@@ -634,6 +635,41 @@ class Threads(unittest.TestCase):
                 x = run(*base, "--threads", 4, "--explain", "p.csv").data()["explain"]["join"]
                 self.assertEqual(x["type"], jt)
                 self.assertEqual(x["work"]["threads"], {"requested": 4, "effective": 1, "reason": "the join is read on one core"})
+        finally:
+            s.cleanup()
+
+
+class Strace(unittest.TestCase):
+    """ST and AU on Linux (`strace`, skipped where there is none): a join of any type starts no thread, opens no socket and opens no file for writing, from a file and from a pipe."""
+
+    @unittest.skipUnless(shutil.which("strace") and sys.platform.startswith("linux"), "strace is Linux only")
+    def test_no_thread_no_socket_no_write(self):
+        s = Scratch()
+        try:
+            rng = random.Random(3)
+            dom = [b"k%d" % i for i in range(10)]
+            J.write_csv(str(s.dir / "p.csv"), [b"k", b"n", b"v"], R.rows_of(rng, 3000, 3, [0, 1], [dom, R.INT_SPELLINGS], b"p"))
+            J.write_csv(str(s.dir / "b.csv"), [b"id", b"m", b"w"], R.rows_of(rng, 100, 3, [0, 1], [dom, R.INT_SPELLINGS], b"b"))
+            probe = (s.dir / "p.csv").read_bytes()
+            # the control: the same trace of a plain threaded read of the same file does show threads, so that an empty answer below means something
+            log = str(s.dir / "control.txt")
+            subprocess.run(["strace", "-f", "-o", log, "-e", "trace=clone,clone3", binary(), "--root", str(s.dir), "--select", "k", "--format", "csv", "--threads", "4", "--parallel-min-bytes", "0", "--chunk-bytes", "100", "p.csv"],
+                           capture_output=True, input=b"", timeout=120)
+            self.assertTrue([l for l in open(log).read().splitlines() if "CLONE_THREAD" in l], "the control: a threaded read starts threads")
+            for jt in JTYPES:
+                for piped in (False, True):
+                    log = str(s.dir / "trace.txt")
+                    argv = ["strace", "-f", "-o", log, "-e", "trace=clone,clone3,socket,connect,openat,open,creat,unlink,rename,mkdir", binary(), "--root", str(s.dir), "--join", "b.csv", "--on", "k=id,n=m:int",
+                            "--join-type", jt, "--format", "csv", "--threads", "4", "--parallel-min-bytes", "0", "--chunk-bytes", "100"] + ([] if piped else ["p.csv"])
+                    p = subprocess.run(argv, capture_output=True, input=probe if piped else b"", timeout=120)
+                    self.assertEqual(p.returncode, 0, (jt, p.stderr[:300]))
+                    trace = open(log).read()
+                    self.assertIn("b.csv", trace, "the control: strace saw the build file opened")
+                    clones = [l for l in trace.splitlines() if re.search(r"\bclone3?\(", l) and "CLONE_THREAD" in l]
+                    self.assertEqual(clones, [], (jt, piped, "a thread was started"))
+                    self.assertEqual(re.findall(r"\bsocket\(|\bconnect\(", trace), [], (jt, piped, "a socket"))
+                    writes = [l for l in trace.splitlines() if re.search(r"O_WRONLY|O_RDWR|O_CREAT|\bcreat\(|unlink|rename|mkdir", l) and "ENOENT" not in l]
+                    self.assertEqual(writes, [], (jt, piped, "a file opened for writing"))
         finally:
             s.cleanup()
 
