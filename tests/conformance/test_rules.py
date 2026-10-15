@@ -31,7 +31,7 @@ LOCAL = {
     "limit.state-too-large": (8, "never", "--max-state-bytes"),
     "column.unknown": (3, "never", "--where, --group or --agg"),
     "column.ambiguous": (8, "never", "more than one column"),
-    "where.syntax": (2, "never", "offset"),
+    "where.syntax": (2, "sometimes", "offset"),
     "agg.bad-spec": (2, "never", "count, sum:COL"),
     "sort.unknown-key": (2, "never", "no output column"),
     "value.not-integer": (8, "never", "exact integer"),
@@ -157,7 +157,7 @@ class Rules(unittest.TestCase):
             ("limit.state-too-large", root + ["--group", "a", "--max-state-bytes", "1", "many.csv"], None),
             ("column.unknown", root + ["--where", "zz = 1", "ok.csv"], None),
             ("column.ambiguous", root + ["--where", "a = 1", "dup.csv"], None),
-            ("where.syntax", root + ["--where", "a =", "ok.csv"], None),
+            ("where.syntax", root + ["--where", "a = 1 or a = 2", "ok.csv"], None),     # the one whose repair is a choose (slice A0); test_filter and test_or_a0 hold the ones that have none
             ("agg.bad-spec", root + ["--group", "a", "--agg", "avg:a", "ok.csv"], None),
             ("sort.unknown-key", root + ["--group", "a", "--sort", "zz", "ok.csv"], None),
             ("value.not-integer", root + ["--where", "b:int > 0", "text.csv"], None),

@@ -1455,7 +1455,35 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7](heap: &!h He
             e = qrefuse.literal_refusal(heap, e, inp.query_text, what, at);
         } else if what != 0 {
             var w = fail.open_in(heap, finish.extra(), "where.syntax", "--where is not an expression", "the grammar is in the help of --where: COLUMN OP VALUE joined by and");
-            w = fail.repair_none(heap, w, "what the expression was meant to say is not known");
+            // an `or` of `=` and `in` on one column is one `in` (docs/or-and-columns.md section 7, slice A0): the same invocation with --where rewritten, offered only whole
+            var offered = false;
+            let where_at = inp.where_at;
+            if what == 4 && where_at >= 0 {
+                let (fixed, found) = expr.or_in(heap, given);
+                if found {
+                    var o = fail.choose_open(heap, w);
+                    if inp.where_whole {
+                        borrow fixed as &fr in {
+                            o = fail.choose_option_replacing(heap, o, args, where_at, buffer.bytes(fr));
+                        }
+                    } else {
+                        var joined = buffer.append(heap, buffer.empty(heap, 64), "--where=");
+                        borrow fixed as &fr in {
+                            joined = buffer.append(heap, joined, buffer.bytes(fr));
+                        }
+                        borrow joined as &jr in {
+                            o = fail.choose_option_replacing(heap, o, args, where_at, buffer.bytes(jr));
+                        }
+                        buffer.drop(heap, joined);
+                    }
+                    w = fail.choose_close(heap, o);
+                    offered = true;
+                }
+                buffer.drop(heap, fixed);
+            }
+            if !offered {
+                w = fail.repair_none(heap, w, "what the expression was meant to say is not known");
+            }
             w = fail.detail_open(heap, w);
             w = fail.detail_int(heap, w, "offset", at);
             w = fail.detail_str(heap, w, "expected", expr.expected(what));

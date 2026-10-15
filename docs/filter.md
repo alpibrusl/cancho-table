@@ -39,6 +39,12 @@ quote. `and`, `in` and `contains` are lower case and are keywords only where the
 grammar expects them (a column may be called `and`: `and = x` is a condition). No
 `or`, no grouping parentheses, no expressions, no functions, as the design says.
 
+**`or` is refused, and one shape of it is repaired** (slice A0 of [`or-and-columns.md`](or-and-columns.md)). `a = 1 or a = 2` is `where.syntax` at the `or`, as it always was,
+and when the whole expression is `COND or COND { or COND }` of `=` and `in` on one column written the same way (the same bytes, the type suffix included: `a:int` and `a:int`,
+not `a:int` and `a`, not `a` and `#1`), the refusal's repair is a `choose` with the same command and `--where "a in (1, 2)"`, the values as written, in order, duplicates kept.
+It is the same rows: a bad cell of a typed column is refused either way, at the first leaf the cell is read by. Nothing is offered for `!=`, `<`, `contains`, two columns, two
+types, an `and` or a parenthesis beside the `or`, a literal the type does not take, or more than 1,024 values: those are the refusal and `repair: none`, as before.
+
 **Names and positions.** The same rules as `--select`, in the notation of this
 grammar: a bare word `#3` is the third column, a header that really is `#3` is `'#3'`
 or `\#3`, `#id` needs nothing. **A deviation from `--select`**: `--select` writes a
