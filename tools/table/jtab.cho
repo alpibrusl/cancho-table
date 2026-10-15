@@ -1,0 +1,192 @@
+edition 5;
+
+module jtab;
+
+// The build side of a join (docs/joins.md sections 6.2 and 6.3): the rows of the `--join` file, held whole and in memory, each reachable by its key.
+//
+//   keys   a `gmap.Tab` of the distinct keys (the bytes of the cell, its quotes undone), entry numbers in the order they were first seen
+//   head   per distinct key, the first build row that has it
+//   tail   per distinct key, the last build row that has it (where the next one is linked)
+//   rows   the records, concatenated, in file order, as the engine sees them (a quoted field keeps its quotes)
+//   start  per held row, where its record starts in `rows`
+//   next   per held row, the next row of the same key, or -1
+//
+// A key's rows are therefore a chain in build file order, walked from `head` by `next` with no sort. Every array grows by doubling, as `gmap` does, because a build does not
+// know its row count; `docs/joins.md` section 15.1 measured that this peaks at 1.65 to 2.26 times the accounted bytes resident.
+//
+// The ACCOUNTED bytes, which `--max-state-bytes` bounds, are a statement of what the arrays hold and are not resident memory:
+//
+//     accounted = sum over held rows (record bytes + 16) + sum over distinct keys (key bytes + 60)
+//
+// where 60 = 4 + 24 + 16 + 16 (a length, the entry of three integers, the slots at the minimum load, `head` and `tail`) and 16 = `start` and `next`. The count is kept as rows are
+// added (`held`), so the refusal is at the first row that would pass the bound, exactly, and the gate holds the count to the formula computed from the file by another program.
+
+import std.buffer;
+import std.bytes;
+import gmap;
+
+pub res struct JTab {
+    keys: gmap.Tab,
+    head: Box[[int]],
+    tail: Box[[int]],
+    rows: buffer.Buffer,
+    start: Box[[int]],
+    next: Box[[int]],
+    nrows: int,
+    held: int,
+}
+
+pub fn empty[&h](heap: &!h Heap) -> [heap] JTab {
+    return JTab { keys: gmap.empty(heap, 1024), head: box_slice(heap, 1024, 0), tail: box_slice(heap, 1024, 0), rows: buffer.empty(heap, 65536), start: box_slice(heap, 1024, 0), next: box_slice(heap, 1024, 0), nrows: 0, held: 0 };
+}
+
+// The same ints in storage twice as large.
+fn grow_ints[&h](heap: &!h Heap, b: Box[[int]]) -> [heap] Box[[int]] {
+    var n = 0;
+    borrow b as &br in {
+        n = len(contents(br));
+    }
+    let out = box_slice(heap, n * 2, 0);
+    var o = out;
+    borrow mut o as &!ow in {
+        borrow b as &br in {
+            let to = contents(ow);
+            let from = contents(br);
+            var i = 0;
+            while i < n {
+                to[i] = from[i];
+                i = i + 1;
+            }
+        }
+    }
+    unbox_slice(heap, b);
+    return o;
+}
+
+// Hold the row `record` whose key is `key`, unless that would take the accounted bytes past `limit`: then the table is as it was and the answer is false (the first row that does
+// not fit, in file order, so the bound is exact). The accounted bytes after the row, when it was held, are `held_of`.
+pub fn add[&h, &k, &r](heap: &!h Heap, t: JTab, key: &k [byte], record: &r [byte], limit: int) -> [heap] (JTab, bool) {
+    let JTab { keys, head, tail, rows, start, next, nrows, held } = t;
+    let hv = gmap.hash(key);
+    var e = 0 - 1;
+    borrow keys as &kr in {
+        e = gmap.find_h(kr, key, hv);
+    }
+    var cost = len(record) + 16;
+    if e < 0 {
+        cost = cost + len(key) + 60;
+    }
+    if held + cost > limit {
+        return (JTab { keys: keys, head: head, tail: tail, rows: rows, start: start, next: next, nrows: nrows, held: held }, false);
+    }
+    var ks = keys;
+    var hd = head;
+    var tl = tail;
+    var rw = rows;
+    var st = start;
+    var nx = next;
+    let row = nrows;
+    var fresh = false;
+    if e < 0 {
+        fresh = true;
+        ks = gmap.put_new(heap, ks, key, hv);
+        borrow ks as &kr in {
+            e = gmap.size(kr) - 1;
+        }
+        var cap = 0;
+        borrow hd as &hr in {
+            cap = len(contents(hr));
+        }
+        if e >= cap {
+            hd = grow_ints(heap, hd);
+            tl = grow_ints(heap, tl);
+        }
+    }
+    var rcap = 0;
+    borrow st as &sr in {
+        rcap = len(contents(sr));
+    }
+    if row >= rcap {
+        st = grow_ints(heap, st);
+        nx = grow_ints(heap, nx);
+    }
+    var at = 0;
+    borrow rw as &rr in {
+        at = buffer.size(rr);
+    }
+    rw = buffer.append(heap, rw, record);
+    borrow mut st as &!sw in {
+        contents(sw)[row] = at;
+    }
+    borrow mut nx as &!nw in {
+        contents(nw)[row] = 0 - 1;
+    }
+    if fresh {
+        borrow mut hd as &!hw in {
+            contents(hw)[e] = row;
+        }
+        borrow mut tl as &!tw in {
+            contents(tw)[e] = row;
+        }
+    } else {
+        var last = 0;
+        borrow tl as &tr in {
+            last = contents(tr)[e];
+        }
+        borrow mut nx as &!nw in {
+            contents(nw)[last] = row;
+        }
+        borrow mut tl as &!tw in {
+            contents(tw)[e] = row;
+        }
+    }
+    return (JTab { keys: ks, head: hd, tail: tl, rows: rw, start: st, next: nx, nrows: row + 1, held: held + cost }, true);
+}
+
+// The first build row of `key`, or -1.
+pub fn first[&t, &k](t: &t JTab, key: &k [byte]) -> [] int {
+    let e = gmap.find_h(t.keys, key, gmap.hash(key));
+    if e < 0 {
+        return 0 - 1;
+    }
+    return contents(t.head)[e];
+}
+
+// The row after `row` with the same key, or -1.
+pub fn next_row[&t](t: &t JTab, row: int) -> [] int {
+    return contents(t.next)[row];
+}
+
+// The record of held row `row`.
+pub fn record[&t](t: &t JTab, row: int) -> [] &t [byte] {
+    let all = buffer.bytes(t.rows);
+    let from = contents(t.start)[row];
+    var to = len(all);
+    if row + 1 < t.nrows {
+        to = contents(t.start)[row + 1];
+    }
+    return all[from..to];
+}
+
+pub fn distinct[&t](t: &t JTab) -> [] int {
+    return gmap.size(t.keys);
+}
+
+pub fn rows_of[&t](t: &t JTab) -> [] int {
+    return t.nrows;
+}
+
+pub fn held_of[&t](t: &t JTab) -> [] int {
+    return t.held;
+}
+
+pub fn drop[&h](heap: &!h Heap, t: JTab) -> [heap] int {
+    let JTab { keys, head, tail, rows, start, next, nrows, held } = t;
+    gmap.drop(heap, keys);
+    unbox_slice(heap, head);
+    unbox_slice(heap, tail);
+    buffer.drop(heap, rows);
+    unbox_slice(heap, start);
+    unbox_slice(heap, next);
+    return nrows;
+}
