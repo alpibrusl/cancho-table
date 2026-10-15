@@ -1,0 +1,116 @@
+edition 5;
+
+module jnkey;
+
+// The key of a record of a join (docs/joins.md section 5), for the pairs of `--on` that are not one pair of text (that one is the cell's bytes, read in place by `jnread`).
+//
+//   one pair, text    the cell's bytes, its quotes undone
+//   one pair, typed   8 bytes: the value plus 2^63, big endian, so that 007 and 7, -0 and 0, 1.5 and 1.50 (at :dec(2)) are one key (`agg.put_value_key` is the same 8 bytes)
+//   several pairs     each component preceded by 4 bytes of its length (little endian), as the group key of `agg.add` is, so that (ab, c) and (a, bc) are two keys
+//
+// A typed cell that is not of its type has no key: the status is the one `query.parse_typed` answers (4 and 5 for :int, 6 to 8 for :dec(S), 9 to 13 for :float) and the pair it was.
+// `keys` has three integers for each pair: the column of the probe, the column of the build, and the type (0 text, 1 :int, 2 + S :dec(S), 21 :float).
+
+import std.buffer;
+import query;
+
+fn put_length[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
+    var o = buffer.push(heap, out, byte_of(n & 255));
+    o = buffer.push(heap, o, byte_of(n >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(n >> 16 & 255));
+    return buffer.push(heap, o, byte_of(n >> 24 & 255));
+}
+
+// The 8 bytes of a scaled value as a key: the value plus 2^63, big endian.
+fn put_value_key[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = out;
+    let biased = v ^ 0 - 9223372036854775807 - 1;
+    var i = 7;
+    while i >= 0 {
+        o = buffer.push(heap, o, byte_of(biased >> 8 * i & 255));
+        i = i - 1;
+    }
+    return o;
+}
+
+// The key of `record`, whose cells are `cells`, for the first `pairs` pairs of `keys`, read from the probe's columns (`side` 0) or the build's (`side` 1). Answers the buffer that
+// holds it (`out`, cleared first), the scratch, the status (0 when there is a key) and the number of the pair that was not of its type.
+pub fn make[&h, &d, &c, &k](heap: &!h Heap, out: buffer.Buffer, scratch: buffer.Buffer, record: &d [byte], cells: &c [int], keys: &k [int], pairs: int, side: int) -> [heap] (buffer.Buffer, buffer.Buffer, int, int) {
+    var o = out;
+    borrow mut o as &!ow in {
+        buffer.clear(ow);
+    }
+    var scr = scratch;
+    var status = 0;
+    var which = 0;
+    var j = 0;
+    while j < pairs && status == 0 {
+        let column = keys[3 * j + side];
+        let kind = keys[3 * j + 2];
+        let first = cells[3 * column];
+        let last = cells[3 * column + 1];
+        let quoted = cells[3 * column + 2];
+        if kind == 0 {
+            if quoted == 0 {
+                if pairs > 1 {
+                    o = put_length(heap, o, last - first);
+                }
+                o = buffer.append(heap, o, record[first..last]);
+            } else {
+                borrow mut scr as &!sw in {
+                    buffer.clear(sw);
+                }
+                scr = query.unquote(heap, scr, record[first..last]);
+                borrow scr as &sr in {
+                    if pairs > 1 {
+                        o = put_length(heap, o, buffer.size(sr));
+                    }
+                    o = buffer.append(heap, o, buffer.bytes(sr));
+                }
+            }
+        } else {
+            var v = 0;
+            var bad = 0;
+            if quoted == 0 {
+                let (x, y) = query.parse_typed(record[first..last], kind);
+                v = x;
+                bad = y;
+            } else {
+                borrow mut scr as &!sw in {
+                    buffer.clear(sw);
+                }
+                scr = query.unquote(heap, scr, record[first..last]);
+                borrow scr as &sr in {
+                    let (x, y) = query.parse_typed(buffer.bytes(sr), kind);
+                    v = x;
+                    bad = y;
+                }
+            }
+            if bad != 0 {
+                status = bad;
+                which = j;
+            } else {
+                if pairs > 1 {
+                    o = put_length(heap, o, 8);
+                }
+                o = put_value_key(heap, o, v);
+            }
+        }
+        j = j + 1;
+    }
+    return (o, scr, status, which);
+}
+
+// How many fractional digits the cell at `first..last` of `record` has (the bytes after its point), for the refusal of a decimal with too many.
+pub fn digits_after_point[&d](record: &d [byte], first: int, last: int) -> [] int {
+    var at = last;
+    var n = 0;
+    while at > first && int_of(record[at - 1]) != '.' {
+        at = at - 1;
+        n = n + 1;
+    }
+    if at == first {
+        return 0;
+    }
+    return n;
+}

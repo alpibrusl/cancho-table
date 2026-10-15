@@ -20,6 +20,9 @@ module jtab;
 //
 // where 60 = 4 + 24 + 16 + 16 (a length, the entry of three integers, the slots at the minimum load, `head` and `tail`) and 16 = `start` and `next`. The count is kept as rows are
 // added (`held`), so the refusal is at the first row that would pass the bound, exactly, and the gate holds the count to the formula computed from the file by another program.
+//
+// (A semi or anti join holds the keys alone, at key bytes + 44, `add_key`.) A key is the cell's bytes for one text pair, the 8 bytes of the value for one typed pair, and for several pairs each component preceded by
+// 4 bytes of length (`jnkey`).
 
 import std.buffer;
 import std.bytes;
@@ -141,6 +144,34 @@ pub fn add[&h, &k, &r](heap: &!h Heap, t: JTab, key: &k [byte], record: &r [byte
         }
     }
     return (JTab { keys: ks, head: hd, tail: tl, rows: rw, start: st, next: nx, nrows: row + 1, held: held + cost }, true);
+}
+
+// The same for a semi or anti join, which asks only whether a key is there: the key alone is held (no row, no chain), at 44 accounted bytes beyond its own: 4 + 24 + 16 (a length, the entry of
+// three integers, the slots at the minimum load). A key that is already held costs nothing, so a build that is mostly duplicates is small.
+pub fn add_key[&h, &k](heap: &!h Heap, t: JTab, key: &k [byte], limit: int) -> [heap] (JTab, bool) {
+    let JTab { keys, head, tail, rows, start, next, nrows, held } = t;
+    let hv = gmap.hash(key);
+    var e = 0 - 1;
+    borrow keys as &kr in {
+        e = gmap.find_h(kr, key, hv);
+    }
+    var cost = 0;
+    if e < 0 {
+        cost = len(key) + 44;
+    }
+    if held + cost > limit {
+        return (JTab { keys: keys, head: head, tail: tail, rows: rows, start: start, next: next, nrows: nrows, held: held }, false);
+    }
+    var ks = keys;
+    if e < 0 {
+        ks = gmap.put_new(heap, ks, key, hv);
+    }
+    return (JTab { keys: ks, head: head, tail: tail, rows: rows, start: start, next: next, nrows: nrows, held: held + cost }, true);
+}
+
+// Whether `key` is held (a semi or anti join).
+pub fn has[&t, &k](t: &t JTab, key: &k [byte]) -> [] bool {
+    return gmap.find_h(t.keys, key, gmap.hash(key)) >= 0;
 }
 
 // The first build row of `key`, or -1.
