@@ -573,10 +573,10 @@ fn probe_one[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z, &k, &m](heap: &!h Heap,
     var matches = 0;
     var x = chain;
     while x >= 0 {
-        matches = matches + 1;
+        matches = 1 + matches;
         x = jtab.next_row(jt, x);
     }
-    if matches > st[s_max_matches()] {
+    if st[s_max_matches()] < matches {
         st[s_max_matches()] = matches;
     }
     borrow mut jrec2 as &!jw in {
@@ -587,52 +587,26 @@ fn probe_one[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z, &k, &m](heap: &!h Heap,
     let keep = len(prec) + 1;
     x = chain;
     while x >= 0 {
-        if st[s_produced()] >= max_join {
-            a[engine.k_abort()] = 71;
-            a[engine.k_stop()] = 1;
-            a[engine.k_err_row()] = st[s_probe()];
-            a[engine.k_err_line()] = number;
-            a[engine.k_err_digits()] = matches;
-            a[engine.k_err_cond()] = st[s_max_matches()];
-            return (rows2, scratch2, escr2, kept2, jrec2, kscr2, kbuf2);
-        }
-        st[s_produced()] = st[s_produced()] + 1;
         let brec = jtab.record(jt, x);
         borrow mut jrec2 as &!jw in {
-            jw.used = keep;
+            jw.used = len(prec) + 1;
         }
         jrec2 = buffer.append(heap, jrec2, brec);
         let (m, open, bad) = reader.fields(brec, delim, bcells, nb);
+        // the cells of the columns the answer shows (a shared-name key leaves its build column out of the cells, and it stays in the record)
         var k = 0;
-        if nk == nb {
-            while k < nb {
-                cells[3 * (np + k)] = bcells[3 * k] + keep;
-                cells[3 * (np + k) + 1] = bcells[3 * k + 1] + keep;
-                cells[3 * (np + k) + 2] = bcells[3 * k + 2];
-                k = k + 1;
-            }
-        } else {
-            // a shared-name key leaves its build column out of the cells (it stays in the record)
-            while k < nk {
-                let col = kmap[k];
-                cells[3 * (np + k)] = bcells[3 * col] + keep;
-                cells[3 * (np + k) + 1] = bcells[3 * col + 1] + keep;
-                cells[3 * (np + k) + 2] = bcells[3 * col + 2];
-                k = k + 1;
-            }
+        while k < nk {
+            cells[3 * (np + k)] = bcells[3 * kmap[k]] + keep;
+            cells[3 * (np + k) + 1] = bcells[3 * kmap[k] + 1] + keep;
+            cells[3 * (np + k) + 2] = bcells[3 * kmap[k] + 2];
+            k = k + 1;
         }
-        a[engine.k_records()] = st[s_produced()];
-        if st[s_produced()] > from {
-            borrow jrec2 as &jr in {
-                let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows2, scratch2, escr2, kept2, tree, cols, buffer.bytes(jr), cells, sel, picked, delim, as_csv, budget, number, limit, a);
-                rows2 = r2;
-                scratch2 = s2;
-                escr2 = e2;
-                kept2 = k2;
-            }
-            if a[engine.k_abort()] != 0 {
-                a[engine.k_err_row()] = st[s_probe()];
-            }
+        borrow jrec2 as &jr in {
+            let (r2, s2, e2, k2) = emit_one(heap, io, tree, cols, sel, cells, buffer.bytes(jr), number, st, a, rows2, scratch2, escr2, kept2, delim, as_csv, from, limit, budget, picked, max_join, matches, false, np);
+            rows2 = r2;
+            scratch2 = s2;
+            escr2 = e2;
+            kept2 = k2;
         }
         if a[engine.k_stop()] == 1 {
             return (rows2, scratch2, escr2, kept2, jrec2, kscr2, kbuf2);

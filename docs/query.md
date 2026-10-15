@@ -215,7 +215,7 @@ Nothing here builds a join; the grammar is shaped so that one fits without break
 * `source = ( string | "stdin" ) [ [ "as" ] alias ]`, and a qualified column `alias.column`: `as` is reserved, `.` is not part of any bare name today (`a.b` is a syntax error), so `t.col` is free.
 * the select list's `*` could become `alias.*`.
 * a join needs its own design (`docs/backlog.md` item 9: a hash join with the build side bounded by `--max-state-bytes`); what this document commits to is only that the words and the dot are not given away.
-* **Update (slice J1 of [joins.md](joins.md)):** the join exists in its **flag form** only, `--join FILE --on PROBE=BUILD` (inner, text keys, rows out). A `--query` still has no join: a `join` in the text is `query.unsupported` as before, and `--query` with `--join` is `args.conflict` (a query says the plan, and so does the flag). The query form, with the aliases it needs, is slice J3b of the design; the corpus of queries that are valid today translates to the same flags, since no word was reserved or unreserved by J1.
+* **Update (slice J1 of [joins.md](joins.md)):** the join exists in its **flag form** only, `--join FILE --on KEYS` (inner, left, semi or anti; text or typed keys, up to eight pairs; rows out; slices J1 and J2). A `--query` still has no join: a `join` in the text is `query.unsupported` as before, and `--query` with `--join` is `args.conflict` (a query says the plan, and so does the flag). The query form, with the aliases it needs, is slice J3b of the design; the corpus of queries that are valid today translates to the same flags, since no word was reserved or unreserved by J1.
 
 ## 8. The equivalence gate
 

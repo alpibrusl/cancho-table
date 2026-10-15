@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mutation check of the join (docs/joins.md section 10, gate M; tests/conformance/test_join.py): slice J1, `--join FILE --on PROBE=BUILD`, text keys, inner.
+"""Mutation check of the join (docs/joins.md section 10, gate M; tests/conformance/test_join.py and test_join_j2.py): slices J1 (`--join FILE --on PROBE=BUILD`, text keys, inner) and J2 (left, semi and anti; typed keys; composite keys; USING; padding).
 
 Each mutant is one defect in how a key is read or compared, how the chain of a key is kept or walked, how the joined row is made, what is counted against the bound, which file is
 read first, or how a flag or a header is judged; the tool is rebuilt from it and run against the tests. A mutant is killed when the build refuses it or a test fails.
@@ -8,10 +8,8 @@ read first, or how a flag or a header is judged; the tool is rebuilt from it and
 
 `--check` only verifies that every site still matches (no build; CI runs it). See mutlib.py.
 
-Not here: the `2 *` of the explain's upper bound (it is provable and, with `rows_at_most` as loose as it is, no file can tell the two forms apart); the byte between the probe record and the build record of the joined record (it is never read: the cells are offsets, so a mutant of it is equivalent).
-Not here either, because J1 has no such code (the slice that adds it adds its mutants, docs/joins.md section 11): the padding width of a left join (J2), a semi join that duplicates and an anti
-join that is inverted (J2), the typed sign of `-0` and the typed read of a key (J2), USING dropping the wrong column (J2), the pushdown of a build condition for `left` and of a typed
-condition (J3), `--join-where` applied to the probe (J3), the swap repair offered for `left` (J7), the shared budget with the groups not subtracted (J3).
+Not here: the `2 *` of the explain's upper bound (it is provable and, with `rows_at_most` as loose as it is, no file can tell the two forms apart); the byte between the probe record and the build record of the joined record (it is never read: the cells are offsets, so a mutant of it is equivalent); the bias of the 8 bytes of a typed key (the value plus 2^63: only the order of keys depends on it, and a join compares for equality); the 4-byte length written before a typed component of a composite key (any length that is the same on both sides gives the same equality); the sign of a negative zero (`-0` is read as the integer 0, and the float reader makes `-0` the key of 0.0, so there is no code to break).
+Not here either, because there is no such code (the slice that adds it adds its mutants, docs/joins.md section 11): a semi join that duplicates (a semi join holds the keys alone, and there is no chain to walk), the pushdown of a build condition for `left` and of a typed condition (J3), `--join-where` applied to the probe (J3), the swap repair offered for `left` (J7), the shared budget with the groups not subtracted (J3).
 """
 import sys
 
@@ -137,7 +135,7 @@ MUTANTS = [
     ("--max-join-rows is off by one for padded and semi rows", "jnread.cho", "    if st[s_produced()] >= max_join {\n        a[engine.k_abort()] = 71;\n        a[engine.k_stop()] = 1;\n        a[engine.k_err_row()] = st[s_probe()];\n        a[engine.k_err_line()] = number;\n        a[engine.k_err_digits()] = matches;", "    if st[s_produced()] > max_join {\n        a[engine.k_abort()] = 71;\n        a[engine.k_stop()] = 1;\n        a[engine.k_err_row()] = st[s_probe()];\n        a[engine.k_err_line()] = number;\n        a[engine.k_err_digits()] = matches;"),
     ("a refused padded read is not flagged", "jnread.cho", "            a[engine.k_err_fn()] = 77;", "            a[engine.k_err_fn()] = 0 - 1;"),
     ("a refused read of the probe cell of a padded row is flagged", "jnread.cho", "a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] >= np {", "a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] >= 0 {"),
-    ("a refused read of a matched row is flagged padded", "jnread.cho", "            if a[engine.k_abort()] != 0 {\n                a[engine.k_err_row()] = st[s_probe()];\n            }\n        }\n        if a[engine.k_stop()] == 1 {", "            if a[engine.k_abort()] != 0 {\n                a[engine.k_err_row()] = st[s_probe()];\n                if a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] >= np {\n                    a[engine.k_err_fn()] = 77;\n                }\n            }\n        }\n        if a[engine.k_stop()] == 1 {"),
+    ("a refused read of a matched row is flagged padded", "jnread.cho", "max_join, matches, false, np);", "max_join, matches, true, np);"),
     ("an integer refusal does not say padded", "finish.cho", "        w = fail.detail_bool(heap, w, \"value_truncated\", buffer.size(kept) >= 64);\n        if c.err_fn == 77 {", "        w = fail.detail_bool(heap, w, \"value_truncated\", buffer.size(kept) >= 64);\n        if c.err_fn == 78 {"),
     ("a float refusal does not say padded", "finish.cho", "            w = fail.detail_str(heap, w, \"direction\", \"underflow\");\n        }\n        if c.err_fn == 77 {", "            w = fail.detail_str(heap, w, \"direction\", \"underflow\");\n        }\n        if c.err_fn == 78 {"),
     ("a decimal refusal does not say padded", "finish.cho", "            w = fail.detail_int(heap, w, \"digits\", digits);\n        }\n        if c.err_fn == 77 {", "            w = fail.detail_int(heap, w, \"digits\", digits);\n        }\n        if c.err_fn == 78 {"),
@@ -153,8 +151,8 @@ MUTANTS = [
     ("USING drops nothing", "jnhead.cho", "                if vec.get(onr.using, j) == 1 {\n                    borrow mut dropped", "                if vec.get(onr.using, j) == 7 {\n                    borrow mut dropped"),
     ("a dropped column still collides", "jnfail.cho", "        if dropped[j] == 0 && collides(pnames, pends, bnames, bends, j, prefix) {\n            n = n + 1;", "        if collides(pnames, pends, bnames, bends, j, prefix) {\n            n = n + 1;"),
     ("a dropped column is listed in the collision", "jnfail.cho", "        if dropped[j] == 0 && collides(pnames, pends, bnames, bends, j, prefix) {\n            found = found + 1;", "        if collides(pnames, pends, bnames, bends, j, prefix) {\n            found = found + 1;"),
-    ("the cells of the build are the columns in order when some are dropped", "jnread.cho", "                cells[3 * (np + k)] = bcells[3 * col] + keep;", "                cells[3 * (np + k)] = bcells[3 * k] + keep;"),
-    ("the dropped columns are shown when some are", "jnread.cho", "        if nk == nb {\n            while k < nb {", "        if true {\n            while k < nb {"),
+    ("the cells of the build are the columns in order when some are dropped", "jnread.cho", "            cells[3 * (np + k)] = bcells[3 * kmap[k]] + keep;", "            cells[3 * (np + k)] = bcells[3 * k] + keep;"),
+    ("the fast probe is taken when a column is left out", "jnread.cho", "    let fast = jtype == 0 && simple && nk == nb;", "    let fast = jtype == 0 && simple;"),
     ("a semi join checks the build's names for a collision", "jnhead.cho", "    if ok && probe_known && jtype <= 1 {", "    if ok && probe_known && jtype <= 3 {"),
     ("a semi join shows the build's names", "jnhead.cho", "    if jtype <= 1 {\n        j = 0;\n        borrow dropped as &dr in {", "    if jtype <= 3 {\n        j = 0;\n        borrow dropped as &dr in {"),
     ("a shared name that is a position is accepted", "jnflags.cho", "                    if lkind >= 1 {\n                        status = 9;", "                    if lkind >= 1000000000 {\n                        status = 9;"),
@@ -166,7 +164,7 @@ MUTANTS = [
     ("an unknown type is a text key", "jnflags.cho", "                if t == 0 {\n                    status = 7;\n                }", ""),
     ("nine pairs are accepted", "jnflags.cho", "            if status == 0 && pairs == 8 {", "            if status == 0 && pairs == 80 {"),
     ("an empty pair is accepted", "jnflags.cho", "            if lsize == 0 || side == 1 && rsize == 0 {\n                status = 6;", "            if lsize == 0 && false || side == 1 && rsize == 0 {\n                status = 6;"),
-    ("a prefix with a semi join is accepted", "jnflags.cho", '    if cli.has(parsed, table, "join-prefix") && (bytes.equal(cli.text(args, parsed, table, "join-type"), "semi") ||', '    if cli.has(parsed, table, "join-prefix") && (bytes.equal(cli.text(args, parsed, table, "join-type"), "semi-never") ||'),
+    ("a prefix with a semi join is accepted", "jnflags.cho", '        if bytes.equal(kind, "semi") || bytes.equal(kind, "anti") {', '        if bytes.equal(kind, "semi-never") || bytes.equal(kind, "anti") {'),
     ("an anti join is read as inner", "jnread.cho", '    if bytes.equal(word, "anti") {\n        return 3;\n    }', '    if bytes.equal(word, "anti-never") {\n        return 3;\n    }'),
     ("a left join is read as inner", "jnread.cho", '    if bytes.equal(word, "left") {\n        return 1;\n    }', '    if bytes.equal(word, "left-never") {\n        return 1;\n    }'),
     ("explain reads a left join as inner", "jnexplain.cho", '    if bytes.equal(word, "left") {\n        jtype = 1;', '    if bytes.equal(word, "left-never") {\n        jtype = 1;'),
@@ -178,6 +176,15 @@ MUTANTS = [
     ("explain lists the shared names of a semi join", "jnexplain.cho", "            if vec.get(onr.using, j) == 1 && jtype <= 1 {", "            if vec.get(onr.using, j) == 1 {"),
     ("explain counts the dropped columns", "jnexplain.cho", "        o = buffer.push_nat(heap, o, np + nk);", "        o = buffer.push_nat(heap, o, np + nb);"),
     ("explain says the bound is the inner one for a keys-only build", "jnexplain.cho", "    if jtype >= 2 {\n        o = buffer.append(heap, o, \",\\\"counted\\\":\\\"key bytes + 44", "    if jtype >= 20 {\n        o = buffer.append(heap, o, \",\\\"counted\\\":\\\"key bytes + 44"),
+    # the build and the probe of J1 (hold_text, probe_inner), which are kept as J1 had them: the same mutants, against the code that runs for an inner join of one pair of text
+    ("a quoted build key keeps its quotes (the inner build)", "jnread.cho", "    if cells[3 * key + 2] == 0 {\n        let (t2, ok) = jtab.add(", "    if true {\n        let (t2, ok) = jtab.add("),
+    ("an empty build key is not held (the inner build)", "jnread.cho", "    let last = cells[3 * key + 1];\n    if cells[3 * key + 2] == 0 {", "    let last = cells[3 * key + 1];\n    if last == first {\n        return (t, scratch, true);\n    }\n    if cells[3 * key + 2] == 0 {"),
+    ("a quoted probe key keeps its quotes (the inner probe)", "jnread.cho", "    if cells[3 * pkey + 2] == 0 {\n        chain = jtab.first(", "    if true {\n        chain = jtab.first("),
+    ("an empty probe key never matches (the inner probe)", "jnread.cho", "    var chain = 0 - 1;\n    if cells[3 * pkey + 2] == 0 {", "    var chain = 0 - 1;\n    if last == first && cells[3 * pkey + 2] == 0 {\n        return (rows2, scratch2, escr2, kept2, jrec2, kscr2);\n    }\n    if cells[3 * pkey + 2] == 0 {"),
+    ("only the first row of a chain is joined (the inner probe)", "jnread.cho", "        x = jtab.next_row(jt, x);\n    }\n    return (rows2, scratch2, escr2, kept2, jrec2, kscr2);\n}", "        x = 0 - 1;\n    }\n    return (rows2, scratch2, escr2, kept2, jrec2, kscr2);\n}"),
+    ("an unmatched probe row is joined to the first build row (the inner probe)", "jnread.cho", "    if chain < 0 {\n        return (rows2, scratch2, escr2, kept2, jrec2, kscr2);\n    }\n    var matches = 0;", "    if chain < 0 {\n        chain = 0;\n    }\n    var matches = 0;"),
+    ("the inner build is not taken for one pair of text", "jnread.cho", "    let bfast = simple && !keys_only;", "    let bfast = simple && !keys_only && false;"),
+    ("the inner probe is taken for a left join", "jnread.cho", "    let fast = jtype == 0 && simple && nk == nb;", "    let fast = jtype <= 1 && simple && nk == nb;"),
     # the rules
     ("the collision has the wrong exit code", "finish.cho", "join.column-collision|2|sometimes|", "join.column-collision|8|sometimes|"),
     ("the join rows rule has the wrong exit code", "finish.cho", "limit.too-many-join-rows|8|never|", "limit.too-many-join-rows|2|never|"),

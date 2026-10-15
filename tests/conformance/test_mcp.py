@@ -243,6 +243,16 @@ CORPUS = [
     {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "max-join-rows": 1},
     {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "explain": True, "threads": 4},
     {"file": "data.csv", "join": "ragged.csv", "on": "id=a"},
+    # J2: the other join types, a typed pair, a pair that is only a name, two pairs
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id:int", "join-type": "left", "join-prefix": "q_", "select": "id,status,q_name", "limit": 10},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-type": "semi", "select": "id,status", "limit": 10},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id:int", "join-type": "anti", "format": "csv"},
+    {"file": "data.csv", "select": "id,name", "limit": 5, "join": "quoted.csv", "on": "id", "join-type": "left"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id,status=status", "join-type": "inner", "join-prefix": "q_", "limit": 3},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id:dec(2)", "join-type": "left", "join-prefix": "q_", "where": "q_name:int > 0"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-type": "semi", "join-prefix": "q_"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id:bogus"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-type": "right"},
 ]
 
 
@@ -345,7 +355,7 @@ class JoinCalls(unittest.TestCase):
         props = r["result"]["tools"][0]["inputSchema"]["properties"]
         for p in ("join", "on", "join-type", "join-prefix", "max-join-rows"):
             self.assertIn(p, props, p)
-        self.assertEqual((props["join"]["type"], props["join-type"]["enum"], props["max-join-rows"]["maximum"]), ("string", ["inner"], 1000000000))
+        self.assertEqual((props["join"]["type"], props["join-type"]["enum"], props["max-join-rows"]["maximum"]), ("string", ["inner", "left", "semi", "anti"], 1000000000))
 
     def test_the_forms_of_a_path_for_join_are_the_forms_of_file(self):
         secret = str(fixtures() / "secret" / "outside.csv")
