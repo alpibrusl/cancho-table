@@ -29,6 +29,7 @@ import join_ref3 as R3
 from harness import ROOT, TRAPS, Scratch, binary, introspect, run, validate
 
 JTYPES = ("inner", "left", "semi", "anti")
+KDOM_ = R3.KDOM
 BIG = ["--limit", "1000000", "--max-bytes", "67108864"]
 
 
@@ -293,6 +294,12 @@ class Pairs(Fixture):
         r = self.go(["--where", "bg = 'a'"], probe="pk,pg\n1,x\n", build='bk,bg\n1,a\n,"two\nlines"\n', on="pk=bk:int")
         self.assertEqual(self.rows(r), ["pk,pg,bk,bg", "1,x,1,a"])
 
+    def test_a_record_over_several_lines_with_a_quote_in_a_cell_passes_the_run(self):
+        probe = 'pk,pg\n1,x\n2,"a\n""b"""\n'
+        r = self.go(["--where", "pg contains 'b'"], probe=probe, build="bk,bg\n1,a\n2,b\n", on="pk=bk:int")
+        self.assertEqual(r.stdout.decode(), 'pk,pg,bk,bg\n2,"a\n""b""",2,b\n')
+        self.assertEqual(self.go(["--where", "(pg contains 'b')"], probe=probe, build="bk,bg\n1,a\n2,b\n", on="pk=bk:int").stdout, r.stdout)
+
     def test_the_one_difference_is_which_cells_a_typed_key_read_can_refuse_probe_side(self):
         probe = "pk,pg\n1,x\n,q\n2,x\n"
         build = "bk,bg\n1,a\n2,b\n"
@@ -440,6 +447,12 @@ class JoinWhere(Fixture):
                 self.assertTrue(rep is None or rep["kind"] == "none", "no repair names a flag it was not given: %r" % rep)
         r = self.go(["--join-where", "bv:dec(1) > 0"], build=build, fmt="json")
         self.assertNotIn("--where", r.error()["hint"].replace("--join-where", ""))
+
+    def test_a_scale_repair_is_not_offered_for_join_where_even_with_a_where_beside(self):
+        r = self.go(["--where", "bg != ''", "--join-where", "bv:dec(1) > 0"], build="bk,bg,bv\na,x,1.25\n", fmt="json")
+        e = r.error()
+        self.assertEqual((e["rule"], e["detail"]["context"]), ("value.decimal-scale", "join-where"))
+        self.assertTrue(e["repair"] is None or e["repair"]["kind"] == "none", e["repair"])
 
     def test_a_guard_beside_a_flag_given_as_flag_equals_value_keeps_that_form(self):
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "pk=bk:int", "--where=pg = 'x'", "--format", "json", "p.csv") if self.s.write("p.csv", "pk,pg\n,x\n") and self.s.write("b.csv", "bk,bg\n1,a\n") else None
@@ -835,6 +848,16 @@ class Accounting(unittest.TestCase):
         for jt in ("inner", "left"):
             plan = {"jtype": jt, "pairs": case.pairs, "prefix": case.prefix, "order": [("g", False, False)]}
             self.assertIsNotNone(self.exact(case, plan, "using " + jt))
+
+    def test_a_sorted_record_with_nothing_of_the_build_left_is_the_probe_record(self):
+        rng = random.Random(2)
+        P = (["k", "g", "v", "t"], R3._rows(rng, 40, KDOM_, 0))
+        B = (["k"], [[rng.choice(KDOM_)] for _ in range(30)])
+        for jt in ("inner", "left"):
+            case = R3.Case("using, nothing of the build left", P, B, [(0, 0, None, True)], "r_", using=True)
+            plan = {"jtype": jt, "pairs": case.pairs, "prefix": "r_", "order": [("g", False, False)]}
+            with self.subTest(jt):
+                self.assertIsNotNone(self.exact(case, plan, "nothing left " + jt))
 
     def test_the_bound_is_exact_at_every_thread_count_and_for_a_pipe(self):
         case = R3.shapes()[0]
