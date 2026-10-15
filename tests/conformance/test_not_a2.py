@@ -42,6 +42,12 @@ SOUPS = int(os.environ.get("NOT_A2_SOUPS", "20000"))
 FUZZ = int(os.environ.get("NOT_A2_FUZZ", "10000"))
 
 
+def report(*what):
+    """NOT_A2_REPORT=1 prints the figures the pull request quotes: what each generated gate drew."""
+    if os.environ.get("NOT_A2_REPORT"):
+        print("\nA2:", *what)
+
+
 def sql_of(node, params):
     """The SQL of a tree with `not` (the tables hold no NULL, so NOT is the two-valued one)."""
     if node[0] == "leaf":
@@ -109,6 +115,7 @@ class SqlOracle(Base):
             return case, text, want, got, r
 
         bad = [(case, text, want, got, r) for case, text, want, got, r in pmap(one, jobs) if got != want]
+        report("G-ORACLE-SQL: %d expressions, %d with a not, %d differ from SQLite" % (len(jobs), sum(1 for j in jobs if "not" in j[2]), len(bad)))
         self.assertEqual(bad[:3], [], "%d of %d expressions differ from SQLite" % (len(bad), len(jobs)))
 
     def test_the_oracle_would_notice_a_dropped_or_doubled_not(self):
@@ -174,6 +181,7 @@ class RefusalOracle(Base):
         results = pmap(one, jobs)
         bad = [(c, t, w, g) for c, t, w, g, r in results if w != g]
         refused = sum(1 for c, t, w, g, r in results if w[0] == "refuse")
+        report("G-ORACLE-REF: %d expressions, %d refused (the first refusal in file order), %d kept rows, %d differ from the reference" % (len(results), refused, len(results) - refused, len(bad)))
         self.assertEqual(bad[:3], [], "%d of %d differ from the reference" % (len(bad), len(results)))
         self.assertGreater(refused, len(results) // 10)
         self.assertGreater(len(results) - refused, len(results) // 10)
@@ -284,6 +292,7 @@ class Program(Base):
                 got, seen = N.run_program(compiled, st)
                 want, seen_tree = N.tree_status(tree, st)
                 self.assertEqual((got, seen), (want, seen_tree), "%s statuses %r" % (text, st))
+        report("G-PROGRAM: %d expressions explained, %d with a program" % (len(jobs), flowed))
         self.assertGreater(flowed, PROGRAM_CASES // 2)
 
     def test_the_program_of_the_documents_examples(self):
@@ -492,6 +501,7 @@ class Offsets(Base):
                     self.assertEqual(rep["kind"], "choose", text)
                     self.assertEqual([lat(o["argv"][o["argv"].index("--where") + 1]) for o in rep["options"]], [fixed], text)
                     seen["repair"] += 1
+        report("G-OFFSETS: %d texts, %s" % (len(texts), seen))
         self.assertGreater(seen["ok"], SOUPS // 10, seen)
         self.assertGreater(seen["syntax"], SOUPS // 5, seen)
         self.assertGreater(seen["mixed"], 100, seen)
@@ -611,6 +621,7 @@ class Fuzz(Base):
             if (e.get("repair") or {}).get("kind") == "choose":
                 for o in e["repair"]["options"]:
                     repairs.append((t, o["argv"]))
+        report("G-FUZZ: %d texts, %s, %d repairs offered" % (len(texts), counts, len(repairs)))
         self.assertGreater(counts["ok"], 100, counts)
         self.assertGreater(counts["where.syntax"], FUZZ // 3, counts)
 

@@ -159,6 +159,8 @@ class Reference(Base):
             self.assertIsNotNone(ref, ("the tool refuses what the reference accepts", q, e["rule"], e["detail"]))
             self.assertEqual((kind, e["detail"]["offset"]), (ref.kind, ref.offset), q)
             self.assertEqual(e["detail"].get("expected", e["detail"].get("feature")), ref.expected if ref.kind not in ("unsupported", "mixed") else ref.feature, q)
+        if os.environ.get("NOT_A2_REPORT"):
+            print("\nA2: query where clauses: %d, %s, %d answered with a not" % (len(queries), seen, nots))
         self.assertGreater(seen["ok"], SOUPS // 20, seen)
         self.assertGreater(nots, SOUPS // 40, seen)
         self.assertGreater(seen["mixed"], SOUPS // 40, seen)
@@ -289,6 +291,8 @@ class Equivalence(Base):
                 self.fail("the reference refuses a generated clause: %s %s" % (q, b))
             nots += "not" in " ".join(argv)
             self.assertEqual((a.status, a.stdout, a.stderr), (b.status, b.stdout, b.stderr), q)
+        if os.environ.get("NOT_A2_REPORT"):
+            print("\nA2: query plans: %d, %d with a not, each as flags and as a query, in 4 modes" % (len(queries), nots))
         self.assertGreater(nots, PLANS // 2)
 
     def test_explain_of_the_query_is_the_explain_of_the_flags(self):
