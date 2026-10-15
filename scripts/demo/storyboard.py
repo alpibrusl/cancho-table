@@ -59,51 +59,66 @@ def make_files(d):
     (d / "sales.csv").write_text(sales())
 
 
-def sh(cmd, exit=0):
-    return {"cmd": cmd, "exit": exit}
+def sh(cmd, exit=0, hold=None):
+    """One command. `hold` is the seconds the output stays on screen (default: demo.py's); a long command is typed on purpose with backslash continuations at flag boundaries."""
+    return {"cmd": cmd, "exit": exit, "hold": hold}
 
 
-GROUPS = "--group customer --agg count,sum:bytes --format csv"
+COLS = 80  # the terminal's width: no line of the video (caption, command or output) is longer than COLS - 1, so nothing wraps
+ROWS = 22
+
 THREADS = "--parallel-min-bytes 0 --chunk-bytes 16384"
+HASH = "  --group customer --agg count,sum:bytes --format csv sales.csv \\\n  | shasum -a 256"
 
 # (scene, [caption lines], [commands]); a scene starts on a cleared screen
 SCENES = [
-    ("question", ["table: one question, one exact answer", "five orders; who sent the most bytes?"], [
+    ("question", ["one question, one exact answer: who sent the most bytes?"], [
         sh("cat orders.csv"),
-        sh("""table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv"""),
+        sh("""table --where "bytes != ''" --group customer --agg count,sum:bytes \\
+  --sort -sum:bytes --format csv orders.csv""", hold=4.0),
     ]),
-    ("refusal", ["a wrong column name is refused, with the repair, exit status 3"], [
-        sh("""table --where "status = 200" --select Customer,bytes orders.csv | jq -c '.error | {rule, hint, repair}'""", 3),
-        sh("""table --where "status = 200" --select customer,bytes orders.csv"""),
+    ("refusal", ["a wrong column name is refused (exit 3); printed: rule, hint, repair"], [
+        sh("""table --where "status = 200" --select Customer,bytes orders.csv \\
+  | jq -r '.error | .rule, .hint, (.repair.options[0].argv | join(" "))'""", 3, hold=4.5),
+        sh("""table --where "status = 200" --select customer,bytes \\
+  --format csv orders.csv""", hold=3.5),
     ]),
-    ("decimals", ["exact decimals: sum:price:dec(2) adds 0.1 + 0.2 + 0.3 to exactly 0.60", "the same sum in plain double arithmetic:"], [
+    ("decimals", ["exact decimals: 0.1 + 0.2 + 0.3 as dec(2), then as plain doubles"], [
         sh("cat prices.csv"),
         sh("""table --agg "sum:price:dec(2)" --format csv prices.csv"""),
-        sh("""python3 -c "print(0.1 + 0.2 + 0.3)" """.strip()),
+        sh("""python3 -c "print(0.1 + 0.2 + 0.3)" """.strip(), hold=4.5),
     ]),
-    ("explain", ["--explain shows the plan and runs nothing: it reads the header only", "(one 64 KiB block of a larger file, no row)"], [
-        sh("""table --explain --group customer --agg count,sum:bytes sales.csv | jq -c '.data.explain | {size: .source.size, bytes_read: .source.bytes_read, form: .plan.form}'"""),
+    ("explain", ["--explain: the plan, not the run; here only the size and bytes read", "(the file is larger than the one 64 KiB block read for the header)"], [
+        sh("""table --explain --group customer --agg count,sum:bytes sales.csv \\
+  | jq -c '.data.explain | {size: .source.size, read: .source.bytes_read}'""", hold=4.0),
     ]),
-    ("jsonl", ["JSON lines in, JSON lines out: --fields names the columns"], [
+    ("jsonl", ["JSON lines in and out: --fields names the columns"], [
         sh("cat events.jsonl"),
-        sh("""table --input-format jsonl --fields user.name,action,ms --where "ms:int > 50" --format jsonl events.jsonl"""),
+        sh("""table --input-format jsonl --fields user.name,action,ms \\
+  --where "ms:int > 50" --format jsonl events.jsonl"""),
     ]),
     ("join", ["a join: which orders have no customer on file? (anti join)"], [
         sh("cat customers.csv"),
-        sh("""table --join customers.csv --on customer=name --join-type anti --select id,customer --format csv orders.csv"""),
+        sh("""table --join customers.csv --on customer=name --join-type anti \\
+  --select id,customer --format csv orders.csv"""),
     ]),
-    ("query", ["the same questions in a small SQL: --query means exactly the flags"], [
-        sh("""table --query "select customer, sum(bytes) from 'orders.csv' where bytes != '' group by customer order by sum(bytes) desc" --format csv"""),
+    ("query", ["the same question in a small SQL: --query means exactly the flags"], [
+        sh("""table --query "select customer, sum(bytes) from 'orders.csv' \\
+  where bytes != '' group by customer order by sum(bytes) desc" \\
+  --format csv"""),
     ]),
-    ("threads", ["the same bytes on 1 core and on 4: the hashes of both answers", "(a few thousand rows; the threshold is lowered so that 4 threads are used)"], [
-        sh("table --threads 1 %s %s sales.csv | shasum -a 256" % (THREADS, GROUPS)),
-        sh("table --threads 4 %s %s sales.csv | shasum -a 256" % (THREADS, GROUPS)),
+    ("threads", ["the same bytes on 1 core and on 4: the hash of each answer", "(6000 rows; the size threshold is lowered so that 4 threads run)"], [
+        sh("table --threads 1 %s \\\n%s" % (THREADS, HASH)),
+        sh("table --threads 4 %s \\\n%s" % (THREADS, HASH), hold=4.5),
     ]),
     ("pipe", ["and it reads a pipe"], [
-        sh("""cat orders.csv | table --where "status = 200" --select id,customer --format csv"""),
+        sh("""cat orders.csv \\
+  | table --where "status = 200" --select id,customer --format csv"""),
     ]),
 ]
-CLOSING = ["table: exact answers, or a refusal that tells you how to fix the question", "", "https://github.com/alpibrusl/cancho-table"]
+# the closing card: (text, style), one line each; "" is a blank line
+CLOSING = [("table", "title"), ("", ""), ("exact answers, or a refusal", "tag"), ("that tells you how to fix the question", "tag"), ("", ""),
+           ("https://github.com/alpibrusl/cancho-table", "url")]
 
 
 def commands():

@@ -22,7 +22,7 @@ import procs as subprocess  # every child in a group that is reaped: tests/confo
 FAST = "--fast" in sys.argv
 CHAR = 0.0 if FAST else 0.018  # seconds per character typed (mean)
 PAUSE_BEFORE_RUN = 0.0 if FAST else 0.5
-PAUSE_AFTER_OUTPUT = 0.0 if FAST else 1.2  # the idle time between commands is capped at this, as render.sh also caps it
+PAUSE_AFTER_OUTPUT = 0.0 if FAST else 2.8  # how long an output stays (a command may ask for more: its "hold"); record.sh and render.sh cap idle time above the longest hold
 PAUSE_AFTER_CAPTION = 0.0 if FAST else 0.5
 rng = random.Random(7)
 
@@ -64,24 +64,26 @@ def clear_screen():
     out("\x1b[2J\x1b[H")
 
 
-def run(cmd, env, cwd):
+def run(cmd, env, cwd, hold=None):
     out(PROMPT)
     type_text(cmd)
     out("\n")
     pause(PAUSE_BEFORE_RUN)
     sys.stdout.flush()
     subprocess.run(storyboard.line_of(cmd), cwd=cwd, env=env, timeout=120)  # stdout and stderr are the terminal's: the output is the tool's own
-    pause(PAUSE_AFTER_OUTPUT)
+    pause(0 if FAST else (hold or PAUSE_AFTER_OUTPUT))
 
 
 def closing():
-    out("\n" * 8)
-    width = 100
-    for i, line in enumerate(storyboard.CLOSING):
-        style = URL if line.startswith("http") else BOLD
-        out(" " * ((width - len(line)) // 2) + style)
-        type_text(line)
-        out(RESET + "\n")
+    out("\x1b[?25l" + "\n" * 5)  # the closing card has no cursor
+    styles = {"title": "\x1b[1;38;5;114m", "tag": BOLD, "url": URL}
+    for text, kind in storyboard.CLOSING:
+        if text:
+            spaced = " ".join(text) if kind == "title" else text
+            out(" " * ((storyboard.COLS - len(spaced)) // 2) + styles[kind])
+            type_text(spaced)
+            out(RESET)
+        out("\n\n" if kind == "tag" or kind == "title" else "\n")
         pause(0.3 if not FAST else 0)
     pause(0.4 if not FAST else 0)
 
@@ -100,7 +102,7 @@ def main():
                 caption(line)
             pause(PAUSE_AFTER_CAPTION)
             for c in cmds:
-                run(c["cmd"], env, d)
+                run(c["cmd"], env, d, c["hold"])
         clear_screen()
         closing()
 

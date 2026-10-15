@@ -1,10 +1,10 @@
 # The demo video
 
-About 95 seconds, no audio: nine short scenes of `table` and a closing card. Files in `docs/assets/demo/`: `table-demo.cast` (the recording), `table-demo.mp4`, `table-demo.webm`, `table-demo.gif` and `table-demo-poster.png`, all 1280x720.
+About 126 seconds, no audio: nine short scenes of `table` and a closing card (the card is held for 4 s). The terminal is 80x22 and the text is drawn at 24 px (cells of about 14x30 px), so it fills most of the 1280x720 frame; no caption, command or output line is 80 characters or longer, so nothing wraps (a long command is typed on purpose with backslash continuations at flag boundaries; `test_demo.py` checks it). Files in `docs/assets/demo/`: `table-demo.cast` (the recording), `table-demo.mp4`, `table-demo.webm`, `table-demo.gif` and `table-demo-poster.png`, all 1280x720.
 
-**The typing is simulated; the output is real.** Each character of a caption or a command is written with a small delay, and the prompt is printed by the script. Every command is then run for real, with the binary built from the commit below, on small files the script generates in a temporary directory. What the terminal shows is what the tool printed. Nothing is edited afterwards, there is no speed claim and no timing on screen. **The cast is the source of truth:** the GIF, MP4, WEBM and poster are drawn from it by `render.sh` and change nothing in it. Three commands pipe the tool's output into `jq` or `shasum` to show a part of it or its hash; the pipe is on screen.
+**The typing is simulated; the output is real.** Each character of a caption or a command is written with a small delay, and the prompt is printed by the script. Every command is then run for real, with the binary built from the commit below, on small files the script generates in a temporary directory. What the terminal shows is what the tool printed. Nothing is edited afterwards, there is no speed claim and no timing on screen. **The cast is the source of truth:** the GIF, MP4, WEBM and poster are drawn from it by `render.sh` and change nothing in it. Three scenes pipe the tool's output into `jq` or `shasum` to show a part of it (the rule, hint and repair of the refusal; the file size and the bytes read by `--explain`) or its hash; the pipe is on screen and the caption says what is filtered.
 
-Recorded at commit `0a1b7dc614e401e4c2e91ef7a17c84a70a2c740a` (origin/main), compiler `e47d647` (the pin in `cancho.toml`); the cast's title and its `TABLE_COMMIT` env entry say the same.
+Recorded at commit `0a1b7dc614e401e4c2e91ef7a17c84a70a2c740a` (origin/main; `record.sh` writes the merge-base with origin/main), compiler `e47d647` (the pin in `cancho.toml`); the cast's title and its `TABLE_COMMIT` env entry say the same.
 
 ## What is here
 
@@ -12,7 +12,7 @@ Recorded at commit `0a1b7dc614e401e4c2e91ef7a17c84a70a2c740a` (origin/main), com
 |---|---|
 | `storyboard.py` | the one list of scenes, captions and commands, the files they run on, and the exit status each must end with |
 | `demo.py` | plays the storyboard with simulated typing and real runs (`--fast`: no delays) |
-| `record.sh` | runs `demo.py` under `asciinema rec`, 100x28, idle capped at 1.2 s |
+| `record.sh` | runs `demo.py` under `asciinema rec`, 80x22, idle capped at 5 s; each output stays 2.8 s, the key ones (the repair, the exact decimals, the identical hashes) 4 to 4.5 s |
 | `render.sh` | cast to GIF (`agg`), MP4 (H.264, yuv420p, faststart), WEBM (VP9) and poster (`ffmpeg`, under `nice`) |
 | `expected.txt` | the golden transcript: every command, its output and its exit status |
 
@@ -55,5 +55,10 @@ The cast, with the small asciinema player (a text file, about 50 KB; copy the pl
 <link rel="stylesheet" href="assets/asciinema-player.min.css">
 <div id="demo"></div>
 <script src="assets/asciinema-player.min.js"></script>
-<script>AsciinemaPlayer.create('assets/demo/table-demo.cast', document.getElementById('demo'), {idleTimeLimit: 1.2, poster: 'npt:0:9', fit: 'width'});</script>
+<script>AsciinemaPlayer.create('assets/demo/table-demo.cast', document.getElementById('demo'), {idleTimeLimit: 5, poster: 'npt:0:9', fit: 'width'});</script>
 ```
+
+## Notes on rendering
+
+* The three videos have the same length (the last frame, the closing card, is held `--last-frame-duration 4` s in each); `render.sh` fails if they differ by 0.2 s or more. In the first render the MP4's last packet lasted 0.1 s instead of 4 s (93.2 s against 96.6 s for the GIF and WEBM); the cause was not isolated, and the same ffmpeg command on the new cast keeps the hold.
+* The videos are variable-frame-rate: a frame can last 4 s. Seeking with `ffmpeg -ss T -i table-demo.mp4` returns the first frame at or after T, which on a long hold is the next scene's first frame, not what was on screen. To look at the end of a scene, extract at a fixed rate (`-vf fps=4`) and take the frame at that second.

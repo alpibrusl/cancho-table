@@ -50,6 +50,18 @@ class Demo(unittest.TestCase):
     def test_the_transcript_is_the_golden_file(self):
         self.assertEqual(storyboard.transcript(self.results), self.expected)
 
+    def test_nothing_wraps(self):
+        # the terminal is storyboard.COLS wide: a caption, a typed line or a line of output at COLS or more would wrap (mid-word); none does
+        long = []
+        for scene, caps, cmds in storyboard.SCENES:
+            long += ["caption: " + c for c in caps if len("# " + c) >= storyboard.COLS]
+        for cmd, _, _, out in self.results:
+            long += [line for i, line in enumerate(cmd.split("\n")) if len(line) + (2 if i == 0 else 0) >= storyboard.COLS]
+            long += [line for line in out.split("\n") if len(line) >= storyboard.COLS]
+        long += [text for text, _ in storyboard.CLOSING if len(text) >= storyboard.COLS]
+        self.assertEqual(long, [])
+        self.assertTrue(max(len(c["cmd"].split("\n")) for c in storyboard.commands()) <= 4)
+
     def test_the_storyboard_is_not_empty_and_has_the_refusal(self):
         self.assertGreaterEqual(len(self.results), 12)
         self.assertTrue(any(w == 3 for _, w, _, _ in self.results))
