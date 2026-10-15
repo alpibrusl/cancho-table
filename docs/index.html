@@ -286,7 +286,7 @@ Zed,64</pre>
   </div>
   <div>
     <h3 class="task">Keep the rows that match</h3>
-    <p>Text compares byte by byte; <code>:int</code> compares whole numbers exactly. Conditions run left to right and stop at the first false one, so the first one here keeps the empty cell away from the number test.</p>
+    <p>Text compares byte by byte; <code>:int</code> compares whole numbers exactly. Conditions run left to right and stop at the first one that decides the level they are in (the first false one of an <code>and</code>, the first true one of an <code>or</code>), so the first one here keeps the empty cell away from the number test, and a typed cell is read only when its condition is reached.</p>
 <!-- gen:t-filter -->
 <pre class="code" tabindex="0"><span class="c">$</span> table --where "bytes != '' and bytes:int &gt; 100" --select id,customer --format csv orders.csv
 id,customer

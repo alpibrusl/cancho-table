@@ -186,16 +186,11 @@ def swap(node):
 # G-ORACLE-REF
 
 def expected_outcome(rows, sem):
-    """("rows", [ids]) or ("refuse", rule, row number, column): the first refusal in file order, else the rows kept."""
-    header = O.HEADER
-    kept = []
-    for n, rec in enumerate(rows, 1):
-        v = O.evaluate(sem, lambda col, rec=rec: rec[header.index(col)])
-        if isinstance(v, tuple):
-            return ("refuse", v[1], n, v[2])
-        if v:
-            kept.append(rec[0])
-    return ("rows", kept)
+    """("rows", [ids]) or ("refuse", rule, row number, column): refimpl.run over the table with the tree: the first refusal in file order, else the rows kept."""
+    answer, ragged, error = refimpl.run([O.HEADER] + rows, {"where_tree": sem, "select": ["id"]})
+    if error:
+        return ("refuse", error[0], error[1]["row"], error[1]["column"])
+    return ("rows", [r[0] for r in answer[2]])
 
 
 def tool_outcome(r):

@@ -105,7 +105,7 @@ Zed,64
 
 ### Keep the rows that match
 
-Text compares byte by byte; `:int` compares whole numbers exactly. Conditions run left to right and stop at the first false one, so the first keeps the empty cell away from the number test.
+Text compares byte by byte; `:int` compares whole numbers exactly. Conditions run left to right and stop at the first one that decides the level they are in (the first false one of an `and`, the first true one of an `or`), so the first keeps the empty cell away from the number test, and a typed cell is read only when its condition is reached.
 
 <!-- gen:t-filter -->
 ```console

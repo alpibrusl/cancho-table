@@ -351,31 +351,8 @@ def has_or(node):
 
 
 def evaluate(node, cell_of):
-    """True or False, or ("refuse", rule, column, leaf number): left to right, stopping at the first unit that decides its level; a cell is read as its type only when its leaf is reached
-    (docs/or-and-columns.md section 5.1). `cell_of(column)` is the cell. Leaves are numbered in text order by the caller (the order of `leaves`)."""
-    return walk(node, cell_of, [0])
-
-
-def walk(node, cell_of, counter):
-    if node[0] == "leaf":
-        n = counter[0]
-        counter[0] += 1
-        v = refimpl.holds(node[1], cell_of(node[1]["column"]))
-        if v is True or v is False:
-            return v
-        return ("refuse", v, node[1]["column"], n)
-    decides = node[0] == "or"
-    verdict = None
-    for k, kid in enumerate(node[1]):
-        v = walk(kid, cell_of, counter)
-        if isinstance(v, tuple):
-            return v
-        if v == decides:
-            # the leaves of the units not reached are skipped but still counted, so that a leaf keeps its number
-            for rest in node[1][k + 1:]:
-                counter[0] += len(leaves(rest))
-            return v
-    return not decides
+    """The tree walker of refimpl.py: True or False, or ("refuse", rule, column, leaf number)."""
+    return refimpl.eval_tree(node, cell_of)
 
 
 def program(node):
@@ -605,7 +582,7 @@ def chain(kind, conds):
 # ---- tables
 
 HEADER = ["id", "a", "b", "c", "n", "d", "f", "t u", "or", "and", "not"]
-TEXTS = ["x", "y", "z", "", "x y", "10", "9", "é", "it's", "a,b", "xx", "Y", "0", "and", "or", "(x)", "x=y"]
+TEXTS = ["x", "y", "z", "", "x y", "10", "9", "é", "it's", "a,b", "xx", "Y", "0", "and", "or", "(x)", "x=y", 'q"z', '"']
 INT_OK = ["0", "1", "-1", "5", "10", "-10", "007", "+3", "100", "9223372036854775807", "-9223372036854775808", "42"]
 DEC_OK = ["0", "1.5", "1.50", "-2", "0.25", "10.00", "-0.5", "3", ".5", "2.25", "100"]
 FLOAT_OK = ["0", "1.5", "2e3", "-0.5", "0.1", "1e-3", "10", "3.25", "2.5", "100", "-7"]
