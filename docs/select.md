@@ -135,10 +135,13 @@ csvtk's 23 and Miller's 329. This is the first benchmark in which `table` and th
 incumbents do the same work (read, parse, select, quote, write), which the shape
 benchmark was not.
 
+## Renaming: `--rename`
+
+`--rename TARGET=NEW,...` (slice B1 of [`or-and-columns.md`](or-and-columns.md), where its design and gates are) gives a column of the answer another label. It follows the rules of this list: a backslash escapes a comma, a backslash or a `#` (and, here, an equals sign); `TARGET` is a label of the answer as it prints (`customer`, `count`, `sum:bytes`) or `#N`, the Nth column of the answer, exactly as a name or a position is in `--select` (`#` and one to nine digits is a position, any other label that begins with a `#` is written `\#`); NEW is at least one byte; the first equals sign without a backslash splits an item. Every target is looked up in the labels as they are before any rename. The labels are written in one place (`frame.prepare`), so the csv header, the JSON `columns` and the keys of JSON lines are the new ones and no row, no engine and no thread sees it: `--where`, `--group`, `--agg` and `--order-by` keep naming the columns of the file, and `--sort` names the label after the rename. Two equal labels are fine in csv and json (they were before), and `output.duplicate-column` in json lines.
+
 ## Not done
 
-* `--format ndjson`; selecting by a range or a pattern; renaming a column in the
-  output; non-UTF-8 header names in `--select` (a name is bytes on the command line, so
+* `--format ndjson`; selecting by a range or a pattern; non-UTF-8 header names in `--select` (a name is bytes on the command line, so
   they work on a platform whose arguments are bytes, but no test covers it).
 * Pages are not cheap to resume (above). An index would need a second file or a
   seekable record format, and neither belongs in a tool that holds no state.

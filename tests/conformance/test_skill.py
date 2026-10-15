@@ -33,6 +33,7 @@ WIDE = 'host,status,bytes,price,path,"a,b"\na,404,1500,1.50,x,1\nb,200,20,2.25,y
 # the strings occur in the help and that nothing is refused.
 HELP_EXAMPLES = {
     "select": [("--select host,bytes", []), ("--select '#3,a\\,b'", [])],
+    "rename": [("--rename host=name,sum:bytes=total", ["--group", "host", "--agg", "sum:bytes"]), ("--rename '#1=id,#3=n\\,m'", ["--select", "host,status,bytes"])],
     "where": [("--where 'status = 404 and bytes:int > 1000'", []), ("--where 'host in (a, b) and path contains x'", [])],
     "group": [("--group host", []), ("--group host,status", []), ("--group 'price:dec(2),status'", [])],
     "agg": [("--agg count,sum:bytes,max:bytes", ["--group", "host"]), ("--agg 'sum:price:dec(2),mean:bytes@1'", [])],
@@ -53,7 +54,7 @@ SAMPLE = {
     "--max-groups": "100", "--max-distinct": "100", "--max-state-bytes": "100000", "--threads": "1",
     "--report": "types", "--chunk-bytes": "100000", "--parallel-min-bytes": "100000", "--format": "json",
     "--query": "select host, count(*) group by host",
-    "--join": "sales.csv", "--on": "host=host", "--join-type": "inner", "--join-prefix": "r_", "--max-join-rows": "1000000",
+    "--rename": "host=h", "--join": "sales.csv", "--on": "host=host", "--join-type": "inner", "--join-prefix": "r_", "--max-join-rows": "1000000",
 }
 REFUSALS = {"args.conflict", "args.required-flag"}
 # What each form's line in the usage lists: the flags the code takes for the form and does something with
@@ -62,12 +63,12 @@ COMMON = {"--root", "--delimiter", "--max-rows", "--max-line-bytes", "--format"}
 PAGED = {"--top", "--limit", "--from", "--max-bytes", "--max-state-bytes", "--threads", "--chunk-bytes", "--parallel-min-bytes"}
 FORM_FLAGS = {
     "shape": COMMON,
-    "rows": COMMON | PAGED | {"--select", "--where", "--order-by", "--max-sort-rows"},
-    "groups": COMMON | PAGED | {"--group", "--agg", "--where", "--sort", "--max-groups", "--max-distinct"},
+    "rows": COMMON | PAGED | {"--select", "--where", "--rename", "--order-by", "--max-sort-rows"},
+    "groups": COMMON | PAGED | {"--group", "--agg", "--where", "--rename", "--sort", "--max-groups", "--max-distinct"},
     "report": (COMMON | PAGED | {"--report", "--select", "--where"}) - {"--top"},
-    "all": COMMON | (PAGED - {"--top", "--max-state-bytes"}) | {"--rows"},
+    "all": COMMON | (PAGED - {"--top", "--max-state-bytes"}) | {"--rows", "--rename"},
     "query": COMMON | PAGED | {"--query", "--max-sort-rows", "--max-groups", "--max-distinct"},
-    "join": COMMON | {"--join", "--on", "--join-type", "--join-prefix", "--max-join-rows", "--select", "--where", "--limit", "--from", "--max-bytes", "--max-state-bytes", "--threads"},
+    "join": COMMON | {"--join", "--on", "--join-type", "--join-prefix", "--max-join-rows", "--select", "--where", "--rename", "--limit", "--from", "--max-bytes", "--max-state-bytes", "--threads"},
 }
 FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"], "all": ["--rows"], "query": ["--query", "select host, count(*) group by host"], "join": ["--join", "sales.csv", "--on", "host=host", "--join-prefix", "r_"]}
 

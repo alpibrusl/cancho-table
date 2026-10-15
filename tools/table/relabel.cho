@@ -1,0 +1,245 @@
+edition 5;
+
+module relabel;
+
+// `--rename LIST` (docs/or-and-columns.md section 8.2): the labels an answer gives its columns instead of its own. LIST is items `TARGET=NEW` separated by commas. A backslash escapes the
+// next byte, which is a comma, a backslash, an equals sign or a `#` (any other is not a list); the first unescaped `=` of an item splits it. TARGET is an output label as the answer would
+// print it (`customer`, `sum:bytes`), or `#N`, the Nth output column, 1-based (a `#` first, unescaped, and one to nine digits; anything else that begins with a `#` is a label, as in
+// `--select`). NEW is at least one byte. Every target is looked up in the labels as they are before any rename, so `a=b,b=c` renames the column that was `a` and the one that was `b`.
+//
+// This module reads the list and applies it to a list of labels. It is called by `frame.prepare`, where the labels of the answer are written (the rows, the engine and the parallel path do not
+// see it), and by `query.cho`'s plan, which keeps the text. The refusals that need the labels are made by `relfail.cho`.
+
+import std.buffer;
+import std.map;
+import std.vec;
+
+// the most items one list holds (the ceiling `--select` has for names)
+pub fn most_items() -> [] int {
+    return 4096;
+}
+
+fn escapable(c: int) -> [] bool {
+    return c == ',' || c == '\\' || c == '=' || c == '#';
+}
+
+fn digits[&d](raw: &d [byte]) -> [] bool {
+    var k = 0;
+    while k < len(raw) {
+        let c = int_of(raw[k]);
+        if c < '0' || c > '9' {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+fn number[&d](raw: &d [byte]) -> [] int {
+    var n = 0;
+    var k = 0;
+    while k < len(raw) {
+        n = n * 10 + (int_of(raw[k]) - '0');
+        k = k + 1;
+    }
+    return n;
+}
+
+// The items of a list: six integers an item (0 a label or 1 a position, the position or -1, where its target begins and ends in the text, where its new label begins and ends), in order.
+// Answers them, a status (0 whole, 1 a fault of the text, 2 more than `most_items`), the byte where the fault is, and what was expected there (1 a byte after the backslash that a backslash
+// escapes, 2 `TARGET=NEW`, 3 a target before the `=`, 4 a new label after it). The first fault in the text is the one answered.
+pub fn parse[&h, &t](heap: &!h Heap, text: &t [byte]) -> [heap] (vec.Vec[int], int, int, int) {
+    var items = vec.empty(heap, 24, 0);
+    let n = len(text);
+    var i = 0;
+    var count = 0;
+    var done = false;
+    while !done {
+        let start = i;
+        var eq = 0 - 1;
+        var bad = false;
+        while !bad && i < n && int_of(text[i]) != ',' {
+            let c = int_of(text[i]);
+            if c == '\\' {
+                if i + 1 < n && escapable(int_of(text[i + 1])) {
+                    i = i + 2;
+                } else {
+                    bad = true;
+                }
+            } else {
+                if c == '=' && eq < 0 {
+                    eq = i;
+                }
+                i = i + 1;
+            }
+        }
+        if bad {
+            return (items, 1, i, 1);
+        }
+        let end = i;
+        if eq < 0 {
+            return (items, 1, end, 2);
+        }
+        if eq == start {
+            return (items, 1, start, 3);
+        }
+        if end == eq + 1 {
+            return (items, 1, eq + 1, 4);
+        }
+        var kind = 0;
+        var position = 0 - 1;
+        if int_of(text[start]) == '#' && eq - start >= 2 && eq - start <= 10 && digits(text[start + 1..eq]) {
+            kind = 1;
+            position = number(text[start + 1..eq]);
+        }
+        items = vec.push(heap, items, kind);
+        items = vec.push(heap, items, position);
+        items = vec.push(heap, items, start);
+        items = vec.push(heap, items, eq);
+        items = vec.push(heap, items, eq + 1);
+        items = vec.push(heap, items, end);
+        count = count + 1;
+        if i >= n {
+            done = true;
+        } else {
+            i = i + 1;
+        }
+    }
+    if count > most_items() {
+        return (items, 2, 0, 0);
+    }
+    return (items, 0, 0, 0);
+}
+
+// One of the six integers of an item (see `parse`).
+pub fn field[&i](items: &i vec.Vec[int], item: int, slot: int) -> [] int {
+    return vec.get(items, 6 * item + slot);
+}
+
+// The bytes a written part of an item stands for: each backslash taken off.
+pub fn unescaped[&h, &d](heap: &!h Heap, raw: &d [byte]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, len(raw) + 1);
+    var i = 0;
+    while i < len(raw) {
+        if int_of(raw[i]) == '\\' && i + 1 < len(raw) {
+            i = i + 1;
+        }
+        out = buffer.push(heap, out, raw[i]);
+        i = i + 1;
+    }
+    return out;
+}
+
+// The labels of the answer (`labels`, each ending where `ends` says) with the list applied. Answers a status (0 done, 1 an item whose target is no output column, 2 an item whose label more
+// than one column has, 3 a column renamed twice), the item at fault (0-based) and, for 3, the item that renamed the column first, and the new labels and where each ends (empty unless done).
+// The list was read whole when the plan was made, so it has no fault of its own here.
+pub fn apply[&h, &t, &l, &e](heap: &!h Heap, text: &t [byte], labels: &l buffer.Buffer, ends: &e vec.Vec[int]) -> [heap] (int, int, int, buffer.Buffer, vec.Vec[int]) {
+    let (items, parsed, at, what) = parse(heap, text);
+    let width = vec.size(ends);
+    var count = 0;
+    borrow items as &ir in {
+        count = vec.size(ir) / 6;
+    }
+    var index = map.empty(heap, 64, 0, 0x5eed);
+    var c = 0;
+    var from = 0;
+    while c < width {
+        let to = vec.get(ends, c);
+        var found = 0 - 1;
+        borrow index as &ir in {
+            found = map.find(ir, buffer.bytes(labels)[from..to]);
+        }
+        if found >= 0 {
+            // the same label twice: it names no one column
+            borrow mut index as &!iw in {
+                map.set_value_at(iw, found, 0 - 2);
+            }
+        } else {
+            index = map.put(heap, index, buffer.bytes(labels)[from..to], c);
+        }
+        from = to;
+        c = c + 1;
+    }
+    var owner = box_slice(heap, width + 1, 0 - 1);
+    var why = 0;
+    var bad = 0;
+    var first = 0;
+    var k = 0;
+    borrow items as &il in {
+        while k < count && why == 0 {
+            let b = 6 * k;
+            var column = 0 - 1;
+            if vec.get(il, b) == 1 {
+                let p = vec.get(il, b + 1);
+                if p >= 1 && p <= width {
+                    column = p - 1;
+                }
+            } else {
+                let target = unescaped(heap, text[vec.get(il, b + 2)..vec.get(il, b + 3)]);
+                borrow target as &tr in {
+                    borrow index as &ir in {
+                        column = map.get(ir, buffer.bytes(tr), 0 - 1);
+                    }
+                }
+                buffer.drop(heap, target);
+            }
+            if column == 0 - 2 {
+                why = 2;
+                bad = k;
+            } else if column < 0 {
+                why = 1;
+                bad = k;
+            } else {
+                var prior = 0 - 1;
+                borrow owner as &ow in {
+                    prior = contents(ow)[column];
+                }
+                if prior >= 0 {
+                    why = 3;
+                    bad = k;
+                    first = prior;
+                } else {
+                    borrow mut owner as &!ow in {
+                        contents(ow)[column] = k;
+                    }
+                }
+            }
+            k = k + 1;
+        }
+    }
+    var out = buffer.empty(heap, buffer.size(labels) + 16);
+    var outends = vec.empty(heap, 8, 0);
+    if why == 0 {
+        borrow items as &il in {
+            c = 0;
+            from = 0;
+            while c < width {
+                let to = vec.get(ends, c);
+                var item = 0 - 1;
+                borrow owner as &ow in {
+                    item = contents(ow)[c];
+                }
+                if item >= 0 {
+                    let fresh = unescaped(heap, text[vec.get(il, 6 * item + 4)..vec.get(il, 6 * item + 5)]);
+                    borrow fresh as &fr in {
+                        out = buffer.append(heap, out, buffer.bytes(fr));
+                    }
+                    buffer.drop(heap, fresh);
+                } else {
+                    out = buffer.append(heap, out, buffer.bytes(labels)[from..to]);
+                }
+                var size = 0;
+                borrow out as &oz in {
+                    size = buffer.size(oz);
+                }
+                outends = vec.push(heap, outends, size);
+                from = to;
+                c = c + 1;
+            }
+        }
+    }
+    unbox_slice(heap, owner);
+    map.drop(heap, index);
+    vec.drop(heap, items);
+    return (why, bad, first, out, outends);
+}

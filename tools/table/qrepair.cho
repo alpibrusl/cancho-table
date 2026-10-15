@@ -149,7 +149,12 @@ fn regrouped[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], code: int) -
     while i < m[qarena.s_item_count()] && m[qarena.s_star()] == 0 {
         if m[items + 8 * i] == 1 {
             clean = buffer.append(heap, clean, ", ");
-            clean = buffer.append(heap, clean, q[m[items + 8 * i + 5]..m[items + 8 * i + 6]]);
+            // (with its `as` name, when it has one)
+            var stop = m[items + 8 * i + 6];
+            if m[items + 8 * i + 7] > 0 {
+                stop = qarena.tok_end(m, m[items + 8 * i + 7] - 1);
+            }
+            clean = buffer.append(heap, clean, q[m[items + 8 * i + 5]..stop]);
             aggs = aggs + 1;
         }
         i = i + 1;

@@ -97,6 +97,15 @@ pub fn expected(code: int) -> [] &static [byte] {
     if code == 30 {
         return "in or contains after not";
     }
+    if code == 31 {
+        return "a name after as (a name that is a keyword is written \"like this\")";
+    }
+    if code == 46 {
+        return "an order by name that is the alias of one column of the answer only";
+    }
+    if code == 47 {
+        return "an order by name that no earlier column of the answer has";
+    }
     if code == 40 {
         return "the group columns then the aggregates, not *";
     }
@@ -134,9 +143,6 @@ pub fn feature(code: int) -> [] &static [byte] {
     }
     if code == 64 {
         return "cast-in-group";
-    }
-    if code == 65 {
-        return "alias";
     }
     if code == 66 {
         return "subquery";
@@ -193,9 +199,6 @@ pub fn hint(code: int) -> [] &static [byte] {
     }
     if code == 64 {
         return "the grammar groups by the text of a column; a grouping by value is the flag --group x:int, x:dec(N) or x:float";
-    }
-    if code == 65 {
-        return "a column keeps its header name and an aggregate its name (sum:bytes); there is no renaming";
     }
     if code == 66 || code == 67 {
         return "one input; there are no joins and no subqueries yet";

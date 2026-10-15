@@ -14,10 +14,10 @@
 | decision | choice | why, in one line |
 |---|---|---|
 | what `--query` is | **a translator from a small SQL subset to the flags the tool already has**; the existing parsers then fill the one `Query`, so there is no second plan to keep equal | the equivalence the design asked for holds by construction for meaning, and the gate checks the writing (quoting and escaping) |
-| the subset | `select` (columns, `*`, `count(*)`, `sum`, `min`, `max`, `mean`, `count(distinct c)`) `from` (`'file'` or `stdin`) `where` (`and` and `or` of comparisons, `contains`, `in`, with parentheses: a level is all `and` or all `or`, a mix is `query.mixed-and-or`; [`or-and-columns.md`](or-and-columns.md), slice A1) `group by` `order by` `limit n offset m`. `not COND`, `not (...)`, `c not in (...)`, `c not contains 'x'` ([`or-and-columns.md`](or-and-columns.md), slice A2). **No aliases, no expressions, no joins, no `like`, no null** | exactly what the engine has; every other SQL word is a tagged refusal that says what to write instead |
+| the subset | `select` (columns, `*`, `count(*)`, `sum`, `min`, `max`, `mean`, `count(distinct c)`) `from` (`'file'` or `stdin`) `where` (`and` and `or` of comparisons, `contains`, `in`, with parentheses: a level is all `and` or all `or`, a mix is `query.mixed-and-or`; [`or-and-columns.md`](or-and-columns.md), slice A1) `group by` `order by` `limit n offset m`. `not COND`, `not (...)`, `c not in (...)`, `c not contains 'x'` ([`or-and-columns.md`](or-and-columns.md), slice A2). `as NAME` after an item of the select list ([`or-and-columns.md`](or-and-columns.md), slice B1: the label that column has in the answer). **No expressions, no joins, no `like`, no null** | exactly what the engine has; every other SQL word is a tagged refusal that says what to write instead |
 | types | **`cast(x as int)` or `x::int`**, `dec(S)`, `float`: the engine's three types, named | one meaning, two spellings agents already type |
 | names | bare ASCII identifiers; **`"double quoted"`** for anything else (spaces, commas, dots, keywords, non-ASCII); **`#3`** a position; values are **`'single quoted'`** or numbers | SQL's own convention; a column called `select` is `"select"` |
-| aliases | **no** (`as` is refused). The engine has no renamed column; a feature with no flag form has no place in the gate | |
+| aliases | **`select a as b`** (slice B1): `--rename '#N=b'`, applied where the labels of the answer are written and nowhere else; `as` is required (`select a b` stays `query.syntax`), `select * as x` is `query.syntax`, and an alias is a bare name that is not a keyword or a "quoted" one | |
 | `limit n offset m` | `--limit n --from m`: **a page**, as the flags are, with `truncated` and `next` | one meaning of limit |
 | `select *` alone | needs one new flag, **`--rows`** (rows, all columns, no condition): today `table FILE` is the shape, and there is no way to ask for every row without a condition | a small gap the front end found |
 | errors | `query.syntax` (offset, what was expected), `query.unsupported` (the feature, what to write), `query.group-mismatch`, `query.too-long`, `query.mixed-and-or` (slice A1: `and` beside `or` at one level, the two readings offered); all exit 2 | as `where.syntax` does |
@@ -43,7 +43,7 @@ What it costs:
 statement = "select" items [ "from" source ] [ "where" conds ] [ "group" "by" columns ]
             [ "order" "by" keys ] [ "limit" nat [ "offset" nat ] | "offset" nat ] [ ";" ] ;
 items     = "*" | item { "," item } ;
-item      = column | aggregate ;
+item      = ( column | aggregate ) [ "as" name ] ;                 (* slice B1 *)
 aggregate = "count" "(" "*" ")"
           | "count" "(" "distinct" typed ")"
           | ( "sum" | "min" | "max" ) "(" typed ")"
@@ -57,6 +57,7 @@ cmp       = "=" | "!=" | "<>" | "<" | "<=" | ">" | ">=" ;
 keys      = key { "," key } ;
 key       = ( typed | aggregate ) [ "asc" | "desc" ] ;
 columns   = column { "," column } ;
+name      = ident | quoted ;                                 (* an alias, slice B1: never a position, never a reserved word unless "quoted" *)
 typed     = column [ "::" type ] | "cast" "(" column "as" type ")" ;
 type      = "int" | "float" | "dec" "(" nat ")" ;            (* dec: 0 to 18 *)
 column    = ident | quoted | "#" digits ;
@@ -80,7 +81,6 @@ A query that names such a column writes it `"like"`; reserving them *now* is wha
 |---|---|
 | `like`, `ilike` | `col contains 'text'` finds a substring; there are no patterns |
 | `between`, `is null`, `null`, booleans | write two conditions; there is no null (an empty cell is the empty text: `= ''`) |
-| `as` (alias) | a column keeps its header name, an aggregate its name (`sum:bytes`); there is no renaming |
 | `count(col)` | `count(*)` counts rows, `count(distinct col)` counts values: `count(col)` would count the empty cells too |
 | `col = other_col` | a condition compares a column with a value |
 | an expression, a function, `cast` in the select list | a type says how a column is *read* in a condition, a sort or an aggregate; selecting returns its text |
@@ -219,6 +219,7 @@ Nothing here builds a join; the grammar is shaped so that one fits without break
 * the select list's `*` could become `alias.*`.
 * a join needs its own design (`docs/backlog.md` item 9: a hash join with the build side bounded by `--max-state-bytes`); what this document commits to is only that the words and the dot are not given away.
 * **Update (slice A2 of [or-and-columns.md](or-and-columns.md)):** `not` is in the subset. `not COND` and `not (...)` are translated to the flag form's `not (...)`, which is the only way the flags have to say it (`not a = 'x'` is `not (a = 'x')`, and `not (...)` is written as it stands); `c not in (...)` and `c not contains 'x'` are written as they are. The parenthesis the translation adds for a `not` before a condition is one of the 8 levels of the ceiling, so the ninth is refused at the `not`. `c not like`, `c not between` are `query.unsupported` (the feature `like`, `between`, at the word after `not`), with the repair of `like '%x%'` (`not contains 'x'`); `c not = 1` and `c not` are `query.syntax`, "in or contains after not", at the word after `not`. The feature `not` of `query.unsupported` is gone. A column called `not` is `"not"`, as it was.
+* **Update (slice B1 of [or-and-columns.md](or-and-columns.md), section 18):** `select a as b` is built. The translation writes `--rename '#N=b'` with N the place of the item in the select list, which is its place in the answer (a grouping's list is its group columns, then its aggregates). In `order by` **an alias wins over a header name**, as in SQL (the design checked SQLite 3.53.4 and DuckDB 1.5.6 for `select a as b, b as a from t order by b`; the tests of the slice run SQLite, which also showed an alias beating a column called `id` in an `order by id`): for rows the translation writes `--order-by` with the header column the alias stands for, for a grouping `--sort` with the label after the rename. An alias is **not seen by `where`, `group by` or an aggregate's argument**, which name the columns of the file. Two refusals are `query.group-mismatch`: an `order by` name that is the alias of two items (`select a as x, b as x ... order by x`), and, for a grouping, a name that an earlier column of the answer already has, because `--sort` finds the first column of a label (`select g, count(*) as g ... group by g order by g`). A name after `as` that is a position, a string or a bare keyword is `query.syntax` ("a name after as") at that word.
 * **Update (slice J1 of [joins.md](joins.md)):** the join exists in its **flag form** only, `--join FILE --on KEYS` (inner, left, semi or anti; text or typed keys, up to eight pairs; rows out; slices J1 and J2). A `--query` still has no join: a `join` in the text is `query.unsupported` as before, and `--query` with `--join` is `args.conflict` (a query says the plan, and so does the flag). The query form, with the aliases it needs, is slice J3b of the design; the corpus of queries that are valid today translates to the same flags, since no word was reserved or unreserved by J1.
 
 ## 8. The equivalence gate
@@ -324,7 +325,7 @@ The grammar's productions are the one thing that cannot be generated from the co
   or `bytes::int > 100` for numbers. Types: int, dec(N), float.
 - Names are bare (letters, digits, underscore) or "double quoted" (spaces, commas, dots, keywords); #3 is the third column.
 - A grouping selects its `group by` columns first, in the same order, then aggregates; it always has at least one aggregate.
-- No aliases, no expressions, no joins, no like, no null: each is refused with the feature named and what to write instead
+- No expressions, no joins, no like, no null: each is refused with the feature named and what to write instead
   (`query.unsupported`). `query.syntax` gives the byte offset and what was expected.
 {{generated: reserved words, functions, types, limits}}
 {{generated, each tested: examples}}

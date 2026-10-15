@@ -7,7 +7,7 @@ module qparse;
 // flags. A column is a token (a name, a quoted name or a position), a value is a token, and a type is a code: 0 text, 1 int, 2 + S for dec(S), 21 for float
 // (the codes of query.cho).
 //
-//     select item      [0 column | 1 aggregate, function, column token, type, scale or -1, start, end, 0]       functions: 0 count, 1 sum, 2 min, 3 max, 4 distinct, 5 mean
+//     select item      [0 column | 1 aggregate, function, column token, type, scale or -1, start, end, the token of its `as` name plus one or 0]       functions: 0 count, 1 sum, 2 min, 3 max, 4 distinct, 5 mean
 //     condition        [column token, type, operator, how many values, start, 0, 0, 0] then the values' tokens   operators: 0 = 1 != 2 < 3 <= 4 > 5 >= 6 contains 7 in 8 not in 9 not contains
 //     order key        [0 column | 1 aggregate, function, column token, type, scale or -1, 1 when descending, start, end of an aggregate]
 //     group column     the column's token
@@ -366,7 +366,16 @@ fn items[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
             m[r + 6] = qarena.tok_end(m, tk(m, 0 - 1));
         }
         if is_word(q, m, 0, "as") {
-            return qarena.fail(m, 2, 65, start_of(m, 0));
+            // `as NAME` (docs/or-and-columns.md section 8.2): a bare name that is not a keyword, or a "quoted" one; the record keeps its token, plus one (0 is none)
+            step(m);
+            let i = tk(m, 0);
+            let kind = qarena.tok_kind(m, i);
+            if kind == qlex.t_id() && !keyword(q, m, i) || kind == qlex.t_qid() {
+                step(m);
+                m[r + 7] = i + 1;
+            } else {
+                return qarena.fail(m, 1, 31, qarena.tok_start(m, i));
+            }
         }
         more = eat_sym(m, qlex.y_comma());
     }

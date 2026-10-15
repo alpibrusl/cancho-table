@@ -240,12 +240,12 @@ def sqlite_answer(names, rows, picks, aliases, where=None, order_cols=None, grou
     `aliases` the AS name of each or None."""
     con = sqlite3.connect(":memory:")
     cols = ", ".join("c%d TEXT" % i for i in range(len(names)))
-    con.execute("CREATE TABLE t (id INTEGER, %s)" % cols)
+    con.execute("CREATE TABLE t (__row INTEGER, %s)" % cols)
     for k, r in enumerate(rows):
         con.execute("INSERT INTO t VALUES (%d, %s)" % (k, ", ".join("?" for _ in names)), r)
     items = []
     for c, a in zip(picks, aliases):
         items.append("c%d" % c + (" AS %s" % qi(a) if a is not None else ""))
-    cur = con.execute("SELECT %s FROM t ORDER BY id" % ", ".join(items))
+    cur = con.execute("SELECT %s FROM t ORDER BY t.__row" % ", ".join(items))
     labels = [d[0] for d in cur.description]
     return labels, [list(r) for r in cur.fetchall()]

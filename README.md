@@ -260,6 +260,25 @@ Zed,1,64
 ```
 <!-- /gen:t-group -->
 
+### Rename columns
+
+`--rename TARGET=NEW,...` gives the columns of rows or groups the labels the next step expects, without a second tool in the middle: TARGET is a label as the answer prints it (`customer`, `count`, `sum:bytes`) or `#N`, its place (the way to name a label two columns have), and NEW is at least one byte. It changes the csv header, the JSON `columns` and the keys of JSON lines, and nothing else: `--where`, `--group`, `--agg` and `--order-by` keep naming the columns of the file, and `--sort` names the label after the rename (`--rename sum:bytes=total --sort -total`). In a query it is `select customer as name`: `as` is required, an alias wins over a file's column in `order by`, and `where` and `group by` do not see it. A target that is not a column of the answer is `rename.unknown-target` and lists the labels it could have been, a label two columns have is `rename.ambiguous-target`, and one column renamed twice is `rename.repeated-target`.
+
+<!-- gen:t-rename -->
+```console
+$ table --where "bytes != ''" --group customer --agg count,sum:bytes --rename customer=name,sum:bytes=total --sort -total --format csv orders.csv
+name,count,total
+"Doe, Jane",2,2560
+Acme,1,128
+Zed,1,64
+$ table --query "select customer as name, sum(bytes) as total from 'orders.csv' where bytes != '' group by customer order by total desc" --format csv
+name,total
+"Doe, Jane",2560
+Acme,128
+Zed,64
+```
+<!-- /gen:t-rename -->
+
 ### Join two files
 
 `--join FILE --on PROBE=BUILD` joins the file you name (or standard input) with a second one. The operand is the **probe** side and is streamed; the `--join` file is the **build** side and is held whole in memory, counted in `--max-state-bytes`. `--join-type` is `inner` (the default: each probe row, in the probe's order, once for every build row with its key, in the build's order, followed by that row's cells), `left` (the same, and a probe row with no match once, with every cell of the build row empty: there is no null), `semi` (each probe row that has a match, once, with its own cells) or `anti` (each probe row that has none, once). A key is compared as text, byte for byte (`007` is not `7`, and an empty cell matches an empty cell: there is no null), or as a number when the pair ends in a type, `--on id=user:int` (also `:dec(S)` and `:float`): then `007` is `7`, `-0` is `0`, `1.5` is `1.50`, and a cell that is not of the type, an empty one included, is refused. `--on a=x,b=y` is a key of two pairs (up to eight); `--on id` names a column both files have, and the answer shows it once. Two files that share a column name are refused as `join.column-collision`, and the refusal offers the invocation with a `--join-prefix`. A number read from a padded cell of a left join (`--where "tier:int > 1"`) is refused as any empty cell is, and the refusal says `padded` ([docs/joins.md](docs/joins.md), sections 16 and 17).
@@ -297,7 +316,7 @@ $ table --join tiers.csv --on customer --join-type left --where "tier:int > 1" o
 
 ### Ask in a small SQL
 
-`--query` takes one statement of a small subset of SQL (`select`, `from`, `where` with `and`, `group by`, `order by`, `limit` and `offset`) and means exactly the flags it is translated to: there is one plan, and the same question asked in flags gives the same bytes. What the subset leaves out (`or`, aliases, expressions, `like`, `null`, joins) is refused with the feature named and what to write instead, and a mistake is refused at the byte where it is, with a corrected command when the correction is certain. [docs/query.md](docs/query.md) has the grammar.
+`--query` takes one statement of a small subset of SQL (`select`, `from`, `where` with `and`, `group by`, `order by`, `limit` and `offset`) and means exactly the flags it is translated to: there is one plan, and the same question asked in flags gives the same bytes. `select a as b` gives a column of the answer another label (it is `--rename '#1=b'`). What the subset leaves out (expressions, `like`, `null`, joins) is refused with the feature named and what to write instead, and a mistake is refused at the byte where it is, with a corrected command when the correction is certain. [docs/query.md](docs/query.md) has the grammar.
 
 <!-- gen:t-query -->
 ```console
@@ -389,10 +408,10 @@ $ table --where "bytes:int > 100" --select id orders.csv
 * **One join, in two slices of it** (J1 and J2 of [docs/joins.md](docs/joins.md)): `--join FILE --on KEYS` joins the operand (or standard input) with a second file, as an `inner`, `left`, `semi` or `anti` join, on up to eight pairs of columns, each compared as text or, with a type (`:int`, `:dec(S)`, `:float`), as a number, giving rows (`--select`, `--where`, `--limit`, `--from`, `--format`). No right or full join, no `--group`, `--agg`, `--order-by` or `--report` over a join (write the join as csv and pipe it into a second call), no jsonl side, no `--join-where`, no filter that runs before the key is read (a typed key is refused at the first cell that is not of its type), no `--query` with a join. The `--join` file is held whole in memory, counted in `--max-state-bytes` (resident memory can be up to about three times that while it grows), and nothing spills to disk. A join is read on one core whatever `--threads` says.
 * **One input** at a time otherwise: a file named on the command line, or standard input (`-`, or no file), read in one pass on one core, in blocks, at about the speed of a named file on one core. A producer that writes slowly is waited for until the first 512 bytes arrive; a closed descriptor 0 reads as empty; a descriptor that fails is refused with an io.* rule (docs/readers.md 11.1, 11.7). ([docs/readers.md](docs/readers.md), section "R1 as built").
 * **JSON lines are read, nothing else is.** `--input-format jsonl` (or `ndjson`) reads one JSON object per line, from a file or from standard input, with the columns declared by `--fields` (paths such as `user.name` or `items.0.sku`; `--discover` reports what the first lines hold). A number is the cell its exact text is, never through a double. A line that is not strict JSON, not an object, a declared path with no value, an object or an array in a cell, and a key twice are tagged refusals ([docs/readers.md](docs/readers.md) section 12). `--format jsonl` writes the answer back as JSON lines (one object per row, keys the output columns, every value a string but the aggregates and the group keys that have a type (`--group NAME:int`, `NAME:dec(S)`, `NAME:float`), which are numbers; [docs/readers.md](docs/readers.md) section 13). No Parquet, no JSON array or pretty-printed document (use `jq -c '.[]'`). CSV and TSV (comma, tab or semicolon) as before.
-* **`--query` is a small subset of SQL**, not SQL: `or`, `not` and parentheses are there (a level is all `and` or all `or`: `a = 1 or b = 2 and c = 3` is refused as `query.mixed-and-or`, with both readings as the repair; `not a = 1`, `not (...)`, `a not in (1, 2)`, `a not contains 'x'`), but no aliases, no expressions or functions, no `like`, no `null`, no joins, no subqueries, and a grouping sorts by one column. Each is refused as `query.unsupported`, with the feature named ([docs/query.md](docs/query.md)).
-* **No guessing.** Every column is text unless you declare `:int`, `:dec(S)` or `:float`; `--report types` suggests a declaration and applies none. No computed or renamed column; `or`, `not` and parentheses are there in a filter (a mix of `and` and `or` at one level is refused with both readings, never guessed; a typed cell is read only when its condition is reached, so `c = '' or c:int > 5` keeps the empty cells and `c:int > 5 or c = ''` refuses the first one).
+* **`--query` is a small subset of SQL**, not SQL: `or`, `not` and parentheses are there (a level is all `and` or all `or`: `a = 1 or b = 2 and c = 3` is refused as `query.mixed-and-or`, with both readings as the repair; `not a = 1`, `not (...)`, `a not in (1, 2)`, `a not contains 'x'`), and `as` names a column of the answer, but no expressions or functions, no `like`, no `null`, no joins, no subqueries, and a grouping sorts by one column. Each is refused as `query.unsupported`, with the feature named ([docs/query.md](docs/query.md)).
+* **No guessing.** Every column is text unless you declare `:int`, `:dec(S)` or `:float`; `--report types` suggests a declaration and applies none. No computed column (a renamed one is `--rename customer=name`, a label and nothing else: the filter, the grouping and the sort by header still name the header's columns); `or`, `not` and parentheses are there in a filter (a mix of `and` and `or` at one level is refused with both readings, never guessed; a typed cell is read only when its condition is reached, so `c = '' or c:int > 5` keeps the empty cells and `c:int > 5 or c = ''` refuses the first one).
 
-Renamed columns and the rest of joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
+The rest of joins is on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
 
 ## How fast
 

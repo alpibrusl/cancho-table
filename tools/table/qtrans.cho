@@ -8,7 +8,7 @@ module qtrans;
 //
 // The result is `Translated`: `text` holds seven sections, each ended by a zero byte (a query comes from an argument, which holds none), in this order
 //
-//     0 --select   1 --where   2 --group   3 --agg   4 --order-by   5 --sort   6 the source (a path)
+//     0 --select   1 --where   2 --group   3 --agg   4 --order-by   5 --sort   6 the source (a path)   7 --rename
 //
 // and `info` the integers (the slots below) and, after them, for a literal that may not fit its column, where it is in the --where text and in the query.
 
@@ -120,6 +120,11 @@ pub fn i_maps() -> [] int {
 
 pub fn i_header() -> [] int {
     return 25;
+}
+
+// 1 when a select item has an `as` name (section 7 is then the `--rename` the query stands for)
+pub fn i_rename() -> [] int {
+    return 21;
 }
 
 pub fn largest() -> [] int {
@@ -321,6 +326,82 @@ fn same_aggregate[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], x: int,
         return true;
     }
     return same_column(heap, q, m, m[x + 2], m[y + 2]);
+}
+
+// The token of the `as` name of select item `k`, or -1 (the last slot of the item's record holds it plus one).
+fn alias_of[&m](m: &m [int], items: int, k: int) -> [] int {
+    return m[items + 8 * k + 7] - 1;
+}
+
+// Whether the name that column token `x` stands for is the `as` name of select item `k`.
+fn named[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], items: int, k: int, x: int) -> [heap] bool {
+    let a = alias_of(m, items, k);
+    if a < 0 || is_position(m, x) {
+        return false;
+    }
+    let n1 = decode(heap, q, m, x);
+    let n2 = decode(heap, q, m, a);
+    var same = false;
+    borrow n1 as &r1 in {
+        borrow n2 as &r2 in {
+            same = bytes.equal(buffer.bytes(r1), buffer.bytes(r2));
+        }
+    }
+    buffer.drop(heap, n1);
+    buffer.drop(heap, n2);
+    return same;
+}
+
+// How many select items have the name of column token `x` as their `as` name, and the first of them (-1 when none).
+fn alias_hits[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], items: int, n_items: int, x: int) -> [heap] (int, int) {
+    var hits = 0;
+    var first = 0 - 1;
+    var k = 0;
+    while k < n_items {
+        if named(heap, q, m, items, k, x) {
+            if hits == 0 {
+                first = k;
+            }
+            hits = hits + 1;
+        }
+        k = k + 1;
+    }
+    return (hits, first);
+}
+
+// The label select item `k` gives its column in the answer, as `--sort` names it: its `as` name, else its column's name or its aggregate's label. And whether it is known: a position stands
+// for a header name that the translation cannot see.
+fn label_of[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], items: int, k: int) -> [heap] (buffer.Buffer, bool) {
+    let r = items + 8 * k;
+    let a = alias_of(m, items, k);
+    if a >= 0 {
+        return (decode(heap, q, m, a), true);
+    }
+    if m[r] == 1 {
+        if m[r + 1] != 0 && is_position(m, m[r + 2]) {
+            return (buffer.empty(heap, 1), false);
+        }
+        return (put_label(heap, buffer.empty(heap, 16), q, m, r), true);
+    }
+    if is_position(m, m[r + 2]) {
+        return (buffer.empty(heap, 1), false);
+    }
+    return (decode(heap, q, m, m[r + 2]), true);
+}
+
+// A new label as `--rename` reads it back: a backslash before a comma and a backslash, and before a leading `#`.
+fn put_new[&h, &d](heap: &!h Heap, out: buffer.Buffer, name: &d [byte]) -> [heap] buffer.Buffer {
+    var o = out;
+    var i = 0;
+    while i < len(name) {
+        let c = int_of(name[i]);
+        if c == ',' || c == '\\' || c == '#' && i == 0 {
+            o = buffer.push(heap, o, byte_of('\\'));
+        }
+        o = buffer.push(heap, o, name[i]);
+        i = i + 1;
+    }
+    return o;
 }
 
 fn put_zero[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
@@ -538,12 +619,17 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
             }
             let r = orders;
             let where_key = m[r + 6];
+            // the select item the key is, once it is known (an `as` name of one, an aggregate the list holds, or a group by column)
+            var key_item = 0 - 1;
             if m[r] == 1 {
                 var listed = false;
                 var a = 0;
                 while a < n_items && !listed {
                     if m[items + 8 * a] == 1 {
                         listed = same_aggregate(heap, q, m, r, items + 8 * a);
+                        if listed {
+                            key_item = a;
+                        }
                     }
                     a = a + 1;
                 }
@@ -559,33 +645,70 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
                     buffer.drop(heap, sort_text);
                     return (text, info);
                 }
-                sort_text = put_label(heap, sort_text, q, m, r);
             } else {
-                var listed = false;
+                // an `as` name wins over a header name (section 8.2); a typed key is read as a column, as it always was
+                var hits = 0;
+                var which = 0 - 1;
                 if m[r + 3] == 0 {
-                    var g2 = 0;
-                    while g2 < n_groups && !listed {
-                        listed = same_column(heap, q, m, m[r + 2], m[groups + g2]);
-                        g2 = g2 + 1;
+                    let (h2, w2) = alias_hits(heap, q, m, items, n_items, m[r + 2]);
+                    hits = h2;
+                    which = w2;
+                }
+                if hits > 1 {
+                    qarena.fail(m, 3, 46, where_key);
+                    buffer.drop(heap, order_text);
+                    buffer.drop(heap, sort_text);
+                    return (text, info);
+                }
+                var listed = hits == 1;
+                if hits == 1 {
+                    key_item = which;
+                } else {
+                    if m[r + 3] == 0 {
+                        var g2 = 0;
+                        while g2 < n_groups && !listed {
+                            listed = same_column(heap, q, m, m[r + 2], m[groups + g2]);
+                            if listed {
+                                key_item = g2;
+                            }
+                            g2 = g2 + 1;
+                        }
+                    }
+                    if !listed {
+                        qarena.fail(m, 3, 44, where_key);
+                        buffer.drop(heap, order_text);
+                        buffer.drop(heap, sort_text);
+                        return (text, info);
+                    }
+                    if is_position(m, m[r + 2]) {
+                        qarena.fail(m, 2, 80, where_key);
+                        buffer.drop(heap, order_text);
+                        buffer.drop(heap, sort_text);
+                        return (text, info);
                     }
                 }
-                if !listed {
-                    qarena.fail(m, 3, 44, where_key);
-                    buffer.drop(heap, order_text);
-                    buffer.drop(heap, sort_text);
-                    return (text, info);
+            }
+            // --sort names the label after the rename, and finds the first column of that name: a name an earlier column of the answer has too would sort by that one
+            let (label, known) = label_of(heap, q, m, items, key_item);
+            var shadowed = false;
+            borrow label as &lr in {
+                var e = 0;
+                while e < key_item && known && !shadowed {
+                    let (other, other_known) = label_of(heap, q, m, items, e);
+                    borrow other as &orr in {
+                        shadowed = other_known && bytes.equal(buffer.bytes(orr), buffer.bytes(lr));
+                    }
+                    buffer.drop(heap, other);
+                    e = e + 1;
                 }
-                if is_position(m, m[r + 2]) {
-                    qarena.fail(m, 2, 80, where_key);
-                    buffer.drop(heap, order_text);
-                    buffer.drop(heap, sort_text);
-                    return (text, info);
-                }
-                let label = decode(heap, q, m, m[r + 2]);
-                borrow label as &lr in {
-                    sort_text = buffer.append(heap, sort_text, buffer.bytes(lr));
-                }
-                buffer.drop(heap, label);
+                sort_text = buffer.append(heap, sort_text, buffer.bytes(lr));
+            }
+            buffer.drop(heap, label);
+            if shadowed {
+                qarena.fail(m, 3, 47, where_key);
+                buffer.drop(heap, order_text);
+                buffer.drop(heap, sort_text);
+                return (text, info);
             }
             var dash = false;
             borrow sort_text as &sr in {
@@ -623,7 +746,19 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
                 if m[r + 5] == 1 {
                     order_text = buffer.push(heap, order_text, byte_of('-'));
                 }
-                order_text = put_column(heap, order_text, q, m, m[r + 2], false, true);
+                // an `as` name wins over a header name (section 8.2): the key is the column the item stands for
+                var key_col = m[r + 2];
+                let (hits, which) = alias_hits(heap, q, m, items, n_items, key_col);
+                if hits > 1 {
+                    qarena.fail(m, 3, 46, m[r + 6]);
+                    buffer.drop(heap, order_text);
+                    buffer.drop(heap, sort_text);
+                    return (text, info);
+                }
+                if hits == 1 {
+                    key_col = m[items + 8 * which + 2];
+                }
+                order_text = put_column(heap, order_text, q, m, key_col, false, true);
                 order_text = put_type(heap, order_text, t);
                 o = o + 1;
             }
@@ -653,6 +788,31 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
             }
             j = j + 1;
         }
+    }
+    text = put_zero(heap, text);
+    // 7 --rename: `#N=NEW` for each select item with an `as` name, N its place in the select list, which is its place in the answer
+    var renamed = false;
+    var item = 0;
+    while item < n_items && !star {
+        let a = alias_of(m, items, item);
+        if a >= 0 {
+            if renamed {
+                text = buffer.push(heap, text, byte_of(','));
+            }
+            renamed = true;
+            text = buffer.push(heap, text, byte_of('#'));
+            text = buffer.push_nat(heap, text, item + 1);
+            text = buffer.push(heap, text, byte_of('='));
+            let fresh = decode(heap, q, m, a);
+            borrow fresh as &fr in {
+                text = put_new(heap, text, buffer.bytes(fr));
+            }
+            buffer.drop(heap, fresh);
+        }
+        item = item + 1;
+    }
+    if renamed {
+        info = put_info(info, i_rename(), 1);
     }
     text = put_zero(heap, text);
     info = put_info(info, i_source(), m[qarena.s_source()]);

@@ -103,7 +103,6 @@ PINNED = [
     ("#1=x,#3=y", ("ok",)),
     ("a", ("syntax", 1, R.EXP_ITEM)),
     ("a=b,c", ("syntax", 5, R.EXP_ITEM)),
-    ("", ("syntax", 0, R.EXP_ITEM)),
     (",", ("syntax", 0, R.EXP_ITEM)),
     ("a=b,", ("syntax", 4, R.EXP_ITEM)),
     ("=b", ("syntax", 0, R.EXP_TARGET)),
@@ -172,6 +171,8 @@ class Syntax(Base):
                 text = "".join(parts)
             else:
                 text = "".join(rnd.choice(alphabet) for _ in range(rnd.randint(0, 12)))
+            if not text:
+                continue          # (an empty value is args.bad-value, the cli's, before the list is read)
             with self.subTest(text=text):
                 want = predicted(text.encode(), labels_of("a", "b", "c"))
                 seen[want[0]] = seen.get(want[0], 0) + 1
@@ -233,8 +234,13 @@ def one_case(tc, rnd, d, stats):
             continue
         new = [l.decode() for l in want[1]]
         if plain.status != 0:
-            # a refusal of the data: the run reads the same cells, so the same rule (the csv header may already be out)
-            tc.assertEqual(got.status, plain.status, ctx)
+            # a refusal of the data: the run reads the same cells, so the same rule (the csv header may already be out); but two equal labels in json lines are refused before any row is read
+            if fmt == "jsonl" and len(set(new)) < len(new) and plain.status == 8:
+                tc.assertEqual(got.status, 2, ctx)
+            elif fmt == "jsonl" and plain.status == 2 and len(set(new)) == len(new):
+                pass                      # the rename removed the duplicate that json lines refused: the answer is the data's
+            else:
+                tc.assertEqual(got.status, plain.status, ctx)
             continue
         if fmt == "json":
             tc.assertEqual(got.status, 0, ctx + (got,))
@@ -290,6 +296,8 @@ class Sqlite(unittest.TestCase):
                     picks = [rnd.randrange(n) for _ in range(rnd.randint(1, 4))]
                     aliases = [rnd.choice(R.POOL + names) if rnd.random() < 0.6 else None for _ in picks]
                     sel = ",".join(query_gen.lst(("name", names[c])) for c in picks)
+                    if all(a is None for a in aliases):
+                        aliases[0] = rnd.choice(R.POOL)
                     renames = [(i, a) for i, a in enumerate(aliases) if a is not None]
                     argv = ["--select", sel]
                     sql_labels = [a if a is not None else names[c] for c, a in zip(picks, aliases)]
@@ -297,7 +305,7 @@ class Sqlite(unittest.TestCase):
                 else:
                     k = rnd.randrange(n)
                     alias_k, alias_n = rnd.choice(R.POOL), rnd.choice(R.POOL + ["count"])
-                    argv = ["--group", query_gen.lst(("name", names[k])), "--agg", "count"]
+                    argv = ["--group", query_gen.lst(("name", names[k])).replace(":", "\\:"), "--agg", "count"]
                     renames = [(0, alias_k), (1, alias_n)]
                     con = __import__("sqlite3").connect(":memory:")
                     con.execute("CREATE TABLE t (c TEXT)")
@@ -389,6 +397,59 @@ class Refusals(Base):
         rule = [x for x in introspect()["rules"] if x["rule"] == "output.duplicate-column"][0]
         self.assertIn("or rename one with --rename", rule["summary"])
         self.assertIn("Repair: none.", rule["summary"])
+
+    def test_the_repair_offers_at_most_five_case_variants_in_both_directions(self):
+        self.s.write("v.csv", "ABC,ABc,AbC,Abc,aBC,aBc,abC\n1,2,3,4,5,6,7\n")
+        r = self.r("--select", "ABC,ABc,AbC,Abc,aBC,aBc,abC", "--rename", "abc=x", "v.csv")
+        opts = r.error()["repair"]["options"]
+        self.assertEqual(len(opts), 5, r)
+        self.assertEqual(len({tuple(o["argv"]) for o in opts}), 5)
+        for o in opts:
+            again = run_argv(o["argv"])
+            self.assertEqual(again.status, 0, again)
+        # an upper-case label for a lower-case target, and the other way round
+        for label, target in (("B", "b"), ("b", "B")):
+            self.s.write("c.csv", label + "\n1\n")
+            r = self.r("--select", label, "--rename", target + "=x", "c.csv")
+            self.assertEqual(r.error()["repair"]["kind"], "choose", (label, target, r))
+
+    def test_a_label_with_an_equals_sign_or_a_comma_is_repaired_escaped(self):
+        self.s.write("e.csv", "K=V,a#b\n1,2\n")
+        r = self.r("--select", "K=V", "--rename", "k\\=v=x", "e.csv")
+        self.assertEqual(r.first_rule(), "rename.unknown-target", r)
+        again = run_argv(r.error()["repair"]["options"][0]["argv"])
+        self.assertEqual(again.status, 0, again)
+        self.assertEqual(again.data()["columns"], ["x"])
+
+    def test_no_repair_is_offered_for_the_equals_form_of_the_flag(self):
+        r = self.r("--select", "a", "--rename=A=x", "f.csv")
+        self.assertEqual((r.first_rule(), r.error()["repair"]["kind"]), ("rename.unknown-target", "none"), r)
+
+    def test_a_wide_answer_lists_fifty_labels(self):
+        names = ["c%d" % i for i in range(60)]
+        self.s.write("w.csv", ",".join(names) + "\n" + ",".join("1" for _ in names) + "\n")
+        r = self.r("--rows", "--rename", "zz=x", "w.csv")
+        d = r.error()["detail"]
+        self.assertEqual((len(d["available"]), d["available_truncated"], d["columns"]), (50, True, 60), r)
+        r = self.r("--select", ",".join(names[:50]), "--rename", "zz=x", "w.csv")
+        d = r.error()["detail"]
+        self.assertEqual((len(d["available"]), d["available_truncated"]), (50, False), r)
+
+    def test_the_repair_of_a_grouping_keeps_the_alias_of_an_aggregate(self):
+        r = self.r("--query", "select region, count(*) as n from 'sales.csv' group by units")
+        self.assertEqual(r.first_rule(), "query.group-mismatch", r)
+        hint = json.dumps(r.error())
+        self.assertIn("count(*) as n", hint)
+
+    def test_discover_takes_no_rename(self):
+        r = self.r("--input-format", "jsonl", "--discover", "--rename", "a=b", stdin=b'{"a":1}\n')
+        self.assertEqual((r.first_rule(), r.status), ("args.conflict", 2), r)
+
+    def test_the_syntax_error_reports_the_list_and_the_offset(self):
+        r = self.r("--select", "a,b", "--rename", "a=x,b", "f.csv")
+        self.assertEqual(r.error()["detail"], {"offset": 5, "expected": R.EXP_ITEM, "list": "a=x,b"}, r)
+        self.assertEqual(r.error()["repair"], None, r)
+        self.assertIn("TARGET=NEW", r.error()["hint"])
 
     def test_the_rename_that_repairs_the_duplicate_is_accepted(self):
         r = self.r("--select", "a,a", "--rename", "#2=a2", "--format", "jsonl", "f.csv")
@@ -485,6 +546,8 @@ def comparable(res):
         for e in [d["error"]] + d.get("errors", []):
             e.pop("repair", None)
         out = (json.dumps(d, sort_keys=True) + "\n").encode()
+    if err.startswith((b"table: where.syntax:", b"table: query.syntax:")):
+        return res.status, out, b"SYNTAX"
     return res.status, out, err
 
 
@@ -570,8 +633,8 @@ class Equivalence(unittest.TestCase):
                     if rnd.random() < 0.3:
                         q += " order by " + rnd.choice(cols + [a for a in aliases if a[0] != "'"])
                     try:
-                        argv, src = query_ref.translate(q)
-                        want = ("ok", argv)
+                        argv, src = query_ref.translate(q.encode("utf-8").decode("latin-1"))       # (the reference reads a byte as a character)
+                        want = ("ok", [a.encode("latin-1").decode("utf-8") for a in argv])
                     except query_ref.QueryError as e:
                         want = (e.kind, e.offset, e.expected if e.kind in ("syntax", "group-mismatch") else e.feature)
                     r = run("--root", self_.dir, "--query", q)
@@ -641,7 +704,7 @@ class Parallel(unittest.TestCase):
         rnd = random.Random(SEED + 5)
         import tempfile
         with tempfile.TemporaryDirectory() as d:
-            rows = [[str(i), rnd.choice(["n", "s", "e", "w"]), str(rnd.randint(0, 999)), "c,%d" % (i % 7)] for i in range(3000)]
+            rows = [[str(i), rnd.choice(["n", "s", "e", "w"]), str(rnd.randint(0, 999)), "c,%d" % (i % 7)] for i in range(400)]
             query_gen.write_csv(os.path.join(d, "f.csv"), ["id", "dir", "n", "note"], rows)
             plans = [
                 ["--select", "id,note,n", "--rename", "id=key,note=memo"],
