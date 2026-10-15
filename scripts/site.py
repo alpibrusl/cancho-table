@@ -20,9 +20,11 @@ cites, next to its conditions). What is generated:
     t-NAME        README.md, index.html   the example for one task: the command and
                                           what the built binary prints for it
     flow          README.md, index.html   one complete flow: a command, a refusal with
-                                          its repair, the repair run
+                                          its repair, the repair run (on the page it is
+                                          the terminal that the script of the page replays,
+                                          one element per line)
     qs            README.md, index.html   the quick start's commands and output
-    hero          index.html              the first example
+    c-NAME        index.html              the small example on one card of "What it does now"
     agentio       index.html              excerpts of `table introspect`
     skill         index.html              the first lines of `table skill`
     exit-codes, rules, examples   docs/refusals.md   the refusal protocol, from introspect
@@ -98,6 +100,9 @@ CUSTOMERS = """name,tier\n"Doe, Jane",gold\nAcme,silver\nZed,bronze\nAcme,resell
 # A third, for the left, semi and anti joins and the shared-name key: some of the customers of orders.csv have a tier here, some do not
 TIERS = """customer,tier\nAcme,silver\nZed,bronze\n"""
 
+# JSON lines, for the card of the JSON lines reader
+EVENTS = """{"user":{"name":"Ana"},"bytes":512}\n{"user":{"name":"Bo"},"bytes":128}\n{"user":{"name":"Ana"},"bytes":64}\n"""
+
 # What is shown is what is typed; the argv run is shlex.split of it.
 DEMOS = {
     "shape": "table orders.csv",
@@ -136,9 +141,13 @@ DEMOS = {
     "join_left": """table --join tiers.csv --on customer --join-type left --select id,customer,tier --format csv orders.csv""",
     "join_anti": """table --join tiers.csv --on customer --join-type anti --format csv orders.csv""",
     "join_typed": """table --join tiers.csv --on customer --join-type left --where "tier:int > 1" orders.csv""",
+    "jsonl": """table --input-format jsonl --fields user.name,bytes --where "bytes:int > 100" --format jsonl events.jsonl""",
+    "stdin": """table --where "status = 200" --select id,bytes --format csv -""",
     "where_or": """table --where "(status = 404 or status = 500) and bytes != '' and bytes:int > 100" --select id,status,bytes --format csv orders.csv""",
     "query_or": "table --query \"select id from 'orders.csv' where status = 404 or status = 500 and bytes != ''\"",
 }
+# demos whose input is the contents of a fixture file, sent on standard input: shown as `cat FILE | ...`
+STDIN = {"stdin": "orders.csv"}
 # demos shown as the members of the JSON line that matter, since the line is long
 SUMMARY = {"float_over": ["rule", "hint", "repair", "detail"], "float_bad": ["rule", "hint", "repair", "detail"], "dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"], "query_typo": ["rule", "hint", "repair", "detail"], "query_or": ["rule", "hint", "repair", "detail"], "join_collision": ["rule", "hint", "repair"], "join_typed": ["rule", "hint", "detail"]}
 # task name -> the demos shown for it
@@ -161,9 +170,9 @@ def e(s):
 # --- running things ----------------------------------------------------------
 
 
-def run_words(words, binary, tmp):
+def run_words(words, binary, tmp, stdin=None):
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "LC_ALL": "C"}
-    r = subprocess.run(words, executable=str(binary), cwd=tmp, env=env,
+    r = subprocess.run(words, executable=str(binary), cwd=tmp, env=env, input=stdin,
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return r.stdout.decode("utf-8"), r.returncode
 
@@ -178,6 +187,9 @@ def item(ctx, key):
     """(typed command, what is printed, status, note). A refusal is shown as the
     members of its JSON line that matter."""
     words = shlex.split(DEMOS[key])
+    if key in STDIN:
+        out, status = ctx["run"](words, (ctx["tmp"] / STDIN[key]).read_bytes())
+        return "cat %s | %s" % (STDIN[key], DEMOS[key]), out, status, None
     out, status = ctx["run"](words)
     if key in SUMMARY:
         doc = json.loads(out)
@@ -237,9 +249,38 @@ def task_items(ctx, task):
     return [item(ctx, k) for k in TASKS[task]]
 
 
-def hero(ctx):
-    return ('<div class="term" role="img" aria-label="One command on a small file and what it prints">'
-            '<div class="bar"><i></i><i></i><i></i></div>\n<pre>' + render([item(ctx, "group")], True) + "</pre></div>")
+def term_pre(items):
+    """The terminal of the page: a pre whose every line is an element of its own,
+    so that the script of the page can replay it line by line. Without the script
+    the whole text is there; a command is `.ln.p` (its text in `.t`), a comment
+    `.ln.c`, what a command prints `.ln.o` (`.ln.x` when it refused), the exit
+    status `.ln.r`."""
+    out = []
+    for display, text, status, note in items:
+        if text is None:
+            out.append('<span class="ln c">%s</span>' % e(display))
+            continue
+        out.append('<span class="ln p"><span class="pr">$ </span><span class="t">%s</span></span>' % e(display))
+        for line in text.rstrip("\n").split("\n"):
+            out.append('<span class="ln %s">%s</span>' % ("x" if status != 0 else "o", e(line)))
+        if status != 0:
+            out.append('<span class="ln r"># exit status %d%s</span>' % (status, "; " + e(note) if note else ""))
+    return ('<pre id="screen" class="screen" tabindex="0" aria-label="The text of the flow: a command, a refusal with its repair, the repair run, and the exact answer">'
+            + "".join(out) + "</pre>")
+
+
+# card name -> (demo, the longest line shown). A longer line is cut, and a comment says so.
+CARDS = {"csv": ("select", None), "jsonl": ("jsonl", None), "stdin": ("stdin", None), "query": ("query", None),
+         "join": ("join_left", None), "or": ("where_or", None), "rename": ("rename", None), "explain": ("explain", 150)}
+
+
+def card(ctx, name):
+    key, clip = CARDS[name]
+    display, text, status, note = item(ctx, key)
+    if clip is not None and any(len(l) > clip for l in text.splitlines()):
+        text = "\n".join(cut(l, clip) for l in text.rstrip("\n").split("\n"))
+        return '<pre class="code" tabindex="0">' + render([(display, text, status, None)], True) + '\n<span class="c"># long lines cut here; the whole line is under "Every example"</span></pre>'
+    return html_pre([(display, text, status, note)])
 
 
 def qs_items(ctx):
@@ -354,7 +395,8 @@ REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), qs=lambda c: md_block(qs_items(c))),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
-                            hero=hero, flow=lambda c: html_pre(flow_items(c)), qs=lambda c: html_pre(qs_items(c)),
+                            flow=lambda c: term_pre(flow_items(c)), qs=lambda c: html_pre(qs_items(c)),
+                            **{"c-" + n: (lambda c, n=n: card(c, n)) for n in CARDS},
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
                             rules=rules_html, nrules=nrules),
     "docs/refusals.md": {"exit-codes": exit_codes, "rules": rules_md, "examples": examples},
@@ -408,7 +450,8 @@ def main():
         (Path(tmp) / "spell.csv").write_text(SPELL)
         (Path(tmp) / "dirty.csv").write_text(DIRTY)
         (Path(tmp) / "big.csv").write_text(BIG)
-        ctx = {"run": lambda words: run_words(words, binary, tmp), "introspect": introspect(binary, tmp)}
+        (Path(tmp) / "events.jsonl").write_text(EVENTS)
+        ctx = {"run": lambda words, stdin=None: run_words(words, binary, tmp, stdin), "introspect": introspect(binary, tmp), "tmp": Path(tmp)}
         for rel, regions in REGIONS.items():
             path = ROOT / rel
             old = path.read_text()
