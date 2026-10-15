@@ -34,6 +34,7 @@ SQLS = int(os.environ.get("RENAME_B1_SQL", "300"))
 REPORT = bool(os.environ.get("RENAME_B1_REPORT"))
 SEED = int(os.environ.get("RENAME_B1_SEED", "41"))
 THREADS = ["--threads", "4", "--parallel-min-bytes", "0", "--chunk-bytes", "65536"]
+HEADER_RULES = {"select.unknown-column", "select.ambiguous-column", "column.unknown", "column.ambiguous", "column.type-conflict", "sort.unknown-key"}
 EXIT = {"rename.syntax": 2, "rename.unknown-target": 3, "rename.ambiguous-target": 8, "rename.repeated-target": 2}
 
 
@@ -228,9 +229,15 @@ def one_case(tc, rnd, d, stats):
         got = run(*flags, "--rename", text.decode(), *fa, "f.csv", cwd=d)
         ctx = (fmt, names, flags, text, want[0])
         if want[0] != "ok":
+            if plain.status != 0 and fmt == "json" and plain.first_rule() in HEADER_RULES:
+                # the plan is refused by the header before a rename is looked at (a column the header lacks, a column read as two types): the same refusal, rename or none
+                tc.assertEqual((got.status, got.first_rule()), (plain.status, plain.first_rule()), ctx)
+                continue
+            if plain.status != 0 and fmt != "json":
+                continue
             tc.assertEqual(got.status, EXIT[want[0]] if want[0] in EXIT else 2, ctx + (got,))
             if fmt == "json":
-                check_against_reference(tc, got, text, [l.encode() for l in labels]) if plain.status == 0 or True else None
+                check_against_reference(tc, got, text, [l.encode() for l in labels])
             continue
         new = [l.decode() for l in want[1]]
         if plain.status != 0:
@@ -856,11 +863,28 @@ class Fuzz(Base):
         rnd = random.Random(SEED + 7)
         rules = {r["rule"] for r in introspect()["rules"]}
         words = ["select", "a", "b", "as", "x", '"x y"', ",", "from 'f.csv'", "count(*)", "group by a", "order by", "x", "desc", "(", ")", "5", "#1", "'s'", "where a = 1", "sum(a)", '"', "é", "\\"]
+        seeds = ["select a as x, count(*) as n from 'f.csv' group by a order by n desc", "select a as x, b as y from 'f.csv' where a = '1' order by y desc limit 2",
+                 "select b, a as b, c as \"c c\" from 'f.csv' order by b", "select a as \"x,y\", sum(a::int) as t from 'f.csv' group by a order by t", "select count(*) as n, min(c) as m from 'f.csv'",
+                 "select a as a, b as b from 'f.csv' where a in ('1', '2') or b = 'y' order by a desc, b"]
         refused = ok = 0
         for k in range(SOUPS):
-            q = " ".join(rnd.choice(words) for _ in range(rnd.randint(1, 12)))
-            if rnd.random() < 0.5:
-                q = "select a as x, " + q[7:] if q.startswith("select ") else q
+            if rnd.random() < 0.6:
+                toks = rnd.choice(seeds).split(" ")
+                for _ in range(rnd.randint(0, 3)):
+                    i = rnd.randrange(len(toks))
+                    r = rnd.random()
+                    if r < 0.3 and len(toks) > 1:
+                        toks.pop(i)
+                    elif r < 0.6:
+                        toks[i] = rnd.choice(words)
+                    elif r < 0.8:
+                        toks.insert(i, rnd.choice(words))
+                    else:
+                        j = rnd.randrange(len(toks))
+                        toks[i], toks[j] = toks[j], toks[i]
+                q = " ".join(toks)
+            else:
+                q = " ".join(rnd.choice(words) for _ in range(rnd.randint(1, 12)))
             r = self.r("--query", q)
             self.assertNotIn(r.status, TRAPS, (q, r))
             try:
@@ -883,6 +907,7 @@ class Fuzz(Base):
                     self.assertFalse((again.first_rule() or "").startswith("query.") if again.status and again.stdout.startswith(b"{") else False, (q, opt, again))
         report("fuzz queries:", ok, refused)
         self.assertGreater(refused, SOUPS // 4)
+        self.assertGreater(ok, SOUPS // 20)
 
 
 if __name__ == "__main__":

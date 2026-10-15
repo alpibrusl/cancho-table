@@ -92,6 +92,8 @@ class Today(unittest.TestCase):
                         same += 1
         self.assertEqual(ran, same)
         self.assertGreater(refusals, ran // 20)
+        if os.environ.get("RENAME_B1_REPORT"):
+            print("\ntoday's calls: %d runs, %d refusals, all byte-identical to main's" % (ran, refusals))
 
     @unittest.skipUnless(BASE, "RENAME_B1_BASE names the directory of main's build")
     def test_the_duplicate_column_rule_changes_its_hint_and_nothing_else(self):
