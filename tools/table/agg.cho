@@ -489,15 +489,17 @@ pub fn add_fast[&g, &q, &c, &d, &e](g: &!g Groups, tree: &q query.Query, cols: &
     if resting > 0 {
         contents(g.memo)[size + 1] = resting - 1;
     } else {
+        // A hash, so it wraps: `*` and `+` are checked in this language and trap on overflow, and three multiplications by 31 a column pass 2^63 at the fifth column
+        // (31^14 > 2^69) for any cell, and at the fourth for a first cell of about 370 bytes (issue 66). Only the place in the cache comes from it, never an answer.
         var look = 0;
         j = 0;
         while j < ng {
             let column = cols[base + j];
             let first = cells[3 * column];
             let n = cells[3 * column + 1] - first;
-            look = look * 31 + n;
+            look = wrapping_add(wrapping_mul(look, 31), n);
             if n > 0 {
-                look = (look * 31 + int_of(record[first])) * 31 + int_of(record[first + n - 1]);
+                look = wrapping_add(wrapping_mul(wrapping_add(wrapping_mul(look, 31), int_of(record[first])), 31), int_of(record[first + n - 1]));
             }
             j = j + 1;
         }
