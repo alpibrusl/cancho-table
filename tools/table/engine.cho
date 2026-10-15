@@ -25,7 +25,6 @@ import std.buffer;
 import std.bytes;
 import std.vec;
 import agg;
-import branch;
 import expr;
 import query;
 import report;
@@ -402,39 +401,6 @@ fn note_agg_refusal[&q, &c, &d, &e, &a](tree: &q query.Query, cols: &c [int], re
     return column;
 }
 
-// `screen` for a plan with an `or` (`query.flowed`): the same answers and the same record of a refusal, the verdict from the branch program. The tail is `screen`'s own, kept as a copy so
-// that the text of `screen`, which every filtered row of every conjunction passes through, is not moved (docs/or-and-columns.md section 10).
-fn screen_program[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], escr: buffer.Buffer, kept: buffer.Buffer, opened: int, a: &!a [int]) -> [heap] (int, buffer.Buffer, buffer.Buffer) {
-    let (verdict, which, e2) = branch.eval(heap, tree, cols, record, cells, escr);
-    if verdict < 2 {
-        return (verdict, e2, kept);
-    }
-    let column = cols[query.cond_at(tree, which, 3)];
-    var code = 9 + verdict;
-    if verdict >= 7 {
-        code = 22 + verdict;
-    } else if verdict >= 4 {
-        code = 18 + verdict;
-    }
-    a[k_abort()] = code;
-    a[k_err_cond()] = which;
-    if verdict == 5 {
-        var at = cells[3 * column + 1];
-        var n = 0;
-        while at > cells[3 * column] && int_of(record[at - 1]) != '.' {
-            at = at - 1;
-            n = n + 1;
-        }
-        a[k_err_digits()] = n;
-    }
-    a[k_err_col()] = column;
-    a[k_err_fn()] = -1;
-    a[k_err_row()] = a[k_records()];
-    a[k_err_line()] = opened;
-    a[k_stop()] = 1;
-    return (-1, e2, keep_value(heap, kept, record, cells[3 * column], cells[3 * column + 1]));
-}
-
 // Whether `--where` wants the record: 1 yes (also when there is no condition),
 // 0 no, -1 a condition met a cell it cannot compare, which is recorded in `a`
 // (the read stops). `escr` is a scratch for a quoted cell, `kept` the first
@@ -442,10 +408,6 @@ fn screen_program[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, 
 pub fn screen[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], escr: buffer.Buffer, kept: buffer.Buffer, opened: int, a: &!a [int]) -> [heap] (int, buffer.Buffer, buffer.Buffer) {
     if query.count_of(tree, 1) == 0 {
         return (1, escr, kept);
-    }
-    if query.flowed(tree) {
-        // a plan with an `or`: the branch program, in a function of its own (docs/or-and-columns.md section 10)
-        return screen_program(heap, tree, cols, record, cells, escr, kept, opened, a);
     }
     let (verdict, which, e2) = expr.eval(heap, tree, cols, record, cells, escr);
     if verdict < 2 {

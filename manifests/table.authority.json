@@ -519,7 +519,6 @@
     "size_for",
     "skip",
     "skip_space",
-    "skip_start",
     "slash",
     "slot_count",
     "slot_count",
@@ -600,5 +599,5 @@
   ],
   "folded_operators": 232,
   "folded_calls": 0,
-  "functions": 963
+  "functions": 961
 }

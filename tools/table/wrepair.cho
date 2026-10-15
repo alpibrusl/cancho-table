@@ -12,7 +12,7 @@ import toolbox.fail;
 import finish;
 
 pub fn hint() -> [] &static [byte] {
-    return "put parentheses round what goes first: (a = 1 or b = 2) and c = 3 is one question and a = 1 or (b = 2 and c = 3) another, and the tool does not choose between them; the repair offers both";
+    return "put parentheses round what goes first: (a = 1 or b = 2) and c = 3 is one question and a = 1 or (b = 2 and c = 3) another, and the tool does not choose between them, the repair offers both";
 }
 
 // The refusal for `given`, the text of `--where` (at argument `where_at` of the call, a value of its own when `whole`, else `--where=text`), added to `errs`; `at` is the connective.

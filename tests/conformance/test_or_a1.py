@@ -401,6 +401,10 @@ class Program(Base):
         self.assertEqual(len([x for x in notes("a = 1 or a = 2 or a in (3, 4)") if "could be one in" in x]), 1)
         self.assertIn("a in (1, 2, 3, 4)", [x for x in notes("a = 1 or a = 2 or a in (3, 4)") if "could be one in" in x][0])
         self.assertEqual([x for x in notes("a = 1 and a = 2") if "could be one in" in x], [])
+        # the same column read two ways is two questions; alternatives that leave differently are not a run
+        self.assertEqual([x for x in notes("a:int = 1 or a = 2") if "could be one in" in x], [])
+        self.assertEqual([x for x in notes("a = 1 or (a = 2 and b = 3)") if "could be one in" in x], [])
+        self.assertEqual([x for x in notes("(a = 1 or a = 2) and b = 3") if "could be one in" in x], ["the conditions at 0 and 1 test a against single values and could be one in: a in (1, 2), which reads the cell once"])
 
 
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -462,7 +466,7 @@ class Parallel(Base):
 # G-OFFSETS and G-FUZZ
 
 PIECES_COLUMNS = ["a", "b", "c", "'c d'", "or", "and", "not", "in", "contains", "#1", "a\\ b", "id"]
-PIECES_CONN = ["and", "or", "and", "or", "AND", "Or", "xor", "&&", "||", "'or'", "or'"]
+PIECES_CONN = ["and", "or", "and", "or", "AND", "Or", "xor", "&&", "||", "'or'", "'and'", "or'", "and'"]
 SOUP_VALUES = ["1", "x", "'y z'", "''", "07", "or", "and", "(", ")", ",", "in", "contains", "=", "\\", "'", "é"]
 
 
@@ -602,6 +606,28 @@ class Offsets(Base):
             done += 1
         self.assertGreater(done, 60)
 
+    def test_the_equals_form_of_the_flag_keeps_its_flag_in_the_repair(self):
+        r = run("--root", self.dir, "--where=a = x or b = y and c = z", "--select", "id", "o.csv")
+        d = doc_of(r)
+        self.assertEqual(d["error"]["rule"], "where.mixed-and-or")
+        options = [o["argv"] for o in d["error"]["repair"]["options"]]
+        self.assertEqual([[a for a in argv if a.startswith("--where")] for argv in options], [["--where=a = x or (b = y and c = z)"], ["--where=(a = x or b = y) and c = z"]])
+        for argv in options:
+            self.assertTrue(doc_of(run_argv(argv)).get("ok"))
+
+    def test_a_reading_that_passes_the_depth_is_not_offered(self):
+        text = "(" * 8 + "a = x or b = y and c = z" + ")" * 8
+        d = doc_of(self.tool("o.csv", "--where", text, "--select", "id"))
+        self.assertEqual(d["error"]["rule"], "where.mixed-and-or")
+        self.assertEqual(d["error"]["repair"]["kind"], "none")
+        text = "(" * 7 + "a = x or b = y and c = z" + ")" * 7
+        d = doc_of(self.tool("o.csv", "--where", text, "--select", "id"))
+        self.assertEqual(len(d["error"]["repair"]["options"]), 2)
+        # one reading deeper than the other: (a or b) and c wraps the first two, a or (b and c) the last two; a mix at depth 8 in the last unit only
+        text = "a = x and b = y or " + "(" * 7 + "c = z" + ")" * 7
+        d = doc_of(self.tool("o.csv", "--where", text, "--select", "id"))
+        self.assertEqual(d["error"]["rule"], "where.mixed-and-or")
+
     def test_the_depth_and_the_leaves_and_the_values(self):
         def rule(text):
             d = doc_of(self.tool("o.csv", "--where", text, "--select", "id"))
@@ -611,6 +637,10 @@ class Offsets(Base):
         self.assertEqual(rule("(" * 9 + "a = x" + ")" * 9), ("where.syntax", 8, "fewer nested parentheses: the ceiling is 8"))
         self.assertEqual(rule(" or ".join("a = %d" % i for i in range(64))), "ok")
         self.assertEqual(rule(" or ".join("a = %d" % i for i in range(65)))[0], "where.syntax")
+        # the 65th unit is refused where it begins, a group or a condition
+        base = " or ".join("a = %d" % i for i in range(64))
+        self.assertEqual(rule(base + " or (a = 1)"), ("where.syntax", len(base) + 4, "fewer conditions or values: the ceiling is 64 conditions and 1024 values"))
+        self.assertEqual(rule(base + " or a = 1"), ("where.syntax", len(base) + 4, "fewer conditions or values: the ceiling is 64 conditions and 1024 values"))
         self.assertEqual(rule("(" + " or ".join("a = %d" % i for i in range(64)) + ") and a = 1")[0], "where.syntax")
         self.assertEqual(rule("a in (%s) or a = 1" % ", ".join(str(i) for i in range(1024))), "ok")
         self.assertEqual(rule("a in (%s) or a = 1" % ", ".join(str(i) for i in range(1025)))[0], "where.syntax")

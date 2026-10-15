@@ -103,7 +103,7 @@ class Equivalence(unittest.TestCase):
             for case in range(CASES):
                 names, kinds, rows = query_gen.make_table(rnd)
                 query_gen.write_csv(path, names, rows)
-                plan = query_gen.make_plan(rnd, names, kinds, rows)
+                plan = query_gen.make_plan(rnd, names, kinds, rows, many=True)
                 flags = query_gen.flag_form(plan)
                 from_clause = "'f.csv'" if rnd.random() < 0.5 else None
                 query = query_gen.query_form(rnd, plan, from_clause)

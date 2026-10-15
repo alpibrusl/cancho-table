@@ -53,7 +53,7 @@ class Grammar(unittest.TestCase):
         for expr, offset in (
             (" ", 1), ("a", 1), ("a =", 3), ("a ! 5", 2), ("a == 5", 3), ("a = 5 b = 6", 6), ("a = 5 and", 9),
             ("a in 5", 5), ("a in (1 2)", 8), ("a in ()", 6), ("a in (1,", 8), ("a:int = x", 8), ("a:int contains 5", 6),
-            ("'abc = 5", 0), ("a\\", 0), ("a = 'x", 4), ("= 5", 0), ("a = 5 and and", 13), ("a <> 5", 3), ("(a) = 5", 0),
+            ("'abc = 5", 0), ("a\\", 0), ("a = 'x", 4), ("= 5", 0), ("a = 5 and and", 13), ("a <> 5", 3), ("(a) = 5", 2),
             ("a:int = 9223372036854775808", 8), ("a:int = 1.5", 8), ("a:int = ''", 8), ("a or b", 2),
         ):
             with self.subTest(expr):

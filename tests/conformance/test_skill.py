@@ -396,7 +396,7 @@ class Claims(unittest.TestCase):
         self.s.write("nums.csv", "v,w\n10,a\n9,b\n,c\n")
         rows = lambda *a: [r[0] for r in self.r("--where", *a, file="nums.csv").data()["rows"]]
         help_ = {f["name"]: f["help"] for f in introspect()["flags"]}["--where"]
-        for sentence in ("so 10 is less than 9", "conditions joined by and or by or, with parentheses to group them", "a level of the expression is all and or all or", "keep such rows out first: bytes != '' and bytes:int > 5", "or with or bytes = '' or bytes:int > 5"):
+        for sentence in ("so 10 is less than 9", "conditions joined by and or by or, with parentheses to group them", "A level of the expression is all and or all or", "keep such rows out first: bytes != '' and bytes:int > 5", "or with or bytes = '' or bytes:int > 5"):
             self.assertIn(sentence, help_)
         # text compares bytewise: 10 is less than 9, and an empty cell is the empty text
         self.assertEqual(rows("v < 9"), ["10", ""])

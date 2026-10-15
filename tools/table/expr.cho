@@ -739,6 +739,9 @@ pub fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
 // the row is wanted, 0 it is not, 2 or 3 a condition refused a cell (see
 // `holds`).
 pub fn eval[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer) -> [heap] (int, int, buffer.Buffer) {
+    if query.flowed(plan) {
+        return eval_program(heap, plan, cols, record, cells, scratch);
+    }
     var scr = scratch;
     var k = 0;
     let total = query.count_of(plan, 1);
@@ -764,4 +767,43 @@ pub fn eval[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: &c [
         k = k + 1;
     }
     return (1, 0, scr);
+}
+
+// The evaluation of a plan that has an `or` (docs/or-and-columns.md section 4): the branch program of `query.flow`. A program counter starts at the first condition; the condition it names
+// is tried, its cell read as the condition's type only now; the counter becomes the condition's exit for the verdict, a condition after it, or the row is kept (-1) or dropped (-2). Exits only
+// go forward, so it ends in at most as many steps as there are conditions, and a cell that no path reaches is never read, as a cell to the right of a false `and` never was. Answers as `eval` does.
+// A function of its own, reached by one test at the head of `eval` and not by a case in the loop of `eval` or in `engine.screen`: a test in `screen` cost every filtered row 15 instructions
+// (measured, docs/or-and-columns.md section 16), and this one 3 to 5.
+fn eval_program[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer) -> [heap] (int, int, buffer.Buffer) {
+    var scr = scratch;
+    var k = 0;
+    while k >= 0 {
+        let column = cols[query.cond_at(plan, k, 3)];
+        let first = cells[3 * column];
+        let last = cells[3 * column + 1];
+        var verdict = 0;
+        if cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {
+            borrow mut scr as &!sw in {
+                buffer.clear(sw);
+            }
+            scr = query.unquote(heap, scr, record[first..last]);
+            borrow scr as &sr in {
+                verdict = holds(plan, k, buffer.bytes(sr));
+            }
+        } else {
+            verdict = holds(plan, k, record[first..last]);
+        }
+        if verdict >= 2 {
+            return (verdict, k, scr);
+        }
+        let next = query.flow_at(plan, k, 1 - verdict);
+        if next == 0 - 1 {
+            return (1, 0, scr);
+        }
+        if next == 0 - 2 {
+            return (0, 0, scr);
+        }
+        k = next;
+    }
+    return (0, 0, scr);
 }

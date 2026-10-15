@@ -68,7 +68,7 @@ fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byt
     var kind = 0;
     var conn = 0;
     var more = true;
-    var i = skip_start(src, from);
+    var i = expr.skip_space(src, from);
     let start = i;
     var last = 0;
     while more && what == 0 {
@@ -175,10 +175,6 @@ fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byt
     }
     vec.drop(heap, kids);
     return (plan, tr, i, leaves, node, what, at, hasor);
-}
-
-fn skip_start[&s](src: &s [byte], from: int) -> [] int {
-    return expr.skip_space(src, from);
 }
 
 // The number of the first condition under `node`.

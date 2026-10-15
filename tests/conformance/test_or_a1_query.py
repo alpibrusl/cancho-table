@@ -199,6 +199,10 @@ class Ceilings(Base):
         self.assertEqual(self.rule(chain(64, "and")), "ok")
         r = self.rule(chain(65, "or"))
         self.assertEqual((r[0], r[2]), ("query.syntax", "fewer conditions or values: the ceiling is 64 conditions and 1024 values"))
+        # the 65th unit is refused where it begins: the group's own parenthesis, not the condition in it
+        base = chain(64, "or")
+        self.assertEqual(self.rule(base + " or (a = 1)")[:2], ("query.syntax", len(base) + 4))
+        self.assertEqual(self.rule(base + " or a = 1")[:2], ("query.syntax", len(base) + 4))
         self.assertEqual(self.rule("select id from 'q.csv' where (" + " or ".join("a = 1" for _ in range(64)) + ") and a = 1")[0], "query.syntax")
         # the flag form gives the same answer for the same leaves
         flags = self.flags("--select", "id", "--where", " or ".join("a = %d" % (i % 10) for i in range(64)))

@@ -41,7 +41,7 @@ MUTANTS = [
     ("a condition after a false one is still evaluated", "expr.cho", "        if verdict != 1 {\n            return (verdict, k, scr);", "        if verdict >= 2 {\n            return (verdict, k, scr);"),
     ("64 conditions is not the ceiling", "expr.cho", "        if many >= 64 {", "        if many >= 65 {"),
     ("1024 values is not the ceiling", "expr.cho", "if values > 1024 {", "if values > 2000 {"),
-    ("in () with a missing paren is accepted", "expr.cho", "                    } else {\n                        what = 7;", "                    } else if false {\n                        what = 7;"),
+    ("in () with a missing paren is accepted", "expr.cho", "            } else {\n                what = 7;", "            } else if false {\n                what = 7;"),
     ("contains is case-insensitive for the keyword", "expr.cho", 'is_contains = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "contains");', 'is_contains = status == 0 && bytes.equal(buffer.bytes(wr), "contains");'),
     # groups
     ("min is max", "agg.cho", "                    } else if function == 2 && v < now {\n                        a = set_at", "                    } else if function == 2 && v > now {\n                        a = set_at"),

@@ -107,7 +107,7 @@ def render_shape(shape, texts, connective):
     return connective(kind).join(out)
 
 
-def make_plan(rnd, names, kinds, rows=()):
+def make_plan(rnd, names, kinds, rows=(), many=False):
     n = len(names)
     awk = [j for j in range(n) if names[j] in AWKWARD]
 
@@ -116,7 +116,7 @@ def make_plan(rnd, names, kinds, rows=()):
         return rnd.choice(awk) if awk and rnd.random() < 0.5 else rnd.randrange(n)
 
     plan = {"conds": [], "group": [], "aggs": [], "order": [], "limit": None, "offset": None, "star": False, "select": []}
-    for _ in range(rnd.choice([0, 0, 1, 1, 2, 3, 3, 4, 6])):
+    for _ in range(rnd.choice([0, 0, 1, 1, 2, 3, 3, 4, 6] if many else [0, 0, 1, 1, 2, 3])):
         i = pick()
         ty = None
         if kinds[i] == "int" and rnd.random() < 0.6:
@@ -130,7 +130,7 @@ def make_plan(rnd, names, kinds, rows=()):
         mk = lambda: lit_from(rnd, rows, i, t0) or lit(rnd, kinds[i], t0)
         vals = [mk() for _ in range(rnd.randint(2, 3))] if op == "in" else [mk()]
         plan["conds"].append({"col": col_ref(rnd, names, i), "ty": ty, "op": op, "vals": vals})
-    plan["shape"] = make_shape(rnd, list(range(len(plan["conds"])))) if len(plan["conds"]) >= 2 and rnd.random() < 0.75 else None
+    plan["shape"] = make_shape(rnd, list(range(len(plan["conds"])))) if len(plan["conds"]) >= 2 and rnd.random() < (0.75 if many else 0.5) else None
     if rnd.random() < 0.45:
         plan["mode"] = "group"
         for i in dict.fromkeys(pick() for _ in range(rnd.choice([0, 1, 1, 2]))):
