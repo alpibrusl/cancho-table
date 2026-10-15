@@ -724,8 +724,8 @@ class Accounting(unittest.TestCase):
             s.cleanup()
 
     def test_the_help_says_one_budget(self):
-        h = {f["name"]: f["help"] for f in introspect()["flags"]}["--max-state-bytes"]
-        for word in ("join", "groups", "sorted rows", "shared"):
+        h = {f["name"]: f["help"] for f in introspect()["flags"]}["--join"]
+        for word in ("share --max-state-bytes", "groups", "sorted rows", "detail.build_bytes", "leading run", "join.where"):
             self.assertIn(word, h)
 
 
