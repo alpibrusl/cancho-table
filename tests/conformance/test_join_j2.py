@@ -768,6 +768,25 @@ class Explain(unittest.TestCase):
                             f = R.accounted(str(self.s.dir / "e.csv"), pairs, jt)
                             self.assertGreaterEqual(at_most, f["held"], (ncols, rows, width, on, jt))
 
+    def test_the_bound_allows_for_a_typed_key_that_is_longer_than_its_cell(self):
+        # one column of 300 distinct three-digit integers: a row is 4 bytes of file and 87 accounted bytes (3 + 16 for the record, 8 + 60 for the key)
+        J.write_csv(str(self.s.dir / "t.csv"), [b"h"], [[b"%d" % (100 + i)] for i in range(300)])
+        f = R.accounted(str(self.s.dir / "t.csv"), [(0, 0, "int", False)], "inner")
+        at_most = run("--root", self.s.dir, "--join", "t.csv", "--on", "h=h:int", "--join-prefix", "r_", "--explain", "t.csv").data()["explain"]["join"]["build_state"]["accounted_at_most"]
+        self.assertGreaterEqual(at_most, f["held"])
+        f = R.accounted(str(self.s.dir / "t.csv"), [(0, 0, "int", False)], "semi")
+        at_most = run("--root", self.s.dir, "--join", "t.csv", "--on", "h=h:int", "--join-type", "semi", "--explain", "t.csv").data()["explain"]["join"]["build_state"]["accounted_at_most"]
+        self.assertGreaterEqual(at_most, f["held"])
+
+    def test_the_counted_sentence_and_the_positions_of_the_keys(self):
+        for jt, word in (("inner", "+ 16 for each row held"), ("semi", "key bytes + 44")):
+            j = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--join-type", jt, "--explain", *(["--join-prefix", "r_"] if jt == "inner" else []), "p.csv").data()["explain"]["join"]
+            self.assertIn(word, j["build_state"]["counted"], jt)
+        self.s.write("p3.csv", "a,b,k\n1,2,x\n")
+        self.s.write("b3.csv", "u,v,w,id\n1,2,3,x\n")
+        j = run("--root", self.s.dir, "--join", "b3.csv", "--on", "k=id", "--explain", "p3.csv").data()["explain"]["join"]
+        self.assertEqual([(k["probe_position"], k["build_position"]) for k in j["keys"]], [(3, 4)])
+
     def test_the_bound_for_the_keys_only_build_is_lower(self):
         inner = self.ex("--join", "b.csv", "--on", "k=id", "--join-prefix", "r_").data()["explain"]["join"]["build_state"]["accounted_at_most"]
         semi = self.ex("--join", "b.csv", "--on", "k=id", "--join-type", "semi").data()["explain"]["join"]["build_state"]["accounted_at_most"]
