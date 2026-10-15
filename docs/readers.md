@@ -138,7 +138,7 @@ The same `lines` reader (64 KiB chunk, line capped at `--max-line-bytes`), fed b
 | an ordinary file, `file_read` | 0.011 s | 0.01 s |
 | `cat` to `/dev/null`, for scale | 0.015 s | |
 
-So **a 1,000,000-row CSV through a pipe costs the reader 0.44 s on the Mac, where the whole question costs 0.046 s from a file**: standard input is **9.6 times slower than the
+**Corrected in place (the figures of this paragraph are those of the `getchar` build, before the bulk read of #39): with the bulk read a pipe costs 1.01 to 1.06 times the file on the same question (Mac 1.012 to 1.063, gram 0.940 to 1.036, section 11.5 below, which has the conditions); the 9.6 below is the `getchar`-era figure and is no longer true.** So **a 1,000,000-row CSV through a pipe costs the reader 0.44 s on the Mac, where the whole question costs 0.046 s from a file**: standard input is **9.6 times slower than the
 entire query on a file**, and the cause is `getchar` (13 ns a byte: a libc call per byte) and nothing in `table`. Options:
 
 1. **Ship `getchar` (R1), say the number in the docs and in `--explain`'s `notes`** (`"source": "standard input", "ceiling": "about 70 MB/s on macOS, 260 on Linux"`). Honest authority row (`io_read`).
