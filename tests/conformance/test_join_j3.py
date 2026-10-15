@@ -266,6 +266,23 @@ class Pairs(Fixture):
         got = self.pair("bg = 'say \"hi\"'", "(bg = 'say \"hi\"')", probe=probe, build=build)
         self.assertEqual(got, ['pk,pg,pv,bk,bg,bv', 'a,"say ""hi""",1,a,"say ""hi""",10', 'a,"say ""hi""",3,a,"say ""hi""",10'])
 
+    def test_a_row_with_a_quoted_cell_that_holds_a_quote_is_rejected_by_the_run_before_its_key_is_read(self):
+        probe = 'pk,pg\n1,x\n,"say ""hi"""\n'
+        build = 'bk,bg\n1,a\n,"say ""hi"""\n'
+        r = self.go(["--where", "pg = 'x'"], probe=probe, build="bk,bg\n1,a\n", on="pk=bk:int")
+        self.assertEqual(self.rows(r), ["pk,pg,bk,bg", "1,x,1,a"], "the probe row is rejected by the run: its empty key is not read")
+        r = self.go(["--where", "bg = 'a'"], probe="pk,pg\n1,x\n", build=build, on="pk=bk:int")
+        self.assertEqual(self.rows(r), ["pk,pg,bk,bg", "1,x,1,a"], "the build row is rejected by the run: its empty key is not read")
+
+    def test_a_build_condition_of_the_run_names_the_column_of_the_build_file_when_a_shared_name_key_leaves_one_out(self):
+        probe = "id,v\na,1\nb,2\n"
+        build = "id,w,z\na,X,1\nb,Y,2\n"
+        for text, rows in (("w = 'X'", ["id,v,w,z", "a,1,X,1"]), ("z = '2'", ["id,v,w,z", "b,2,Y,2"]), ("w not in ('X')", ["id,v,w,z", "b,2,Y,2"])):
+            with self.subTest(text):
+                self.assertEqual(self.pair(text, "(" + text + ")", probe=probe, build=build, on="id"), rows)
+        w = self.explain(["--where", "w = 'X'"], probe=probe, build=build, on="id")["join"]["where"]
+        self.assertEqual(w["build_before_build"], ["w = 'X'"])
+
     def test_the_one_difference_is_which_cells_a_typed_key_read_can_refuse_probe_side(self):
         probe = "pk,pg\n1,x\n,q\n2,x\n"
         build = "bk,bg\n1,a\n2,b\n"
@@ -415,6 +432,21 @@ class JoinWhere(Fixture):
         self.assertEqual((r.status, r.first_rule(), d["flag"], d["input"], d["name"], d["available"]), (3, "column.unknown", "--join-where", "build", "nope", ["bk", "bg", "bv"]))
         r = self.go(["--join-where", "x = 1"], build="bk,x,x\na,1,2\n", fmt="json")
         self.assertEqual(r.first_rule(), "column.ambiguous")
+
+    def test_the_mix_repair_of_join_where_keeps_its_flag_in_both_forms(self):
+        text = "bg = 'y' or bg = 'x' and bv:int > 5"
+        self.s.write("p.csv", self.PROBE)
+        self.s.write("b.csv", self.BUILD)
+        for given in (["--join-where", text], ["--join-where=" + text]):
+            r = run("--root", self.s.dir, "--join", "b.csv", "--on", "pk=bk", *given, "--format", "json", "p.csv")
+            self.assertEqual((r.status, r.first_rule(), r.error()["detail"]["flag"]), (2, "where.mixed-and-or", "--join-where"))
+            options = r.error()["repair"]["options"]
+            self.assertEqual(len(options), 2)
+            for o in options:
+                self.assertTrue(any(a == "--join-where" or a.startswith("--join-where=") for a in o["argv"]), o["argv"])
+                self.assertEqual(any(a.startswith("--join-where=") for a in o["argv"]), given[0].startswith("--join-where="))
+                again = subprocess.run(o["argv"], capture_output=True, input=b"")
+                self.assertEqual(again.returncode, 0, again.stdout[:300])
 
     def test_it_is_in_introspect_and_the_help(self):
         flags = {f["name"]: f for f in introspect()["flags"]}
