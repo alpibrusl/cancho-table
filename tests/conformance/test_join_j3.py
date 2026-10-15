@@ -283,6 +283,16 @@ class Pairs(Fixture):
         w = self.explain(["--where", "w = 'X'"], probe=probe, build=build, on="id")["join"]["where"]
         self.assertEqual(w["build_before_build"], ["w = 'X'"])
 
+    def test_a_record_over_several_lines_is_rejected_by_the_run_before_its_key_is_read(self):
+        probe = 'pk,pg\n1,x\n,"two\nlines"\n2,x\n'
+        r = self.go(["--where", "pg = 'x'"], probe=probe, build="bk,bg\n1,a\n2,b\n", on="pk=bk:int")
+        self.assertEqual(self.rows(r), ["pk,pg,bk,bg", "1,x,1,a", "2,x,2,b"])
+        twin = self.go(["--where", "(pg = 'x')"], probe=probe, build="bk,bg\n1,a\n2,b\n", on="pk=bk:int", fmt="json")
+        d = twin.error()["detail"]
+        self.assertEqual((twin.first_rule(), d["input"], d["row"], d["line"]), ("value.not-integer", "probe", 2, 3))
+        r = self.go(["--where", "bg = 'a'"], probe="pk,pg\n1,x\n", build='bk,bg\n1,a\n,"two\nlines"\n', on="pk=bk:int")
+        self.assertEqual(self.rows(r), ["pk,pg,bk,bg", "1,x,1,a"])
+
     def test_the_one_difference_is_which_cells_a_typed_key_read_can_refuse_probe_side(self):
         probe = "pk,pg\n1,x\n,q\n2,x\n"
         build = "bk,bg\n1,a\n2,b\n"
@@ -632,6 +642,14 @@ class Guard(Fixture):
         r = self.go([], probe="k,k\n1,x\n,y\n", build="bk,bg\n1,a\n", on="#1=bk:int", fmt="json")
         argv = self.repair_argv(r)
         self.assertEqual(self.after(argv, "--where"), "#1 != ''")
+
+    def test_the_guard_names_the_key_column_wherever_it_is(self):
+        r = self.go([], probe="pg,pk\nx,1\ny,\n", build="bg,bk\na,1\n", on="pk=bk:int", fmt="json")
+        argv = self.repair_argv(r)
+        self.assertEqual(self.after(argv, "--where"), "pk != ''")
+        r = self.go([], probe="pk,pg\n1,x\n", build="bg,bk\na,1\nb,\n", on="pk=bk:int", fmt="json")
+        argv = self.repair_argv(r)
+        self.assertEqual(self.after(argv, "--join-where"), "bk != ''")
 
     def test_a_cell_that_is_not_empty_has_no_guard(self):
         for side, probe, build in (("probe", "pk,pg\noops,x\n", "bk,bg\n1,a\n"), ("build", "pk,pg\n1,x\n", "bk,bg\noops,b\n")):
