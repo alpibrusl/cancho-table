@@ -576,6 +576,12 @@ class Padded(Fixture):
         rule, d = self.refusal(["--agg", "sum:bv:float"])
         self.assertEqual((rule, d["context"], d.get("padded")), ("value.not-float", "sum", True))
 
+    def test_the_scale_of_a_padded_decimal_key_is_the_keys(self):
+        for flags, ctx in ((["--group", "bv:dec(3)"], "group"), (["--order-by", "bv:dec(3)"], "order-by")):
+            with self.subTest(ctx):
+                rule, d = self.refusal(flags)
+                self.assertEqual((rule, d["context"], d.get("padded"), d["scale"]), ("value.not-decimal", ctx, True, 3))
+
     def test_the_cells_that_are_not_padding_do_not_say_so(self):
         rule, d = self.refusal(["--agg", "sum:bv"], build="bk,bg,bv\na,x,\nb,y,5\n", jtype="inner")
         self.assertEqual((rule, d["context"], d["row"]), ("value.not-integer", "sum", 1))
@@ -895,6 +901,17 @@ class Explain(Fixture):
         self.assertEqual(d["work"]["threads"]["requested"], 4)
         self.assertEqual(d["join"]["work"]["threads"], {"requested": 4, "effective": 1, "reason": "the join is read on one core"})
         self.assertIn("the join is read on one core", json.dumps(d))
+
+    def test_the_limits_that_can_refuse_a_grouping_and_a_sort_are_listed(self):
+        possible = self.explain(["--group", "bg"])["refusals"]["possible"]
+        self.assertIn("limit.too-many-groups", possible)
+        self.assertNotIn("limit.too-many-sort-rows", possible)
+        possible = self.explain(["--order-by", "bg"])["refusals"]["possible"]
+        self.assertIn("limit.too-many-sort-rows", possible)
+        self.assertNotIn("limit.too-many-groups", possible)
+        possible = self.explain(["--select", "pk"])["refusals"]["possible"]
+        self.assertNotIn("limit.too-many-groups", possible)
+        self.assertIn("limit.state-too-large", possible)
 
     def test_the_notes(self):
         notes = " ".join(self.explain(["--where", "bg = 'y'"], jtype="left")["notes"])
