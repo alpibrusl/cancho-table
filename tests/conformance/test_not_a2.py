@@ -35,8 +35,8 @@ pmap = A1.pmap
 table_csv = A1.table_csv
 lat = A1.lat
 doc_of = A1.doc_of
-SQL_CASES = int(os.environ.get("NOT_A2_SQL", "3000"))
-REF_CASES = int(os.environ.get("NOT_A2_REF", "3000"))
+SQL_CASES = int(os.environ.get("NOT_A2_SQL", "3500"))
+REF_CASES = int(os.environ.get("NOT_A2_REF", "3500"))
 PROGRAM_CASES = int(os.environ.get("NOT_A2_PROGRAM", "10000"))
 SOUPS = int(os.environ.get("NOT_A2_SOUPS", "20000"))
 FUZZ = int(os.environ.get("NOT_A2_FUZZ", "10000"))
@@ -315,6 +315,20 @@ class Program(Base):
         for text in ("a = 1", "a = 1 and b in (1, 2) and c contains x", "(a = 1 and b = 2) and c != 3", "a:int < 5 and b:dec(2) >= 1.5"):
             for e in A1.explain_where(explain(self, text)):
                 self.assertEqual(sorted(e), ["column", "op", "type", "values"], text)
+
+    def test_no_note_that_a_run_could_be_one_in_when_the_run_leaves_by_reject(self):
+        # `not (a = 1 or a = 2)` and `a not in (1) and a not in (2)` are one program, a run of alternatives that reject when one is true: "a in (1, 2)" would not be what to write
+        def notes(text):
+            return [x for x in doc_of(explain(self, text))["data"]["explain"]["notes"] if "could be one in" in x]
+
+        self.assertEqual(notes("not (a = 1 or a = 2)"), [])
+        self.assertEqual(notes("a not in (1) and a not in (2)"), [])
+        self.assertEqual(notes("b = 3 and not (a = 1 or a = 2)"), [])
+        # alternatives that accept, or go on, when one is true are the advice of A1, with a not inside or round them
+        self.assertEqual(len(notes("a = 1 or a = 2")), 1)
+        self.assertEqual(len(notes("not (a not in (1) and a not in (2))")), 1)
+        self.assertEqual(len(notes("(a = 1 or a = 2) and b not in (3)")), 1)
+        self.assertEqual(len(notes("not (not (a = 1 or a = 2))")), 1)
 
     def test_the_explain_of_a_not_names_the_swap_in_its_exits(self):
         d = doc_of(explain(self, "a not in (1, 2)"))
@@ -725,7 +739,8 @@ class Forms(Base):
 
 class Mcp(unittest.TestCase):
     def setUp(self):
-        M.BUILT.clear()           # test_mcp's tearDownModule has removed the server it built when it ran first: build it again
+        M.BUILT.clear()           # test_mcp's tearDownModule has removed the server and the files it built when it ran first: build them again
+        M.FIXTURES.clear()
 
     def tearDown(self):
         M.tearDownModule()

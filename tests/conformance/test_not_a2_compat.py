@@ -101,6 +101,9 @@ class Compat(unittest.TestCase):
         changes, same = self.classify()
         self.assertGreater(same, 2500)
         self.assertGreater(len(changes), 700)
+        for c in changes:
+            # nothing changes unless the expression has the word `not` in it (an escaped n\ot is the word, as an escaped \and is the connective)
+            self.assertRegex(c[2].lower().replace("\\", ""), r"\bnot\b", c)
         if os.environ.get("NOT_A2_WRITE"):
             CHANGES.write_text(json.dumps({"count": len(changes), "same": same, "changes": changes}, sort_keys=True, indent=0, separators=(",", ":")) + "\n")
         recorded = json.loads(CHANGES.read_text())
