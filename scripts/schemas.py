@@ -132,7 +132,10 @@ def explain_document():
                 "type": type_,
                 "op": {"enum": ["=", "!=", "<", "<=", ">", ">=", "contains", "in"]},
                 "values": {"type": "array", "items": TB, "minItems": 1},
-            })},
+                # only in a plan that has an `or` (docs/or-and-columns.md section 6.3): the condition run next when this one is true, and when it is false (an index into this array, or "accept" or "reject")
+                "if_true": {"oneOf": [NAT, {"enum": ["accept", "reject"]}]},
+                "if_false": {"oneOf": [NAT, {"enum": ["accept", "reject"]}]},
+            }, required=["column", "type", "op", "values"])},
             "group": {"type": "array", "items": obj({"column": column, "type": type_})},
             "aggregates": {"type": "array", "items": obj({
                 "function": {"enum": ["count", "sum", "mean", "min", "max", "distinct"]},

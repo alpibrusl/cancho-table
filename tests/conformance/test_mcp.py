@@ -218,7 +218,12 @@ CORPUS = [
     {"file": "data.csv", "rows": True, "limit": 3},
     {"file": "data.csv", "rows": True, "format": "csv", "max-rows": 20},
     {"file": "data.csv", "query": "selct id"},
-    {"file": "data.csv", "query": "select id, status where status = 404 or status = 500"},
+    {"file": "data.csv", "query": "select id, status where status like '4%'"},
+    {"file": "data.csv", "query": "select id, status where status = 404 or status = 500 limit 5"},
+    {"file": "data.csv", "query": "select id, status where status = 404 or status = 500 and bytes != ''"},
+    {"file": "data.csv", "where": "(status = 404 or status = 500) and bytes:int > 90000", "select": "id,status,bytes", "limit": 6},
+    {"file": "data.csv", "select": "id", "where": "status = 404 or status = 500 and bytes != ''"},
+    {"file": "data.csv", "where": "bytes != '' and (status = 404 or path contains /p/9)", "group": "status", "agg": "count"},
     {"file": "data.csv", "query": "select id", "select": "id"},
     # --explain: the plan said and not run, a document that validates against the output schema; its refusals are the run's
     {"file": "data.csv", "explain": True, "group": "status", "agg": "count,sum:bytes", "threads": 4, "parallel-min-bytes": 0},
@@ -298,7 +303,7 @@ class Differential(unittest.TestCase):
         self.assertGreater(seen_stderr, 0)
         for rule in ("parse.csv-ragged-row", "select.unknown-column", "where.syntax", "agg.bad-spec", "io.not-found", "parse.csv-bad-quote",
                      "limit.too-many-groups", "args.required-flag", "io.is-a-directory", "value.not-integer", "column.unknown",
-                     "query.syntax", "query.unsupported", "args.conflict"):
+                     "query.syntax", "query.unsupported", "args.conflict", "where.mixed-and-or", "query.mixed-and-or"):
             self.assertIn(rule, seen_rules)
 
     def test_one_call_at_a_time_in_order(self):

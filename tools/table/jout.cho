@@ -48,8 +48,8 @@ pub fn template[&h, &s](heap: &!h Heap, scratch: buffer.Buffer, sel: &s [int], p
 // last group column). The plan carries it, as it carries `--top` and `--from` (query.with_page), because the read functions cannot be handed another parameter, nor another branch, without
 // costing the one-thread reads of every plan instructions a row (docs/readers.md section 13.2).
 pub fn set_jsonl[&h](heap: &!h Heap, q: query.Query) -> [heap] query.Query {
-    let query.Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
-    return query.Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: vec.push(heap, gkinds, 0), sort: sort };
+    let query.Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
+    return query.Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: vec.push(heap, gkinds, 0), sort: sort, flow: flow };
 }
 
 pub fn jsonl[&q](q: &q query.Query) -> [] bool {

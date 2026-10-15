@@ -1,0 +1,146 @@
+edition 5;
+
+module explainor;
+
+// What `--explain` says of a plan that has an `or` (docs/or-and-columns.md section 6.3): where each condition goes next, and the advice that a run of single-value conditions on one column is one
+// `in`. A conjunction has no program and none of this is written for it, so its document is the document it always was.
+
+import std.buffer;
+import std.bytes;
+import query;
+import toolbox.text;
+
+// `,"if_true":X,"if_false":Y` for condition `k`: X and Y are the index of the condition run next (into the `where` array) or "accept" or "reject".
+pub fn put_exits[&h, &q](heap: &!h Heap, o: buffer.Buffer, tree: &q query.Query, k: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, o, ",\"if_true\":");
+    b = put_exit(heap, b, query.flow_at(tree, k, 0));
+    b = buffer.append(heap, b, ",\"if_false\":");
+    return put_exit(heap, b, query.flow_at(tree, k, 1));
+}
+
+fn put_exit[&h](heap: &!h Heap, o: buffer.Buffer, to: int) -> [heap] buffer.Buffer {
+    if to == 0 - 1 {
+        return buffer.append(heap, o, "\"accept\"");
+    }
+    if to == 0 - 2 {
+        return buffer.append(heap, o, "\"reject\"");
+    }
+    return buffer.push_nat(heap, o, to);
+}
+
+// Whether condition `k` is one value, or a list of values, compared for equality.
+fn single[&q](tree: &q query.Query, k: int) -> [] bool {
+    return query.cond_at(tree, k, 0) == 2 || query.cond_at(tree, k, 0) == 0 && query.cond_at(tree, k, 2) == 0;
+}
+
+// Whether `j` and `k` are two alternatives of one `or`, on one column read one way: both single-valued, the same bytes for the column, the same type, `j` running `k` next when it is false and
+// both leaving the same way when they are true.
+fn linked[&q](tree: &q query.Query, j: int, k: int) -> [] bool {
+    if !single(tree, j) || !single(tree, k) || query.flow_at(tree, j, 1) != k || query.flow_at(tree, j, 0) != query.flow_at(tree, k, 0) {
+        return false;
+    }
+    if query.cond_at(tree, j, 1) != query.cond_at(tree, k, 1) {
+        return false;
+    }
+    let a = query.cond_at(tree, j, 3);
+    let b = query.cond_at(tree, k, 3);
+    return query.kind_at(tree, a) == query.kind_at(tree, b) && bytes.equal(query.name_at(tree, a), query.name_at(tree, b));
+}
+
+fn put_type[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buffer {
+    var b = o;
+    if t == 1 {
+        b = buffer.append(heap, b, ":int");
+    } else if t == 21 {
+        b = buffer.append(heap, b, ":float");
+    } else if t >= 2 {
+        b = buffer.append(heap, b, ":dec(");
+        b = buffer.push_nat(heap, b, t - 2);
+        b = buffer.push(heap, b, byte_of(')'));
+    }
+    return b;
+}
+
+// The notes, appended to the array of notes (`first` says whether it is empty): one for each run of two or more alternatives that could be one `in`. Answers the buffer and `first`.
+pub fn chain_notes[&h, &q](heap: &!h Heap, o: buffer.Buffer, tree: &q query.Query, first: bool) -> [heap] (buffer.Buffer, bool) {
+    var b = o;
+    var none_yet = first;
+    let n = query.count_of(tree, 1);
+    var k = 0;
+    while k < n {
+        var starts = single(tree, k);
+        var j = 0;
+        while j < k && starts {
+            if linked(tree, j, k) {
+                starts = false;
+            }
+            j = j + 1;
+        }
+        var length = 1;
+        var cur = k;
+        var values = query.cond_at(tree, k, 5);
+        while starts && query.flow_at(tree, cur, 1) >= 0 && linked(tree, cur, query.flow_at(tree, cur, 1)) {
+            cur = query.flow_at(tree, cur, 1);
+            length = length + 1;
+            values = values + query.cond_at(tree, cur, 5);
+        }
+        if starts && length >= 2 && values <= 1024 {
+            var s = buffer.append(heap, buffer.empty(heap, 96), "the conditions at ");
+            var m = 0;
+            var at = k;
+            while m < length {
+                if m > 0 && m + 1 == length {
+                    s = buffer.append(heap, s, " and ");
+                } else if m > 0 {
+                    s = buffer.append(heap, s, ", ");
+                }
+                s = buffer.push_nat(heap, s, at);
+                at = query.flow_at(tree, at, 1);
+                m = m + 1;
+            }
+            s = buffer.append(heap, s, " test ");
+            let name = query.cond_at(tree, k, 3);
+            var column = buffer.empty(heap, 32);
+            if query.kind_at(tree, name) >= 0 {
+                column = buffer.push_nat(heap, buffer.push(heap, column, byte_of('#')), query.kind_at(tree, name));
+            } else {
+                column = buffer.append(heap, column, query.name_at(tree, name));
+            }
+            column = put_type(heap, column, query.cond_at(tree, k, 1));
+            borrow column as &cr in {
+                s = buffer.append(heap, s, buffer.bytes(cr));
+                s = buffer.append(heap, s, " against single values and could be one in: ");
+                s = buffer.append(heap, s, buffer.bytes(cr));
+            }
+            buffer.drop(heap, column);
+            s = buffer.append(heap, s, " in (");
+            m = 0;
+            at = k;
+            var written = 0;
+            while m < length {
+                var v = 0;
+                while v < query.cond_at(tree, at, 5) {
+                    if written > 0 {
+                        s = buffer.append(heap, s, ", ");
+                    }
+                    s = buffer.append(heap, s, query.lit_bytes(tree, query.cond_at(tree, at, 4) + v));
+                    written = written + 1;
+                    v = v + 1;
+                }
+                at = query.flow_at(tree, at, 1);
+                m = m + 1;
+            }
+            s = buffer.append(heap, s, "), which reads the cell once");
+            if !none_yet {
+                b = buffer.push(heap, b, byte_of(','));
+            }
+            borrow s as &sr in {
+                b = text.append_json(heap, b, buffer.bytes(sr));
+            }
+            buffer.drop(heap, s);
+            none_yet = false;
+        }
+        k = k + 1;
+    }
+    return (b, none_yet);
+}

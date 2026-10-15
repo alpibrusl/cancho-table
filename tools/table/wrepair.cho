@@ -1,0 +1,59 @@
+edition 5;
+
+module wrepair;
+
+// The refusal of `and` mixed with `or` at one level of `--where` (docs/or-and-columns.md section 3.3): `where.mixed-and-or`, at the connective that changes the level, with a repair that
+// offers the two ways to read it as whole invocations: by precedence (`and` before `or`, as SQL does) and left to right. A reading is offered only if `--where` takes it whole.
+
+import std.buffer;
+import std.json;
+import orparse;
+import toolbox.fail;
+import finish;
+
+pub fn hint() -> [] &static [byte] {
+    return "put parentheses round what goes first: (a = 1 or b = 2) and c = 3 is one question and a = 1 or (b = 2 and c = 3) another, and the tool does not choose between them, the repair offers both";
+}
+
+// The refusal for `given`, the text of `--where` (at argument `where_at` of the call, a value of its own when `whole`, else `--where=text`), added to `errs`; `at` is the connective.
+pub fn refuse[&h, &g, &w](heap: &!h Heap, errs: fail.Errors, given: &w [byte], at: int, args: &g Args, where_at: int, whole: bool) -> [heap, args] fail.Errors {
+    var w = fail.open_in(heap, finish.extra(), "where.mixed-and-or", "--where uses and and or at one level: which of them goes first is not guessed", hint());
+    let (r0, ok0, r1, ok1) = orparse.readings(heap, given);
+    if where_at >= 0 && (ok0 || ok1) {
+        var o = fail.choose_open(heap, w);
+        if ok0 {
+            borrow r0 as &rr in {
+                o = option(heap, o, args, where_at, whole, buffer.bytes(rr));
+            }
+        }
+        if ok1 {
+            borrow r1 as &rr in {
+                o = option(heap, o, args, where_at, whole, buffer.bytes(rr));
+            }
+        }
+        w = fail.choose_close(heap, o);
+    } else {
+        w = fail.repair_none(heap, w, "which of the two readings was meant is not known, and neither can be written in the grammar");
+    }
+    buffer.drop(heap, r0);
+    buffer.drop(heap, r1);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_int(heap, w, "offset", at);
+    w = fail.detail_text(heap, w, "expression", given);
+    return fail.add(heap, errs, w);
+}
+
+fn option[&h, &g, &t](heap: &!h Heap, w: json.Writer, args: &g Args, where_at: int, whole: bool, text: &t [byte]) -> [heap, args] json.Writer {
+    var o = w;
+    if whole {
+        o = fail.choose_option_replacing(heap, o, args, where_at, text);
+    } else {
+        var joined = buffer.append(heap, buffer.empty(heap, 64), "--where=");
+        joined = buffer.append(heap, joined, text);
+        borrow joined as &jr in {
+            o = fail.choose_option_replacing(heap, o, args, where_at, buffer.bytes(jr));
+        }
+        buffer.drop(heap, joined);
+    }
+    return o;
+}

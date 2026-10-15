@@ -2,9 +2,9 @@ edition 5;
 
 module expr;
 
-// `--where`: conditions joined by `and`, and what each says of a row.
+// `--where`: conditions, and what each says of a row. This module reads a condition (`parse_cond`) and decides one against a cell (`holds`); `orparse` reads the whole expression,
 //
-//     EXPR  := COND { "and" COND }
+//     EXPR  := ALL | ANY | UNIT          ALL := UNIT "and" UNIT { "and" UNIT }          ANY := UNIT "or" UNIT { "or" UNIT }          UNIT := COND | "(" EXPR ")"
 //     COND  := COLUMN OP VALUE | COLUMN "contains" VALUE
 //            | COLUMN "in" "(" VALUE { "," VALUE } ")"
 //     OP    := "=" | "!=" | "<" | "<=" | ">" | ">="
@@ -16,17 +16,16 @@ module expr;
 // the next byte part of it, whatever it is (`\#3` is the name "#3", not the
 // third column). A quoted word is between single quotes with '' for a quote;
 // a quoted word is always a name or a value, never a position, and never has
-// the keyword meaning of and, in or contains. `and`, `in` and `contains` are
-// lower case. Nothing else is in the language: no or, no parentheses for
-// grouping, no expressions, no functions.
+// the keyword meaning of and, or, in or contains. `and`, `or`, `in` and `contains` are
+// lower case. Nothing else is in the language: no not yet, no expressions, no functions.
 //
 // A condition compares text, bytewise, unless the column is written `:int`, in
 // which case the cell is an exact integer and the literals are too, or `:dec(S)`, in
 // which case the cell is an exact decimal of at most S fractional digits (docs/numbers.md:
 // never rounded, `1.5` and `1.50` are one value) and so are the literals. Evaluation
-// is left to right and stops at the first condition that is false, so a
-// condition that would refuse a cell (an empty one is not an integer) is only
-// reached by rows that passed those before it.
+// is left to right and stops at the first condition that decides the level it is in (a false one
+// in an `and`, a true one in an `or`), so a condition that would refuse a cell (an empty one is
+// not an integer) is only reached by rows that the ones before it did not decide (docs/or-and-columns.md section 5).
 
 import std.buffer;
 import std.bytes;
@@ -38,7 +37,7 @@ fn is_delimiter(c: int) -> [] bool {
     return c == 32 || c == 9 || c == 10 || c == 13 || c == 39 || c == '(' || c == ')' || c == ',' || c == '=' || c == '!' || c == '<' || c == '>';
 }
 
-fn skip_space[&s](src: &s [byte], from: int) -> [] int {
+pub fn skip_space[&s](src: &s [byte], from: int) -> [] int {
     var i = from;
     while i < len(src) && (int_of(src[i]) == 32 || int_of(src[i]) == 9 || int_of(src[i]) == 10 || int_of(src[i]) == 13) {
         i = i + 1;
@@ -50,7 +49,7 @@ fn skip_space[&s](src: &s [byte], from: int) -> [] int {
 // status, whether its first byte was escaped, how many bytes up to and
 // including the last escaped one). Status: 0 a word, 1 none here, 9 a quote
 // never closed, 10 a backslash at the end.
-fn read_word[&h, &s](heap: &!h Heap, out: buffer.Buffer, src: &s [byte], from: int) -> [heap] (buffer.Buffer, int, int, int, int, int) {
+pub fn read_word[&h, &s](heap: &!h Heap, out: buffer.Buffer, src: &s [byte], from: int) -> [heap] (buffer.Buffer, int, int, int, int, int) {
     var o = out;
     var j = from;
     var made = 0;
@@ -160,6 +159,12 @@ pub fn expected(what: int) -> [] &static [byte] {
     }
     if what == 20 {
         return "a number within the range of a double (between 5e-324 and 1.7976931348623157e308 in size), of at most 1,100 bytes";
+    }
+    if what == 21 {
+        return "fewer nested parentheses: the ceiling is 8";
+    }
+    if what == 22 {
+        return "and, or, or the ) that closes the group";
     }
     return "a complete expression";
 }
@@ -366,6 +371,78 @@ fn parse_value[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int
     return (plan, after, what, from);
 }
 
+// One condition at `from`, added to the plan: a column, an operator, and a value or a list of values. Answers the plan, where the condition ends (just after its last byte), and what /
+// where when it is not whole (`expected`). It is the one reader of a condition: `parse` reads a conjunction of them and `orparse.parse` the whole grammar.
+pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int) -> [heap] (query.Query, int, int, int) {
+    var plan = q;
+    var i = from;
+    var what = 0;
+    var at = 0;
+    let begins = from;
+    let (p1, after_column, index, typed, w1, a1) = parse_column(heap, plan, src, i);
+    plan = p1;
+    what = w1;
+    at = a1;
+    if what == 0 {
+        i = skip_space(src, after_column);
+        let (kind, op, after_op, w2, a2) = parse_operator(heap, src, i, typed);
+        what = w2;
+        at = a2;
+        i = after_op;
+        var first = 0;
+        borrow plan as &pr in {
+            first = query.lit_count(pr);
+        }
+        var values = 0;
+        if what == 0 && kind == 2 {
+            i = skip_space(src, i);
+            if i < len(src) && int_of(src[i]) == '(' {
+                i = i + 1;
+                var listing = true;
+                while listing && what == 0 {
+                    i = skip_space(src, i);
+                    let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, typed);
+                    plan = p3;
+                    what = w3;
+                    at = a3;
+                    if what == 0 {
+                        values = values + 1;
+                        i = skip_space(src, after_value);
+                        if i < len(src) && int_of(src[i]) == ',' {
+                            i = i + 1;
+                        } else if i < len(src) && int_of(src[i]) == ')' {
+                            i = i + 1;
+                            listing = false;
+                        } else {
+                            what = 8;
+                            at = i;
+                        }
+                        if values > 1024 {
+                            what = 11;
+                            at = i;
+                        }
+                    }
+                }
+            } else {
+                what = 7;
+                at = i;
+            }
+        } else if what == 0 {
+            i = skip_space(src, i);
+            let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, typed);
+            plan = p3;
+            what = w3;
+            at = a3;
+            values = 1;
+            i = after_value;
+        }
+        if what == 0 {
+            plan = query.add_cond(heap, plan, kind, typed, op, index, first, values, begins);
+        }
+    }
+    return (plan, i, what, at);
+}
+
 // Read EXPR into the plan. Answers the plan, and 0 for what and the offset
 // when it is whole, else what was expected (`expected`) and where, as a byte
 // offset into the expression.
@@ -377,87 +454,32 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
     var many = 0;
     var more = true;
     while more && what == 0 {
-        let begins = i;
         if many >= 64 {
             what = 11;
             at = i;
         } else {
-            let (p1, after_column, index, typed, w1, a1) = parse_column(heap, plan, src, i);
+            let (p1, after, w1, a1) = parse_cond(heap, plan, src, i);
             plan = p1;
             what = w1;
             at = a1;
+            i = after;
             if what == 0 {
-                i = skip_space(src, after_column);
-                let (kind, op, after_op, w2, a2) = parse_operator(heap, src, i, typed);
-                what = w2;
-                at = a2;
-                i = after_op;
-                var first = 0;
-                borrow plan as &pr in {
-                    first = query.lit_count(pr);
-                }
-                var values = 0;
-                if what == 0 && kind == 2 {
-                    i = skip_space(src, i);
-                    if i < len(src) && int_of(src[i]) == '(' {
-                        i = i + 1;
-                        var listing = true;
-                        while listing && what == 0 {
-                            i = skip_space(src, i);
-                            let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, typed);
-                            plan = p3;
-                            what = w3;
-                            at = a3;
-                            if what == 0 {
-                                values = values + 1;
-                                i = skip_space(src, after_value);
-                                if i < len(src) && int_of(src[i]) == ',' {
-                                    i = i + 1;
-                                } else if i < len(src) && int_of(src[i]) == ')' {
-                                    i = i + 1;
-                                    listing = false;
-                                } else {
-                                    what = 8;
-                                    at = i;
-                                }
-                                if values > 1024 {
-                                    what = 11;
-                                    at = i;
-                                }
-                            }
-                        }
-                    } else {
-                        what = 7;
-                        at = i;
+                many = many + 1;
+                i = skip_space(src, i);
+                if i >= len(src) {
+                    more = false;
+                } else {
+                    let (word, after_and, quoted, status, e1, e2) = read_word(heap, buffer.empty(heap, 4), src, i);
+                    var is_and = false;
+                    borrow word as &wr in {
+                        is_and = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "and");
                     }
-                } else if what == 0 {
-                    i = skip_space(src, i);
-                    let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, typed);
-                    plan = p3;
-                    what = w3;
-                    at = a3;
-                    values = 1;
-                    i = after_value;
-                }
-                if what == 0 {
-                    plan = query.add_cond(heap, plan, kind, typed, op, index, first, values, begins);
-                    many = many + 1;
-                    i = skip_space(src, i);
-                    if i >= len(src) {
-                        more = false;
+                    buffer.drop(heap, word);
+                    if is_and {
+                        i = skip_space(src, after_and);
                     } else {
-                        let (word, after_and, quoted, status, e1, e2) = read_word(heap, buffer.empty(heap, 4), src, i);
-                        var is_and = false;
-                        borrow word as &wr in {
-                            is_and = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "and");
-                        }
-                        buffer.drop(heap, word);
-                        if is_and {
-                            i = skip_space(src, after_and);
-                        } else {
-                            what = 4;
-                            at = i;
-                        }
+                        what = 4;
+                        at = i;
                     }
                 }
             }
@@ -638,7 +660,7 @@ fn holds_dec[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many:
 // and the cell is not an integer, 3 it is one that does not fit 64 bits; for a
 // :dec column 4 the cell is not a decimal, 5 it has more fractional digits than
 // the scale, 6 it is too wide (`cellnum.parse_dec`); for a :float column 7 to 11 (`flt.parse_float`'s statuses less two).
-fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
+pub fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
     let kind = query.cond_at(plan, k, 0);
     let op = query.cond_at(plan, k, 2);
     let first = query.cond_at(plan, k, 4);
@@ -717,6 +739,9 @@ fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
 // the row is wanted, 0 it is not, 2 or 3 a condition refused a cell (see
 // `holds`).
 pub fn eval[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer) -> [heap] (int, int, buffer.Buffer) {
+    if query.flowed(plan) {
+        return eval_program(heap, plan, cols, record, cells, scratch);
+    }
     var scr = scratch;
     var k = 0;
     let total = query.count_of(plan, 1);
@@ -742,4 +767,43 @@ pub fn eval[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: &c [
         k = k + 1;
     }
     return (1, 0, scr);
+}
+
+// The evaluation of a plan that has an `or` (docs/or-and-columns.md section 4): the branch program of `query.flow`. A program counter starts at the first condition; the condition it names
+// is tried, its cell read as the condition's type only now; the counter becomes the condition's exit for the verdict, a condition after it, or the row is kept (-1) or dropped (-2). Exits only
+// go forward, so it ends in at most as many steps as there are conditions, and a cell that no path reaches is never read, as a cell to the right of a false `and` never was. Answers as `eval` does.
+// A function of its own, reached by one test at the head of `eval` and not by a case in the loop of `eval` or in `engine.screen`: a test in `screen` cost every filtered row 15 instructions
+// (measured, docs/or-and-columns.md section 16), and this one 3 to 5.
+fn eval_program[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer) -> [heap] (int, int, buffer.Buffer) {
+    var scr = scratch;
+    var k = 0;
+    while k >= 0 {
+        let column = cols[query.cond_at(plan, k, 3)];
+        let first = cells[3 * column];
+        let last = cells[3 * column + 1];
+        var verdict = 0;
+        if cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {
+            borrow mut scr as &!sw in {
+                buffer.clear(sw);
+            }
+            scr = query.unquote(heap, scr, record[first..last]);
+            borrow scr as &sr in {
+                verdict = holds(plan, k, buffer.bytes(sr));
+            }
+        } else {
+            verdict = holds(plan, k, record[first..last]);
+        }
+        if verdict >= 2 {
+            return (verdict, k, scr);
+        }
+        let next = query.flow_at(plan, k, 1 - verdict);
+        if next == 0 - 1 {
+            return (1, 0, scr);
+        }
+        if next == 0 - 2 {
+            return (0, 0, scr);
+        }
+        k = next;
+    }
+    return (0, 0, scr);
 }

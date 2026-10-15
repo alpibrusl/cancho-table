@@ -46,6 +46,9 @@ pub res struct Query {
     gkinds: vec.Vec[int],
     // the label `--sort` names (empty when there is none): an output column of the grouping, resolved when the groups are finished
     sort: buffer.Buffer,
+    // the branch program of a plan that has an `or` (docs/or-and-columns.md section 4): 2 integers a condition, the condition to run next when it is true and when it is false (greater than its own),
+    // or -1 (the row is kept) or -2 (it is dropped). Empty for a conjunction, which runs the code that has always run (`expr.eval`)
+    flow: vec.Vec[int],
 }
 
 pub fn empty[&h](heap: &!h Heap) -> [heap] Query {
@@ -55,11 +58,11 @@ pub fn empty[&h](heap: &!h Heap) -> [heap] Query {
     meta = vec.push(heap, meta, 0);
     meta = vec.push(heap, meta, 0);
     meta = vec.push(heap, meta, 0);
-    return Query { names: buffer.empty(heap, 64), nends: vec.empty(heap, 8, 0), nkinds: vec.empty(heap, 8, 0), conds: vec.empty(heap, 8, 0), lits: vec.empty(heap, 8, 0), ltext: buffer.empty(heap, 64), aggs: vec.empty(heap, 4, 0), meta: meta, gkinds: vec.push(heap, vec.push(heap, vec.empty(heap, 4, 0), 0), 0), sort: buffer.empty(heap, 1) };
+    return Query { names: buffer.empty(heap, 64), nends: vec.empty(heap, 8, 0), nkinds: vec.empty(heap, 8, 0), conds: vec.empty(heap, 8, 0), lits: vec.empty(heap, 8, 0), ltext: buffer.empty(heap, 64), aggs: vec.empty(heap, 4, 0), meta: meta, gkinds: vec.push(heap, vec.push(heap, vec.empty(heap, 4, 0), 0), 0), sort: buffer.empty(heap, 1), flow: vec.empty(heap, 2, 0) };
 }
 
 pub fn drop[&h](heap: &!h Heap, q: Query) -> [heap] int {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     buffer.drop(heap, names);
     vec.drop(heap, nends);
     vec.drop(heap, nkinds);
@@ -70,13 +73,14 @@ pub fn drop[&h](heap: &!h Heap, q: Query) -> [heap] int {
     vec.drop(heap, meta);
     vec.drop(heap, gkinds);
     buffer.drop(heap, sort);
+    vec.drop(heap, flow);
     return 0;
 }
 
 // One more column reference: its bytes and its position (-1 for a name).
 // Answers its index.
 pub fn add_name[&h, &d](heap: &!h Heap, q: Query, given: &d [byte], position: int) -> [heap] (Query, int) {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     var at = 0;
     borrow nends as &r in {
         at = vec.size(r);
@@ -86,37 +90,37 @@ pub fn add_name[&h, &d](heap: &!h Heap, q: Query, given: &d [byte], position: in
     borrow n as &r in {
         size = buffer.size(r);
     }
-    return (Query { names: n, nends: vec.push(heap, nends, size), nkinds: vec.push(heap, nkinds, position), conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: gkinds, sort: sort }, at);
+    return (Query { names: n, nends: vec.push(heap, nends, size), nkinds: vec.push(heap, nkinds, position), conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: gkinds, sort: sort, flow: flow }, at);
 }
 
 // meta[slot] += by (slot: 0 select, 1 conditions, 2 group, 3 aggregates).
 pub fn bump(q: Query, slot: int, by: int) -> [] Query {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     var m = meta;
     borrow mut m as &!w in {
         vec.set(w, slot, vec.get(w, slot) + by);
     }
-    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: m, gkinds: gkinds, sort: sort };
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: m, gkinds: gkinds, sort: sort, flow: flow };
 }
 
 // One more `--order-by` key: the index of its name, and its flags.
 pub fn add_order[&h](heap: &!h Heap, q: Query, name: int, flags: int) -> [heap] Query {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     var m = vec.push(heap, meta, name);
     m = vec.push(heap, m, flags);
-    return bump(Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: m, gkinds: gkinds, sort: sort }, 4, 1);
+    return bump(Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: m, gkinds: gkinds, sort: sort, flow: flow }, 4, 1);
 }
 
 // One more `--group` column's type (in the order of the group names).
 pub fn add_gkind[&h](heap: &!h Heap, q: Query, kind: int) -> [heap] Query {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     var g = vec.push(heap, gkinds, kind);
     if kind != 0 {
         borrow mut g as &!gw in {
             vec.set(gw, 0, vec.get(gw, 0) + 1);
         }
     }
-    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: g, sort: sort };
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: g, sort: sort, flow: flow };
 }
 
 // The type of group column `j` (0 when the plan gave none).
@@ -129,8 +133,8 @@ pub fn gkind_at[&q](q: &q Query, j: int) -> [] int {
 
 // The label `--sort` names, kept in the plan so that it comes from the flag or from a query alike (empty when the plan has none).
 pub fn set_sort[&h, &d](heap: &!h Heap, q: Query, label: &d [byte]) -> [heap] Query {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
-    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: gkinds, sort: buffer.append(heap, sort, label) };
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: gkinds, sort: buffer.append(heap, sort, label), flow: flow };
 }
 
 pub fn sort_label[&q](q: &q Query) -> [] &q [byte] {
@@ -144,12 +148,12 @@ pub fn reporting[&q](q: &q Query) -> [] bool {
 }
 
 pub fn set_reporting[&h](heap: &!h Heap, q: Query) -> [heap] Query {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     var g = gkinds;
     borrow mut g as &!gw in {
         vec.set(gw, 1, 1);
     }
-    return add_order(heap, Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: g, sort: sort }, 0, 0);
+    return add_order(heap, Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: g, sort: sort, flow: flow }, 0, 0);
 }
 
 // How many `--group` columns are typed (the first element of `gkinds`).
@@ -160,10 +164,10 @@ pub fn typed_groups[&q](q: &q Query) -> [] int {
 // `--top` and `--from` kept with the plan, after the order keys of `meta` (par.run needs them to know how many groups a page wants; they cannot be passed through
 // `read_file` without changing that function's code, which costs the one-thread reads of every plan 3 to 4 percent in cycles on Linux, docs/gap-groups.md).
 pub fn with_page[&h](heap: &!h Heap, q: Query, top: int, from: int) -> [heap] Query {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     var m = vec.push(heap, meta, top);
     m = vec.push(heap, m, from);
-    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: m, gkinds: gkinds, sort: sort };
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: m, gkinds: gkinds, sort: sort, flow: flow };
 }
 
 // (`--top`, `--from`) as `with_page` left them, or (0, 0).
@@ -189,6 +193,22 @@ pub fn order_flags[&q](q: &q Query, k: int) -> [] int {
 
 pub fn count_of[&q](q: &q Query, slot: int) -> [] int {
     return vec.get(q.meta, slot);
+}
+
+// The branch program (see `flow` above): whether the plan has one, and the two exits of condition `k` (0 when it is true, 1 when it is false).
+pub fn flowed[&q](q: &q Query) -> [] bool {
+    return vec.size(q.flow) != 0;
+}
+
+pub fn flow_at[&q](q: &q Query, k: int, which: int) -> [] int {
+    return vec.get(q.flow, 2 * k + which);
+}
+
+// The program a parsed expression compiled to (`orparse`); an empty one for a conjunction.
+pub fn with_flow[&h, &v](heap: &!h Heap, q: Query, program: &v vec.Vec[int]) -> [heap] Query {
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
+    vec.drop(heap, flow);
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: gkinds, sort: sort, flow: copy_vec(heap, program) };
 }
 
 pub fn name_count[&q](q: &q Query) -> [] int {
@@ -318,7 +338,7 @@ pub fn type_conflict[&q, &c](q: &q Query, cols: &c [int]) -> [] (int, int, int) 
 
 // One more literal: its bytes (kept in `ltext`) and its integer value.
 pub fn add_lit[&h, &d](heap: &!h Heap, q: Query, given: &d [byte], value: int) -> [heap] Query {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     var t = ltext;
     var begin = 0;
     borrow t as &r in {
@@ -329,7 +349,7 @@ pub fn add_lit[&h, &d](heap: &!h Heap, q: Query, given: &d [byte], value: int) -
     l = vec.push(heap, l, begin + len(given));
     l = vec.push(heap, l, value);
     l = vec.push(heap, l, 0);
-    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: l, ltext: t, aggs: aggs, meta: meta, gkinds: gkinds, sort: sort };
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: l, ltext: t, aggs: aggs, meta: meta, gkinds: gkinds, sort: sort, flow: flow };
 }
 
 pub fn lit_count[&q](q: &q Query) -> [] int {
@@ -338,7 +358,7 @@ pub fn lit_count[&q](q: &q Query) -> [] int {
 
 // One more condition (the 7 integers above).
 pub fn add_cond[&h](heap: &!h Heap, q: Query, kind: int, as_int: int, op: int, name: int, first: int, many: int, offset: int) -> [heap] Query {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     var c = vec.push(heap, conds, kind);
     c = vec.push(heap, c, as_int);
     c = vec.push(heap, c, op);
@@ -346,17 +366,17 @@ pub fn add_cond[&h](heap: &!h Heap, q: Query, kind: int, as_int: int, op: int, n
     c = vec.push(heap, c, first);
     c = vec.push(heap, c, many);
     c = vec.push(heap, c, offset);
-    return Query { names: names, nends: nends, nkinds: nkinds, conds: c, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: gkinds, sort: sort };
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: c, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: gkinds, sort: sort, flow: flow };
 }
 
 // One more aggregate: function code, name index (-1 for count), type and mean (see the top).
 pub fn add_agg[&h](heap: &!h Heap, q: Query, function: int, name: int, kind: int, mean: int) -> [heap] Query {
-    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort } = q;
+    let Query { names, nends, nkinds, conds, lits, ltext, aggs, meta, gkinds, sort, flow } = q;
     var a = vec.push(heap, aggs, function);
     a = vec.push(heap, a, name);
     a = vec.push(heap, a, kind);
     a = vec.push(heap, a, mean);
-    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: a, meta: meta, gkinds: gkinds, sort: sort };
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: a, meta: meta, gkinds: gkinds, sort: sort, flow: flow };
 }
 
 pub fn cond_at[&q](q: &q Query, k: int, field: int) -> [] int {
@@ -430,5 +450,5 @@ fn copy_buffer[&h, &b](heap: &!h Heap, from: &b buffer.Buffer) -> [heap] buffer.
 // The plan again, in memory of its own: a worker thread gets one, because the plan is
 // read by all of them and owned by none.
 pub fn duplicate[&h, &q](heap: &!h Heap, plan: &q Query) -> [heap] Query {
-    return Query { names: copy_buffer(heap, plan.names), nends: copy_vec(heap, plan.nends), nkinds: copy_vec(heap, plan.nkinds), conds: copy_vec(heap, plan.conds), lits: copy_vec(heap, plan.lits), ltext: copy_buffer(heap, plan.ltext), aggs: copy_vec(heap, plan.aggs), meta: copy_vec(heap, plan.meta), gkinds: copy_vec(heap, plan.gkinds), sort: copy_buffer(heap, plan.sort) };
+    return Query { names: copy_buffer(heap, plan.names), nends: copy_vec(heap, plan.nends), nkinds: copy_vec(heap, plan.nkinds), conds: copy_vec(heap, plan.conds), lits: copy_vec(heap, plan.lits), ltext: copy_buffer(heap, plan.ltext), aggs: copy_vec(heap, plan.aggs), meta: copy_vec(heap, plan.meta), gkinds: copy_vec(heap, plan.gkinds), sort: copy_buffer(heap, plan.sort), flow: copy_vec(heap, plan.flow) };
 }

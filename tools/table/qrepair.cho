@@ -20,6 +20,7 @@ import std.buffer;
 import std.bytes;
 import std.json;
 import expr;
+import orparse;
 import qarena;
 import qlex;
 import query;
@@ -317,7 +318,13 @@ fn corrected[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], kind: int, 
 // `--query=text`) and `value_at` the one that ends it.
 fn put_option[&h, &t, &g](heap: &!h Heap, w: json.Writer, t: &t qtrans.Translated, args: &g Args, flag_at: int, value_at: int) -> [heap, args] json.Writer {
     var o = fail.choose_open(heap, w);
-    o = fail.choose_option_open(heap, o);
+    o = option_into(heap, o, t, args, flag_at, value_at, "", false);
+    return fail.choose_close(heap, o);
+}
+
+// One option of a choice (the caller opens and closes the choice): the invocation with the query replaced by the flags of `t`, whose `--where` is `where_text` when `own_where`.
+fn option_into[&h, &t, &g, &x](heap: &!h Heap, w: json.Writer, t: &t qtrans.Translated, args: &g Args, flag_at: int, value_at: int, where_text: &x [byte], own_where: bool) -> [heap, args] json.Writer {
+    var o = fail.choose_option_open(heap, w);
     var i = 0;
     while i < arg_count(args) {
         if i == flag_at {
@@ -338,7 +345,11 @@ fn put_option[&h, &t, &g](heap: &!h Heap, w: json.Writer, t: &t qtrans.Translate
             }
             if qtrans.info_at(t, qtrans.i_where()) == 1 {
                 o = fail.choose_arg(heap, o, "--where");
-                o = fail.choose_arg(heap, o, qtrans.section(t, 1));
+                if own_where {
+                    o = fail.choose_arg(heap, o, where_text);
+                } else {
+                    o = fail.choose_arg(heap, o, qtrans.section(t, 1));
+                }
             }
             if qtrans.info_at(t, qtrans.i_order()) == 1 {
                 o = fail.choose_arg(heap, o, "--order-by");
@@ -373,8 +384,40 @@ fn put_option[&h, &t, &g](heap: &!h Heap, w: json.Writer, t: &t qtrans.Translate
     if qtrans.info_at(t, qtrans.i_source()) == 1 {
         o = fail.choose_arg(heap, o, qtrans.section(t, 6));
     }
-    o = fail.choose_option_close(heap, o);
-    return fail.choose_close(heap, o);
+    return fail.choose_option_close(heap, o);
+}
+
+// The repair of `query.mixed-and-or`: the invocation twice, with the where clause the translation wrote (as the query wrote it) read two ways, by precedence and left to right (section 3.3).
+// Each is offered when the grammar of --where takes it whole; nothing is offered when the rest of the statement does not translate.
+fn mixed_repair[&h, &t, &g](heap: &!h Heap, w: json.Writer, t: &t qtrans.Translated, args: &g Args, query_at: int, whole: bool, operands: int) -> [heap, args] json.Writer {
+    var flag_at = query_at;
+    if whole {
+        flag_at = query_at - 1;
+    }
+    if qtrans.info_at(t, qtrans.i_tolerant()) != 1 || query_at <= 0 || qtrans.info_at(t, qtrans.i_source()) == 1 && operands > 0 {
+        return fail.repair_none(heap, w, "which of the two readings was meant is not known, or the rest of the query does not translate: detail.offset is the connective that mixes");
+    }
+    let (r0, ok0, r1, ok1) = orparse.readings(heap, qtrans.section(t, 1));
+    var out = w;
+    if ok0 || ok1 {
+        out = fail.choose_open(heap, out);
+        if ok0 {
+            borrow r0 as &rr in {
+                out = option_into(heap, out, t, args, flag_at, query_at, buffer.bytes(rr), true);
+            }
+        }
+        if ok1 {
+            borrow r1 as &rr in {
+                out = option_into(heap, out, t, args, flag_at, query_at, buffer.bytes(rr), true);
+            }
+        }
+        out = fail.choose_close(heap, out);
+    } else {
+        out = fail.repair_none(heap, out, "neither reading can be written within the grammar of --where: detail.offset is the connective that mixes");
+    }
+    buffer.drop(heap, r0);
+    buffer.drop(heap, r1);
+    return out;
 }
 
 // The `"repair"` of a refusal of the query `q` (`t`, its failed translation): a choice of the one invocation its correction stands for, or none and why. `query_at` is the argument
@@ -385,6 +428,9 @@ pub fn repair[&h, &q, &t, &g](heap: &!h Heap, w: json.Writer, q: &q [byte], t: &
     let offset = qtrans.info_at(t, qtrans.i_offset());
     if kind == 4 || kind == 0 {
         return fail.repair_none(heap, w, "a shorter query is a different question: what to leave out is not known");
+    }
+    if kind == 5 {
+        return mixed_repair(heap, w, t, args, query_at, whole, operands);
     }
     var arena = box_slice(heap, qarena.size_for(len(q)), 0);
     var fixed = buffer.empty(heap, 1);

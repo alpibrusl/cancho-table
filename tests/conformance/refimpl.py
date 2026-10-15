@@ -8,7 +8,7 @@ another width than the header is ragged: counted, never tested or grouped.
 
     rows, ragged, error = run(table, plan)
 
-`plan` is a dict: where (a list of conditions), select (a list of column names
+`plan` is a dict: where (a list of conditions, a conjunction) or where_tree (a tree of `and` and `or`, see `eval_tree`), select (a list of column names
 or None), group (a list of names or None), aggs (a list of (function, column)),
 sort (a string or None), top (an int or None). The answer is ("rows", header,
 rows) or ("groups", labels, rows) with ragged: a count, or an error
@@ -75,6 +75,34 @@ def holds(cond, cell):
     return compare(cond["op"], cell, cond["lit"])
 
 
+def leaf_count(node):
+    return 1 if node[0] == "leaf" else sum(leaf_count(k) for k in node[1])
+
+
+def eval_tree(node, cell_of, counter=None):
+    """The `--where` of docs/or-and-columns.md as a tree: ("leaf", cond) or ("and" | "or", [nodes]). True or False, or ("refuse", rule, column, the leaf's number, leaves in text order):
+    left to right, stopping at the first unit that decides its level (the first false of an `and`, the first true of an `or`); a cell is read as its type only when its leaf is reached,
+    so a bad cell that no path reaches is not an error (section 5.1). `cell_of(column)` is the cell of the record."""
+    counter = [0] if counter is None else counter
+    if node[0] == "leaf":
+        n = counter[0]
+        counter[0] += 1
+        v = holds(node[1], cell_of(node[1]["column"]))
+        if v is True or v is False:
+            return v
+        return ("refuse", v, node[1]["column"], n)
+    decides = node[0] == "or"
+    for k, kid in enumerate(node[1]):
+        v = eval_tree(kid, cell_of, counter)
+        if isinstance(v, tuple):
+            return v
+        if v == decides:
+            for rest in node[1][k + 1:]:
+                counter[0] += leaf_count(rest)       # the leaves not reached are skipped but still counted, so that a leaf keeps its number
+            return v
+    return not decides
+
+
 def run(table, plan):
     header, records = table[0], table[1:]
     width = len(header)
@@ -94,6 +122,11 @@ def run(table, plan):
             ragged += 1
             continue
         verdict = True
+        if plan.get("where_tree") is not None:
+            v = eval_tree(plan["where_tree"], lambda column, rec=rec: rec[header.index(column)])
+            if isinstance(v, tuple):
+                return None, ragged, (v[1], {"row": n, "column": v[2], "context": "where"})
+            verdict = v
         for cond in where:
             v = holds(cond, rec[header.index(cond["column"])])
             if v is True:
