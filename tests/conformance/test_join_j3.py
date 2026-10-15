@@ -643,6 +643,18 @@ class Guard(Fixture):
         argv = self.repair_argv(r)
         self.assertEqual(self.after(argv, "--where"), "#1 != ''")
 
+    def test_a_name_is_quoted_when_the_grammar_would_read_it_otherwise(self):
+        for name, written in (("my_key", "my_key"), ("it's", "'it''s'"), ("and", "'and'"), ("not", "'not'"), ("1k", "'1k'"), ("a b", "'a b'"), ("a:int", "'a:int'"), ("#1", "'#1'"), ("Ab_9", "Ab_9")):
+            with self.subTest(name):
+                on = "%s=bk:int" % name.replace("\\", "\\\\").replace(":", "\\:").replace("=", "\\=").replace(",", "\\,")
+                if name.startswith("#"):
+                    on = "\\" + on
+                r = self.go([], probe="%s,pg\n,x\n" % (name if name.isalnum() or "_" in name else '"%s"' % name.replace('"', '""')), build="bk,bg\n1,a\n", on=on, fmt="json")
+                self.assertEqual(r.first_rule(), "value.not-integer", r.stdout[:300])
+                argv = self.repair_argv(r)
+                self.assertEqual(self.after(argv, "--where"), written + " != ''")
+                self.assertEqual(subprocess.run(argv, capture_output=True, input=b"").returncode, 0, written)
+
     def test_the_guard_names_the_key_column_wherever_it_is(self):
         r = self.go([], probe="pg,pk\nx,1\ny,\n", build="bg,bk\na,1\n", on="pk=bk:int", fmt="json")
         argv = self.repair_argv(r)
