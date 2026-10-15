@@ -34,6 +34,11 @@ cites, next to its conditions). What is generated:
                                           for net, ffi and clock)
     limits        index.html              the limits `table introspect` lists
     rules         index.html              the rules `table introspect` lists
+    sbs           index.html, benchmarks.html   the side-by-side of `table` and DuckDB at 1 to 16
+                                          threads, written from docs/assets/threads-vs-duckdb.json
+                                          (and -linux.json), the output of scripts/threads_vs_duckdb.py:
+                                          every number and every sentence about the values comes
+                                          from that file, so the page cannot drift from the data
 
 Two whole files are also written (and checked) from the list of pages below, so that
 the pages and the sitemap cannot disagree: docs/sitemap.xml and docs/robots.txt. The
@@ -391,6 +396,124 @@ def examples(ctx):
     return "\n\n".join(blocks)
 
 
+# --- the side by side of table and DuckDB at several thread counts ---------------
+
+SBS_SCRIPT = "https://github.com/alpibrusl/cancho-table/blob/main/scripts/threads_vs_duckdb.py"
+SBS_FILES = [("docs/assets/threads-vs-duckdb.json", "threads-vs-duckdb.json"), ("docs/assets/threads-vs-duckdb-linux.json", "threads-vs-duckdb-linux.json")]
+
+
+def sbs_load(rel):
+    path = ROOT / rel
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def sbs_join(items):
+    items = list(items)
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def sbs_machine(doc):
+    m = doc["machine"]
+    return "%s, %s" % (m["cpu"], m["os"])
+
+
+def sbs_values(vals, exact):
+    return "".join('<span class="v%s">%s</span>' % (" same" if float(v) == float(exact) else "", e(v)) for v in vals)
+
+
+def sbs_block(doc, jsonname, heading, level):
+    """One machine's side by side, from the dict that threads_vs_duckdb.py wrote."""
+    f, m, v, n = doc["file"], doc["machine"], doc["versions"], doc["runs"]
+    ex, ths = doc["exact_sum"], doc["threads"]
+    duck = doc["duckdb"]
+    if not duck:
+        raise Drift("%s has no DuckDB values" % jsonname)
+    eq = lambda x: float(x) == float(ex)
+    ds = duck["sum"]
+    allv = [x for t in ths for x in ds[str(t)]]
+    changed = [str(t) for t in ths if len(set(ds[str(t)])) > 1]
+    n_eq = sum(eq(x) for x in allv)
+    tab_ok = all(eq(x) for t in ths for x in doc["table"][str(t)])
+    if not tab_ok:
+        raise Drift("%s: table is not equal to the exact sum at every thread count: the data is not publishable" % jsonname)
+    ks, dc = duck["kahan_sum"], duck["decimal"]
+    kall = [x for t in ths for x in ks[str(t)]]
+    dvals = sorted({x for t in ths for x in dc[str(t)]})
+    dec_stable = len(dvals) == 1
+    dec_ex = doc["exact_sum_for_decimal_contender"]
+    short = v["table_commit"].split(" ")[0][:7]
+    out = []
+    out.append('<h%d>%s</h%d>' % (level, e(heading), level))
+    out.append('<p class="sbs-exact">The exact sum of the %s values in this file, rounded once: <code>%s</code></p>' % (format(f["rows"], ","), e(ex)))
+    cap = "Sum of x over %s rows at %s: the value each tool printed, in each of %d runs" % (format(f["rows"], ","), sbs_join("%d" % t for t in ths) + " threads", n)
+    rows = []
+    for t in ths:
+        tv, dv = doc["table"][str(t)], ds[str(t)]
+        rows.append('<tr><th scope="row">%d</th><td class="num">%s</td><td class="num">%s</td><td>table: %s<br>DuckDB: %d of %d runs</td></tr>' % (
+                        t, sbs_values(sorted(set(tv), key=tv.index), ex), sbs_values(dv, ex),
+                        "yes, %d of %d runs" % (sum(eq(x) for x in tv), len(tv)) if all(eq(x) for x in tv) else "no", sum(eq(x) for x in dv), len(dv)))
+    out.append('<div class="fitwrap" tabindex="0" role="region" aria-label="%s: table and DuckDB, thread by thread"><table class="fit sbs"><caption>%s</caption>'
+               '<thead><tr><th scope="col">Threads</th><th scope="col" class="num">table</th><th scope="col" class="num">DuckDB <code>sum(x)</code></th>'
+               '<th scope="col">Equal to the exact sum?</th></tr></thead><tbody>%s</tbody></table></div>' % (
+                   e(heading), e(cap), "".join(rows)))
+    if changed:
+        chg = "at %s threads the value changed between runs" % sbs_join(changed)
+    else:
+        chg = "at no thread count did the value change between runs, but it changed with the thread count (%d different values over %d thread counts)" % (len(set(allv)), len(ths))
+    out.append('<p class="sbs-says">In this run <code>table</code> printed the exact sum at every thread count in all %d runs. DuckDB&rsquo;s <code>sum</code> printed %d different values over the %d runs; '
+               '%d of them equalled the exact sum. DuckDB values are from these runs: %s.</p>' % (n, len(set(allv)), len(allv), n_eq, e(chg)))
+    out.append('<p class="sbs-says">Adding doubles is order-dependent, and a threaded sum adds them in an order that depends on how the work was split, so a plain double sum can give a different answer for a different number of threads. '
+               '<code>table</code> adds every cell without rounding and rounds the total once. DuckDB has other ways to add, shown below.</p>')
+    rows = []
+    for t in ths:
+        k, d = ks[str(t)], dc[str(t)]
+        rows.append('<tr><th scope="row">%d</th><td class="num">%s</td><td>%d of %d runs</td>'
+                    '<td class="num">%s</td><td>%s</td></tr>' % (
+                        t, sbs_values(k, ex), sum(eq(x) for x in k), len(k), "".join('<span class="v">%s</span>' % e(x) for x in d), "yes" if len(set(d)) == 1 else "no"))
+    kn = sum(eq(x) for x in kall)
+    more = ('<details class="sbs-more"><summary>DuckDB&rsquo;s <code>kahan_sum</code> and a DECIMAL sum, on the same file</summary>'
+            '<div class="fitwrap" tabindex="0" role="region" aria-label="%s: DuckDB kahan_sum and DECIMAL sum"><table class="fit sbs"><caption>DuckDB <code>kahan_sum(x)</code> with x as DOUBLE (also spelled <code>fsum</code>), and <code>sum(x)</code> with x read as DECIMAL(38,12)</caption>'
+            '<thead><tr><th scope="col">Threads</th><th scope="col" class="num"><code>kahan_sum</code></th><th scope="col"><code>kahan_sum</code> equal to the exact sum?</th>'
+            '<th scope="col" class="num">DECIMAL(38,12) <code>sum</code></th><th scope="col">DECIMAL value the same in every run?</th></tr></thead><tbody>%s</tbody></table></div>'
+            '<p class="sbs-says">In this run <code>kahan_sum</code>, DuckDB&rsquo;s compensated sum, was equal to the exact sum in %d of %d runs, and printed %d different values over the %d runs. '
+            'The DECIMAL sum printed %s over the %d thread counts and %d runs. It adds the file&rsquo;s values after rounding each to %d decimal places, so it answers a slightly different question: '
+            'the exact sum of the rounded values is <code>%s</code>%s.</p></details>' % (
+                e(heading), "".join(rows), kn, len(kall), len(set(kall)), len(kall),
+                ("one value, <code>%s</code>," % e(dvals[0])) if dec_stable else "%d different values" % len(dvals), len(ths), n, 12,
+                e(dec_ex), (" and that is what DuckDB printed" if dec_stable and dvals[0] == dec_ex else "; DuckDB printed what the table shows")))
+    out.append(more)
+    load = m["load_average_before"][0]
+    out.append('<p class="fine sbs-cond"><strong>Conditions.</strong> %s, %s cores%s, load average %s (1 minute) at the start and %s at the end. DuckDB %s; <code>table</code> at <code>%s</code> with <code>--agg sum:x:float</code>; Python %s. '
+               'DuckDB aggregates: <code>sum(x)</code> on a DOUBLE column (plain double addition), <code>kahan_sum(x)</code> on a DOUBLE column, and <code>sum(x)</code> on DECIMAL(38,12), at <code>SET threads=N</code>. '
+               'File: %s rows, %s bytes, seed %d, sha256 <code>%s</code>, written under a temporary directory by the script. %d runs at each thread count; every value is as printed, no timings are reported. '
+               'Re-run it: <code>python3 scripts/threads_vs_duckdb.py</code> (<a href="%s">the script</a>, <a href="assets/%s">every value as JSON</a>).</p>' % (
+                   e(sbs_machine(doc)), m["cores"], (" (%d usable by the script)" % m["cores_usable"]) if m["cores_usable"] != m["cores"] else "", load, m["load_average_after"][0], e(v["duckdb"]), e(short), e(v["python"]),
+                   format(f["rows"], ","), format(f["bytes"], ","), f["seed"], e(f["sha256"]), n, SBS_SCRIPT, jsonname))
+    return "\n".join(out)
+
+
+def sbs_index(_ctx=None):
+    rel, name = SBS_FILES[0]
+    doc = sbs_load(rel)
+    if doc is None:
+        raise Drift("%s is missing: run scripts/threads_vs_duckdb.py --json %s" % (rel, rel))
+    return sbs_block(doc, name, "On %s" % sbs_machine(doc), 3) + '\n<p class="fine">The benchmarks page has this on every machine it was run on, and the questions where DuckDB is ahead: <a href="benchmarks.html#floats">benchmarks, floats</a>.</p>'
+
+
+def sbs_bench(_ctx=None):
+    out = []
+    for rel, name in SBS_FILES:
+        doc = sbs_load(rel)
+        if doc is None:
+            if rel == SBS_FILES[0][0]:
+                raise Drift("%s is missing" % rel)
+            continue
+        out.append(sbs_block(doc, name, "Same file, same question, any number of cores: %s" % sbs_machine(doc), 3))
+    return "\n".join(out)
+
+
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), qs=lambda c: md_block(qs_items(c))),
@@ -398,7 +521,8 @@ REGIONS = {
                             flow=lambda c: term_pre(flow_items(c)), qs=lambda c: html_pre(qs_items(c)),
                             **{"c-" + n: (lambda c, n=n: card(c, n)) for n in CARDS},
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
-                            rules=rules_html, nrules=nrules),
+                            rules=rules_html, nrules=nrules, sbs=sbs_index),
+    "docs/benchmarks.html": {"sbs": sbs_bench},
     "docs/refusals.md": {"exit-codes": exit_codes, "rules": rules_md, "examples": examples},
 }
 
