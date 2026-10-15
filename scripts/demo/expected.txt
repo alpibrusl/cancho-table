@@ -1,0 +1,88 @@
+$ cat orders.csv
+id,customer,status,bytes
+1,"Doe, Jane",200,512
+2,Acme,404,
+3,"Doe, Jane",200,2048
+4,Acme,500,128
+5,Zed,200,64
+[exit 0]
+
+$ table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv
+customer,count,sum:bytes
+"Doe, Jane",2,2560
+Acme,1,128
+Zed,1,64
+[exit 0]
+
+$ table --where "status = 200" --select Customer,bytes orders.csv | jq -c '.error | {rule, hint, repair}'
+{"rule":"select.unknown-column","hint":"pick from detail.available","repair":{"kind":"choose","options":[{"argv":["table","--where","status = 200","--select","customer,bytes","orders.csv"]}]}}
+[exit 3]
+
+$ table --where "status = 200" --select customer,bytes orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["customer","bytes"],"rows":[["Doe, Jane","512"],["Doe, Jane","2048"],["Zed","64"]],"row_count":3,"truncated":false,"next":null},"meta":{"version":"0.3.0"}}
+[exit 0]
+
+$ cat prices.csv
+item,price
+tea,0.1
+cup,0.2
+book,0.3
+[exit 0]
+
+$ table --agg "sum:price:dec(2)" --format csv prices.csv
+sum:price
+0.60
+[exit 0]
+
+$ python3 -c "print(0.1 + 0.2 + 0.3)"
+0.6000000000000001
+[exit 0]
+
+$ table --explain --group customer --agg count,sum:bytes sales.csv | jq -c '.data.explain | {size: .source.size, bytes_read: .source.bytes_read, form: .plan.form}'
+{"size":129967,"bytes_read":65536,"form":"groups"}
+[exit 0]
+
+$ cat events.jsonl
+{"user":{"name":"ana"},"action":"login","ms":120}
+{"user":{"name":"bo"},"action":"view","ms":45}
+{"user":{"name":"ana"},"action":"view","ms":80}
+[exit 0]
+
+$ table --input-format jsonl --fields user.name,action,ms --where "ms:int > 50" --format jsonl events.jsonl
+{"user.name":"ana","action":"login","ms":"120"}
+{"user.name":"ana","action":"view","ms":"80"}
+[exit 0]
+
+$ cat customers.csv
+name,tier
+Acme,silver
+Zed,bronze
+[exit 0]
+
+$ table --join customers.csv --on customer=name --join-type anti --select id,customer --format csv orders.csv
+id,customer
+1,"Doe, Jane"
+3,"Doe, Jane"
+[exit 0]
+
+$ table --query "select customer, sum(bytes) from 'orders.csv' where bytes != '' group by customer order by sum(bytes) desc" --format csv
+customer,sum:bytes
+"Doe, Jane",2560
+Acme,128
+Zed,64
+[exit 0]
+
+$ table --threads 1 --parallel-min-bytes 0 --chunk-bytes 16384 --group customer --agg count,sum:bytes --format csv sales.csv | shasum -a 256
+b4d8817428d3f010d08d413c7626ace6637576d16a75d33eb70d65722eb9bff5  -
+[exit 0]
+
+$ table --threads 4 --parallel-min-bytes 0 --chunk-bytes 16384 --group customer --agg count,sum:bytes --format csv sales.csv | shasum -a 256
+b4d8817428d3f010d08d413c7626ace6637576d16a75d33eb70d65722eb9bff5  -
+[exit 0]
+
+$ cat orders.csv | table --where "status = 200" --select id,customer --format csv
+id,customer
+1,"Doe, Jane"
+3,"Doe, Jane"
+5,Zed
+[exit 0]
