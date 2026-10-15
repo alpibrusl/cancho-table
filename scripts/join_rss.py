@@ -8,7 +8,7 @@ For each build file: the accounted bytes by the formula of docs/joins.md 6.2, co
 read from its refusal at one byte below (`detail.held` plus the cost of the last row must be the formula, or the run stops); then, as the minimum of `--runs` runs, the peak resident set
 the kernel reports (`/usr/bin/time -l` on macOS, bytes; `-v` on Linux, kilobytes) of `table --join FILE` with a probe of one row, at `--max-state-bytes` equal to the formula (the build is
 held whole), and of the same call with a build of one row (the floor: the process, the reader's chunks, a table of the smallest size). The ratios are published as they are, with the
-conditions printed: nothing is claimed of them. The spike's figures were 1.65 to 2.26 (grown by doubling), 0.99 to 1.29 pre-sized.
+conditions printed: nothing is claimed of them. The spike's figures were 1.65 to 2.26 (grown by doubling), 0.99 to 1.29 pre-sized; the real build's are in docs/joins.md section 16.3.
 """
 import argparse
 import json

@@ -716,19 +716,19 @@ class Accounting(unittest.TestCase):
         self.assertEqual(run("--root", self.s.dir, "--join", "one.csv", "--on", "k=k", "--join-prefix", "r_", "--max-state-bytes", str(f["held"]), "p.csv").status, 0)
         self.assertEqual(run("--root", self.s.dir, "--join", "one.csv", "--on", "k=k", "--join-prefix", "r_", "--max-state-bytes", str(f["held"] - 1), "p.csv").first_rule(), "limit.state-too-large")
 
-    def test_the_refusal_says_the_resident_set_may_be_twice_the_number(self):
+    def test_the_refusal_says_the_resident_set_may_be_three_times_the_number(self):
         self.probe()
         self.build_file("one.csv", [b"k", b"v"], [[b"a", b"b"]])
         r = run("--root", self.s.dir, "--join", "one.csv", "--on", "k=k", "--join-prefix", "r_", "--max-state-bytes", "10", "p.csv")
-        self.assertIn("twice", r.error()["hint"])
-        self.assertIn("twice", [f for f in introspect()["flags"] if f["name"] == "--max-state-bytes"][0]["help"].replace("about twice", "twice"))
+        self.assertIn("three times", r.error()["hint"])
+        self.assertIn("three times", [f for f in introspect()["flags"] if f["name"] == "--max-state-bytes"][0]["help"])
 
     def test_the_formula_in_the_help(self):
         helps = {f["name"]: f["help"] for f in introspect()["flags"]}
         self.assertIn("plus 16", helps["--max-state-bytes"])
         self.assertIn("plus 60", helps["--max-state-bytes"])
         self.assertIn("not resident memory", helps["--max-state-bytes"])
-        self.assertIn("1.65 to 2.26", helps["--max-state-bytes"])
+        self.assertIn("1.5 to 2.8", helps["--max-state-bytes"])
 
 
 class Stdin(unittest.TestCase):

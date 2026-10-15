@@ -118,7 +118,7 @@ fn join_doc[&h, &g, &p, &s, &t](heap: &!h Heap, args: &g Args, parsed: &p cli.Pa
     } else {
         o = buffer.append(heap, o, "false");
     }
-    o = buffer.append(heap, o, ",\"counted\":\"record bytes + 16 for each row held, key bytes + 60 for each distinct key: not resident memory, which can be about twice that while the build grows\",\"swap\":{\"offered\":false,\"reason\":\"the swap repair arrives with a later slice\"}},\"max_join_rows\":");
+    o = buffer.append(heap, o, ",\"counted\":\"record bytes + 16 for each row held, key bytes + 60 for each distinct key: not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\",\"swap\":{\"offered\":false,\"reason\":\"the swap repair arrives with a later slice\"}},\"max_join_rows\":");
     o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "max-join-rows"));
     o = buffer.append(heap, o, ",\"order\":\"probe order, then build order\",\"work\":{\"class\":\"join: build then stream\",\"first_output_after\":\"the whole build\",\"threads\":{\"requested\":");
     o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "threads"));

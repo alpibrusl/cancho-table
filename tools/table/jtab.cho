@@ -12,7 +12,7 @@ module jtab;
 //   next   per held row, the next row of the same key, or -1
 //
 // A key's rows are therefore a chain in build file order, walked from `head` by `next` with no sort. Every array grows by doubling, as `gmap` does, because a build does not
-// know its row count; `docs/joins.md` section 15.1 measured that this peaks at 1.65 to 2.26 times the accounted bytes resident.
+// know its row count; `docs/joins.md` section 15.1 measured a spike at 1.65 to 2.26 times the accounted bytes resident, and section 16.3 the real build at 1.48 to 2.77.
 //
 // The ACCOUNTED bytes, which `--max-state-bytes` bounds, are a statement of what the arrays hold and are not resident memory:
 //

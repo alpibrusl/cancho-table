@@ -175,7 +175,7 @@ pub fn collision[&h, &g, &p, &a, &b, &x, &y, &q, &s](heap: &!h Heap, e: fail.Err
 
 // `limit.state-too-large` for the build: the rows already held fit, the one named does not. Everything in it is exact; nothing is projected (the rest of the file is unread).
 pub fn build_too_large[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], limit: int, held: int, rows_held: int, row: int, line: int, bytes_read: int, file_bytes: int) -> [heap] fail.Errors {
-    var o = fail.open_in(heap, finish.extra(), "limit.state-too-large", "the --join file is held in memory and the rows held would pass --max-state-bytes", "make the smaller file the --join file (the rows and columns of the answer then change), or raise --max-state-bytes, up to the ceiling introspect names: it counts the bytes the join holds, and resident memory can be about twice that while the build grows. There is no join on disk");
+    var o = fail.open_in(heap, finish.extra(), "limit.state-too-large", "the --join file is held in memory and the rows held would pass --max-state-bytes", "make the smaller file the --join file (the rows and columns of the answer then change), or raise --max-state-bytes, up to the ceiling introspect names: it counts the bytes the join holds, and resident memory can be up to about three times that while the build grows. There is no join on disk");
     o = fail.repair_none(heap, o, "the bytes the rest of the file needs are not known; the number that is raises the flag, up to the ceiling");
     o = fail.detail_open(heap, o);
     o = fail.detail_str(heap, o, "holder", "join-build");
