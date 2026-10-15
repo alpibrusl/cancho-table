@@ -41,7 +41,7 @@ class Shared(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix="named-nb1-")
         cls.path, cls.meta = gen.write(100_000, 100, cls.tmp.name)
-        cls.ref = ref.reference(cls.path)
+        cls.ref = ref.reference(cls.path, with_q10=True)
 
     @classmethod
     def tearDownClass(cls):
@@ -150,7 +150,7 @@ class Generator(Shared):
 
 class Reference(Shared):
     def test_streaming_reference_equals_sqlite(self):
-        self.assertEqual(ref.reference_sqlite(self.path), self.ref)
+        self.assertEqual(ref.reference_sqlite(self.path, with_q10=True), self.ref)
 
     def test_q10_by_both_paths(self):
         with tempfile.TemporaryDirectory(prefix="named-nb1-") as d:
@@ -183,14 +183,14 @@ class Reference(Shared):
         with tempfile.TemporaryDirectory() as d:
             p = pathlib.Path(d) / "f.csv"
             p.write_text(text)
-            r = ref.reference(p)
+            r = ref.reference(p, with_q10=True)
             self.assertEqual(r["q1"]["rows"], [("id001", "3"), ("id002", "5")])
             self.assertEqual(r["q2"]["rows"], [("id001", "id001", "3"), ("id002", "id001", "1"), ("id002", "id002", "4")])
             self.assertEqual(r["q3"]["rows"], [("id0000000001", "3", "0.000002"), ("id0000000002", "5", "33.333335")])
             # q4 id4=1: v1 1.5, v2 1.5, v3 0.000002 (tie to even); id4=2: v1 5/3, v2 6/3, v3 (2+3+99999999)/3 = 33333334.67 millionths -> 33.333335
             self.assertEqual(r["q4"]["rows"], [("1", "1.500000", "1.500000", "0.000002"), ("2", "1.666667", "2.000000", "33.333335")])
             self.assertEqual(r["q5"]["rows"], [("1", "3", "3", "0.000003"), ("2", "5", "6", "100.000004")])
-            self.assertEqual(ref.reference_sqlite(p), r)
+            self.assertEqual(ref.reference_sqlite(p, with_q10=True), r)
             self.assertEqual(r["q5"]["chk"], "8;9;100.0")  # the owner's chk: ints as they are, a float rounded to 3 decimals
             # and the tool agrees, in both forms
             self.assertEqual(ref.gate(p, r, with_q10_defect=False), [])
@@ -212,7 +212,7 @@ class Questions(unittest.TestCase):
         ids = [q["id"] for q in self.q["questions"]]
         self.assertEqual(ids, ["q%d" % i for i in range(1, 11)])
         self.assertEqual({q["id"]: q["class"] for q in self.q["questions"]},
-                         {"q1": "E", "q2": "E", "q3": "E", "q4": "E", "q5": "E", "q6": "X", "q7": "X", "q8": "X", "q9": "X", "q10": "D"})
+                         {"q1": "E", "q2": "E", "q3": "E", "q4": "E", "q5": "E", "q6": "X", "q7": "X", "q8": "X", "q9": "X", "q10": "B"})
         self.assertIn("not the h2oai R generator", self.q["label"])
         for q in self.q["questions"]:
             self.assertTrue(q["sql"].startswith("SELECT"), q["id"])
@@ -221,6 +221,8 @@ class Questions(unittest.TestCase):
                 self.assertTrue(any("{FILE}" in a for a in q["query"]))
                 self.assertEqual(q["flags"][-2:], ["csv", "{FILE}"], q["id"])
                 self.assertTrue(q["columns"])
+                if q["class"] == "B":
+                    self.assertTrue(q["note"], q["id"])
             elif q["class"] == "X":
                 self.assertTrue(q["blocker"] and q["link"] and q["probe"]["rule"], q["id"])
             else:
@@ -273,7 +275,7 @@ class Gates(Shared):
         real = ref.div_half_even
         try:
             ref.div_half_even = lambda n, d: n // d  # truncation
-            p = ref.gate(self.path, ref.reference(self.path), with_q10_defect=False)
+            p = ref.gate(self.path, ref.reference(self.path, with_q10=True), with_q10_defect=False)
             self.assertTrue(p, "truncating means were not caught")
         finally:
             ref.div_half_even = real
@@ -287,10 +289,10 @@ class Gates(Shared):
             p.write_text(text)
             try:
                 ref.div_half_even = lambda n, d: (n + d // 2) // d  # ties up: the 1.5 -> 2 is right, the 2.5 -> 3 is wrong
-                self.assertTrue(ref.gate(p, ref.reference(p), with_q10_defect=False), "ties-up rounding was not caught by the tie fixture")
+                self.assertTrue(ref.gate(p, ref.reference(p, with_q10=True), with_q10_defect=False), "ties-up rounding was not caught by the tie fixture")
             finally:
                 ref.div_half_even = real
-            self.assertEqual(ref.gate(p, ref.reference(p), with_q10_defect=False), [])
+            self.assertEqual(ref.gate(p, ref.reference(p, with_q10=True), with_q10_defect=False), [])
 
     def test_a_mutated_command_is_caught(self):
         def edit(qid, field, f):
@@ -310,6 +312,9 @@ class Gates(Shared):
             "q3 mean at scale 5": edit("q3", "flags", sub("sum:v1,mean:v3:dec(6)@6", "sum:v1,mean:v3:dec(6)@5")),
             "q4 a mean as a sum": edit("q4", "flags", sub("mean:v1@6,mean:v2@6,mean:v3:dec(6)@6", "sum:v1,mean:v2@6,mean:v3:dec(6)@6")),
             "q5 v3 as float": edit("q5", "flags", sub("sum:v1,sum:v2,sum:v3:dec(6)", "sum:v1,sum:v2,sum:v3:float")),
+            "q10 forgets id6": edit("q10", "flags", sub("id1,id2,id3,id4,id5,id6", "id1,id2,id3,id4,id5")),
+            "q10 sums v2": edit("q10", "flags", sub("sum:v3:dec(6),count", "sum:v2,count")),
+            "q10 query form groups by five": edit("q10", "query", lambda a: a.__setitem__(-1, a[-1].replace(", id6 from", " from").replace("group by id1, id2, id3, id4, id5, id6", "group by id1, id2, id3, id4, id5"))),
             "q1 query form differs": edit("q1", "query", lambda a: a.__setitem__(-1, a[-1].replace("sum(v1)", "sum(v2)"))),
             "q5 query form a different key": edit("q5", "query", lambda a: a.__setitem__(-1, a[-1].replace("group by id6", "group by id5"))),
             "q3 query form with fewer groups allowed": edit("q3", "query", lambda a: a.__setitem__(a.index("1000000"), "10")),
@@ -333,12 +338,22 @@ class Gates(Shared):
         self.assertTrue(any(x.startswith("q6") for x in ref.gate(self.path, self.ref, questions=q)))
 
     def test_a_defect_that_is_fixed_must_be_reclassified(self):
+        """The class D of the questions file is kept for the next defect: an entry that says "still a trap" while its command works is a failure of the gate. q10 was the first
+        (issue 66, a grouping by six columns trapped); it is now class B, and here it is put back to D to show that the gate sees a fix."""
         q = copy.deepcopy(ref.load_questions())
         for item in q["questions"]:
             if item["id"] == "q10":
-                item["defect"]["argvs"] = [["--group", "id1,id2,id3,id4", "--agg", "count", "--format", "csv", "{FILE}"]]  # four keys work
+                item["class"] = "D"
+                item["blocker"] = "a trap"
+                item["defect"] = {"argvs": [item["flags"]], "statuses": [132, -4]}
         p = ref.gate(self.path, self.ref, questions=q)
         self.assertTrue(any(x.startswith("q10") and "re-classify" in x for x in p), p)
+
+    def test_q10_is_a_six_column_grouping_that_answers(self):
+        """The question that trapped: six keys, a decimal sum and a count, equal to the reference (SQLite and the streaming pass agree) in the flag form and the --query form."""
+        self.assertEqual(self.ref["q10"]["columns"], ["id1", "id2", "id3", "id4", "id5", "id6", "sum:v3", "count"])
+        self.assertGreater(len(self.ref["q10"]["rows"]), 90_000)
+        self.assertEqual(ref.gate(self.path, self.ref, questions={"questions": [q for q in ref.load_questions()["questions"] if q["id"] == "q10"]}), [])
 
     def test_a_missing_reference_is_a_failure(self):
         r = dict(self.ref)
