@@ -6,9 +6,9 @@
 `put_float(heap, out, key)` writes the key of a double (`flt.key_of`) as text. The finite contract is the one the differential tests define and this script
 does not change: the layout of `numbers_ref.float_text` (shortest decimal that reads back, positional from 1e-6 to 1e21, always with a point, scientific
 outside), compared exactly. The one thing added by #59 is the non-finite doubles: before it `std.fmt.float_into`'s `inf` was split as digits and exponent and
-came out as `i.nf`; now `+inf`, `-inf` and `nan` are written as the text `inf`, `-inf` and `nan`.
+came out as `i.nf`; now `+inf` and `-inf` are written as `inf` and `-inf`, and every NaN (either sign, any payload) as `NaN`: the spelling of `std.fmt.float_into`, which has no sign for a NaN.
 
-The cells: +inf, -inf, nan, -nan and a nan with a payload (the NON-FINITE family), 0.0, -0.0 (both the key 0), 5e-324, 1e21, 1e-7, 123456789012345678 (18 digits), the tie of the issue
+The cells: +inf, -inf, NaN, -NaN and a NaN with a payload (the NON-FINITE family), 0.0, -0.0 (both the key 0), 5e-324, 1e21, 1e-7, 123456789012345678 (18 digits), the tie of the issue
 (`0xc309a9757963b552`, exactly -902899553826474.25: two equally short decimals, the compiler's std.fmt picks the even one since cancho#361), the boundaries of
 the positional range, and --random finite doubles of random bit patterns (deterministic from --seed). The probe is tests/conformance/put_float_probe/main.cho,
 built with the compiler cancho.toml pins ($CANCHO, or `cancho` on PATH) from tools/table/{flt,pow5}.cho. Exit 1 on any difference; the output names each.
@@ -29,9 +29,9 @@ sys.path.insert(0, str(ROOT / "tests" / "conformance"))
 import numbers_ref as ref  # noqa: E402
 
 INF = float("inf")
-NON_FINITE = [("+inf", INF, "inf"), ("-inf", -INF, "-inf"), ("nan", float("nan"), "nan"),
-              ("-nan", struct.unpack(">d", struct.pack(">Q", 0xfff8000000000000))[0], "nan"),
-              ("nan payload", struct.unpack(">d", struct.pack(">Q", 0x7ff0000000000001))[0], "nan")]
+NON_FINITE = [("+inf", INF, "inf"), ("-inf", -INF, "-inf"), ("nan", float("nan"), "NaN"),
+              ("-nan", struct.unpack(">d", struct.pack(">Q", 0xfff8000000000000))[0], "NaN"),
+              ("nan payload", struct.unpack(">d", struct.pack(">Q", 0x7ff0000000000001))[0], "NaN")]
 NAMED = [
     ("0.0", 0.0), ("-0.0", -0.0), ("5e-324", 5e-324), ("1e21", 1e21), ("1e-7", 1e-7), ("123456789012345678", float(123456789012345678)),
     ("tie -902899553826474.25", struct.unpack(">d", struct.pack(">Q", 0xc309a9757963b552))[0]),

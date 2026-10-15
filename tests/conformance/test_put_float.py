@@ -1,7 +1,7 @@
 """`flt.put_float` from the in-tree sources: scripts/put_float_edge.py (issue #59).
 
 The finite doubles are written as Python's repr in the layout of docs/numbers.md 4.6 (the contract of the differential tests, unchanged); a key that stands for a
-double that is not finite is written `inf`, `-inf` or `nan`, not the garbled `i.nf`, `-i.nf`, `N.aN` that splitting the text of `std.fmt.float_into` gave. A leg that
+double that is not finite is written `inf`, `-inf` or `NaN` (the spelling of `std.fmt.float_into`), not the garbled `i.nf`, `-i.nf`, `N.aN` that splitting the text of `std.fmt.float_into` gave. A leg that
 cannot fail proves nothing: the control gives it a wrong reference.
 """
 

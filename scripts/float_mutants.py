@@ -48,10 +48,10 @@ MUTANTS = [
     ("zero is written without its point", "flt.cho", "        return buffer.append(heap, out, \"0.0\");", "        return buffer.append(heap, out, \"0\");"),
     # the guard of a double that is not finite (issue #59)
     ("a key that is infinite falls through to the digit split", "flt.cho", "    if magnitude & 0x7fffffffffffffff >= 0x7ff0000000000000 {", "    if magnitude & 0x7fffffffffffffff > 0x7ff0000000000000 {"),
-    ("infinity is written as nan", "flt.cho", "        if magnitude & 0x7fffffffffffffff > 0x7ff0000000000000 {", "        if magnitude & 0x7fffffffffffffff >= 0x7ff0000000000000 {"),
+    ("infinity is written as NaN", "flt.cho", "        if magnitude & 0x7fffffffffffffff > 0x7ff0000000000000 {", "        if magnitude & 0x7fffffffffffffff >= 0x7ff0000000000000 {"),
     ("minus infinity is written without its sign", "flt.cho", "        if key < 0 {\n            return buffer.append(heap, out, \"-inf\");", "        if false && key < 0 {\n            return buffer.append(heap, out, \"-inf\");"),
     ("a negative key is tested without being flipped to its magnitude", "flt.cho", "    var magnitude = key;\n    if key < 0 {\n        magnitude = key ^ 0x7fffffffffffffff;\n    }", "    var magnitude = key;"),
-    ("nan is written as std.fmt writes it", "flt.cho", "            return buffer.append(heap, out, \"nan\");", "            return buffer.append(heap, out, \"NaN\");"),
+    ("NaN is written in lower case", "flt.cho", "            return buffer.append(heap, out, \"NaN\");", "            return buffer.append(heap, out, \"nan\");"),
     # the condition and the plan
     ("the literal that is not finite is said to be not a number", "expr.cho", "                } else if bad == 10 {\n                    what = 19;", "                } else if bad == 10 {\n                    what = 18;"),
     ("a float verdict takes the code of another", "expr.cho", "            return bad - 2;", "            return bad - 1;"),
