@@ -436,10 +436,12 @@ class TypedRefusals(unittest.TestCase):
         r = self.go("k\na\n", "id,w\na,\n", "k=id", "inner", extra=["--where", "w:int > 0"])
         self.assertNotIn("padded", r.error()["detail"])
 
-    def test_count_of_a_padded_column_is_not_in_a_join(self):
-        # --group/--agg over a join are J3; the padded count(*) of 8.1 is J3's. The refusal says so and the pipe is the way
-        r = self.go("k\na\n", "id,w\na,\n", "k=id", "left", extra=["--group", "k"])
-        self.assertEqual((r.status, r.first_rule()), (2, "args.conflict"))
+    def test_count_of_a_padded_column(self):
+        # J3: count(*) counts the padded rows, and a sum of a padded column is the refusal that says it was padded
+        r = self.go("k\na\n", "id,w\na,\n", "k=id", "left", extra=["--group", "k"], fmt="csv")
+        self.assertEqual(r.stdout.decode().splitlines(), ["k,count", "a,1"])
+        r = self.go("k\nz\n", "id,w\na,1\n", "k=id", "left", extra=["--agg", "sum:w"])
+        self.assertEqual((r.status, r.first_rule(), r.error()["detail"]["padded"]), (8, "value.not-integer", True))
 
 
 class Flags(unittest.TestCase):
@@ -539,9 +541,9 @@ class Flags(unittest.TestCase):
         finally:
             s.cleanup()
 
-    def test_join_where_and_the_forms_of_j3_are_still_refused(self):
-        for extra in (["--group", "k"], ["--order-by", "k"], ["--top", "1"]):
-            self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", "left", *extra), (2, "args.conflict"))
+    def test_the_forms_of_j3_are_taken(self):
+        for extra in (["--group", "k"], ["--order-by", "k"], ["--group", "k", "--top", "1"], ["--join-where", "w = 'x'"]):
+            self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", "left", *extra)[0], 0, extra)
 
 
 class Accounting(unittest.TestCase):

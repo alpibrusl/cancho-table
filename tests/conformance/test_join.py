@@ -406,13 +406,15 @@ class Flags(unittest.TestCase):
                 self.assertEqual((r.status, r.first_rule()), (2, "args.bad-value"), why)
                 self.assertEqual(r.error()["detail"]["flags"], "--on")
 
-    def test_a_join_gives_rows_in_this_version(self):
-        for extra in (["--group", "k"], ["--agg", "count"], ["--order-by", "k"], ["--sort", "count"], ["--top", "1"], ["--report", "types"]):
+    def test_a_join_takes_groups_and_sorts_and_still_refuses_the_report(self):
+        # J3 (docs/joins.md section 18): --group, --agg, --order-by, --sort and --top take the joined row; --report is still the pipe
+        for extra in (["--group", "k"], ["--agg", "count"], ["--order-by", "k"], ["--group", "k", "--sort", "count"], ["--order-by", "k", "--top", "1"]):
             with self.subTest(extra):
-                self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", *extra), (2, "args.conflict"))
+                self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", *extra)[0], 0)
+        self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--report", "types"), (2, "args.conflict"))
         self.s.write("j.jsonl", '{"k":"a"}\n')
         self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--input-format", "jsonl", "--fields", "k", file="j.jsonl"), (2, "args.conflict"))
-        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--group", "k", "p.csv")
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--report", "types", "p.csv")
         self.assertIn("pipe", r.error()["hint"])
 
     def test_right_full_and_cross_are_not_join_types(self):
