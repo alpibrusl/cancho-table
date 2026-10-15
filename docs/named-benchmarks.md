@@ -1,6 +1,14 @@
 # Named benchmarks: a design for externally comparable measurements
 
-> **Status: design only. No tool code, no script and no data is added by the pull request that adds this file, and nothing was run to
+> **Status (2026-10-15): accepted, and NB1 built.** The maintainer accepted every recommendation of section 15 on 2026-10-15: Q1 groupby q1 to q5
+> and join q1 to q5 first; Q2 our own seeded Python generator, labelled as such, no R install; Q3 R only on gram and only as a separate yes (so not now); Q4 no
+> 12 GB 1BRC file for now; Q5 a measured, capped ClickBench/TLC download is allowed later (not in NB1); Q6 no `--no-header` for the benchmark's sake; Q7 no
+> rounding-mode flag for `mean`; Q8 the taxi set deferred; Q9 and Q10 as recommended; Q11 gram cores 0-6 only after confirming no soak is running (`pgrep`,
+> `docker ps`, `uptime` first, else cores 0-5 as before); Q12 Mac runs are not publishable while loaded. **NB1 (section 17) is built: the groupby generator,
+> the reference answers and the gates, with no clock. Where building it showed this document wrong, the text is corrected in place, marked
+> "[corrected in NB1]", and listed in section 17.** The paragraphs below describe the document as it was when it was a design.
+>
+> **Original status: design only. No tool code, no script and no data was added by the pull request that added this file (#64), and nothing was run to
 > measure speed.** This document follows the rules of `docs/numbers.md`, `docs/joins.md` and `docs/or-and-columns.md`: every decision has
 > its argument, every fact about a benchmark that is not ours is cited with a URL, and what could not be cited is marked **unverified**.
 > **It makes no claim about how fast `table` is on any of these benchmarks.** The only runs made while writing it were five-row syntax probes of
@@ -19,12 +27,12 @@
 |---|---|---|
 | what "comparable" means | **same questions, same data layout, same answer check, run side by side on our machines**. **Never** a comparison with the timings published by the benchmark's owner | their numbers come from other hardware and, for the H2O suite, from tables already in memory with the load left out (section 1) |
 | which to adopt | **db-benchmark groupby (q1 to q5 now) and join (q1 to q5, after J2 and a pipe check)**, the **1BRC** task on the generator's files, **ClickBench's 16 expressible queries** plus the 16 that are expressible only below a cardinality bound, on a prefix of its file. **The taxi set only for its first two queries**, **simdjson's files as a correctness corpus, not a timing benchmark**, **TPC-H and TPC-DS never** | sections 4 to 10 |
-| what is not adopted, because `table` refuses it | 5 of 10 groupby questions (median and sd, a difference of two aggregates, per-group top two, correlation; the six-key grouping above the 1,000,000 group ceiling), the NA variants (no null), ClickBench's 11 queries with functions, regex, text `min`, `having` or `not like`, taxi queries 3 and 4 (a year and a rounded number are computed columns) | each is listed with the rule or the feature that blocks it, and **a refusal is a result of the suite, not a hole in it** (section 3.4) |
+| what is not adopted, because `table` refuses it | 5 of 10 groupby questions (median and sd, a difference of two aggregates, per-group top two, correlation; the six-key grouping, which traps at any size: **[corrected in NB1]** it was written as "above the 1,000,000 group ceiling"; see section 17), the NA variants (no null), ClickBench's 11 queries with functions, regex, text `min`, `having` or `not like`, taxi queries 3 and 4 (a year and a rounded number are computed columns) | each is listed with the rule or the feature that blocks it, and **a refusal is a result of the suite, not a hole in it** (section 3.4) |
 | the gate | **an answer is checked against a reference computed independently of every contender, before any time is printed; a contender that disagrees is reported and not timed** | the rule of `scripts/bench.py` and `scripts/bench_parallel.py`, unchanged |
 | scale ladder | **1e6, 1e7, 1e8 rows** (groupby and join: about 51 MB, 0.5 GB, 5 GB for the left table, computed); **1e9 rows is out of budget on both machines** (50 GB) | the Mac has 43 GiB free, gram 67 GB (section 3.5) |
-| data in git | **none.** Generators and checkers in git, data under `$NAMED_DATA` (a directory outside the worktree, default `~/named-data`), deleted after the run | the repository stays small and the data reproducible from a seed |
+| data in git | **none.** Generators and checkers in git, data under `$NAMED_DATA` or `--out` (a directory outside the worktree; **[corrected in NB1]** the default is `<system temporary directory>/cancho-named-data`, not `~/named-data`, and the generator refuses a directory inside the repository), deleted after the run | the repository stays small and the data reproducible from a seed |
 | the generator | **our own Python generator, same schema and same distributions, a fixed seed, not the same bytes as the owner's file** for the H2O suite (their generator is R, `set.seed(108)`, and R is installed on neither machine with `data.table`); **the owner's generator unchanged for 1BRC (Java) and the owner's file for ClickBench** | the bytes of an R `sample()` cannot be reproduced without R; the answer check does not need them (section 3.3) |
-| scripts | `scripts/bench_named.py` (driver), `scripts/named/` (generators, references, per-suite question tables), all with `import procs as subprocess` (the reaper of #55) | no child outlives its runner |
+| scripts | `scripts/bench_named.py` (driver), `scripts/bench_named_gen.py`, `scripts/bench_named_ref.py`, `scripts/bench_named_questions.json` (**[corrected in NB1]** flat files in `scripts/`, not a `scripts/named/` directory: the existing scripts are flat, and a JSON question file is read by the driver and by the tests alike), all with `import procs as subprocess` (the reaper of #55) | no child outlives its runner |
 | publishing | a section per suite in `docs/benchmarks.html`, **each number next to its conditions** (machine, cores, load, N, tool versions, the ladder step), **only numbers that were measured, with the claim worded to the question and the conditions** | the memory rule "claims only measured" |
 | staging | NB1 to NB8, each a small pull request with its gates written first (section 13) | as J0 to J9 |
 
@@ -170,7 +178,7 @@ exit status and **not timed**. This is the rule of `scripts/bench.py`.
 
 * **The reference is computed by the generator process from the arrays it is about to write**, with exact integer arithmetic (the `v` columns as integers;
   `v3` as an integer count of millionths, whose sums stay below 2^63 for 1e8 rows: 1e8 x 1e8 = 1e16), and **recomputed from the written file** by a
-  second path (chunked `pandas.read_csv` with `dtype=str` and the same integer conversion), the two must be equal before the file is used. A contender is never the
+  second path (**[corrected in NB1]** by SQLite, which is in Python's standard library: pandas is installed on the Mac only, so a gate that needs it cannot run on gram or in CI; the SQLite path groups and sums in SQL and shares with the first path only the last rounding of a mean), the two must be equal before the file is used. A contender is never the
   reference.
 * **Means.** `table` gives an exact mean rounded half to even at the scale asked (`mean:v3:dec(6)@6`); a double-based engine gives a double. The check
   compares every mean with the reference's exact rational: a `table` or exact-decimal answer must equal the reference rounded half to even at its scale; a double
@@ -241,7 +249,7 @@ cheap follow-ups (the same questions, other file). **Not adopted: the NA variant
 ### 4.2 Generation
 
 The owner's is `groupby-datagen.R` (R with `data.table`, seed 108). It **cannot be reproduced byte for byte without R** (the draws are R's `sample`), and `data.table` is installed on neither
-machine. So: **`scripts/named/gen_groupby.py`** (numpy, `numpy.random.Generator(PCG64(108))`, never the global state) writes a file with the **same header, the same value sets, the same
+machine. So: **`scripts/named/gen_groupby.py`** (**[corrected in NB1]** pure Python with its own SplitMix64, specified in the script's docstring; numpy is not installed on gram and neither numpy's nor `random`'s streams are promised across versions, so the bytes are pinned by a digest that was checked on both machines) writes a file with the **same header, the same value sets, the same
 formats** (`id%03d`, `id%010d`, integer ids, `round(v3, 6)` written with trailing zeros dropped as `fwrite` does, which the reference must mirror) and the same draw
 shape (independent uniform draws with replacement), and records the seed, `N`, `K`, the sha256 and the exact answer. The result is labelled **"H2O-groupby layout, own generator, seed 108"**. If the maintainer prefers
 the owner's bytes, Q3 is the route (install R and `data.table` on gram, run their script unchanged, still check the answers with our reference).
@@ -261,7 +269,7 @@ SQL as the DuckDB script of the owner runs it (S6), the flag form, the `--query`
 | 7 | `max(v1) - min(v2) AS range_v1_v2 ... GROUP BY id3` | `--agg max:v1,min:v2` gives the two operands | none | **not expressible**: the difference is a computed column ("no, not now", `docs/or-and-columns.md` section 8) |
 | 8 | `unnest(max(v3, 2)) ... WHERE v3 IS NOT NULL GROUP BY id6` | none | none | **not expressible**: no per-group top-k (`--top` takes the first groups, not the first values of each group) |
 | 9 | `pow(corr(v1, v2), 2) ... GROUP BY id2, id4` | none | none | **not expressible**: no correlation |
-| 10 | `SELECT id1..id6, sum(v3), count(*) ... GROUP BY id1..id6` | `--group id1,id2,id3,id4,id5,id6 --agg 'sum:v3:dec(6),count'` | `... group by id1, id2, id3, id4, id5, id6` | **refused above 1e6 rows**: about N groups against `--max-groups`' **ceiling of 1,000,000** (`limit.too-many-groups`); fits only in a non-named size at or under 1e6 rows. The ceiling is a constant of the tool, not a flag |
+| 10 | `SELECT id1..id6, sum(v3), count(*) ... GROUP BY id1..id6` | `--group id1,id2,id3,id4,id5,id6 --agg 'sum:v3:dec(6),count'` | `... group by id1, id2, id3, id4, id5, id6` | **[corrected in NB1: a defect, not a bound. A grouping by five or more columns exits 132 (a trap, no output, no tagged refusal) at any size, even on a one-row file, so the question cannot be run; section 17.]** The text below is the original and is wrong: **refused above 1e6 rows**: about N groups against `--max-groups`' **ceiling of 1,000,000** (`limit.too-many-groups`); fits only in a non-named size at or under 1e6 rows. The ceiling is a constant of the tool, not a flag |
 
 `mean:COL@N` and `sum:COL:dec(6)` are the exact forms of `docs/numbers.md`; `:float` would also work and is cheaper to write but its sum is the exact sum of doubles,
 a different quantity from a double engine's. The owner's questions 1 to 5 are therefore **adopted now** (5 of 10), 6 to 9 are **listed as not expressible** and 10 as **bounded**. The
@@ -508,7 +516,7 @@ The suites' results are JSON files (`results/named-<suite>-<machine>-<date>.json
 | slice | what | proves | depends on |
 |---|---|---|---|
 | **NB0** | this document | the questions, the mapping, the blockers are written down with sources | |
-| **NB1** | `scripts/named/` generators and references for **groupby** (own generator, seed 108), `scripts/named/questions_groupby.py`, the unit tests and gates G-repro, G-ref, G-forms, G-class. **No timing driver yet** | the layout and the reference are right before any clock; the `table` forms of q1 to q5 equal their `--query` forms and q6 to q10 are refused as classified | nothing |
+| **NB1 (built, section 17)** | `scripts/named/` generators and references for **groupby** (own generator, seed 108), `scripts/named/questions_groupby.py`, the unit tests and gates G-repro, G-ref, G-forms, G-class. **No timing driver yet** | the layout and the reference are right before any clock; the `table` forms of q1 to q5 equal their `--query` forms and q6 to q10 are refused as classified | nothing |
 | **NB2** | `scripts/bench_named.py` with the answer gate, the contender forms for groupby (DuckDB, csvtk, Miller, pandas), the 1e6 step on the Mac and gram, the real sizes and the real time of each step; the maintainer decides 1e7 and 1e8 | the driver does not print a time for a wrong or refused answer (G-answer, G-refusal) | NB1 |
 | **NB3** | **join**: `gen_join.py`, the `--join` forms, the pipe check; q3 only once J2 merges | the join answers equal the owner's `chk`; the build-side bound is reported where it refuses | NB2; J2 (#62) for q3; J1 for the rest |
 | **NB4** | publish groupby (and join) sections in `docs/benchmarks.html` from measured results | claims only measured | NB2, NB3 and unloaded runs |
@@ -552,3 +560,44 @@ Each slice is a pull request with its gates written first and failing against `m
 * **Computed, not measured:** the file sizes of section 3.5 (formula in the text), the group counts of section 4.3, the 10.7-byte arithmetic in 5.2, the exact mean 25.45 and the rounding rule read from the 1BRC sample (F17).
 * **Probed on five-row files with the J2 branch's build, no clock**: the flag forms in sections 4 to 8 that say "probed"; the J1/J2 forms in 5.2 are from `docs/joins.md` and the probe of `--join ... --on id1 --join-prefix s_` and `--join-type left`.
 * **Open pull requests this design leans on**: #62 (J2), #63 (A1). If either changes before merge, sections 5.2 and 8.2 are re-read.
+
+## 17. NB1: what was built, what it measured, and what this document had wrong
+
+Built (all outside any clock; nothing here is a speed claim): `scripts/bench_named_gen.py` (the generator), `scripts/bench_named_ref.py` (the reference answers, the
+layout check and the answer gate), `scripts/bench_named_questions.json` (the ten questions as commands, for the later driver) and
+`tests/conformance/test_named_groupby.py` (26 tests, in CI).
+
+**The generator.** Pure Python, the generator specified in its docstring (SplitMix64, nine draws a row, `draw mod m`), streaming in blocks of 50,000 rows, writing
+`G1_<N>_<K>_0_0.csv` and `.meta.json` (seed, N, K, bytes, sha256, the label "NOT the h2oai R generator: same layout, different bytes, so published numbers are not
+comparable") outside the repository. **Measured, deterministic on both machines:** the sha256 of the 100,000-row file is `ca52ff7e...7c3a1` and of the 1,000,000-row
+file `16f80eb8ced039012aa9bbfdde73ecf1468e57ae28c6e40611d9736d79a73d6a`, identical on the Mac (Python 3.14.5, arm64) and on gram (3.14.4, x86-64); the 10,000,000-row file
+is 509,174,428 bytes, sha256 `d0c061a103432514c1cd7e0456f764256070d311924259da0afe63ca2a94dba4`. **Real sizes, replacing the estimates of section 3.5:** 1e6 rows
+49,916,813 bytes (the estimate said about 51 MB), 1e7 rows 509,174,428 bytes. Generation takes about 3 s at 1e6 and 33 s at 1e7 on the Mac, one core, loaded: recorded, not published.
+
+**The reference.** A streaming pass over the written file, standard library only, exact integers (`v3` as millionths, means as exact rationals rounded half to even), and
+a second path by SQLite; the two are equal for q1 to q5 (and q10) at 1e5 and 1e6 rows. `chk` follows `make_chk` of the owner's helpers (ints as they are, floats rounded
+to 3 decimals, `;`); for the means it is the sum of the group means rounded at scale 6, which is not the owner's sum of double averages, so it is recorded and never compared
+across engines.
+
+**The gates, all passing; each can fail.** (a) the layout check holds the file to the documented header, formats, ranges and distinct counts (14 file mutants are each caught);
+(b) `table`'s q1 to q5, flag form and `--query` form, equal the reference and each other byte for byte, at 1e5 rows in CI and at 1e6 and 1e7 rows by hand (`python3 scripts/bench_named_ref.py FILE --layout --answers --gate`);
+mutated references (7), mutated commands (9) and a reference with truncating or ties-up rounding are each caught; (c) q6 to q9 carry a probe that must be refused with a stated rule
+(`agg.bad-spec` or `query.unsupported`: a probe is the nearest spelling, so a feature that lands changes the rule and fails the gate until the entry is re-classified); (d) q10 is
+class D (below) and the gate fails if it stops failing.
+
+**What this document had wrong, found by building it:**
+
+1. **q10 is a defect, not a bound.** Section 4.3 said the six-key grouping is "refused above 1e6 rows" with `limit.too-many-groups`. Measured on `origin/main` `2f24508` built with the
+   pinned compiler (`e47d647`) and on the older build of `fb4098d`: **`--group` with five or more columns exits 132 (SIGILL, a trap), with no output and no tagged refusal, on any input,
+   including a file of one data row**; four columns work. The group ceiling is never reached. The question is classed D in the questions file and the gate asserts the trap, so a fix
+   will fail the gate and force a re-classification (to B, with the bound the doc described). The defect itself is not fixed by this slice.
+2. **Pandas cannot be the second path** (section 3.3): it is on the Mac only. SQLite replaces it.
+3. **numpy cannot be the generator** (section 4.2): not installed on gram. The own-generator decision (Q2) stands; only its engine changed.
+4. **File names and the default directory** (sections 0, 11, 13): flat files in `scripts/`, and a default under the temporary directory, as asked.
+5. **Sizes** (section 3.5): 49.9 MB and 509 MB, measured.
+6. **Distinct counts** (section 4.1): with draws with replacement a column of m values holds all m only with many draws a value. At K=100 every column is complete from 1e5 rows up
+   except the pair `id1:id2` (q2's groups: 9,998 of 10,000 in the 1e5-row file); at K=2 or K=10 `id3` and `id6` miss some of their N/K values, as the owner's `sample` does. The layout check
+   therefore requires every value when there are 20 draws a value or more, and the expected count (m times 1 - e^-(N/m)) otherwise.
+7. **q3 and q5 at 1e7 rows** have 100,000 groups, exactly the default `--max-groups`; the commands pass `--max-groups 1000000` anyway, and `table` answers them at 1e7 (checked by the gate).
+
+**Not done in NB1, by design:** no timing, no contender other than `table` and SQLite-as-reference, no driver (NB2), no join (NB3), no R, no download, no data in git.
