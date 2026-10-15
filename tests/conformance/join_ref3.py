@@ -162,7 +162,16 @@ def refuse_key(r, side, n, line, header, col, cell, kind):
     raise Refused(rule=r[1], context="join", input=side, column=header[col], value=cell, row=n, line=line, direction=r[2], padded=False)
 
 
-def key_of(row, cols, kinds, side, n, header):
+def line_numbers(rows):
+    """The physical line each record of a file of single- and multi-line records begins on (the header is line 1)."""
+    out, line = [], 2
+    for r in rows:
+        out.append(line)
+        line += 1 + sum(c.count("\n") for c in r)
+    return out
+
+
+def key_of(row, cols, kinds, side, n, header, line=None):
     out = []
     for c, kind in zip(cols, kinds):
         cell = row[c]
@@ -171,7 +180,7 @@ def key_of(row, cols, kinds, side, n, header):
         else:
             r = R.typed(cell.encode("latin-1"), kind)
             if r[0] != "ok":
-                refuse_key(r, side, n, n + 1, header, c, cell, kind)
+                refuse_key(r, side, n, n + 1 if line is None else line, header, c, cell, kind)
             out.append(r[1])
     return tuple(out)
 
@@ -208,17 +217,18 @@ def execute(plan, P, B, trace=None):
             elif jt == "inner":
                 build_conds.append(c)
     # BUILD
+    blines, plines = line_numbers(brows), line_numbers(prows)
     index = {}
     for n, row in enumerate(brows, 1):
         if jw is not None:
             v = RI.eval_tree(strip(jw), lambda col, row=row: row[bh.index(col)])
             if isinstance(v, tuple):
-                raise Refused(rule=v[1], context="join-where", input="build", column=v[2], value=row[bh.index(v[2])], row=n, line=n + 1, padded=False)
+                raise Refused(rule=v[1], context="join-where", input="build", column=v[2], value=row[bh.index(v[2])], row=n, line=blines[n - 1], padded=False)
             if not v:
                 continue
         if any(not cond_holds(c, row[bh.index(c["column"][len(plan.get("prefix", "")):])]) for c in build_conds):
             continue
-        k = key_of(row, bks, kinds, "build", n, bh)
+        k = key_of(row, bks, kinds, "build", n, bh, blines[n - 1])
         if trace is not None:
             cost = 0
             if jt in ("inner", "left"):
@@ -240,11 +250,11 @@ def execute(plan, P, B, trace=None):
     for n, prow in enumerate(prows, 1):
         if any(not cond_holds(c, prow[ph.index(c["column"])]) for c in probe_conds):
             continue
-        k = key_of(prow, pks, kinds, "probe", n, ph)
+        k = key_of(prow, pks, kinds, "probe", n, ph, plines[n - 1])
         ms = index.get(k, [])
         rows = []
         if jt in ("inner", "left"):
-            rows = [(list(prow) + [b[j] for j in keep], False, rec_len(prow) + 1 + rec_len(b)) for b in ms]
+            rows = [(list(prow) + [b[j] for j in keep], False, rec_len(prow) + (1 + rec_len([b[j] for j in keep]) if keep else 0)) for b in ms]
             if not ms and jt == "left":
                 rows = [(list(prow) + [""] * len(keep), True, rec_len(prow) + len(keep))]
         elif (jt == "semi") == bool(ms):
@@ -257,12 +267,12 @@ def execute(plan, P, B, trace=None):
                 v = eval_node(where, lambda col, cells=cells: cells[jheader.index(col)])
                 if isinstance(v, tuple):
                     col = v[2]
-                    raise Refused(rule=v[1], context="where", input="probe", column=col, value=cells[jheader.index(col)], row=n, line=n + 1, padded=padded and jheader.index(col) >= np_)
+                    raise Refused(rule=v[1], context="where", input="probe", column=col, value=cells[jheader.index(col)], row=n, line=plines[n - 1], padded=padded and jheader.index(col) >= np_)
                 if not v:
                     continue
 
             def refuse_cell(rule_bad, context, col):
-                raise Refused(rule=rule_bad, context=context, input="probe", column=col, value=cells[jheader.index(col)], row=n, line=n + 1, padded=padded and jheader.index(col) >= np_)
+                raise Refused(rule=rule_bad, context=context, input="probe", column=col, value=cells[jheader.index(col)], row=n, line=plines[n - 1], padded=padded and jheader.index(col) >= np_)
 
             if grouping:
                 gk = []
@@ -605,6 +615,7 @@ class Case:
 
     def __init__(self, name, P, B, pairs, prefix="", using=False):
         self.name, self.P, self.B, self.pairs, self.prefix, self.using = name, P, B, pairs, prefix, using
+        self.awkward = False
 
 
 def shapes(seed=11):
@@ -634,6 +645,16 @@ def shapes(seed=11):
     add("same names with a prefix", tables(50, 40, same=True), [(0, 0, None, False)], prefix="r_")
     add("using with a prefix", tables(50, 40, same=True), [(0, 0, None, True)], prefix="r_", using=True)
     add("big fan-out", tables(300, 300, ["a", "a", "a", "b"], ["a", "a", "b", "c"]), [(0, 0, None, False)])
+    # cells with a comma, a quote and a line break in the group and the text columns: quoted records, one of them over two lines
+    P, B = tables(40, 30)
+    odd = ["a,b", 'say "hi"', "two\nlines", "x", "y", ""]
+    for rows in (P[1], B[1]):
+        for r in rows:
+            r[1] = rng.choice(odd)
+            r[3] = rng.choice(["q\"q", "multi\nline", "t1", "t2"])
+    case = Case("awkward cells in quoted records", P, B, [(0, 0, None, False)])
+    case.awkward = True
+    out.append(case)
     return out
 
 

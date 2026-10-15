@@ -1,0 +1,129 @@
+edition 5;
+
+module jnguard;
+
+// The guard that a refusal of an empty typed key teaches (docs/joins.md sections 5.3 and 18): a condition that runs before the key is read and keeps the empty cell out. For the build file
+// it is `KEY != ''` in `--join-where`; for the probe file it is `KEY != ''` before the rest of `--where` (the leading run of text conditions is applied before the key is read, section 8.1).
+// Offered as the whole invocation with that flag added or changed, and only when the result is an expression of the grammar: an existing expression is put in parentheses after the guard, so
+// that a top-level `or` in it is not mixed with the `and`.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.vec;
+import orparse;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+
+// Whether `word` is one the grammar reads as a keyword where a column may stand.
+fn keyword[&w](word: &w [byte]) -> [] bool {
+    return bytes.equal(word, "and") || bytes.equal(word, "or") || bytes.equal(word, "not") || bytes.equal(word, "in") || bytes.equal(word, "contains");
+}
+
+// Column `col` (0-based) of the header `names`/`ends` as an expression of `--where` writes it: its name when it is one word that no other column shares, in single quotes (a quote doubled)
+// when the name has anything but letters, digits and underscores, begins with a digit, or is a keyword, and `#N` (the position) when another column has the same name.
+pub fn name_for[&h, &n, &e](heap: &!h Heap, names: &n buffer.Buffer, ends: &e vec.Vec[int], col: int) -> [heap] buffer.Buffer {
+    var from = 0;
+    if col > 0 {
+        from = vec.get(ends, col - 1);
+    }
+    let name = buffer.bytes(names)[from..vec.get(ends, col)];
+    var same = 0;
+    var i = 0;
+    var begin = 0;
+    while i < vec.size(ends) {
+        let to = vec.get(ends, i);
+        if bytes.equal(buffer.bytes(names)[begin..to], name) {
+            same = same + 1;
+        }
+        begin = to;
+        i = i + 1;
+    }
+    var out = buffer.empty(heap, len(name) + 8);
+    if same != 1 {
+        out = buffer.push(heap, out, byte_of('#'));
+        return buffer.push_nat(heap, out, col + 1);
+    }
+    var plain = len(name) > 0 && !keyword(name) && !bytes.is_digit(int_of(name[0]));
+    var k = 0;
+    while k < len(name) && plain {
+        let c = int_of(name[k]);
+        if !(bytes.is_digit(c) || c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
+            plain = false;
+        }
+        k = k + 1;
+    }
+    if plain {
+        return buffer.append(heap, out, name);
+    }
+    out = buffer.push(heap, out, byte_of(39));
+    k = 0;
+    while k < len(name) {
+        if int_of(name[k]) == 39 {
+            out = buffer.push(heap, out, byte_of(39));
+        }
+        out = buffer.push(heap, out, name[k]);
+        k = k + 1;
+    }
+    return buffer.push(heap, out, byte_of(39));
+}
+
+// The repair of an empty typed key: the invocation with `flag` (`--where` or `--join-where`) holding `KEY != ''` and, if it held an expression, that one after it in parentheses. Answers the
+// writer with a `choose` repair and true, or the writer as it was and false when the result would not be an expression of the grammar (or the flag's value cannot be put back).
+pub fn guarded[&h, &g, &p, &k](heap: &!h Heap, w: json.Writer, args: &g Args, parsed: &p cli.Parsed, flag: &static [byte], key: &k [byte]) -> [heap, args] (json.Writer, bool) {
+    let table = spec.flag_table();
+    let name = flag[2..len(flag)];
+    var text = buffer.append(heap, buffer.empty(heap, 64), key);
+    text = buffer.append(heap, text, " != ''");
+    let given = cli.has(parsed, table, name);
+    if given {
+        text = buffer.append(heap, text, " and (");
+        text = buffer.append(heap, text, cli.text(args, parsed, table, name));
+        text = buffer.push(heap, text, byte_of(')'));
+    }
+    var ok = false;
+    borrow text as &tr in {
+        ok = orparse.whole(heap, buffer.bytes(tr));
+    }
+    var o = w;
+    var done = false;
+    if ok {
+        borrow text as &tr in {
+            if given {
+                let at = cli.value_index(parsed, table, name);
+                if at >= 0 {
+                    var c = fail.choose_open(heap, o);
+                    if cli.value_is_whole(parsed, table, name) {
+                        c = fail.choose_option_replacing(heap, c, args, at, buffer.bytes(tr));
+                    } else {
+                        var joined = buffer.append(heap, buffer.empty(heap, 64), flag);
+                        joined = buffer.push(heap, joined, byte_of('='));
+                        joined = buffer.append(heap, joined, buffer.bytes(tr));
+                        borrow joined as &jr in {
+                            c = fail.choose_option_replacing(heap, c, args, at, buffer.bytes(jr));
+                        }
+                        buffer.drop(heap, joined);
+                    }
+                    o = fail.choose_close(heap, c);
+                    done = true;
+                }
+            } else {
+                var c = fail.choose_open(heap, o);
+                c = fail.choose_option_open(heap, c);
+                var i = 0;
+                while i < arg_count(args) {
+                    c = fail.choose_arg(heap, c, arg(args, i));
+                    i = i + 1;
+                }
+                c = fail.choose_arg(heap, c, flag);
+                c = fail.choose_arg(heap, c, buffer.bytes(tr));
+                c = fail.choose_option_close(heap, c);
+                o = fail.choose_close(heap, c);
+                done = true;
+            }
+        }
+    }
+    buffer.drop(heap, text);
+    return (o, done);
+}

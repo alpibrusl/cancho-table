@@ -6,15 +6,19 @@ module jnflags;
 // when an argument could be one of them (`Inputs.join_mention`).
 //
 // What these slices take of the design (docs/joins.md section 11): J1 one key pair compared as text and the inner join; J2 the left, semi and anti joins, typed keys, a list of up to 8 pairs, the shared-name
-// form `--on NAME`; rows out. The rest is refused here with a rule and a hint, never ignored: `--group`, `--agg`, `--order-by`, `--sort`, `--top` and `--report` over a join (J3).
+// form `--on NAME`; J3 `--join-where` and the groups, sorts and pages over the joined row. The rest is refused here with a rule and a hint, never ignored: `--report` over a join.
 
 import std.buffer;
 import std.bytes;
 import std.vec;
+import expr;
+import finish;
 import flags;
 import inputs;
+import orparse;
 import query;
 import spec;
+import wrepair;
 import toolbox.cli;
 import toolbox.fail;
 
@@ -253,12 +257,12 @@ pub fn parse_on[&h, &g](heap: &!h Heap, given: &g [byte]) -> [heap] On {
 }
 
 // What is wrong with the flags of a join, added to `errs`.
-pub fn check[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, inp: inputs.Inputs, grouped: bool, errs: fail.Errors) -> [heap, args] fail.Errors {
+pub fn check[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, inp: inputs.Inputs, errs: fail.Errors) -> [heap, args] fail.Errors {
     let table = spec.flag_table();
     var e = errs;
     if !inp.has_join {
-        if cli.has(parsed, table, "on") || cli.has(parsed, table, "join-prefix") || cli.has(parsed, table, "join-type") || cli.has(parsed, table, "max-join-rows") {
-            e = flags.problem(heap, e, "args.required-flag", "--on, --join-type, --join-prefix and --max-join-rows are for a join, so they need --join", "--join FILE --on PROBE=BUILD", "--join --on --join-type --join-prefix --max-join-rows");
+        if cli.has(parsed, table, "on") || cli.has(parsed, table, "join-prefix") || cli.has(parsed, table, "join-type") || cli.has(parsed, table, "max-join-rows") || cli.has(parsed, table, "join-where") {
+            e = flags.problem(heap, e, "args.required-flag", "--on, --join-type, --join-prefix, --join-where and --max-join-rows are for a join, so they need --join", "--join FILE --on PROBE=BUILD", "--join --on --join-type --join-prefix --join-where --max-join-rows");
         }
         return e;
     }
@@ -311,8 +315,26 @@ pub fn check[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, i
             e = flags.problem(heap, e, "args.conflict", "a semi or anti join gives the probe columns only, so there is no column of the --join file for --join-prefix to name", "drop --join-prefix", "--join-type --join-prefix");
         }
     }
-    if grouped || inp.has_order || inp.has_sort || inp.has_top || inp.has_report {
-        e = flags.problem(heap, e, "args.conflict", "a join gives rows in this version: --group, --agg, --order-by, --sort, --top and --report do not take one yet", "write the join as --format csv and pipe it into a second call that groups, sorts or reports", "--join --group --agg --order-by --sort --top --report");
+    if inp.has_report {
+        e = flags.problem(heap, e, "args.conflict", "--report types describes the columns of one file, and the joined row has padded cells and a key with two spellings: it does not take a join", "write the join as --format csv and pipe it into a second call that reports", "--join --report");
+    }
+    if cli.has(parsed, table, "join-where") {
+        // the expression is read here, before any file is opened; the names in it are resolved against the --join file's header with the key columns
+        let given = cli.text(args, parsed, table, "join-where");
+        let (t, what, at) = orparse.parse(heap, query.empty(heap), given);
+        query.drop(heap, t);
+        if what == orparse.mixed() {
+            e = wrepair.refuse_for(heap, e, given, at, args, cli.value_index(parsed, table, "join-where"), cli.value_is_whole(parsed, table, "join-where"), "--join-where");
+        } else if what != 0 {
+            var w = fail.open_in(heap, finish.extra(), "where.syntax", "--join-where is not an expression", "the grammar is in the help of --where: COLUMN OP VALUE joined by and or by or, with parentheses and not");
+            w = fail.repair_none(heap, w, "what the expression was meant to say is not known");
+            w = fail.detail_open(heap, w);
+            w = fail.detail_str(heap, w, "flag", "--join-where");
+            w = fail.detail_int(heap, w, "offset", at);
+            w = fail.detail_str(heap, w, "expected", expr.expected(what));
+            w = fail.detail_text(heap, w, "expression", given);
+            e = fail.add(heap, e, w);
+        }
     }
     if inp.jsonl {
         e = flags.problem(heap, e, "args.conflict", "a join reads csv or tsv on both sides in this version", "drop --input-format, or convert the input to csv", "--join --input-format");

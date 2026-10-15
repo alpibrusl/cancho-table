@@ -179,7 +179,7 @@ class Order(unittest.TestCase):
             d = r.data()
             self.assertEqual((d["rows"], d["truncated"], d["next"]), ([["p3", "b4"], ["p5", "b1"], ["p5", "b3"]], False, None))
             # a page with --where: next.from is a place in the joined rows, before the filter, as for a file
-            r = run(*base, "--where", "w = b3", "--limit", "1", "--select", "v,w", "p.csv")
+            r = run(*base, "--where", "(w = b3)", "--limit", "1", "--select", "v,w", "p.csv")
             self.assertEqual((r.data()["rows"], r.data()["next"]), ([["p2", "b3"]], {"from": 7}))
             # --rows: every column
             r = run(*base, "--rows", "--limit", "1", "p.csv")
@@ -545,7 +545,7 @@ class MaxJoinRows(unittest.TestCase):
 
     def test_the_threshold_to_the_row(self):
         total = 1 + 50 * 40
-        base = ["--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--where", "w = nothing"]
+        base = ["--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--where", "(w = nothing)"]
         r = run(*base, "--max-join-rows", str(total), "p.csv")
         self.assertEqual(r.status, 0, r.stdout[:300])
         r = run(*base, "--max-join-rows", str(total - 1), "p.csv")
@@ -573,11 +573,11 @@ class MaxJoinRows(unittest.TestCase):
         d = introspect()
         lim = {l["name"]: (l["default"], l["ceiling"]) for l in d["limits"]}
         self.assertEqual(lim["max-join-rows"], (10000000, 1000000000))
-        # 3162 x 3163 = 10,001,... rows is past it: a hot key on both sides, nothing printed (--where nothing)
+        # 3162 x 3163 = 10,001,... rows is past it: a hot key on both sides, nothing printed (--where nothing, in parentheses: the leading run of a --where is applied before the join and would leave no row to count, docs/joins.md section 18)
         n = 3163
         self.s.write("hp.csv", "k,v\n" + "h,1\n" * n)
         self.s.write("hb.csv", "id,w\n" + "h,1\n" * n)
-        r = run("--root", self.s.dir, "--join", "hb.csv", "--on", "k=id", "--where", "w = nothing", "hp.csv")
+        r = run("--root", self.s.dir, "--join", "hb.csv", "--on", "k=id", "--where", "(w = nothing)", "hp.csv")
         self.assertEqual(r.first_rule(), "limit.too-many-join-rows")
         self.assertEqual(r.error()["detail"]["limit"], 10000000)
         self.assertEqual(r.error()["detail"]["probe_row"], 10000000 // n + 1)
@@ -586,7 +586,7 @@ class MaxJoinRows(unittest.TestCase):
         # 3 probe rows of the key, 2 build rows of it: 6 joined rows, whatever --where keeps
         self.s.write("p2.csv", "k,v\nh,1\nh,2\nh,3\n")
         self.s.write("b2.csv", "id,w\nh,a\nh,b\n")
-        base = ["--root", self.s.dir, "--join", "b2.csv", "--on", "k=id", "--where", "w = a", "p2.csv"]
+        base = ["--root", self.s.dir, "--join", "b2.csv", "--on", "k=id", "--where", "(w = a)", "p2.csv"]
         self.assertEqual(run("--max-join-rows", "6", *base).status, 0)
         self.assertEqual(run("--max-join-rows", "5", *base).first_rule(), "limit.too-many-join-rows")
 

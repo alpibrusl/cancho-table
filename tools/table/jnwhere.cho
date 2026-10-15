@@ -1,0 +1,259 @@
+edition 5;
+
+module jnwhere;
+
+// `--where` and `--join-where` of a join (docs/joins.md sections 8.1 and 18).
+//
+// THE SPLIT. The units of the top-level `and` list of `--where` (`orparse.top_units`), from the first, as long as each is a bare condition (or a negated one: `a not in (...)`) with no type suffix, are the
+// LEADING RUN. A condition of the run on a column of FILE is applied to the probe row before its key is read; one on a column of the `--join` file is applied to the build row before it is held, for an
+// inner join only (a left join keeps its probe row for `--join-where`'s ON semantics and drops a padded row for `--where`'s WHERE semantics); any other stays where it was, after the join, and so does
+// everything after the first unit that is not in the run. Text conditions cannot refuse and commute, so applying some of them first changes no answer; the only difference from joining first and filtering
+// after is which cells a typed key read can refuse, and which rows `--from` and `--max-join-rows` count (a row the run rejects produces no joined row). The whole `--where` is still evaluated on the joined
+// row afterwards (the run's conditions are true there, and their refusals cannot occur), so that the refusals of the conditions after the run are numbered as they always were.
+//
+// THE CLASS of each condition: a vector `cls` with, for condition `k`, 0 (stays), 1 (probe side) or 2 (build side), plus 4 when the condition is negated; then the number of probe-side and of build-side
+// conditions of the run.
+//
+// `--join-WHERE` is a `--where` expression over the `--join` file's own header, evaluated by the engine's `screen` on each build row after the row is known to be whole and before its key is read.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import expr;
+import finish;
+import jnfail;
+import orparse;
+import plan;
+import query;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.text;
+
+// The class of each condition of `tree` (`--where`): `cols` maps the plan's names to the columns of the joined header, whose first `np` are FILE's; `units` are `orparse.top_units`; `jtype` 0 inner, 1 left,
+// 2 semi, 3 anti. Entry `nw` is how many conditions are probe-side, `nw + 1` how many build-side.
+pub fn classify[&h, &q, &c, &u](heap: &!h Heap, tree: &q query.Query, cols: &c [int], units: &u vec.Vec[int], np: int, jtype: int) -> [heap] Box[[int]] {
+    let nw = query.count_of(tree, 1);
+    var cls = box_slice(heap, nw + 2, 0);
+    var i = 0;
+    var going = true;
+    var probe = 0;
+    var build = 0;
+    borrow mut cls as &!cw in {
+        let c2 = contents(cw);
+        while going && i < vec.size(units) / 4 {
+            let kind = vec.get(units, 4 * i);
+            let leaf = vec.get(units, 4 * i + 1);
+            if kind == 1 || query.cond_at(tree, leaf, 1) != 0 {
+                going = false;
+            } else {
+                let column = cols[query.cond_at(tree, leaf, 3)];
+                var side = 0;
+                if column < np {
+                    side = 1;
+                } else if jtype == 0 {
+                    side = 2;
+                }
+                if side != 0 {
+                    c2[leaf] = side;
+                    if kind == 5 {
+                        c2[leaf] = side + 4;
+                    }
+                    if side == 1 {
+                        probe = probe + 1;
+                    } else {
+                        build = build + 1;
+                    }
+                }
+                i = i + 1;
+            }
+        }
+        c2[nw] = probe;
+        c2[nw + 1] = build;
+    }
+    return cls;
+}
+
+// The verdict (1 true, 0 false) of the text condition `k` of `tree` on the cell of column `column` of `record`, whose cells are `cells`; `escr` is the scratch for a quoted cell.
+fn verdict_of[&h, &q, &d, &e](heap: &!h Heap, tree: &q query.Query, k: int, column: int, record: &d [byte], cells: &e [int], escr: buffer.Buffer) -> [heap] (int, buffer.Buffer) {
+    let first = cells[3 * column];
+    let last = cells[3 * column + 1];
+    if cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {
+        var scr = escr;
+        borrow mut scr as &!sw in {
+            buffer.clear(sw);
+        }
+        scr = query.unquote(heap, scr, record[first..last]);
+        var v = 0;
+        borrow scr as &sr in {
+            v = expr.holds(tree, k, buffer.bytes(sr));
+        }
+        return (v, scr);
+    }
+    return (expr.holds(tree, k, record[first..last]), escr);
+}
+
+// `run_ok` without the scratch and the heap, for the cells that need neither (every cell but a quoted one with a doubled quote): 1 they hold, 0 they do not, 2 a cell needs the scratch, and `run_ok` is
+// to be asked. The buffer is not moved in and out for each row.
+pub fn run_fast[&q, &k, &c, &d, &e](tree: &q query.Query, cls: &k [int], side: int, cols: &c [int], record: &d [byte], cells: &e [int]) -> [] int {
+    let nw = query.count_of(tree, 1);
+    var j = 0;
+    while j < nw {
+        if cls[j] % 4 == side {
+            let column = cols[query.cond_at(tree, j, 3)];
+            let first = cells[3 * column];
+            let last = cells[3 * column + 1];
+            if cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {
+                return 2;
+            }
+            let v = expr.holds(tree, j, record[first..last]);
+            var holds = v == 1;
+            if cls[j] >= 4 {
+                holds = v != 1;
+            }
+            if !holds {
+                return 0;
+            }
+        }
+        j = j + 1;
+    }
+    return 1;
+}
+
+// Whether the conditions of the run that are of class `side` hold for `record`. For the probe side `cols` is the plan's map to the joined header (whose first columns are the probe's); for the build side it
+// is `bcols`, the map to the columns of the `--join` file (`bcols_of`).
+pub fn run_ok[&h, &q, &k, &c, &d, &e](heap: &!h Heap, tree: &q query.Query, cls: &k [int], side: int, cols: &c [int], record: &d [byte], cells: &e [int], escr: buffer.Buffer) -> [heap] (bool, buffer.Buffer) {
+    var scr = escr;
+    let nw = query.count_of(tree, 1);
+    var j = 0;
+    while j < nw {
+        if cls[j] % 4 == side {
+            let (v, s2) = verdict_of(heap, tree, j, cols[query.cond_at(tree, j, 3)], record, cells, scr);
+            scr = s2;
+            var holds = v == 1;
+            if cls[j] >= 4 {
+                holds = v != 1;
+            }
+            if !holds {
+                return (false, scr);
+            }
+        }
+        j = j + 1;
+    }
+    return (true, scr);
+}
+
+// The plan's names as columns of the `--join` file: for a name that is a column of the joined header from `np` on, the build column it shows (`kmap`: the build columns the answer shows, in order);
+// 0 for the others, which are not asked about.
+pub fn bcols_of[&h, &c, &m](heap: &!h Heap, cols: &c [int], names: int, np: int, kmap: &m [int]) -> [heap] Box[[int]] {
+    var out = box_slice(heap, names + 1, 0);
+    borrow mut out as &!ow in {
+        var i = 0;
+        while i < names {
+            if cols[i] >= np {
+                contents(ow)[i] = kmap[cols[i] - np];
+            }
+            i = i + 1;
+        }
+    }
+    return out;
+}
+
+// `["text of a unit", ...]` for the units `from` the list that are of class `side` (0: all those that stay) under `cls`.
+fn put_units[&h, &s, &u, &k](heap: &!h Heap, out: buffer.Buffer, src: &s [byte], units: &u vec.Vec[int], cls: &k [int], side: int) -> [heap] buffer.Buffer {
+    var o = buffer.push(heap, out, byte_of('['));
+    var first = true;
+    var i = 0;
+    while i < vec.size(units) / 4 {
+        let kind = vec.get(units, 4 * i);
+        let leaf = vec.get(units, 4 * i + 1);
+        var mine = 0;
+        if kind != 1 {
+            mine = cls[leaf] % 4;
+        }
+        if mine == side {
+            if !first {
+                o = buffer.push(heap, o, byte_of(','));
+            }
+            first = false;
+            o = text.append_json(heap, o, src[vec.get(units, 4 * i + 2)..vec.get(units, 4 * i + 3)]);
+        }
+        i = i + 1;
+    }
+    return buffer.push(heap, o, byte_of(']'));
+}
+
+// The member `where` of the join document: `{"probe_before_join": [...], "build_before_build": [...], "after_join": [...]}`, the units of `--where` as written.
+pub fn split_json[&h, &s, &u, &k](heap: &!h Heap, src: &s [byte], units: &u vec.Vec[int], cls: &k [int]) -> [heap] buffer.Buffer {
+    var o = buffer.append(heap, buffer.empty(heap, 128), "{\"probe_before_join\":");
+    o = put_units(heap, o, src, units, cls, 1);
+    o = buffer.append(heap, o, ",\"build_before_build\":");
+    o = put_units(heap, o, src, units, cls, 2);
+    o = buffer.append(heap, o, ",\"after_join\":");
+    o = put_units(heap, o, src, units, cls, 0);
+    return buffer.push(heap, o, byte_of('}'));
+}
+
+// The units of `--join-where` as written, a json array.
+pub fn units_json[&h, &s, &u](heap: &!h Heap, src: &s [byte], units: &u vec.Vec[int]) -> [heap] buffer.Buffer {
+    var o = buffer.push(heap, buffer.empty(heap, 64), byte_of('['));
+    var i = 0;
+    while i < vec.size(units) / 4 {
+        if i > 0 {
+            o = buffer.push(heap, o, byte_of(','));
+        }
+        o = text.append_json(heap, o, src[vec.get(units, 4 * i + 2)..vec.get(units, 4 * i + 3)]);
+        i = i + 1;
+    }
+    return buffer.push(heap, o, byte_of(']'));
+}
+
+// `--join-where` read against the header of the `--join` file (`names`, `ends`): the column of each name it holds. A name the header lacks or has twice is `column.unknown` or `column.ambiguous`, and a
+// column it reads as two numeric types `column.type-conflict`, added to `errs`; `tree` is the expression (`orparse.parse`). Answers the errors, the map from the expression's names to the columns of the
+// file, and whether it is whole.
+pub fn resolve[&h, &q, &n, &d, &s](heap: &!h Heap, errs: fail.Errors, tree: &q query.Query, names: &n buffer.Buffer, ends: &d vec.Vec[int], shown: &s [byte]) -> [heap] (fail.Errors, Box[[int]], bool) {
+    var e = errs;
+    var cols = box_slice(heap, query.name_count(tree) + 1, 0);
+    var status = 0;
+    var bad = 0;
+    borrow mut cols as &!cw in {
+        let found = plan.resolve(heap, names, ends, tree.names, tree.nends, tree.nkinds, contents(cw));
+        status = found.status;
+        bad = found.at;
+    }
+    if status != 0 {
+        var begin = 0;
+        if bad > 0 {
+            begin = vec.get(tree.nends, bad - 1);
+        }
+        e = jnfail.name_column(heap, e, status, "--join-where", "build", shown, buffer.bytes(tree.names)[begin..vec.get(tree.nends, bad)], names, ends);
+        return (e, cols, false);
+    }
+    var conflict = -1;
+    var type_a = 0;
+    var type_b = 0;
+    borrow cols as &cr in {
+        let (c1, a1, b1) = query.type_conflict(tree, contents(cr));
+        conflict = c1;
+        type_a = a1;
+        type_b = b1;
+    }
+    if conflict >= 0 {
+        e = type_conflict(heap, e, conflict, type_a, type_b, names, ends);
+        return (e, cols, false);
+    }
+    return (e, cols, true);
+}
+
+// `column.type-conflict` for `--join-where`: the column `conflict` of the `--join` file is read as two numeric types.
+fn type_conflict[&h, &n, &d](heap: &!h Heap, errs: fail.Errors, conflict: int, a: int, b: int, names: &n buffer.Buffer, ends: &d vec.Vec[int]) -> [heap] fail.Errors {
+    var from = 0;
+    if conflict > 0 {
+        from = vec.get(ends, conflict - 1);
+    }
+    var w = fail.open_in(heap, finish.extra(), "column.type-conflict", "the plan reads one column as two numeric types", "give the column one type: the same :int, :float or :dec(N), in every place it is named, --where, --group, --agg and --order-by");
+    w = fail.repair_none(heap, w, "which type was meant is not known");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", "--join-where");
+    w = fail.detail_text(heap, w, "column", buffer.bytes(names)[from..vec.get(ends, conflict)]);
+    return fail.add(heap, errs, w);
+}

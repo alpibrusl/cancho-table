@@ -16,6 +16,8 @@
 >
 > **Update 2026-10-15 (the pull request that adds section 17): slice J2 is built** (`--join-type left|semi|anti`, typed keys `:int`, `:dec(S)`, `:float`, a list of up to 8 pairs, the shared-name key `--on NAME`, the padding of a left join), and section 17 says what it is, where it differs from this document, its gates and its numbers. Where it corrects an earlier sentence the sentence says "Corrected by section 17" in place.
 >
+> **Update 2026-10-15 (the pull request that adds section 18): slice J3 is built** (`--join-where`, the split of `--where` into probe, build and after, `--group`, `--agg`, `--sort`, `--order-by`, `--top`, `--limit`, `--from` and `--rename` over the joined row with one `--max-state-bytes` for the build and the groups or the sorted rows, the guard of an empty typed key, `--explain`), and section 18 says what it is, where it differs from this document (every narrow reading, numbered), its gates and its numbers. Where it corrects an earlier sentence the sentence says "Corrected by section 18" in place.
+>
 > References to code are to `origin/main` at `072ce15` (`file:line`). The branch that adds columns renaming
 > (`docs/or-and-columns.md` in the request) **does not exist**: there is no such file and `gh pr list` shows no open pull
 > request on 2026-10-14, so section 4 defines the minimal prefixing rule itself and says what a rename feature would replace.
@@ -251,7 +253,7 @@ chooses the type that both can be read as (`:dec(1)` reads `1` and `1.0`; that i
 
 * **A typed key with an empty cell is a refusal**, as it is everywhere (`docs/filter.md:88-98`; measured: `--group k:int` on a file with an empty cell is `value.not-integer`). The
   repair that the tool already teaches is a guard: for the build side `--join-where "k != ''"`; for the probe side `--where "k != '' and ..."` (section 8.1 makes the leading text
-  condition run before the key is read, so the guard works). **Corrected by section 17.2:** J2 has neither `--join-where` nor the split of `--where` (both are J3), so in J2 `--where` runs after the join and the key is read first; the refusal of J2 teaches the repairs it has (read the pair as text, or correct the file) and not this guard.
+  condition run before the key is read, so the guard works). **Corrected by section 17.2:** J2 has neither `--join-where` nor the split of `--where` (both are J3), so in J2 `--where` runs after the join and the key is read first; the refusal of J2 teaches the repairs it has (read the pair as text, or correct the file) and not this guard. **Corrected by section 18.2 (J3):** both exist now, and the refusal of an empty typed key offers this guard as its repair (reading 10).
 * **A text key with an empty cell is a key: it matches an empty cell.** Argument: (1) `table` says it has no null and that an empty cell is the empty text
   (`docs/query.md:81`), `name = ''` works, and `--group` makes `''` a group (measured: `--group k` over `,a` and `1,b` gives the groups `` and `1`); the join's equality is the
   `where`'s equality; (2) the alternative, "an empty key never matches" (SQL's behaviour for null), makes an inner join answer about fewer rows than the file has, which is
@@ -533,7 +535,7 @@ Gram (Linux x86-64) counterparts of EQ, IB, A, ST (with `strace`) and TH are req
 | **J0** | this document; spikes S0 and S1 (section 15: run, results below) | the design is falsifiable: the table can be shared, and the accounted bytes can be related to the resident |
 | **J1** | `--join`, `--on` (text keys, no suffix), `--join-type inner`, `--join-prefix`, `join.column-collision`, csv x csv, rows out, `--max-join-rows`, the build bound with `limit.state-too-large` (no repair yet), `--threads` accepted and ignored | the semantics against the oracle (O), the defined order, the formula and the exact bound (A), the shared loops untouched (EQ, IB), the authority unchanged (AU) |
 | **J2** | `left`, `semi`, `anti`; typed keys; composite keys; USING; padding. **Built: section 17** | the null-free semantics: padded cells and typed refusals (O-shapes), `anti` as the answer to "no match" |
-| **J3** | `--where` split (probe/build/after), `--join-where`; `--group`, `--agg`, `--order-by`, `--top`, `--limit`, `--from` over joined rows with the shared budget; `--explain` | the pushdown definition equals the unpushed one except for the key read (a test pair for each), the shared budget (A), the plan document (EXPL) |
+| **J3** | `--where` split (probe/build/after), `--join-where`; `--group`, `--agg`, `--order-by`, `--top`, `--limit`, `--from` over joined rows with the shared budget; `--explain`. **Built: section 18** | the pushdown definition equals the unpushed one except for the key read (a test pair for each), the shared budget (A), the plan document (EXPL) |
 | **J3b** | the query form, `semi`/`anti` contextual, the `query.unsupported` features | Q-EQ, and that no query valid before changes |
 | **J4** | standard input as the probe (the generated copy of the loop, `scripts/stream.py --check`), MCP `join` and `stdin` | ST, MCP |
 | **J5** | jsonl on either side, `--join-delimiter` | the reader contract holds for a join (O with jsonl sides) |

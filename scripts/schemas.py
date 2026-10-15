@@ -177,7 +177,11 @@ def explain_document():
             "prefix": TB,
             "using": {"type": "array", "items": TB},
             "build_state": obj({"file_bytes": NULLABLE_NAT, "header_bytes": NAT, "accounted_at_most": NULLABLE_NAT, "budget": NAT, "may_pass_bound": {"type": "boolean"},
-                                "counted": {"type": "string"}, "swap": obj({"offered": {"type": "boolean"}, "reason": {"type": "string"}})}),
+                                "counted": {"type": "string"}, "shared_with": {"oneOf": [{"type": "null"}, {"enum": ["groups", "sorted rows"]}]},
+                                "swap": obj({"offered": {"type": "boolean"}, "reason": {"type": "string"}})}),
+            # J3 (docs/joins.md section 18): the conditions of `--where` by where they are applied (null when the probe is standard input, whose header is not read) and the units of `--join-where`
+            "where": {"oneOf": [{"type": "null"}, obj({"probe_before_join": {"type": "array", "items": TB}, "build_before_build": {"type": "array", "items": TB}, "after_join": {"type": "array", "items": TB}})]},
+            "join_where": {"type": "array", "items": TB},
             "max_join_rows": NAT,
             "order": {"type": "string"},
             "work": obj({"class": {"type": "string"}, "first_output_after": {"type": "string"},

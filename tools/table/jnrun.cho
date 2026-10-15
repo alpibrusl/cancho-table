@@ -1,0 +1,536 @@
+edition 5;
+
+module jnrun;
+
+// The run of a join (docs/joins.md sections 6, 8 and 18): both files opened and their headers read, the key columns, the joined header, `--join-where` and the plan resolved against them, the build read whole into a
+// table, the probe streamed, and the refusal that the read ended in, if it did. The loops are in `jnread` (J1 and J2, unchanged) and `jn3pass` (the same loops with the additions of J3, used when a plan has one of them).
+//
+// THE LOOPS. A plan uses the loops of `jn3pass` when it has a `--join-where`, a condition of the leading run of `--where` (`jnwhere`), or groups or sorted rows; every other plan runs the loops it ran before.
+//
+// THE BUDGET. `--max-state-bytes` bounds the accounted bytes of the build, and the groups or the rows held to sort are given what it leaves (docs/joins.md section 6.3): the build is read first, so the number is
+// known when the first group is made. A group or a sorted row that does not fit is `limit.state-too-large` with `detail.holder` `groups` or `sort`, `detail.build_bytes` and `detail.held`.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import agg;
+import engine;
+import explain;
+import finish;
+import frame;
+import jn3pass;
+import jnfail;
+import jnhead;
+import jnread;
+import jnwhere;
+import jtab;
+import orparse;
+import qpath;
+import query;
+import sorter;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.lines;
+import toolbox.place;
+
+// 0 inner, 1 left, 2 semi, 3 anti: `--join-type`.
+fn jtype_of[&g, &p](args: &g Args, parsed: &p cli.Parsed) -> [args] int {
+    let table = spec.flag_table();
+    let word = cli.text(args, parsed, table, "join-type");
+    if bytes.equal(word, "left") {
+        return 1;
+    }
+    if bytes.equal(word, "semi") {
+        return 2;
+    }
+    if bytes.equal(word, "anti") {
+        return 3;
+    }
+    return 0;
+}
+
+// The refusal of a typed key cell (abort 72) of the file whose header is `names`: the facts are in the tally `c` and the cell in `value`. `gnames` and `gends` are the header the guard of the repair names the
+// key in: the joined header for the probe (its columns come first, so the key has the same place), the build file's own for the build.
+fn typed_refusal[&h, &g, &p, &k, &v, &s, &n, &d, &a, &b](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, e: fail.Errors, keys: &k [int], c: finish.Counts, value: &v buffer.Buffer, shown: &s [byte], input: &static [byte], names: &n buffer.Buffer, ends: &d vec.Vec[int], gnames: &a buffer.Buffer, gends: &b vec.Vec[int]) -> [heap, args] fail.Errors {
+    var from = 0;
+    if c.err_col > 0 {
+        from = vec.get(ends, c.err_col - 1);
+    }
+    let name = buffer.bytes(names)[from..vec.get(ends, c.err_col)];
+    return jnfail.typed_key(heap, e, c.err_fn, input, shown, name, c.err_row, c.err_line, buffer.bytes(value), c.err_cond + 1, keys[3 * c.err_cond + 2] - 2, c.err_digits, args, parsed, gnames, gends, c.err_col);
+}
+
+// Everything once both files are open: `bfile` is the build, `pfile` the probe (or the empty file that stands in for standard input). Answers as `read_file` does.
+fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, bfile: &!b File, pfile: &!f File, stdin: bool, shown: &s [byte], shown_b: &t [byte], io: &!i Io, delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_read, io_write] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+    let table = spec.flag_table();
+    let cap = cli.nat(args, parsed, table, "max-line-bytes");
+    let most = cli.nat(args, parsed, table, "max-rows");
+    let max_state = cli.nat(args, parsed, table, "max-state-bytes");
+    let max_join = cli.nat(args, parsed, table, "max-join-rows");
+    var sort = "";
+    if cli.has(parsed, table, "sort") {
+        sort = cli.text(args, parsed, table, "sort");
+    }
+    var e = errs;
+    var rb = lines.start(heap, cap);
+    let (rb1, hb) = jnhead.head_of(heap, rb, bfile, io, false, cap, delim);
+    rb = rb1;
+    var rp = lines.start(heap, cap);
+    var hp = jnhead.no_head(heap);
+    var refused = false;
+    borrow hb as &hbr in {
+        let (e2, bad) = jnhead.head_refusal(heap, args, parsed, tree, hbr, shown_b, budget, e);
+        e = e2;
+        refused = bad;
+    }
+    if !refused {
+        let (rp1, hp1) = jnhead.head_of(heap, rp, pfile, io, stdin, cap, delim);
+        rp = rp1;
+        jnhead.drop_head(heap, hp);
+        hp = hp1;
+        borrow hp as &hpr in {
+            let (e2, bad) = jnhead.head_refusal(heap, args, parsed, tree, hpr, shown, budget, e);
+            e = e2;
+            refused = bad;
+        }
+    }
+    var jnames = buffer.empty(heap, 1);
+    var jends = vec.empty(heap, 1, 0);
+    var keys = box_slice(heap, 3, 0);
+    var kmap = box_slice(heap, 1, 0);
+    var pairs = 0;
+    var np = 0;
+    var nb = 0;
+    var nk = 0;
+    let jtype = jtype_of(args, parsed);
+    // `--join-where`: its names are the build file's own, resolved against its header with the keys, so that the refusals of the header come together
+    let jw_on = cli.has(parsed, table, "join-where");
+    var jwtree = query.empty(heap);
+    var jwcols = box_slice(heap, 1, 0);
+    if !refused {
+        borrow hp as &hpr in {
+            borrow hb as &hbr in {
+                let (u, e2) = jnhead.unite(heap, args, parsed, e, hpr.names, hpr.ends, hbr.names, hbr.ends, true, shown, shown_b, jtype);
+                e = e2;
+                borrow u as &ur in {
+                    pairs = ur.pairs;
+                    np = ur.np;
+                    nb = ur.nb;
+                    nk = ur.nk;
+                    refused = !ur.ok;
+                }
+                let (names, ends, k3, m3) = jnhead.take_header(u);
+                buffer.drop(heap, jnames);
+                vec.drop(heap, jends);
+                unbox_slice(heap, keys);
+                unbox_slice(heap, kmap);
+                jnames = names;
+                jends = ends;
+                keys = k3;
+                kmap = m3;
+                if jw_on {
+                    query.drop(heap, jwtree);
+                    let (t1, what, at) = orparse.parse(heap, query.empty(heap), cli.text(args, parsed, table, "join-where"));
+                    jwtree = t1;
+                    borrow jwtree as &jq in {
+                        let (e3, c3, ok3) = jnwhere.resolve(heap, e, jq, hbr.names, hbr.ends, shown_b);
+                        e = e3;
+                        unbox_slice(heap, jwcols);
+                        jwcols = c3;
+                        if !ok3 {
+                            refused = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    var simple = false;
+    borrow keys as &kr0 in {
+        simple = pairs == 1 && contents(kr0)[2] == 0;
+    }
+    let ncols = np + nk;
+    // the plan against the joined header, as `read_file` resolves it against a file's
+    var cols = box_slice(heap, 1, 0);
+    var sel = box_slice(heap, 1, 0);
+    var cellbox = box_slice(heap, 1, 0);
+    var head = buffer.append(heap, buffer.empty(heap, 4), "[]");
+    var labels = buffer.empty(heap, 1);
+    var lends = vec.empty(heap, 1, 0);
+    var lead = buffer.empty(heap, 1);
+    var picked = 0;
+    var sort_field = 0 - 1;
+    var sort_slot = 0 - 1;
+    var sort_desc = 0;
+    var jt = jtab.empty(heap);
+    var out_rows = buffer.empty(heap, 1);
+    var spare = buffer.empty(heap, 1);
+    var kept = buffer.empty(heap, 1);
+    var c = jnread.nothing();
+    var errno = 0;
+    var go = !refused;
+    if go {
+        var made = frame.none(heap);
+        frame.drop(heap, made);
+        borrow jnames as &nr in {
+            borrow jends as &er in {
+                made = frame.prepare(heap, tree, nr, er, ncols, mode, delim, sort);
+            }
+        }
+        let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
+        unbox_slice(heap, cols);
+        unbox_slice(heap, sel);
+        unbox_slice(heap, cellbox);
+        buffer.drop(heap, head);
+        buffer.drop(heap, labels);
+        vec.drop(heap, lends);
+        buffer.drop(heap, lead);
+        cols = fcols;
+        sel = fsel;
+        cellbox = fcells;
+        head = fhead;
+        labels = flabels;
+        lends = flends;
+        lead = flead;
+        picked = fpicked;
+        sort_field = fsort_field;
+        sort_slot = fsort_slot;
+        sort_desc = fdesc;
+        if fabort != 0 {
+            c = finish.Counts { columns: ncols, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: fabort, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: fbad, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+            go = false;
+        }
+    }
+    // what the plan does with the joined rows: written, grouped, or held to sort (`read_file` calls the last two the grouping and the order)
+    let ordering = query.count_of(tree, 4) > 0;
+    let row_grouping = mode == 2 || ordering;
+    // the split of `--where` (docs/joins.md section 8.1): the units of its top level, and which conditions are applied before the join
+    let where_text = cli.text(args, parsed, table, "where");
+    let nw = query.count_of(tree, 1);
+    var units = orparse.top_units(heap, where_text);
+    var cls = box_slice(heap, 2, 0);
+    var bcols = box_slice(heap, 1, 0);
+    var push_p = false;
+    var push_b = false;
+    if go && nw > 0 {
+        unbox_slice(heap, cls);
+        borrow cols as &kr in {
+            borrow units as &ur2 in {
+                cls = jnwhere.classify(heap, tree, contents(kr), ur2, np, jtype);
+            }
+            unbox_slice(heap, bcols);
+            borrow kmap as &kmr in {
+                bcols = jnwhere.bcols_of(heap, contents(kr), query.name_count(tree), np, contents(kmr));
+            }
+        }
+        borrow cls as &clr in {
+            push_p = contents(clr)[nw] > 0;
+            push_b = contents(clr)[nw + 1] > 0;
+        }
+    }
+    var bcounts = jnread.nothing();
+    var consumed = 0;
+    if go {
+        // the build phase
+        var bkept = buffer.empty(heap, 1);
+        borrow keys as &kr1 in {
+            if jw_on || push_b {
+                borrow cls as &clr in {
+                    borrow bcols as &bcr in {
+                        borrow jwcols as &jcr in {
+                            borrow jwtree as &jq in {
+                                let (rb2, jt2, bc, consumed2, bk2) = jn3pass.build_pass3(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, cap, most, max_state, jq, contents(jcr), jw_on, tree, contents(clr), contents(bcr), push_b);
+                                rb = rb2;
+                                jt = jt2;
+                                buffer.drop(heap, bkept);
+                                bkept = bk2;
+                                bcounts = bc;
+                                consumed = consumed2;
+                            }
+                        }
+                    }
+                }
+            } else {
+                let (rb2, jt2, bc, consumed2, bk2) = jnread.build_pass(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, cap, most, max_state);
+                rb = rb2;
+                jt = jt2;
+                buffer.drop(heap, bkept);
+                bkept = bk2;
+                bcounts = bc;
+                consumed = consumed2;
+            }
+        }
+        let bc = bcounts;
+        var berrno = 0;
+        borrow rb as &rbr in {
+            berrno = lines.failed(rbr);
+        }
+        if bc.abort == 70 {
+            var held = 0;
+            var rows_held = 0;
+            borrow jt as &tr in {
+                held = jtab.held_of(tr);
+                rows_held = jtab.rows_of(tr);
+            }
+            var size = 0;
+            match file_size(bfile) {
+                Done::Ok(n) => {
+                    size = n;
+                }
+                Done::Failed(reason) => {
+                    size = 0 - 1;
+                }
+            }
+            e = jnfail.build_too_large(heap, e, shown_b, max_state, held, rows_held, bc.records, bc.abort_line, consumed, size);
+            go = false;
+        } else if bc.abort == 72 {
+            borrow keys as &kr2 in {
+                borrow hb as &hbr in {
+                    borrow bkept as &bkr in {
+                        e = typed_refusal(heap, args, parsed, e, contents(kr2), bc, bkr, shown_b, "build", hbr.names, hbr.ends, hbr.names, hbr.ends);
+                    }
+                }
+            }
+            go = false;
+        } else if bc.abort != 0 && bc.err_fn == 0 - 4 {
+            // a cell that `--join-where` reads as a number and that is not one: the rule of the rest of the tool, with the build file's header and the expression's plan
+            borrow hb as &hbr in {
+                borrow labels as &lr in {
+                    borrow lends as &le in {
+                        borrow bkept as &bkr in {
+                            borrow jwtree as &jq in {
+                                e = finish.explain(heap, args, parsed, jq, hbr.names, hbr.ends, lr, le, bkr, bc, shown_b, 0 - 1, berrno, true, budget, e);
+                            }
+                        }
+                    }
+                }
+            }
+            go = false;
+        } else if bc.abort != 0 || bc.ragged > 0 || bc.capped || berrno != 0 {
+            borrow jnames as &nr in {
+                borrow jends as &er in {
+                    borrow labels as &lr in {
+                        borrow lends as &le in {
+                            borrow kept as &kr in {
+                                e = finish.explain(heap, args, parsed, tree, nr, er, lr, le, kr, bc, shown_b, 0 - 1, berrno, true, budget, e);
+                            }
+                        }
+                    }
+                }
+            }
+            go = false;
+        }
+        buffer.drop(heap, bkept);
+    }
+    var build_held = 0;
+    borrow jt as &tr in {
+        build_held = jtab.held_of(tr);
+    }
+    var probed = false;
+    if go {
+        probed = true;
+        if as_csv {
+            out_rows = finish.start_output(heap, out_rows, lead);
+            lead = buffer.empty(heap, 1);
+        }
+        // the groups and the sorted rows are given what the flag leaves after the build
+        let gstate = max_state - build_held;
+        let max_distinct = cli.nat(args, parsed, table, "max-distinct");
+        var max_groups = cli.nat(args, parsed, table, "max-groups");
+        let max_sort_rows = cli.nat(args, parsed, table, "max-sort-rows");
+        var groups = agg.start(heap, tree);
+        if ordering {
+            max_groups = max_sort_rows;
+            // the rows of the answer that are wanted, when they are not all of them (as `read_file` decides it)
+            var wanted = 0;
+            if limit < 100000000 {
+                wanted = from + limit + 1;
+            }
+            if top > 0 && (wanted == 0 || top < wanted) {
+                wanted = top;
+            }
+            if wanted > 0 && 2 * wanted + 1 > max_sort_rows {
+                wanted = 0;
+            }
+            let nko = query.order_count(tree);
+            var okeys = box_slice(heap, 1, 0);
+            unbox_slice(heap, okeys);
+            borrow cols as &kr in {
+                okeys = sorter.keys_of(heap, tree, contents(kr));
+            }
+            borrow okeys as &okr in {
+                groups = sorter.configure(groups, nko, wanted, max_sort_rows, gstate, contents(okr));
+            }
+            unbox_slice(heap, okeys);
+        }
+        var gv = box_slice(heap, 8, 0);
+        borrow mut gv as &!gw in {
+            let g8 = contents(gw);
+            g8[0] = max_groups;
+            g8[1] = max_distinct;
+            g8[2] = gstate;
+            if nw > 0 {
+                g8[3] = 1;
+            }
+            if engine.fast_ok(tree) {
+                g8[4] = 1;
+            }
+            g8[5] = sort_field;
+            g8[6] = sort_slot;
+            g8[7] = sort_desc;
+        }
+        var bcellbox = box_slice(heap, 3 * (nb + 1), 0);
+        borrow jt as &tr in {
+            borrow cols as &kr in {
+                borrow sel as &sr in {
+                    borrow keys as &ky in {
+                        borrow kmap as &km in {
+                            borrow mut cellbox as &!cw in {
+                                borrow mut bcellbox as &!bw in {
+                                    if push_p || row_grouping {
+                                        borrow cls as &clr in {
+                                            borrow gv as &gr in {
+                                                let (rp2, pc, rows2, scratch2, kept2) = jn3pass.probe_pass3(heap, rp, pfile, io, stdin, tr, tree, contents(kr), contents(sr), contents(cw), contents(bw), contents(ky), contents(km), pairs, simple, jtype, nk, out_rows, spare, np, nb, delim, as_csv, from, limit, budget, picked, cap, most, max_join, contents(clr), push_p, row_grouping, mode, groups, contents(gr), top);
+                                                rp = rp2;
+                                                c = pc;
+                                                out_rows = rows2;
+                                                spare = scratch2;
+                                                buffer.drop(heap, kept);
+                                                kept = kept2;
+                                            }
+                                        }
+                                    } else {
+                                        agg.drop(heap, groups);
+                                        let (rp2, pc, rows2, scratch2, kept2) = jnread.probe_pass(heap, rp, pfile, io, stdin, tr, tree, contents(kr), contents(sr), contents(cw), contents(bw), contents(ky), contents(km), pairs, simple, jtype, nk, out_rows, spare, np, nb, delim, as_csv, from, limit, budget, picked, cap, most, max_join);
+                                        rp = rp2;
+                                        c = pc;
+                                        out_rows = rows2;
+                                        spare = scratch2;
+                                        buffer.drop(heap, kept);
+                                        kept = kept2;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, bcellbox);
+        unbox_slice(heap, gv);
+        borrow rp as &rpr in {
+            errno = lines.failed(rpr);
+        }
+    }
+    lines.drop(heap, rb);
+    lines.drop(heap, rp);
+    jtab.drop(heap, jt);
+    // what csv still had pending, written now unless the stream already failed
+    if probed && as_csv && c.abort != 9 {
+        let (after, ok) = engine.flush_last(io, out_rows);
+        out_rows = after;
+        if !ok {
+            c = finish.Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: c.groups };
+        }
+    }
+    // the refusal of the probe (or of the plan, at the header), if there is one
+    var clean = true;
+    borrow e as &er0 in {
+        clean = fail.count(er0) == 0;
+    }
+    if clean && !refused {
+        if c.abort == 71 {
+            e = jnfail.too_many_rows(heap, e, shown, max_join, c.err_row, c.err_line, c.err_digits, c.err_cond);
+        } else if c.abort == 72 {
+            borrow keys as &kr3 in {
+                borrow hp as &hpr in {
+                    borrow kept as &vr in {
+                        borrow jnames as &jnr in {
+                            borrow jends as &jer in {
+                                e = typed_refusal(heap, args, parsed, e, contents(kr3), c, vr, shown, "probe", hpr.names, hpr.ends, jnr, jer);
+                            }
+                        }
+                    }
+                }
+            }
+        } else if c.abort == 15 || c.abort == 21 {
+            // the groups or the sorted rows passed what the build leaves of the flag
+            e = jnfail.shared_too_large(heap, e, c.abort == 15, shown, max_state, build_held, c.err_digits);
+        } else {
+            borrow jnames as &nr in {
+                borrow jends as &er in {
+                    borrow labels as &lr in {
+                        borrow lends as &le in {
+                            borrow kept as &kr in {
+                                e = finish.explain(heap, args, parsed, tree, nr, er, lr, le, kr, c, shown, names_at, errno, as_csv, budget, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    query.drop(heap, jwtree);
+    unbox_slice(heap, jwcols);
+    unbox_slice(heap, cls);
+    unbox_slice(heap, bcols);
+    vec.drop(heap, units);
+    unbox_slice(heap, cols);
+    unbox_slice(heap, sel);
+    unbox_slice(heap, cellbox);
+    unbox_slice(heap, keys);
+    unbox_slice(heap, kmap);
+    buffer.drop(heap, lead);
+    buffer.drop(heap, labels);
+    vec.drop(heap, lends);
+    buffer.drop(heap, spare);
+    buffer.drop(heap, kept);
+    jnhead.drop_head(heap, hb);
+    jnhead.drop_head(heap, hp);
+    return (c, head, out_rows, jnames, jends, e);
+}
+
+// The read of a join: the `--join` file is found beneath the root as a query's `from 'path'` is (`qpath.resolve`: the rules of an operand), opened the same way, and both files go to `run`.
+// `file` is the probe (an empty file stands in for standard input). A path or an open that fails is the refusal of an operand, naming the path given to `--join`.
+pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, stdin: bool, shown: &s [byte], io: &!i Io, fs: &fs Fs(""), root: &rt [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_read, io_write, fs_read(""), dir_read] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+    let table = spec.flag_table();
+    var e = errs;
+    var c = jnread.nothing();
+    var head = buffer.append(heap, buffer.empty(heap, 4), "[]");
+    var rows = buffer.empty(heap, 1);
+    var names = buffer.empty(heap, 1);
+    var ends = vec.empty(heap, 1, 0);
+    let (full, shown_at, checked) = qpath.resolve(heap, root, cli.text(args, parsed, table, "join"), e);
+    e = checked;
+    borrow full as &fr in {
+        if shown_at >= 0 {
+            let whole = buffer.bytes(fr);
+            let build = whole[shown_at..len(whole)];
+            match place.open_operand(fs, root, build, whole) {
+                Opened::Failed(reason) => {
+                    e = fail.io_error(heap, e, reason, false, build);
+                }
+                Opened::Ok(opened) => {
+                    var bf = opened;
+                    borrow mut bf as &!bh in {
+                        let (c2, h2, r2, n2, d2, e2) = run(heap, args, parsed, bh, file, stdin, shown, build, io, delim, mode, as_csv, from, limit, budget, top, tree, names_at, e);
+                        c = c2;
+                        buffer.drop(heap, head);
+                        head = h2;
+                        buffer.drop(heap, rows);
+                        rows = r2;
+                        buffer.drop(heap, names);
+                        names = n2;
+                        vec.drop(heap, ends);
+                        ends = d2;
+                        e = e2;
+                    }
+                    file_close(bf);
+                }
+            }
+        }
+    }
+    buffer.drop(heap, full);
+    return (c, head, rows, names, ends, e);
+}

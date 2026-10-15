@@ -376,6 +376,9 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
         if unbounded {
             reads = "the whole build file, then all the probe rows";
         }
+        if mode == 2 || ordering {
+            reads = "the whole build file, then every probe row (a grouping or a sort needs every row)";
+        }
     }
     var wanted = 0;
     if class == 3 {
@@ -803,13 +806,13 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
     if mode != 0 && !as_csv {
         o = rule(heap, o, "limit.output-too-large");
     }
-    if class == 2 {
+    if class == 2 || joining && mode == 2 {
         o = rule(heap, o, "limit.too-many-groups");
         if distinct {
             o = rule(heap, o, "limit.too-many-distinct");
         }
     }
-    if class == 3 {
+    if class == 3 || joining && ordering {
         o = rule(heap, o, "limit.too-many-sort-rows");
     }
     if class == 2 || class == 3 || class == 1 || class == 5 {
@@ -877,7 +880,15 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             first_note = false;
         }
         if bytes.find(jn, "\"type\":\"left\"") >= 0 {
-            o = note(heap, o, first_note, "a probe row with no match has every cell of the build row empty (padding, there is no null): a number read from one of those cells is refused with detail.padded, and a condition on a build column removes the padded rows");
+            o = note(heap, o, first_note, "a probe row with no match has every cell of the build row empty (padding, there is no null): a number read from one of those cells is refused with detail.padded, and a condition on a build column in --where removes the padded rows, where the same condition in --join-where keeps the probe row, padded");
+            first_note = false;
+        }
+        if bytes.find(jn, "\"probe_before_join\":[\"") >= 0 || bytes.find(jn, "\"build_before_build\":[\"") >= 0 {
+            o = note(heap, o, first_note, "the conditions of join.where that are before the join (the leading run of --where: text conditions, none after the first typed one) are applied before the join: a probe row they reject has its key left unread and produces no joined row, so --from and --max-join-rows do not count it");
+            first_note = false;
+        }
+        if mode == 2 || ordering {
+            o = note(heap, o, first_note, "--max-state-bytes is one number for the whole call: the --join file is held first, and the groups (or the rows to sort) are counted against what it leaves");
             first_note = false;
         }
         if requested > 1 {

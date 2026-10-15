@@ -96,7 +96,7 @@ def main():
             print("%-40s %12.2f %12.2f %9.4f %9d %9d  %s" % (name, orow, nrow, ratio, o2, n2, "OVER" if bad else ""))
             out["cells"].append({"cell": name, "old_per_row": orow, "new_per_row": nrow, "ratio": ratio, "old_total": o2, "new_total": n2})
         # the join of J1 (one text pair, inner) with both binaries
-        for name, extra in (("join inner, text pair, select 4 columns", ["--select", "id,k,v,b_name"]), ("join inner, text pair, all columns", []), ("join inner, --where on the probe", ["--where", "v != '7'"])):
+        for name, extra in (("join inner, text pair, select 4 columns", ["--select", "id,k,v,b_name"]), ("join inner, text pair, all columns", [])):
             mk = lambda b, n, extra=extra: [b, "--root", str(d), "--join", "build.csv", "--on", "k=k", "--join-prefix", "b_", *extra, "--format", "csv", "--max-rows", "1000000", "probe-%d.csv" % n]
             o1, o2, orow = per_row(a.old, mk, a.small, a.large)
             n1, n2, nrow = per_row(a.new, mk, a.small, a.large)
@@ -105,6 +105,25 @@ def main():
             failed |= bad
             print("%-40s %12.2f %12.2f %9.4f %9d %9d  %s" % (name, orow, nrow, ratio, o2, n2, "OVER" if bad else ""))
             out["cells"].append({"cell": name, "old_per_row": orow, "new_per_row": nrow, "ratio": ratio, "old_total": o2, "new_total": n2})
+        # J3: the conditions applied before the join, and the groups and the sort over a join. The first is on a path J2 had (a --where on the probe, which J3 applies before the key is read and again after the join: the ratio is
+        # given for the record and is not judged); the others are new
+        j3 = {
+            "join inner, --where on the probe (pushed)": ["--where", "v != '7'"],
+            "join inner, --join-where on the build": ["--join-where", "name != 'n7'"],
+            "join inner, --group b_name --agg count,sum:v": ["--group", "b_name", "--agg", "count,sum:v"],
+            "join left, --group b_name --agg count,sum:v": ["--join-type", "left", "--group", "b_name", "--agg", "count,sum:v"],
+            "join inner, --order-by v:int": ["--order-by", "v:int"],
+        }
+        for name, extra in j3.items():
+            mk = lambda b, n, extra=extra: [b, "--root", str(d), "--join", "build.csv", "--on", "k=k", *(["--join-prefix", "b_"] if "--join-type" not in extra or True else []), *extra, "--format", "csv", "--max-rows", "1000000", "--max-groups", "1000000", "probe-%d.csv" % n]
+            n1, n2, nrow = per_row(a.new, mk, a.small, a.large)
+            if name.startswith("join inner, --where"):
+                o1, o2, orow = per_row(a.old, mk, a.small, a.large)
+                print("%-40s %12.2f %12.2f %9.4f %9d %9d  (for the record)" % (name, orow, nrow, nrow / orow, o2, n2))
+                out["cells"].append({"cell": name, "old_per_row": orow, "new_per_row": nrow, "ratio": nrow / orow, "old_total": o2, "new_total": n2})
+            else:
+                print("%-40s %12s %12.2f %9s %9s %9d" % (name, "-", nrow, "-", "-", n2))
+                out["cells"].append({"cell": name, "new_per_row": nrow, "new_total": n2})
         # the build: the cost of a build row, from builds of two sizes against a probe of one row (J1's path, old against new; then the build shapes J2 adds, new only)
         rnd = random.Random(7)
         for nb in (a.small // 4, a.large // 4):

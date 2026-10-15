@@ -258,6 +258,19 @@ CORPUS = [
     {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-type": "semi", "join-prefix": "q_"},
     {"file": "data.csv", "join": "quoted.csv", "on": "id=id:bogus"},
     {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-type": "right"},
+    # J3: --join-where, groups and sorted rows over a join, the leading run of --where, the shared budget
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "join-where": "name != ''", "select": "id,q_name", "limit": 10},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "join-type": "left", "join-where": "id:int > 1", "where": "status = 200 and id:int < 8", "select": "id,q_name", "format": "csv"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "join-type": "left", "group": "status", "agg": "count,max:bytes", "where": "status != 404", "sort": "-count"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "order-by": "-bytes:int", "top": 3, "select": "id,bytes"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "join-type": "left", "agg": "sum:q_name:int"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "join-where": "nope = 1"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "join-where": "name = "},
+    {"file": "data.csv", "join-where": "name = 'x'"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "report": "types"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "group": "q_name", "max-state-bytes": 200},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "join-where": "name != ''", "group": "q_name", "agg": "count", "explain": True},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id:int", "join-type": "anti", "where": "id:int < 6", "group": "status", "format": "csv"},
 ]
 
 
@@ -358,7 +371,7 @@ class JoinCalls(unittest.TestCase):
     def test_the_schema_has_the_flags_of_a_join(self):
         [r], _ = talk(root(), [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
         props = r["result"]["tools"][0]["inputSchema"]["properties"]
-        for p in ("join", "on", "join-type", "join-prefix", "max-join-rows"):
+        for p in ("join", "on", "join-type", "join-prefix", "join-where", "max-join-rows"):
             self.assertIn(p, props, p)
         self.assertEqual((props["join"]["type"], props["join-type"]["enum"], props["max-join-rows"]["maximum"]), ("string", ["inner", "left", "semi", "anti"], 1000000000))
 

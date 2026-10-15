@@ -11,9 +11,12 @@ import std.buffer;
 import std.bytes;
 import std.vec;
 import explain;
+import frame;
 import jnfail;
 import jnflags;
 import jnhead;
+import jnwhere;
+import orparse;
 import qpath;
 import query;
 import spec;
@@ -79,7 +82,7 @@ fn type_name[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buff
 }
 
 // The text of the `join` member. `jtype`: 0 inner, 1 left, 2 semi, 3 anti.
-fn join_doc[&h, &g, &p, &s, &t, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int) -> [heap, args] buffer.Buffer {
+fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte]) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let on = jnflags.parse_on(heap, cli.text(args, parsed, table, "on"));
     let budget = cli.nat(args, parsed, table, "max-state-bytes");
@@ -190,7 +193,17 @@ fn join_doc[&h, &g, &p, &s, &t, &k](heap: &!h Heap, args: &g Args, parsed: &p cl
     } else {
         o = buffer.append(heap, o, ",\"counted\":\"record bytes + 16 for each row held, key bytes + 60 for each distinct key (a key is 8 bytes for a typed pair and 4 bytes of length more for each pair of several): not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\"");
     }
-    o = buffer.append(heap, o, ",\"swap\":{\"offered\":false,\"reason\":\"the swap repair arrives with a later slice\"}},\"max_join_rows\":");
+    o = buffer.append(heap, o, ",\"shared_with\":");
+    if len(shared) == 0 {
+        o = buffer.append(heap, o, "null");
+    } else {
+        o = text.append_json(heap, o, shared);
+    }
+    o = buffer.append(heap, o, ",\"swap\":{\"offered\":false,\"reason\":\"the swap repair arrives with a later slice\"}},\"where\":");
+    o = buffer.append(heap, o, where_json);
+    o = buffer.append(heap, o, ",\"join_where\":");
+    o = buffer.append(heap, o, jw_json);
+    o = buffer.append(heap, o, ",\"max_join_rows\":");
     o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "max-join-rows"));
     o = buffer.append(heap, o, ",\"order\":\"probe order, then build order\",\"work\":{\"class\":\"join: build then stream\",\"first_output_after\":\"the whole build\",\"threads\":{\"requested\":");
     o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "threads"));
@@ -292,6 +305,8 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
     var jends = vec.empty(heap, 1, 0);
     var ok = false;
     var jtype = 0;
+    let jw_on = cli.has(parsed, table, "join-where");
+    var jwtree = query.empty(heap);
     let word = cli.text(args, parsed, table, "join-type");
     if bytes.equal(word, "left") {
         jtype = 1;
@@ -321,9 +336,21 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
                 jends = ends;
                 keys = k3;
                 kmap = m3;
+                if jw_on {
+                    // `--join-where` against the build file's header, as the run reads it
+                    query.drop(heap, jwtree);
+                    let (t1, what, at) = orparse.parse(heap, query.empty(heap), cli.text(args, parsed, table, "join-where"));
+                    jwtree = t1;
+                    borrow jwtree as &jq in {
+                        let (e3, c3, ok3) = jnwhere.resolve(heap, e, jq, hbr.names, hbr.ends, buffer.bytes(sb));
+                        e = e3;
+                        unbox_slice(heap, c3);
+                    }
+                }
             }
         }
     }
+    query.drop(heap, jwtree);
     var failed = false;
     borrow e as &er0 in {
         failed = fail.count(er0) > 0;
@@ -350,13 +377,89 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
         pconsumed = hpr.consumed;
         pread = hpr.bytes_read;
     }
+    // the split of `--where` (the conditions of the leading run, by side) and the units of `--join-where`, as the run applies them; unknown when the probe is standard input, whose header is not read
+    var where_json = buffer.append(heap, buffer.empty(heap, 8), "null");
+    var jw_json = buffer.append(heap, buffer.empty(heap, 8), "[]");
+    if jw_on {
+        let jtext = cli.text(args, parsed, table, "join-where");
+        let ju = orparse.top_units(heap, jtext);
+        buffer.drop(heap, jw_json);
+        borrow ju as &jur in {
+            jw_json = jnwhere.units_json(heap, jtext, jur);
+        }
+        vec.drop(heap, ju);
+    }
+    if !stdin {
+        let wtext = cli.text(args, parsed, table, "where");
+        let wu = orparse.top_units(heap, wtext);
+        var nw = 0;
+        borrow tree0 as &t0 in {
+            nw = query.count_of(t0, 1);
+        }
+        var cls = box_slice(heap, nw + 2, 0);
+        var sortflag = "";
+        if cli.has(parsed, table, "sort") {
+            sortflag = cli.text(args, parsed, table, "sort");
+        }
+        if nw > 0 {
+            var made = frame.none(heap);
+            frame.drop(heap, made);
+            borrow tree0 as &tq in {
+                borrow jnames as &nr in {
+                    borrow jends as &er in {
+                        made = frame.prepare(heap, tq, nr, er, np + nk, mode, delim, sortflag);
+                    }
+                }
+                let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
+                if fabort == 0 {
+                    unbox_slice(heap, cls);
+                    borrow fcols as &fc in {
+                        borrow wu as &wur in {
+                            cls = jnwhere.classify(heap, tq, contents(fc), wur, np, jtype);
+                        }
+                    }
+                }
+                unbox_slice(heap, fcols);
+                unbox_slice(heap, fsel);
+                unbox_slice(heap, fcells);
+                buffer.drop(heap, fhead);
+                buffer.drop(heap, flead);
+                buffer.drop(heap, flabels);
+                vec.drop(heap, flends);
+            }
+        }
+        buffer.drop(heap, where_json);
+        borrow wu as &wur in {
+            borrow cls as &clr in {
+                where_json = jnwhere.split_json(heap, wtext, wur, contents(clr));
+            }
+        }
+        unbox_slice(heap, cls);
+        vec.drop(heap, wu);
+    }
+    var shared = "";
+    var ordered = false;
+    borrow tree0 as &t0 in {
+        ordered = query.count_of(t0, 4) > 0;
+    }
+    if mode == 2 {
+        shared = "groups";
+    } else if ordered {
+        shared = "sorted rows";
+    }
     var doc = buffer.empty(heap, 1);
     borrow shown_b_copy as &sb in {
         buffer.drop(heap, doc);
         borrow keys as &ky in {
-            doc = join_doc(heap, args, parsed, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, !stdin, jtype, nb);
+            borrow where_json as &wjr in {
+                borrow jw_json as &jjr in {
+                    doc = join_doc(heap, args, parsed, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, !stdin, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared);
+                }
+            }
         }
     }
+    buffer.drop(heap, where_json);
+    buffer.drop(heap, jw_json);
     unbox_slice(heap, keys);
     unbox_slice(heap, kmap);
     buffer.drop(heap, shown_b_copy);
