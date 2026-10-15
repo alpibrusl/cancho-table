@@ -30,7 +30,21 @@ is not `cells`, which was the provisional one: `cells` is already the name of th
 The gate has to be able to fail: it was shown failing after (a) a one-byte change to a source and (b) a hand edit of a store, and passing
 again after the republish. The results are in the pull request text, with the compiler that published the stores.
 
-A store published by the pinned compiler is read by other compilers (a consumer's compiler need not be the pin).
+## Which compiler reads which store
+
+A store is the source of its module, and a consumer's compiler type-checks that source (`cancho install` then `cancho build`): the compiler need not be the pin, but it must be new enough for the module. Measured at `0105a87` (the revision before #59; `flt` published by the pin `e47d647`), by a scratch project per store and per compiler that depends on the one store by `git`, `rev` and `path` and imports it (`cancho install`, then `cancho build`):
+
+| Store | `edition` | `a4572ea` (the pin of `cancho-ml`; the compiler of the rename, 2026-10-07 09:44) | `b844dc6` (`cancho#361`, merged 2026-10-07 23:26) | `e47d647` (the pin of this repository) |
+|---|---|---|---|---|
+| `pow5` | 5 | builds | builds | builds |
+| `dec` | 5 | builds | builds | builds |
+| `flt` | 7 | **does not build:** `dependency flt: e191a4a9... no longer type-checks: not-a-function: float_of_bits is not a function in this program` | builds | builds |
+| `cellnum` | 5 | builds | builds | builds |
+| `facc` | 5 | builds | builds | builds |
+| `reader` | 5 | builds | builds | builds |
+
+So **`flt` needs a compiler with `float_of_bits` (edition 7), which is `cancho#361`, merge commit `b844dc6d`, or any later one; the other five stores need nothing beyond edition 5** and build with the compiler before #361. `flt` has needed it since #56 (issue #36; `float_of_key` builds the double with `float_of_bits`; the store before #56 was edition 5 and used `std.math.ldexp`, and `cancho-ml`'s pin of it at `202b214` builds with `a4572ea`). `b844dc6` is the first compiler with it because #361 is the change that adds `float_of_bits` and edition 7; the measurement is `a4572ea` (fails) and `b844dc6` (builds), and the compilers between the two were not built. The same #361 is what makes `std.fmt.float_into` break a tie of two equally short decimals to the even digit, as Python does (`docs/numbers.md` 1.1); with `a4572ea` the tie `-902899553826474.25` prints `...4.3`. A new store whose source uses something newer than the pin says so in this table in the commit that adds it.
+
 
 ## Commands
 
