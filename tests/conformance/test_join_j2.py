@@ -373,6 +373,24 @@ class TypedRefusals(unittest.TestCase):
         r = self.go("k\nNaN\n", "id\n1\n", "k=id:float")
         self.assertEqual(r.first_rule(), "value.not-finite")
 
+    def test_a_quoted_typed_key_is_read_as_the_number_inside_its_quotes(self):
+        r = self.go('k,v\n"7",a\n"-0",b\n', 'id,w\n007,x\n"0",y\n', "k=id:int", "inner", fmt="csv")
+        self.assertEqual(J.read_csv_bytes(r.stdout), [[b"k", b"v", b"id", b"w"], [b"7", b"a", b"007", b"x"], [b"-0", b"b", b"0", b"y"]])
+        r = self.go('k,v\n"1.50",c\n', 'id,w\n"1.5",x\n', "k=id:dec(2)", "semi", fmt="csv")
+        self.assertEqual(J.read_csv_bytes(r.stdout), [[b"k", b"v"], [b"1.50", b"c"]])
+        r = self.go('k,v\n"x7",a\n', 'id,w\n7,x\n', "k=id:int")
+        self.assertEqual((r.status, r.first_rule(), r.error()["detail"]["input"]), (8, "value.not-integer", "probe"))
+
+    def test_the_refused_column_is_named_by_its_own_header_when_the_keys_are_in_different_places(self):
+        r = self.go("a,b,c,k\n1,2,3,bad\n", "x,id\n9,1\n", "k=id:int")
+        d = r.error()["detail"]
+        self.assertEqual((d["input"], d["column"], d["value"]), ("probe", "k", "bad"))
+        r = self.go("a,b,c,k\n1,2,3,1\n", "x,id\n9,bad\n", "k=id:int")
+        d = r.error()["detail"]
+        self.assertEqual((d["input"], d["column"], d["value"]), ("build", "id", "bad"))
+        r = self.go("a,k\n1,1\n", "x,y,z,id\n9,8,7,bad\n", "k=id:int")
+        self.assertEqual((r.error()["detail"]["input"], r.error()["detail"]["column"]), ("build", "id"))
+
     def test_a_text_join_never_reads_a_number(self):
         r = self.go("k\nbad\n", "id\nworse\n", "k=id", "inner", fmt="csv")
         self.assertEqual(r.status, 0)
