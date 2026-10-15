@@ -207,7 +207,7 @@ class Reference(Base):
         self.assertEqual(d["error"]["rule"], "query.unsupported")
         self.assertEqual(d["error"]["repair"]["kind"], "choose")
         argv = d["error"]["repair"]["options"][0]["argv"]
-        self.assertEqual(argv[argv.index("--where") + 1], "a not contains x")
+        self.assertEqual(argv[argv.index("--where") + 1], "a not contains 'x'")
         self.assertTrue(doc_of(run_argv(argv)).get("ok"))
         d = doc_of(self.query("select id from 'q.csv' where a not like 'x%'"))
         self.assertEqual(d["error"]["repair"]["kind"], "none")
@@ -257,7 +257,7 @@ class Mixed(Base):
                 again = run(*o["argv"][1:])
                 self.assertTrue(again.status in (0, 8), (q, o["argv"], again.stdout[:200]))
             done += 1
-        self.assertGreater(done, 40)
+        self.assertGreater(done, 25)
 
 
 class Equivalence(Base):

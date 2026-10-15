@@ -1498,6 +1498,17 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7](heap: &!h He
                 }
                 buffer.drop(heap, fixed);
             }
+            // `not COND` is refused (the flag form has `not (` only): the same invocation with each such condition rewritten as its exact complement (docs/or-and-columns.md section 3.1), offered only whole
+            if what == 23 && where_at >= 0 {
+                let (fixed, found) = wrepair.not_repair(heap, given);
+                if found {
+                    borrow fixed as &fr in {
+                        w = wrepair.offer(heap, w, args, where_at, inp.where_whole, buffer.bytes(fr));
+                    }
+                    offered = true;
+                }
+                buffer.drop(heap, fixed);
+            }
             if !offered {
                 w = fail.repair_none(heap, w, "what the expression was meant to say is not known");
             }

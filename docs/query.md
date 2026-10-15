@@ -14,7 +14,7 @@
 | decision | choice | why, in one line |
 |---|---|---|
 | what `--query` is | **a translator from a small SQL subset to the flags the tool already has**; the existing parsers then fill the one `Query`, so there is no second plan to keep equal | the equivalence the design asked for holds by construction for meaning, and the gate checks the writing (quoting and escaping) |
-| the subset | `select` (columns, `*`, `count(*)`, `sum`, `min`, `max`, `mean`, `count(distinct c)`) `from` (`'file'` or `stdin`) `where` (`and` and `or` of comparisons, `contains`, `in`, with parentheses: a level is all `and` or all `or`, a mix is `query.mixed-and-or`; [`or-and-columns.md`](or-and-columns.md), slice A1) `group by` `order by` `limit n offset m`. **No `not` yet, no aliases, no expressions, no joins, no `like`, no null** | exactly what the engine has; every other SQL word is a tagged refusal that says what to write instead |
+| the subset | `select` (columns, `*`, `count(*)`, `sum`, `min`, `max`, `mean`, `count(distinct c)`) `from` (`'file'` or `stdin`) `where` (`and` and `or` of comparisons, `contains`, `in`, with parentheses: a level is all `and` or all `or`, a mix is `query.mixed-and-or`; [`or-and-columns.md`](or-and-columns.md), slice A1) `group by` `order by` `limit n offset m`. `not COND`, `not (...)`, `c not in (...)`, `c not contains 'x'` ([`or-and-columns.md`](or-and-columns.md), slice A2). **No aliases, no expressions, no joins, no `like`, no null** | exactly what the engine has; every other SQL word is a tagged refusal that says what to write instead |
 | types | **`cast(x as int)` or `x::int`**, `dec(S)`, `float`: the engine's three types, named | one meaning, two spellings agents already type |
 | names | bare ASCII identifiers; **`"double quoted"`** for anything else (spaces, commas, dots, keywords, non-ASCII); **`#3`** a position; values are **`'single quoted'`** or numbers | SQL's own convention; a column called `select` is `"select"` |
 | aliases | **no** (`as` is refused). The engine has no renamed column; a feature with no flag form has no place in the gate | |
@@ -79,7 +79,7 @@ A query that names such a column writes it `"like"`; reserving them *now* is wha
 | feature | what the hint says |
 |---|---|
 | `like`, `ilike` | `col contains 'text'` finds a substring; there are no patterns |
-| `between`, `not`, `is null`, `null`, booleans | write two conditions; there is no null (an empty cell is the empty text: `= ''`) |
+| `between`, `is null`, `null`, booleans | write two conditions; there is no null (an empty cell is the empty text: `= ''`) |
 | `as` (alias) | a column keeps its header name, an aggregate its name (`sum:bytes`); there is no renaming |
 | `count(col)` | `count(*)` counts rows, `count(distinct col)` counts values: `count(col)` would count the empty cells too |
 | `col = other_col` | a condition compares a column with a value |
@@ -217,6 +217,7 @@ Nothing here builds a join; the grammar is shaped so that one fits without break
 * `source = ( string | "stdin" ) [ [ "as" ] alias ]`, and a qualified column `alias.column`: `as` is reserved, `.` is not part of any bare name today (`a.b` is a syntax error), so `t.col` is free.
 * the select list's `*` could become `alias.*`.
 * a join needs its own design (`docs/backlog.md` item 9: a hash join with the build side bounded by `--max-state-bytes`); what this document commits to is only that the words and the dot are not given away.
+* **Update (slice A2 of [or-and-columns.md](or-and-columns.md)):** `not` is in the subset. `not COND` and `not (...)` are translated to the flag form's `not (...)`, which is the only way the flags have to say it (`not a = 'x'` is `not (a = 'x')`, and `not (...)` is written as it stands); `c not in (...)` and `c not contains 'x'` are written as they are. The parenthesis the translation adds for a `not` before a condition is one of the 8 levels of the ceiling, so the ninth is refused at the `not`. `c not like`, `c not between` are `query.unsupported` (the feature `like`, `between`, at the word after `not`), with the repair of `like '%x%'` (`not contains 'x'`); `c not = 1` and `c not` are `query.syntax`, "in or contains after not", at the word after `not`. The feature `not` of `query.unsupported` is gone. A column called `not` is `"not"`, as it was.
 * **Update (slice J1 of [joins.md](joins.md)):** the join exists in its **flag form** only, `--join FILE --on PROBE=BUILD` (inner, text keys, rows out). A `--query` still has no join: a `join` in the text is `query.unsupported` as before, and `--query` with `--join` is `args.conflict` (a query says the plan, and so does the flag). The query form, with the aliases it needs, is slice J3b of the design; the corpus of queries that are valid today translates to the same flags, since no word was reserved or unreserved by J1.
 
 ## 8. The equivalence gate
@@ -317,7 +318,7 @@ The grammar's productions are the one thing that cannot be generated from the co
     select COLUMNS | * | count(*) | sum(c) | min(c) | max(c) | mean(c [, N]) | count(distinct c)
     [from 'FILE' | stdin] [where COND and COND ...] [group by COLUMNS] [order by KEY [desc], ...] [limit N [offset N]]
 
-- COND is `c = 'x'`, `c != 5`, `c <> 5`, `c < 5` (also <= > >=), `c contains 'x'`, `c in ('a', 'b')`, joined by `and` or by `or`, with parentheses to group them: a level is all `and` or all `or` (`query.mixed-and-or`).
+- COND is `c = 'x'`, `c != 5`, `c <> 5`, `c < 5` (also <= > >=), `c contains 'x'`, `c in ('a', 'b')`, their opposites `c not in ('a', 'b')` and `c not contains 'x'`, and `not` before any condition or group (`not c = 'x'`, `not (c = 'x' or d = 1)`), joined by `and` or by `or`, with parentheses to group them: a level is all `and` or all `or` (`query.mixed-and-or`). `not` binds the one condition or group that follows it.
 - Values are 'single quoted' text or bare numbers. Text compares bytewise: `bytes > 100` is text order; write `cast(bytes as int) > 100`
   or `bytes::int > 100` for numbers. Types: int, dec(N), float.
 - Names are bare (letters, digits, underscore) or "double quoted" (spaces, commas, dots, keywords); #3 is the third column.

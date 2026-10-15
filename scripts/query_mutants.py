@@ -43,7 +43,7 @@ MUTANTS = [
     ("parser: a keyword is a column when quoted only for some", "qparse.cho", "if keyword(q, m, i) {", "if keyword(q, m, i) && qarena.tok_kind(m, i) == qlex.t_id() && qarena.tok_end(m, i) - qarena.tok_start(m, i) != 3 {"),
     # ---- the parser
         ("parser: and ends the conditions", "qparse.cho", "if is_word(q, m, 0, \"and\") {\n            connective = 1;", "if is_word(q, m, 0, \"and\") {\n            connective = 0;"),
-        ("parser: an in list has one value", "qparse.cho", "listing = eat_sym(m, qlex.y_comma());\n        }\n        if expect_sym(m, qlex.y_close(), 20)", "listing = false;\n        }\n        if expect_sym(m, qlex.y_close(), 20)"),
+        ("parser: an in list has one value", "qparse.cho", "listing = eat_sym(m, qlex.y_comma());\n    }\n    if expect_sym(m, qlex.y_close(), 20)", "listing = false;\n    }\n    if expect_sym(m, qlex.y_close(), 20)"),
     ("parser: :: is not a cast", "qparse.cho", "if eat_sym(m, qlex.y_cast()) {", "if eat_sym(m, qlex.y_cast() + 90) {"),
     ("parser: cast(c as t) reads the type of the wrong word", "qparse.cho", "if !eat_word(q, m, \"as\") {", "if !eat_word(q, m, \"as\") && !is_word(q, m, 0, \"int\") {"),
     ("parser: count(distinct c) is not distinct", "qparse.cho", "} else if eat_word(q, m, \"distinct\") {", "} else if eat_word(q, m, \"distinct!\") {"),
@@ -58,7 +58,7 @@ MUTANTS = [
     ("parser: mean has no scale", "qparse.cho", "if f == 5 && eat_sym(m, qlex.y_comma()) {", "if f == 7 && eat_sym(m, qlex.y_comma()) {"),
     ("parser: an alias is not refused", "qparse.cho", "if is_word(q, m, 0, \"as\") {\n            return qarena.fail(m, 2, 65, start_of(m, 0));", "if is_word(q, m, 0, \"asx\") {\n            return qarena.fail(m, 2, 65, start_of(m, 0));"),
     ("parser: a column comparison is a value", "qparse.cho", "if nk == qlex.t_qid() || nk == qlex.t_pos() {", "if nk == qlex.t_pos() {"),
-        ("parser: contains takes a typed column", "qparse.cho", "if t != 0 {\n            return qarena.fail(m, 1, 15,", "if t == 77 {\n            return qarena.fail(m, 1, 15,"),
+        ("parser: contains takes a typed column", "qparse.cho", "if t != 0 {\n        return qarena.fail(m, 1, 15,", "if t == 77 {\n        return qarena.fail(m, 1, 15,"),
     ("parser: offset alone is an error", "qparse.cho", "} else if eat_word(q, m, \"offset\") {", "} else if eat_word(q, m, \"offsetx\") {"),
     ("parser: from stdin is a file", "qparse.cho", "} else if qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, a, b, \"stdin\") {", "} else if qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, a, b, \"stdinx\") {"),
     ("parser: a typed group by column is accepted", "qparse.cho", "if t != 0 {\n            return qarena.fail(m, 2, 64, at);", "if t == 77 {\n            return qarena.fail(m, 2, 64, at);"),

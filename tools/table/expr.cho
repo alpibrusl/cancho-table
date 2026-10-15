@@ -4,9 +4,9 @@ module expr;
 
 // `--where`: conditions, and what each says of a row. This module reads a condition (`parse_cond`) and decides one against a cell (`holds`); `orparse` reads the whole expression,
 //
-//     EXPR  := ALL | ANY | UNIT          ALL := UNIT "and" UNIT { "and" UNIT }          ANY := UNIT "or" UNIT { "or" UNIT }          UNIT := COND | "(" EXPR ")"
-//     COND  := COLUMN OP VALUE | COLUMN "contains" VALUE
-//            | COLUMN "in" "(" VALUE { "," VALUE } ")"
+//     EXPR  := ALL | ANY | UNIT          ALL := UNIT "and" UNIT { "and" UNIT }          ANY := UNIT "or" UNIT { "or" UNIT }          UNIT := COND | "(" EXPR ")" | "not" "(" EXPR ")"
+//     COND  := COLUMN OP VALUE | COLUMN "contains" VALUE | COLUMN "not" "contains" VALUE
+//            | COLUMN "in" "(" VALUE { "," VALUE } ")" | COLUMN "not" "in" "(" VALUE { "," VALUE } ")"
 //     OP    := "=" | "!=" | "<" | "<=" | ">" | ">="
 //     COLUMN:= WORD [":int" | ":float" | ":dec(" N ")"]     a name, or #N the Nth column; N is a scale, 0 to 18
 //     VALUE := WORD
@@ -16,8 +16,8 @@ module expr;
 // the next byte part of it, whatever it is (`\#3` is the name "#3", not the
 // third column). A quoted word is between single quotes with '' for a quote;
 // a quoted word is always a name or a value, never a position, and never has
-// the keyword meaning of and, or, in or contains. `and`, `or`, `in` and `contains` are
-// lower case. Nothing else is in the language: no not yet, no expressions, no functions.
+// the keyword meaning of and, or, not, in or contains. `and`, `or`, `not`, `in` and `contains` are
+// lower case. Nothing else is in the language: no expressions, no functions.
 //
 // A condition compares text, bytewise, unless the column is written `:int`, in
 // which case the cell is an exact integer and the literals are too, or `:dec(S)`, in
@@ -166,6 +166,12 @@ pub fn expected(what: int) -> [] &static [byte] {
     if what == 22 {
         return "and, or, or the ) that closes the group";
     }
+    if what == 23 {
+        return "( after not";
+    }
+    if what == 24 {
+        return "in or contains after not";
+    }
     return "a complete expression";
 }
 
@@ -268,21 +274,21 @@ fn parse_column[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: in
     return (plan, next, index, typed, what, at);
 }
 
-// The operator at `from`: answers its kind (0 compare, 1 contains, 2 in), its
-// code, where it ends, and what / where on an error.
-fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, typed: int) -> [heap] (int, int, int, int, int) {
+// The operator at `from`: answers its kind (0 compare, 1 contains, 2 in), its code, where it ends, what / where on an error, and whether it was written `not in` or `not contains` (the
+// condition is then the `in` or the `contains`, and its caller swaps the two exits: docs/or-and-columns.md section 17).
+fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, typed: int) -> [heap] (int, int, int, int, int, bool) {
     if from >= len(src) {
-        return (0, 0, from, 2, from);
+        return (0, 0, from, 2, from, false);
     }
     let c = int_of(src[from]);
     if c == '=' {
-        return (0, 0, from + 1, 0, 0);
+        return (0, 0, from + 1, 0, 0, false);
     }
     if c == '!' {
         if from + 1 < len(src) && int_of(src[from + 1]) == '=' {
-            return (0, 1, from + 2, 0, 0);
+            return (0, 1, from + 2, 0, 0, false);
         }
-        return (0, 0, from, 2, from);
+        return (0, 0, from, 2, from, false);
     }
     if c == '<' || c == '>' {
         var base = 2;
@@ -290,28 +296,52 @@ fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, typed: int)
             base = 4;
         }
         if from + 1 < len(src) && int_of(src[from + 1]) == '=' {
-            return (0, base + 1, from + 2, 0, 0);
+            return (0, base + 1, from + 2, 0, 0, false);
         }
-        return (0, base, from + 1, 0, 0);
+        return (0, base, from + 1, 0, 0, false);
     }
     let (word, after, quoted, status, e1, e2) = read_word(heap, buffer.empty(heap, 16), src, from);
     var is_contains = false;
     var is_in = false;
+    var is_not = false;
     borrow word as &wr in {
         is_contains = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "contains");
         is_in = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "in");
+        is_not = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "not");
     }
     buffer.drop(heap, word);
+    if is_not {
+        // `not in` and `not contains`: the word after `not` is the operator, and what is not one is refused where it stands
+        let at = skip_space(src, after);
+        let (w2, after2, quoted2, status2, f1, f2) = read_word(heap, buffer.empty(heap, 16), src, at);
+        var not_contains = false;
+        var not_in = false;
+        borrow w2 as &wr in {
+            not_contains = status2 == 0 && quoted2 == 0 && bytes.equal(buffer.bytes(wr), "contains");
+            not_in = status2 == 0 && quoted2 == 0 && bytes.equal(buffer.bytes(wr), "in");
+        }
+        buffer.drop(heap, w2);
+        if not_contains && typed != 0 {
+            return (0, 0, at, 6, at, false);
+        }
+        if not_contains {
+            return (1, 0, after2, 0, 0, true);
+        }
+        if not_in {
+            return (2, 0, after2, 0, 0, true);
+        }
+        return (0, 0, at, 24, at, false);
+    }
     if is_contains && typed != 0 {
-        return (0, 0, from, 6, from);
+        return (0, 0, from, 6, from, false);
     }
     if is_contains {
-        return (1, 0, after, 0, 0);
+        return (1, 0, after, 0, 0, false);
     }
     if is_in {
-        return (2, 0, after, 0, 0);
+        return (2, 0, after, 0, 0, false);
     }
-    return (0, 0, from, 2, from);
+    return (0, 0, from, 2, from, false);
 }
 
 // One literal at `from`, added to the plan. Answers the plan, where it ends,
@@ -372,12 +402,14 @@ fn parse_value[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int
 }
 
 // One condition at `from`, added to the plan: a column, an operator, and a value or a list of values. Answers the plan, where the condition ends (just after its last byte), and what /
-// where when it is not whole (`expected`). It is the one reader of a condition: `parse` reads a conjunction of them and `orparse.parse` the whole grammar.
-pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int) -> [heap] (query.Query, int, int, int) {
+// where when it is not whole (`expected`), and whether the condition was written `not in` or `not contains`. It is the one reader of a condition: `parse` reads a conjunction of them and
+// `orparse.parse` the whole grammar.
+pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int) -> [heap] (query.Query, int, int, int, bool) {
     var plan = q;
     var i = from;
     var what = 0;
     var at = 0;
+    var negative = false;
     let begins = from;
     let (p1, after_column, index, typed, w1, a1) = parse_column(heap, plan, src, i);
     plan = p1;
@@ -385,7 +417,8 @@ pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: 
     at = a1;
     if what == 0 {
         i = skip_space(src, after_column);
-        let (kind, op, after_op, w2, a2) = parse_operator(heap, src, i, typed);
+        let (kind, op, after_op, w2, a2, negated) = parse_operator(heap, src, i, typed);
+        negative = negated;
         what = w2;
         at = a2;
         i = after_op;
@@ -440,7 +473,81 @@ pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: 
             plan = query.add_cond(heap, plan, kind, typed, op, index, first, values, begins);
         }
     }
-    return (plan, i, what, at);
+    return (plan, i, what, at, negative);
+}
+
+// The exact complement of the condition at `from`, as text (docs/or-and-columns.md section 3.1, the repair of `not COND`): the same column and value, the operator that is true for the cells
+// the condition is false for: `=` and `!=`, `<` and `>=`, `>` and `<=`, `in` and `not in`, `contains` and `not contains`, and `not in` and `not contains` back to their plain spelling. The
+// complement is exact for text (a total order, bytewise) and for the typed comparisons (the cell is read the same way whichever operator follows it, so a bad cell is refused in both).
+// Answers the text, where the condition ends, and whether `from` is a condition (a refusal of the condition itself is no complement).
+pub fn complement[&h, &s](heap: &!h Heap, src: &s [byte], from: int) -> [heap] (buffer.Buffer, int, bool) {
+    let none = buffer.empty(heap, 1);
+    let (p0, end, w0, a0, negated) = parse_cond(heap, query.empty(heap), src, from);
+    query.drop(heap, p0);
+    if w0 != 0 {
+        return (none, from, false);
+    }
+    let (p1, after_column, index, typed, w1, a1) = parse_column(heap, query.empty(heap), src, from);
+    query.drop(heap, p1);
+    let at = skip_space(src, after_column);
+    var op_end = at;
+    var instead = "";
+    let c = int_of(src[at]);
+    if c == '=' {
+        instead = "!=";
+        op_end = at + 1;
+    } else if c == '!' {
+        instead = "=";
+        op_end = at + 2;
+    } else if c == '<' || c == '>' {
+        let or_equal = at + 1 < len(src) && int_of(src[at + 1]) == '=';
+        if c == '<' && or_equal {
+            instead = ">";
+        } else if c == '<' {
+            instead = ">=";
+        } else if or_equal {
+            instead = "<";
+        } else {
+            instead = "<=";
+        }
+        op_end = at + 1;
+        if or_equal {
+            op_end = at + 2;
+        }
+    } else {
+        let (word, after, quoted, status, e1, e2) = read_word(heap, buffer.empty(heap, 16), src, at);
+        var first_in = false;
+        borrow word as &wr in {
+            first_in = bytes.equal(buffer.bytes(wr), "in");
+        }
+        buffer.drop(heap, word);
+        op_end = after;
+        if negated {
+            // `not in` or `not contains`: the operator runs to the end of the word after `not`
+            let at2 = skip_space(src, after);
+            let (w2, after2, q2, s2, f1, f2) = read_word(heap, buffer.empty(heap, 16), src, at2);
+            var second_in = false;
+            borrow w2 as &wr in {
+                second_in = bytes.equal(buffer.bytes(wr), "in");
+            }
+            buffer.drop(heap, w2);
+            op_end = after2;
+            if second_in {
+                instead = "in";
+            } else {
+                instead = "contains";
+            }
+        } else if first_in {
+            instead = "not in";
+        } else {
+            instead = "not contains";
+        }
+    }
+    var out = buffer.append(heap, buffer.empty(heap, end - from + 16), src[from..at]);
+    out = buffer.append(heap, out, instead);
+    out = buffer.append(heap, out, src[op_end..end]);
+    buffer.drop(heap, none);
+    return (out, end, true);
 }
 
 // Read EXPR into the plan. Answers the plan, and 0 for what and the offset
@@ -458,11 +565,16 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
             what = 11;
             at = i;
         } else {
-            let (p1, after, w1, a1) = parse_cond(heap, plan, src, i);
+            let (p1, after, w1, a1, negative) = parse_cond(heap, plan, src, i);
             plan = p1;
             what = w1;
             at = a1;
             i = after;
+            if what == 0 && negative {
+                // the conjunction reader of slice A0 has no `not`: a condition that is negated is not one of its conditions
+                what = 24;
+                at = i;
+            }
             if what == 0 {
                 many = many + 1;
                 i = skip_space(src, i);
@@ -518,8 +630,8 @@ pub fn or_in[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] (buffer.Buffer, b
         }
         if ok {
             i = skip_space(src, after_column);
-            let (kind, op, after_op, w2, a2) = parse_operator(heap, src, i, typed);
-            if w2 != 0 || kind == 1 || kind == 0 && op != 0 {
+            let (kind, op, after_op, w2, a2, negated) = parse_operator(heap, src, i, typed);
+            if w2 != 0 || kind == 1 || kind == 0 && op != 0 || negated {
                 ok = false;
             } else {
                 i = skip_space(src, after_op);

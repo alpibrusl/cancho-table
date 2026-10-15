@@ -170,13 +170,13 @@ class Refusals(Base):
                 self.assertEqual((err.kind, err.offset, err.expected if err.kind in ("syntax", "group-mismatch") else err.feature), (kind, offset, what))
 
     def test_every_pinned_refusal(self):
-        for row in query_cases.REFUSALS:
+        for row in query_cases.ALL_REFUSALS:
             self.check(row)
 
     def test_every_rule_and_kind_is_pinned(self):
-        kinds = {row[1] for row in query_cases.REFUSALS}
+        kinds = {row[1] for row in query_cases.ALL_REFUSALS}
         self.assertEqual(kinds, {"syntax", "unsupported", "group-mismatch", "mixed"})
-        features = {row[3] for row in query_cases.REFUSALS if row[1] == "unsupported"}
+        features = {row[3] for row in query_cases.ALL_REFUSALS if row[1] == "unsupported"}
         for feature in ("subquery", "join", "alias", "count-column", "cast-in-select", "cast-in-group", "column-comparison", "null", "boolean", "like", "between", "is-null",
                         "having", "union", "expression", "empty-name", "order-by-two-keys", "order-by-position", "order-by-dash-name"):
             self.assertIn(feature, features)

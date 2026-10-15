@@ -40,6 +40,7 @@ EXPECTED = {
     14: "a decimal with no more fractional digits than the column's scale (write :dec(N) with a larger N to compare finer values)",
     15: "a decimal below 10^18 once scaled to the column's scale (a smaller scale, or fewer digits)",
     16: "a scale in parentheses after :dec, as :dec(2)",
+    17: "a scale from 0 to 18",
     18: "a number: digits, a point, an exponent (the nearest double), because the column is :float",
     19: "a finite number: inf and nan are not numbers here",
     20: "a number within the range of a double (between 5e-324 and 1.7976931348623157e308 in size), of at most 1,100 bytes",
@@ -204,16 +205,23 @@ def leaf(s, i, number):
     return ("leaf", cond, number, begins, i), i
 
 
-def dec_suffix(s, j, at):
-    if j >= len(s) or s[j] != "(":
-        raise Refused("syntax", at, 16)
-    k = j + 1
+def dec_suffix(s, p, at):
+    """The scale of a `:dec(N)` suffix, `p` being where the `(` must be: (("dec", N), where the suffix ends). The offsets are those of main's (docs/numbers.md): the `(` that is missing is
+    refused where it should be, a scale with no digits or more than 18 one byte after it, a `)` that is missing where it should be. (Slice A1's reference said the start of the condition
+    for all of them, which no generated expression reached; slice A2's soups did.)"""
+    if p >= len(s) or s[p] != "(":
+        raise Refused("syntax", p, 16)
+    k = p + 1
     d = ""
     while k < len(s) and s[k].isdigit() and len(d) < 3:
         d += s[k]
         k += 1
-    if not d or len(d) > 2 or int(d) > 18 or k >= len(s) or s[k] != ")":
-        raise Refused("syntax", at, 16)
+    if not d:
+        raise Refused("syntax", p + 1, 16)
+    if len(d) > 2 or int(d) > 18:
+        raise Refused("syntax", p + 1, 17)
+    if k >= len(s) or s[k] != ")":
+        raise Refused("syntax", k, 16)
     return ("dec", int(d)), k + 1
 
 

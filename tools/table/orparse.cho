@@ -6,14 +6,17 @@ module orparse;
 //
 //     EXPR  := ALL | ANY | UNIT
 //     ALL   := UNIT "and" UNIT { "and" UNIT }          ANY := UNIT "or" UNIT { "or" UNIT }
-//     UNIT  := COND | "(" EXPR ")"
+//     UNIT  := COND | "(" EXPR ")" | "not" "(" EXPR ")"
 //
-// A level is all `and` or all `or`: `a and b or c` is `where.mixed-and-or`, and the repair offers the two ways to read it. A condition is read by `expr.parse_cond`, as it always was.
-// At most 8 levels of parentheses and 64 conditions (the leaves, wherever they are).
+// A level is all `and` or all `or`: `a and b or c` is `where.mixed-and-or`, and the repair offers the two ways to read it. A condition is read by `expr.parse_cond`, as it always was, with
+// `COLUMN not in (...)` and `COLUMN not contains V` (slice A2: the condition is the `in` or the `contains`, negated). A `not` is a keyword only where a `(` follows it or a word that is not an
+// operator (`not a = 1` is refused, and the repair rewrites it): `not = 1`, `not in (1)`, `not contains x` and `not not in (1)` are the column called `not`, as they were.
+// At most 8 levels of parentheses, a `not (` being one, and 64 conditions (the leaves, wherever they are).
 //
-// The expression is read into a tree of records in one vector (`tree`: a leaf `[0, its number, start, end]`, a group `[3, its child, start, end]`, a level `[1 and | 2 or | 4 mixed, where its
-// children are, how many, start]`, the children being pairs `[the connective before it, the node]`), and a tree that holds an `or` is compiled to the branch program of `query.flow`: for each
-// condition, the condition to run next when it is true and when it is false. A conjunction has no program, and is evaluated by the loop that has always evaluated it.
+// The expression is read into a tree of records in one vector (`tree`: a leaf `[0, its number, start, end]`, a negated leaf (`not in`, `not contains`) `[5, its number, start, end]`, a group
+// `[3, its child, start, end]`, `not ( ... )` `[6, its child, start, end]`, a level `[1 and | 2 or | 4 mixed, where its children are, how many, start]`, the children being pairs `[the connective
+// before it, the node]`), and a tree that holds an `or` or a `not` is compiled to the branch program of `query.flow`: for each condition, the condition to run next when it is true and when it
+// is false. A `not` is the swap of the two exits of what it holds, and costs nothing else. A conjunction has no program, and is evaluated by the loop that has always evaluated it.
 
 import std.buffer;
 import std.bytes;
@@ -53,14 +56,51 @@ fn connective[&h, &s](heap: &!h Heap, src: &s [byte], at: int) -> [heap] (int, i
     return (c, after);
 }
 
+// What the unit at `at` begins with, as far as `not` goes: (0, _) a condition or a group, (1, p) `not (` with the parenthesis at `p`, (2, p) `not` followed by a word that is not an operator, refused
+// where that word is. `not` is a keyword here only in those two cases: before `=`, `!`, `<`, `>`, `in`, `contains` and `not` (or nothing a word can be) it is the column of that name.
+fn not_unit[&h, &s](heap: &!h Heap, src: &s [byte], at: int) -> [heap] (int, int) {
+    let (word, after, quoted, status, e1, e2) = expr.read_word(heap, buffer.empty(heap, 4), src, at);
+    var is_not = false;
+    borrow word as &wr in {
+        is_not = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "not");
+    }
+    buffer.drop(heap, word);
+    if !is_not {
+        return (0, 0);
+    }
+    let j = expr.skip_space(src, after);
+    if j >= len(src) {
+        return (0, 0);
+    }
+    let c = int_of(src[j]);
+    if c == '(' {
+        return (1, j);
+    }
+    if c == '=' || c == '!' || c == '<' || c == '>' {
+        return (0, 0);
+    }
+    let (w2, after2, quoted2, status2, f1, f2) = expr.read_word(heap, buffer.empty(heap, 4), src, j);
+    var refuse = false;
+    borrow w2 as &wr in {
+        if status2 == 0 {
+            refuse = quoted2 == 1 || !(bytes.equal(buffer.bytes(wr), "in") || bytes.equal(buffer.bytes(wr), "contains") || bytes.equal(buffer.bytes(wr), "not"));
+        }
+    }
+    buffer.drop(heap, w2);
+    if refuse {
+        return (2, j);
+    }
+    return (0, 0);
+}
+
 // One level at `from`, `UNIT { connective UNIT }`, inside `depth` parentheses; `leaves` conditions have been read before it. It stops at the end of the text or at a `)` it does not
-// consume. Answers the plan, the tree, where it stopped, the number of conditions read, the node, what / where when it is not whole, and whether an `or` was met. With `tolerant`, a level that
+// consume. Answers the plan, the tree, where it stopped, the number of conditions read, the node, what / where when it is not whole, and whether an `or` or a `not` was met (a branch program is needed). With `tolerant`, a level that
 // mixes `and` and `or` is read (as kind 4) instead of refused: that is how the repair reads an expression in order to say it in two ways.
-fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byte], from: int, depth: int, leaves0: int, tolerant: bool, hasor0: bool) -> [heap] (query.Query, vec.Vec[int], int, int, int, int, int, bool) {
+fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byte], from: int, depth: int, leaves0: int, tolerant: bool, flowed0: bool) -> [heap] (query.Query, vec.Vec[int], int, int, int, int, int, bool) {
     var plan = q;
     var tr = tr0;
     var leaves = leaves0;
-    var hasor = hasor0;
+    var flowed = flowed0;
     var what = 0;
     var at = 0;
     var kids = vec.empty(heap, 8, 0);
@@ -74,20 +114,37 @@ fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byt
     while more && what == 0 {
         i = expr.skip_space(src, i);
         var node = 0;
+        var paren = 0 - 1;
+        var group_kind = 3;
+        var refused_at = 0 - 1;
+        if i < len(src) && int_of(src[i]) == '(' {
+            paren = i;
+        } else {
+            let (nk, np) = not_unit(heap, src, i);
+            if nk == 1 {
+                paren = np;
+                group_kind = 6;
+            } else if nk == 2 {
+                refused_at = np;
+            }
+        }
         if leaves >= 64 {
             what = 11;
             at = i;
-        } else if i < len(src) && int_of(src[i]) == '(' {
+        } else if refused_at >= 0 {
+            what = 23;
+            at = refused_at;
+        } else if paren >= 0 {
             if depth >= depth_limit() {
                 what = 21;
-                at = i;
+                at = paren;
             } else {
                 let opened = i;
-                let (p2, t2, after, l2, child, w2, a2, o2) = level(heap, plan, tr, src, i + 1, depth + 1, leaves, tolerant, hasor);
+                let (p2, t2, after, l2, child, w2, a2, o2) = level(heap, plan, tr, src, paren + 1, depth + 1, leaves, tolerant, flowed);
                 plan = p2;
                 tr = t2;
                 leaves = l2;
-                hasor = o2;
+                flowed = o2 || group_kind == 6;
                 what = w2;
                 at = a2;
                 if what == 0 {
@@ -97,7 +154,7 @@ fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byt
                         borrow tr as &sz in {
                             node = vec.size(sz);
                         }
-                        tr = push4(heap, tr, 3, child, opened, i);
+                        tr = push4(heap, tr, group_kind, child, opened, i);
                     } else {
                         what = 22;
                         at = i;
@@ -105,7 +162,7 @@ fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byt
                 }
             }
         } else {
-            let (p1, after, w1, a1) = expr.parse_cond(heap, plan, src, i);
+            let (p1, after, w1, a1, negated) = expr.parse_cond(heap, plan, src, i);
             plan = p1;
             what = w1;
             at = a1;
@@ -113,7 +170,12 @@ fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byt
                 borrow tr as &sz in {
                     node = vec.size(sz);
                 }
-                tr = push4(heap, tr, 0, leaves, i, after);
+                var leaf_kind = 0;
+                if negated {
+                    leaf_kind = 5;
+                    flowed = true;
+                }
+                tr = push4(heap, tr, leaf_kind, leaves, i, after);
                 leaves = leaves + 1;
                 i = after;
             }
@@ -147,7 +209,7 @@ fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byt
                         }
                     }
                     if c == 2 {
-                        hasor = true;
+                        flowed = true;
                     }
                     conn = c;
                     i = expr.skip_space(src, after_c);
@@ -174,23 +236,23 @@ fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byt
         tr = push4(heap, tr, kind, at_kids, count, start);
     }
     vec.drop(heap, kids);
-    return (plan, tr, i, leaves, node, what, at, hasor);
+    return (plan, tr, i, leaves, node, what, at, flowed);
 }
 
 // The number of the first condition under `node`.
 fn first_leaf[&n](tr: &n vec.Vec[int], node: int) -> [] int {
     let kind = vec.get(tr, node);
-    if kind == 0 {
+    if kind == 0 || kind == 5 {
         return vec.get(tr, node + 1);
     }
-    if kind == 3 {
+    if kind == 3 || kind == 6 {
         return first_leaf(tr, vec.get(tr, node + 1));
     }
     return first_leaf(tr, vec.get(tr, vec.get(tr, node + 1) + 1));
 }
 
 // Compile `node` to the program, given where to go when it is true (`t`) and when it is false (`f`): a leaf writes its two exits; `A and B` runs `A` with (the first condition of `B`, `f`) and
-// `B` with (`t`, `f`); `A or B` is the dual. Every exit is a condition after the leaf's own, or -1 (kept) or -2 (dropped).
+// `B` with (`t`, `f`); `A or B` is the dual; `not A` runs `A` with (`f`, `t`). Every exit is a condition after the leaf's own, or -1 (kept) or -2 (dropped).
 fn emit[&n, &p](tr: &n vec.Vec[int], flow: &!p vec.Vec[int], node: int, t: int, f: int) -> [] int {
     let kind = vec.get(tr, node);
     if kind == 0 {
@@ -199,8 +261,19 @@ fn emit[&n, &p](tr: &n vec.Vec[int], flow: &!p vec.Vec[int], node: int, t: int, 
         vec.set(flow, 2 * leaf + 1, f);
         return 0;
     }
+    if kind == 5 {
+        // `not in`, `not contains`: the condition's own exits, swapped
+        let leaf = vec.get(tr, node + 1);
+        vec.set(flow, 2 * leaf, f);
+        vec.set(flow, 2 * leaf + 1, t);
+        return 0;
+    }
     if kind == 3 {
         return emit(tr, flow, vec.get(tr, node + 1), t, f);
+    }
+    if kind == 6 {
+        // `not ( ... )`: what is inside, with the two exits swapped
+        return emit(tr, flow, vec.get(tr, node + 1), f, t);
     }
     let at = vec.get(tr, node + 1);
     let count = vec.get(tr, node + 2);
@@ -231,7 +304,7 @@ fn emit[&n, &p](tr: &n vec.Vec[int], flow: &!p vec.Vec[int], node: int, t: int, 
 // where, as a byte offset into the expression. A plan that holds an `or` carries its branch program.
 pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (query.Query, int, int) {
     var tr = vec.empty(heap, 64, 0);
-    let (p, t2, after, leaves, node, w, a, hasor) = level(heap, q, tr, src, 0, 0, 0, false, false);
+    let (p, t2, after, leaves, node, w, a, flowed) = level(heap, q, tr, src, 0, 0, 0, false, false);
     var plan = p;
     var what = w;
     var at = a;
@@ -243,7 +316,7 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
         }
     }
     plan = query.bump(plan, 1, leaves);
-    if what == 0 && hasor {
+    if what == 0 && flowed {
         var flow = vec.empty(heap, 2 * leaves + 1, 0);
         var j = 0;
         while j < 2 * leaves {
@@ -287,8 +360,13 @@ fn put_conn[&h](heap: &!h Heap, out: buffer.Buffer, c: int) -> [heap] buffer.Buf
 fn render[&h, &s, &n](heap: &!h Heap, out: buffer.Buffer, src: &s [byte], tr: &n vec.Vec[int], node: int, policy: int) -> [heap] buffer.Buffer {
     var o = out;
     let kind = vec.get(tr, node);
-    if kind == 0 {
+    if kind == 0 || kind == 5 {
         return buffer.append(heap, o, src[vec.get(tr, node + 2)..vec.get(tr, node + 3)]);
+    }
+    if kind == 6 {
+        o = buffer.append(heap, o, "not (");
+        o = render(heap, o, src, tr, vec.get(tr, node + 1), policy);
+        return buffer.push(heap, o, byte_of(')'));
     }
     if kind == 3 {
         o = buffer.push(heap, o, byte_of('('));
@@ -372,7 +450,7 @@ fn whole[&h, &s](heap: &!h Heap, text: &s [byte]) -> [heap] bool {
 // The two readings of an expression that mixes `and` and `or` at some level (section 3.3): (the reading by precedence, whether it is offered, the reading left to right, whether it is
 // offered). A reading is offered only if the grammar takes it whole (a reading can pass the 8 levels of parentheses). Nothing is offered for an expression that is not otherwise whole.
 pub fn readings[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] (buffer.Buffer, bool, buffer.Buffer, bool) {
-    let (p, t2, after, leaves, node, w, a, hasor) = level(heap, query.empty(heap), vec.empty(heap, 64, 0), src, 0, 0, 0, true, false);
+    let (p, t2, after, leaves, node, w, a, flowed) = level(heap, query.empty(heap), vec.empty(heap, 64, 0), src, 0, 0, 0, true, false);
     query.drop(heap, p);
     var ok = w == 0 && expr.skip_space(src, after) >= len(src);
     var r0 = buffer.empty(heap, 1);

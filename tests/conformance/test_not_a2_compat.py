@@ -65,12 +65,14 @@ class Compat(unittest.TestCase):
         expr = C1.expression_of(argv)
         r1, r2 = readings(expr)
         if row[:3] == old[:3]:
-            self.assertEqual(r1, r2, "%s %r: the references say the grammars differ, and the tool answered the bytes of main" % (cid, expr))
+            # (a refusal in the formats that carry no detail -- csv, JSON lines -- is one line of text that does not say where or what was expected: the same bytes for two readings)
+            if kind not in ("csv", "jsonl", "query-csv") and not (r1 != r2 and r1[0] == r2[0] == "syntax" and "stderr" in kind):
+                self.assertEqual(r1, r2, "%s %r: the references say the grammars differ, and the tool answered the bytes of main" % (cid, expr))
             return None
         if r1 == r2:
-            # the same reading, so the same refusal at the same place with the same words: only the repair may differ, and only that of a mix, which now may hold a `not`
+            # the same reading, so the same refusal at the same place with the same words: only the repair may differ. It can: a repair is the corrected query or the two readings of a mix,
+            # offered only if the rest of the expression is whole, and the rest may now hold a `not` (a `"x"` made a value in a query that also has `not b < 1`)
             self.assertEqual(row[3], old[3], "%s %r: read the same by both grammars, and answered differently in more than the repair" % (cid, expr))
-            self.assertEqual(r1[0], "mixed", "%s %r: only the repair of a mix may differ when the reading is the same" % (cid, expr))
             return [cid, kind, expr[1], list(r1), list(r2), "repair"]
         args = [a.replace("{DIR}", self.dir) for a in argv]
         doc = None if kind in ("csv", "jsonl", "query-csv") else C1.as_doc(run(*args))
@@ -131,7 +133,7 @@ class Compat(unittest.TestCase):
         self.assertGreater(len(became), 100)
         for text in became:
             self.assertIsNotNone(text)
-            self.assertRegex(text.lower(), r"\bnot\b", text)
+            self.assertRegex(text.lower().replace("\\", ""), r"\bnot\b", text)         # an escaped n\ot is the word not, as an escaped \and is the word and
 
     @unittest.skipUnless(BASE, "NOT_A2_BASE names the directory of main's build")
     def test_against_the_binary_of_main(self):

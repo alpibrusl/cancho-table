@@ -8,7 +8,7 @@ module qparse;
 // (the codes of query.cho).
 //
 //     select item      [0 column | 1 aggregate, function, column token, type, scale or -1, start, end, 0]       functions: 0 count, 1 sum, 2 min, 3 max, 4 distinct, 5 mean
-//     condition        [column token, type, operator, how many values, start, 0, 0, 0] then the values' tokens   operators: 0 = 1 != 2 < 3 <= 4 > 5 >= 6 contains 7 in
+//     condition        [column token, type, operator, how many values, start, 0, 0, 0] then the values' tokens   operators: 0 = 1 != 2 < 3 <= 4 > 5 >= 6 contains 7 in 8 not in 9 not contains
 //     order key        [0 column | 1 aggregate, function, column token, type, scale or -1, 1 when descending, start, end of an aggregate]
 //     group column     the column's token
 
@@ -428,9 +428,53 @@ fn comparison[&m](m: &m [int]) -> [] int {
     return op_of(qarena.tok_aux(m, i));
 }
 
+// The values of `in (...)`, the cursor being after `in`: each value's token is kept in the records after the condition's. Answers how many values, or -1 with the error set.
+fn in_values[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    if expect_sym(m, qlex.y_open(), 19) != 0 {
+        return 0 - 1;
+    }
+    var values = 0;
+    var listing = true;
+    while listing {
+        if values >= 1024 {
+            qarena.fail(m, 1, 27, start_of(m, 0));
+            return 0 - 1;
+        }
+        let v = literal(q, m);
+        if v < 0 {
+            return 0 - 1;
+        }
+        m[m[qarena.s_rec_base()]] = v;
+        m[qarena.s_rec_base()] = m[qarena.s_rec_base()] + 1;
+        values = values + 1;
+        listing = eat_sym(m, qlex.y_comma());
+    }
+    if expect_sym(m, qlex.y_close(), 20) != 0 {
+        return 0 - 1;
+    }
+    return values;
+}
+
+// The value of `contains` (operator 6) or `not contains` (operator 9) for the condition at record `r` of type `t`, the cursor being after `contains`, whose token is `word`: a typed column
+// cannot be searched (that is refused at the word). Answers 0, or 1 with the error set.
+fn contains_value[&q, &m](q: &q [byte], m: &!m [int], r: int, t: int, word: int, op: int) -> [] int {
+    if t != 0 {
+        return qarena.fail(m, 1, 15, qarena.tok_start(m, word));
+    }
+    let v = literal(q, m);
+    if v < 0 {
+        return 1;
+    }
+    m[r + 2] = op;
+    m[r + 3] = 1;
+    m[m[qarena.s_rec_base()]] = v;
+    m[qarena.s_rec_base()] = m[qarena.s_rec_base()] + 1;
+    return 0;
+}
+
 // WHERE: conditions joined by `and` or by `or`, and parentheses (docs/or-and-columns.md section 3.4): `orlist = andlist { or andlist }`, here read as a level that is all `and` or all `or`, a
 // unit being a condition or a parenthesised level. At most 64 conditions, 8 levels of parentheses and, in one `in`, 1,024 values. What it reads it keeps as records, in the order of the text:
-// a condition's record (and its values after it), and for the structure a record of eight integers whose first is -1 an opening parenthesis, -2 a closing one, -3 `and`, -4 `or` (the fifth
+// a condition's record (and its values after it), and for the structure a record of eight integers whose first is -1 an opening parenthesis, -2 a closing one, -3 `and`, -4 `or`, -5 `not` (the fifth
 // is its offset). A level that mixes `and` and `or` is read to the end, as the flags' parser would read it with a repair in mind, and the offset of the first connective that changed it is kept
 // (`s_mix`, plus one): the translation turns that into `query.mixed-and-or`, which comes before anything the rest of the statement says.
 fn condition[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
@@ -468,38 +512,13 @@ fn condition[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
         m[qarena.s_rec_base()] = m[qarena.s_rec_base()] + 1;
     } else if is_word(q, m, 0, "contains") {
         step(m);
-        if t != 0 {
-            return qarena.fail(m, 1, 15, qarena.tok_start(m, here));
-        }
-        let v = literal(q, m);
-        if v < 0 {
+        if contains_value(q, m, r, t, here, 6) != 0 {
             return 1;
         }
-        m[r + 2] = 6;
-        m[r + 3] = 1;
-        m[m[qarena.s_rec_base()]] = v;
-        m[qarena.s_rec_base()] = m[qarena.s_rec_base()] + 1;
     } else if is_word(q, m, 0, "in") {
         step(m);
-        if expect_sym(m, qlex.y_open(), 19) != 0 {
-            return 1;
-        }
-        var values = 0;
-        var listing = true;
-        while listing {
-            if values >= 1024 {
-                return qarena.fail(m, 1, 27, start_of(m, 0));
-            }
-            let v = literal(q, m);
-            if v < 0 {
-                return 1;
-            }
-            m[m[qarena.s_rec_base()]] = v;
-            m[qarena.s_rec_base()] = m[qarena.s_rec_base()] + 1;
-            values = values + 1;
-            listing = eat_sym(m, qlex.y_comma());
-        }
-        if expect_sym(m, qlex.y_close(), 20) != 0 {
+        let values = in_values(q, m);
+        if values < 0 {
             return 1;
         }
         m[r + 2] = 7;
@@ -511,7 +530,29 @@ fn condition[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
     } else if is_word(q, m, 0, "is") {
         return qarena.fail(m, 2, 75, qarena.tok_start(m, here));
     } else if is_word(q, m, 0, "not") {
-        return qarena.fail(m, 2, 76, qarena.tok_start(m, here));
+        // `not in (...)` and `not contains V`; anything else after `not` is refused at the word after it (docs/or-and-columns.md section 3.4)
+        step(m);
+        let word = tk(m, 0);
+        if is_word(q, m, 0, "in") {
+            step(m);
+            let values = in_values(q, m);
+            if values < 0 {
+                return 1;
+            }
+            m[r + 2] = 8;
+            m[r + 3] = values;
+        } else if is_word(q, m, 0, "contains") {
+            step(m);
+            if contains_value(q, m, r, t, word, 9) != 0 {
+                return 1;
+            }
+        } else if is_word(q, m, 0, "like") || is_word(q, m, 0, "ilike") {
+            return qarena.fail(m, 2, 73, qarena.tok_start(m, word));
+        } else if is_word(q, m, 0, "between") {
+            return qarena.fail(m, 2, 74, qarena.tok_start(m, word));
+        } else {
+            return qarena.fail(m, 1, 30, qarena.tok_start(m, word));
+        }
     } else {
         return qarena.fail(m, 1, 13, qarena.tok_start(m, here));
     }
@@ -527,30 +568,55 @@ fn structure[&m](m: &!m [int], what: int, at: int) -> [] int {
     return 0;
 }
 
+// A unit: a condition, a group `( ... )`, or `not` and a unit (docs/or-and-columns.md section 3.4, where `not` binds the unit that follows: a comparison, a group or another `not`). The flag
+// form has `not (` only, so the translation writes the parenthesis a `not` before a condition needs: that parenthesis is a level of the ceiling of 8 like one the query wrote, and is refused at
+// the `not` when it would be the 9th. A `not` before a group is written as it stands. Structure records: -5 `not`, and for the parenthesis of a `not` before a condition -1 and -2.
+fn unit[&q, &m](q: &q [byte], m: &!m [int], depth: int) -> [] int {
+    let at = start_of(m, 0);
+    if m[qarena.s_cond_count()] >= 64 {
+        return qarena.fail(m, 1, 27, at);
+    }
+    if is_word(q, m, 0, "not") {
+        step(m);
+        structure(m, 0 - 5, at);
+        if is_sym(m, 0, qlex.y_open()) {
+            return unit(q, m, depth);
+        }
+        if depth >= 8 {
+            return qarena.fail(m, 1, 29, at);
+        }
+        structure(m, 0 - 1, at);
+        if unit(q, m, depth + 1) != 0 {
+            return 1;
+        }
+        structure(m, 0 - 2, start_of(m, 0));
+        return 0;
+    }
+    if is_sym(m, 0, qlex.y_open()) {
+        if depth >= 8 {
+            return qarena.fail(m, 1, 29, at);
+        }
+        step(m);
+        structure(m, 0 - 1, at);
+        if level(q, m, depth + 1) != 0 {
+            return 1;
+        }
+        let close = start_of(m, 0);
+        if expect_sym(m, qlex.y_close(), 8) != 0 {
+            return 1;
+        }
+        structure(m, 0 - 2, close);
+        return 0;
+    }
+    return condition(q, m);
+}
+
 // A level: unit { connective unit } at `depth` parentheses deep. Stops before a `)` that closes it, or at anything that is not a connective.
 fn level[&q, &m](q: &q [byte], m: &!m [int], depth: int) -> [] int {
     var kind = 0;
     var more = true;
     while more {
-        if is_sym(m, 0, qlex.y_open()) {
-            let at = start_of(m, 0);
-            if m[qarena.s_cond_count()] >= 64 {
-                return qarena.fail(m, 1, 27, at);
-            }
-            if depth >= 8 {
-                return qarena.fail(m, 1, 29, at);
-            }
-            step(m);
-            structure(m, 0 - 1, at);
-            if level(q, m, depth + 1) != 0 {
-                return 1;
-            }
-            let close = start_of(m, 0);
-            if expect_sym(m, qlex.y_close(), 8) != 0 {
-                return 1;
-            }
-            structure(m, 0 - 2, close);
-        } else if condition(q, m) != 0 {
+        if unit(q, m, depth) != 0 {
             return 1;
         }
         var connective = 0;

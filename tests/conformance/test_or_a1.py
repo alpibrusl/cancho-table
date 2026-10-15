@@ -23,6 +23,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
+import not_a2 as N
 import or_a1 as O
 import refimpl
 from harness import Scratch, binary, introspect, run, run_argv, validate
@@ -536,7 +537,7 @@ class Offsets(Base):
             return text, run("--root", self.dir, "--where", text, "--select", "id", "o.csv")
 
         for text, r in pmap(one, texts):
-            ref = O.parse_result(lat(text))
+            ref = N.parse_result(lat(text))        # the grammar now: A2's reference reads `not (` too, and a text of A1's soups can hold one
             self.assertEqual(validate(r), [], (text, r))
             d = doc_of(r)
             if d.get("ok"):
@@ -553,7 +554,7 @@ class Offsets(Base):
             self.assertEqual(tool, ref if ref[0] != "ok" else ("ok",), text[:300])
             if ref[0] == "mixed":
                 options = [lat(o["argv"][o["argv"].index("--where") + 1]) for o in d["error"]["repair"]["options"]] if d["error"]["repair"]["kind"] == "choose" else []
-                offered = O.offered_readings(lat(text))
+                offered = N.offered_readings(lat(text))
                 self.assertEqual(options, offered, text)
         self.assertGreater(seen["ok"], SOUPS // 20, seen)
         self.assertGreater(seen["syntax"], SOUPS // 10, seen)

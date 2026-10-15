@@ -68,7 +68,8 @@ pub fn chain_notes[&h, &q](heap: &!h Heap, o: buffer.Buffer, tree: &q query.Quer
     let n = query.count_of(tree, 1);
     var k = 0;
     while k < n {
-        var starts = single(tree, k);
+        // a run that leaves by `reject` when it is true is `not (a = 1 or a = 2)` or `a not in (1) and a not in (2)`: one `in` there is not the advice (docs/or-and-columns.md section 17)
+        var starts = single(tree, k) && query.flow_at(tree, k, 0) != 0 - 2;
         var j = 0;
         while j < k && starts {
             if linked(tree, j, k) {

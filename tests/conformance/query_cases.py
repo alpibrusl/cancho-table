@@ -206,7 +206,8 @@ NOT_PINNED = [
     ("select a from 'f' where b not in (1", 'syntax', 35, ', or )'),
     ("select a from 'f' order by not a", 'syntax', 27, 'a column (a name that is a keyword is written "like this")'),
 ]
-REFUSALS = [row for row in PINNED if row not in RETIRED] + NOT_PINNED
+REFUSALS = [row for row in PINNED if row not in RETIRED]
+ALL_REFUSALS = REFUSALS + NOT_PINNED          # what test_query.py pins; the fuzz tests of the other modules seed from REFUSALS, whose size sets the mix they draw
 
 # (query, the flags it translates to, the source)
 ACCEPTED = [

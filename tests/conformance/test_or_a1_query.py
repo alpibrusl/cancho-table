@@ -6,7 +6,7 @@
   rest of the query translates;
 * the ceilings: 64 conditions, 1,024 values, 8 levels of parentheses, 4,096 bytes;
 * the same plan as flags and as a query gives the same bytes (the equivalence gate of test_query.py draws its plans with `or` and parentheses; here the explain documents too);
-* what stays unsupported (`not`, `like`, `between`, `is null`) and what a position outside the where clause says of an `or`.
+* what stays unsupported (`like`, `between`, `is null`; `not` since slice A2) and what a position outside the where clause says of an `or`.
 """
 
 import json
@@ -14,6 +14,7 @@ import os
 import random
 import unittest
 
+import not_a2 as N
 import or_a1 as O
 import query_ref
 from harness import Scratch, run, validate
@@ -40,7 +41,7 @@ def leaf(rng):
         return "%s in (%s)" % (col, ", ".join(rng.choice(vals) for _ in range(rng.randint(1, 3))))
     if r < 0.9 and "::" not in col and "cast" not in col:
         return "%s contains %s" % (col, rng.choice(["'x'", "'a'", "''"]))
-    return rng.choice(["%s like 'x%%'" % col, "%s not in (1)" % col, "%s is null" % col, "%s between 1 and 2" % col, "%s = %s" % (col, rng.choice(COLUMNS)), "not %s = 1" % col])
+    return rng.choice(["%s like 'x%%'" % col, "%s not in (1)" % col, "%s is null" % col, "%s between 1 and 2" % col, "%s = %s" % (col, rng.choice(COLUMNS)), "not %s = 1" % col])        # (the last two are answers since slice A2: the reference decides)
 
 
 def clause(rng, depth=0):
@@ -147,7 +148,7 @@ class Mixed(Base):
                 self.assertEqual(d["error"]["repair"]["kind"], "none", q)
                 continue
             where = argv[argv.index("--where") + 1]
-            offered = O.offered_readings(where)
+            offered = N.offered_readings(where)
             if not offered:
                 self.assertEqual(d["error"]["repair"]["kind"], "none", q)
                 continue
@@ -246,12 +247,12 @@ class Same(Base):
         self.assertEqual([r[0] for r in a["data"]["rows"]], ["1", "2", "3"])
 
     def test_what_stays_unsupported(self):
-        for q, feature in (("a not in (1)", "not"), ("a like 'x'", "like"), ("a between 1 and 2", "between"), ("a is null", "is-null"), ("a = null", "null"), ("a = b", "column-comparison")):
+        for q, feature in (("a like 'x'", "like"), ("a between 1 and 2", "between"), ("a is null", "is-null"), ("a = null", "null"), ("a = b", "column-comparison")):
             d = doc_of(self.query("select id from 'q.csv' where " + q))
             self.assertEqual((d["error"]["rule"], d["error"]["detail"]["feature"]), ("query.unsupported", feature), q)
-        for q in ("select id from 'q.csv' where not a = 'x'", "select id from 'q.csv' where not (a = 'x')"):
-            d = doc_of(self.query(q))
-            self.assertEqual(d["error"]["rule"], "query.syntax", q)
+        # slice A2: `not` is in the subset (test_not_a2_query.py holds the grammar); what A1 refused as the feature `not` and as a syntax error now answers
+        for q in ("select id from 'q.csv' where not a = 'x'", "select id from 'q.csv' where not (a = 'x')", "select id from 'q.csv' where a not in (1)"):
+            self.assertTrue(doc_of(self.query(q)).get("ok"), q)
         d = doc_of(self.query("select id from 'q.csv' order by id or a"))
         self.assertEqual((d["error"]["rule"], d["error"]["detail"]["expected"]), ("query.syntax", "the end of the query (one statement)"))
         d = doc_of(self.query("select id from 'q.csv' where a = 'x' (b = 'y')"))
