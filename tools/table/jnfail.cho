@@ -76,12 +76,12 @@ fn collides[&a, &b, &x, &y, &p](pnames: &a buffer.Buffer, pends: &b vec.Vec[int]
     return false;
 }
 
-// How many build columns would collide with the probe header under `prefix`.
-pub fn collisions[&a, &b, &x, &y, &p](pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], prefix: &p [byte]) -> [] int {
+// How many build columns would collide with the probe header under `prefix`; a column `dropped` marks (the build column of a shared-name key, which the answer leaves out) cannot.
+pub fn collisions[&a, &b, &x, &y, &p, &z](pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], prefix: &p [byte], dropped: &z [int]) -> [] int {
     var n = 0;
     var j = 0;
     while j < vec.size(bends) {
-        if collides(pnames, pends, bnames, bends, j, prefix) {
+        if dropped[j] == 0 && collides(pnames, pends, bnames, bends, j, prefix) {
             n = n + 1;
         }
         j = j + 1;
@@ -118,13 +118,13 @@ fn stem_prefix[&h, &s](heap: &!h Heap, shown: &s [byte]) -> [heap] buffer.Buffer
 
 // `join.column-collision`: a name that both headers have, with the prefix given (or ""). Nothing is renamed. The repair is the invocation with `--join-prefix` and the stem of the build
 // file's name, offered only when no prefix was given and the result has no collision; otherwise there is none.
-pub fn collision[&h, &g, &p, &a, &b, &x, &y, &q, &s](heap: &!h Heap, e: fail.Errors, args: &g Args, parsed: &p cli.Parsed, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], prefix: &q [byte], shown: &s [byte], table: &static [byte]) -> [heap, args] fail.Errors {
+pub fn collision[&h, &g, &p, &a, &b, &x, &y, &q, &s, &z](heap: &!h Heap, e: fail.Errors, args: &g Args, parsed: &p cli.Parsed, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], prefix: &q [byte], shown: &s [byte], table: &static [byte], dropped: &z [int]) -> [heap, args] fail.Errors {
     var o = fail.open_in(heap, finish.extra(), "join.column-collision", "a column name is in both files, and the joined row would have it twice (nothing is renamed on the way)", "give the --join file's columns a prefix with --join-prefix, or select and name them by position");
     let given = cli.has(parsed, table, "join-prefix");
     let stem = stem_prefix(heap, shown);
     var good = false;
     borrow stem as &sr in {
-        good = !given && collisions(pnames, pends, bnames, bends, buffer.bytes(sr)) == 0;
+        good = !given && collisions(pnames, pends, bnames, bends, buffer.bytes(sr), dropped) == 0;
     }
     if good {
         var c = fail.choose_open(heap, o);
@@ -154,7 +154,7 @@ pub fn collision[&h, &g, &p, &a, &b, &x, &y, &q, &s](heap: &!h Heap, e: fail.Err
     var found = 0;
     var j = 0;
     while j < vec.size(bends) {
-        if collides(pnames, pends, bnames, bends, j, prefix) {
+        if dropped[j] == 0 && collides(pnames, pends, bnames, bends, j, prefix) {
             found = found + 1;
             if listed < 32 {
                 var from = 0;
@@ -204,5 +204,62 @@ pub fn too_many_rows[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], l
     o = fail.detail_int(heap, o, "probe_line", probe_line);
     o = fail.detail_int(heap, o, "matches", matches);
     o = fail.detail_int(heap, o, "max_matches_so_far", max_matches);
+    return fail.add(heap, e, o);
+}
+
+// A key cell that is not of the type its pair was given (docs/joins.md section 5.2): the rule of the rest of the tool, with `context` "join", which file it was in (`input`), the pair of `--on`
+// (counted from 1), the column by the name its own header gives it, the row and line of its own file and the cell. `status` is the answer of `query.parse_typed`: 4 not an integer, 5 past 64 bits,
+// 6 not a decimal, 7 more fractional digits than the scale, 8 too wide, 9 not a float, 10 inf or nan, 11 past the range, 12 rounds to zero, 13 too long. An empty cell is not of any type.
+pub fn typed_key[&h, &s, &n, &v](heap: &!h Heap, e: fail.Errors, status: int, input: &static [byte], shown: &s [byte], column: &n [byte], row: int, line: int, value: &v [byte], pair: int, scale: int, digits: int) -> [heap] fail.Errors {
+    var rule = "value.not-integer";
+    var what = "a key cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)";
+    if status == 5 {
+        rule = "value.integer-overflow";
+        what = "a key cell is an integer that does not fit 64 bits";
+    } else if status == 6 {
+        rule = "value.not-decimal";
+        what = "a key cell is not a decimal: digits and at most one point, optionally signed, nothing else (an empty cell is not one)";
+    } else if status == 7 {
+        rule = "value.decimal-scale";
+        what = "a key cell has more fractional digits than the scale of its pair; a decimal is never rounded";
+    } else if status == 8 {
+        rule = "value.decimal-too-wide";
+        what = "a key cell has 18 or more significant digits once scaled to the scale of its pair";
+    } else if status == 9 {
+        rule = "value.not-float";
+        what = "a key cell is not a number: digits, a point and an exponent, optionally signed, nothing else (an empty cell is not one)";
+    } else if status == 10 {
+        rule = "value.not-finite";
+        what = "a key cell is inf or nan, which are not numbers here: a NaN would break equality";
+    } else if status == 11 || status == 12 {
+        rule = "value.float-range";
+        what = "a key cell is outside the range of a double, or a non-zero number so small that it would read as zero";
+    } else if status == 13 {
+        rule = "limit.number-too-long";
+        what = "a key cell is longer than 1,100 bytes, the longest cell that can be a double";
+    }
+    var o = fail.open_in(heap, finish.extra(), rule, what, "a typed key is read from every row and refused at the first cell that is not of its type; write the pair without its type to compare the cells as text, or correct the file (this version has no filter that runs before the key is read)");
+    o = fail.repair_none(heap, o, "what the cell was meant to be is not known");
+    o = fail.detail_open(heap, o);
+    o = fail.detail_text(heap, o, "path", shown);
+    o = fail.detail_str(heap, o, "context", "join");
+    o = fail.detail_str(heap, o, "input", input);
+    o = fail.detail_int(heap, o, "pair", pair);
+    o = fail.detail_text(heap, o, "column", column);
+    o = fail.detail_int(heap, o, "row", row);
+    o = fail.detail_int(heap, o, "line", line);
+    o = fail.detail_text(heap, o, "value", value);
+    o = fail.detail_bool(heap, o, "value_truncated", len(value) >= 64);
+    if status >= 6 && status <= 8 {
+        o = fail.detail_int(heap, o, "scale", scale);
+    }
+    if status == 7 {
+        o = fail.detail_int(heap, o, "digits", digits);
+    }
+    if status == 11 {
+        o = fail.detail_str(heap, o, "direction", "overflow");
+    } else if status == 12 {
+        o = fail.detail_str(heap, o, "direction", "underflow");
+    }
     return fail.add(heap, e, o);
 }

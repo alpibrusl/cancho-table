@@ -277,18 +277,6 @@ class Keys(unittest.TestCase):
         finally:
             s.cleanup()
 
-    def test_a_typed_key_is_not_in_this_version(self):
-        s = Scratch()
-        try:
-            s.write("p.csv", "k\n7\n")
-            s.write("b.csv", "id\n007\n")
-            for on in ("k=id:int", "k:int=id:int", "k=id:dec(2)", "k=id:float"):
-                r = run("--root", s.dir, "--join", "b.csv", "--on", on, "p.csv")
-                self.assertEqual((r.status, r.first_rule()), (2, "args.bad-value"), on)
-                self.assertEqual(r.error()["detail"]["flags"], "--on")
-        finally:
-            s.cleanup()
-
 
 class Columns(unittest.TestCase):
     """The header of a join is the probe's names, then the build's with the prefix. A name in both is a refusal; nothing is renamed on the way."""
@@ -409,8 +397,9 @@ class Flags(unittest.TestCase):
         r = run("--root", self.s.dir, "--join", "./-", "--on", "k=id", "--format", "csv", "p.csv")
         self.assertEqual(r.stdout.decode().splitlines(), ["k,v,id,w", "a,1,a,2"])
 
-    def test_the_forms_of_on_this_version_does_not_take(self):
-        cases = {"k=id,w": "a second pair with no equals sign", "k": "no pair", "k=": "empty name", "=id": "empty name", "k=id,v=w": "two pairs", "k=id=w": "two equals signs", "k=id:int": "a type", "k\\x=id": "bad escape", "k=id\\": "trailing backslash"}
+    def test_the_forms_of_on_that_are_never_a_pair(self):
+        # (J2 takes a second pair, a type and a shared name: test_join_j2.py has the grammar of --on whole)
+        cases = {"k=": "empty name", "=id": "empty name", "k=id=w": "two equals signs", "k\\x=id": "bad escape", "k=id\\": "trailing backslash"}
         for on, why in cases.items():
             with self.subTest(on):
                 r = run("--root", self.s.dir, "--join", "b.csv", "--on", on, "p.csv")
@@ -426,10 +415,11 @@ class Flags(unittest.TestCase):
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--group", "k", "p.csv")
         self.assertIn("pipe", r.error()["hint"])
 
-    def test_only_the_inner_join_exists_yet(self):
-        for t in ("left", "semi", "anti", "right", "full", "cross", "LEFT"):
+    def test_right_full_and_cross_are_not_join_types(self):
+        for t in ("right", "full", "cross", "LEFT"):
             self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t), (2, "args.bad-value"), t)
-        self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", "inner")[0], 0)
+        for t in ("inner", "left", "semi", "anti"):
+            self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t)[0], 0, t)
 
     def test_max_join_rows_is_1_to_a_billion(self):
         for v in ("0", "1000000001"):
@@ -923,7 +913,7 @@ class Introspect(unittest.TestCase):
     def test_the_flags_and_limits_and_rules_are_in_introspect(self):
         d = introspect()
         names = {f["name"]: f for f in d["flags"]}
-        for flag, kind in (("--join", "path"), ("--on", "text"), ("--join-type", "choice:inner"), ("--join-prefix", "any"), ("--max-join-rows", "nat")):
+        for flag, kind in (("--join", "path"), ("--on", "text"), ("--join-type", "choice:inner/left/semi/anti"), ("--join-prefix", "any"), ("--max-join-rows", "nat")):
             self.assertEqual(names[flag]["kind"], kind, flag)
         self.assertEqual(names["--join"]["role"], "path-read")
         self.assertEqual(names["--join-type"]["default"], "inner")

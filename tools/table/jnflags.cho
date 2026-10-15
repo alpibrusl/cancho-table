@@ -5,11 +5,12 @@ module jnflags;
 // The flags of a join (docs/joins.md section 2) and what is wrong with them before any byte is read: `--join` and `--on`, `--join-type`, `--join-prefix`, `--max-join-rows`. Looked up only
 // when an argument could be one of them (`Inputs.join_mention`).
 //
-// What this slice takes of the design (docs/joins.md section 11, J1): one key pair, `PROBE=BUILD`, compared as text; the inner join; rows out. The rest is refused here with a rule and
-// a hint, never ignored: the shared-name form `--on NAME`, a type suffix and a second pair (J2), `--group`, `--agg`, `--order-by`, `--sort`, `--top` and `--report` over a join (J3).
+// What these slices take of the design (docs/joins.md section 11): J1 one key pair compared as text and the inner join; J2 the left, semi and anti joins, typed keys, a list of up to 8 pairs, the shared-name
+// form `--on NAME`; rows out. The rest is refused here with a rule and a hint, never ignored: `--group`, `--agg`, `--order-by`, `--sort`, `--top` and `--report` over a join (J3).
 
 import std.buffer;
 import std.bytes;
+import std.vec;
 import flags;
 import inputs;
 import query;
@@ -17,71 +18,139 @@ import spec;
 import toolbox.cli;
 import toolbox.fail;
 
-// `--on` read: `status` is 0 when it is one pair, else why not (1 no equals sign, 2 more than one pair, 3 a type suffix or an unescaped colon, 4 a backslash that escapes nothing it may,
-// 5 two equals signs in a pair, 6 an empty name). `left` and `right` are the names unescaped; `lkind` and `rkind` are -1 for a name or N for `#N`.
+// `--on` read: a comma list of 1 to 8 pairs, `LEFT=RIGHT` or the shared-name form `NAME` (USING), each with an optional type at the end (`:int`, `:dec(S)`, `:float`).
+// `status` is 0 when it is a list of pairs, else why not (1 no pair, 3 a type before the equals sign, 4 a backslash that escapes nothing it may, 5 two equals signs in a pair,
+// 6 an empty name or an empty pair, 7 a type that is not one, 8 two types in a pair, 9 a position alone (`#2` is not a name shared by two files), 10 more than 8 pairs).
+// The names are in `names`, two for each pair (left, right; the right one is the left one again for a shared name), `ends` their ends; `kinds` has for each name -1 for a
+// name and N for `#N`; `types` has for each pair 0 for text, 1 for :int, 2 + S for :dec(S), 21 for :float; `using` has 1 for a shared-name pair.
 pub res struct On {
     status: int,
-    left: buffer.Buffer,
-    lkind: int,
-    right: buffer.Buffer,
-    rkind: int,
+    pairs: int,
+    names: buffer.Buffer,
+    ends: vec.Vec[int],
+    kinds: vec.Vec[int],
+    types: vec.Vec[int],
+    using: vec.Vec[int],
 }
 
 pub fn drop_on[&h](heap: &!h Heap, o: On) -> [heap] int {
-    let On { status, left, lkind, right, rkind } = o;
-    buffer.drop(heap, left);
-    buffer.drop(heap, right);
+    let On { status, pairs, names, ends, kinds, types, using } = o;
+    buffer.drop(heap, names);
+    vec.drop(heap, ends);
+    vec.drop(heap, kinds);
+    vec.drop(heap, types);
+    vec.drop(heap, using);
     return status;
 }
 
+// The name `i` of the list (`2 * pair` is the left one, `2 * pair + 1` the right one).
+pub fn name_at[&o](o: &o On, i: int) -> [] &o [byte] {
+    var from = 0;
+    if i > 0 {
+        from = vec.get(o.ends, i - 1);
+    }
+    return buffer.bytes(o.names)[from..vec.get(o.ends, i)];
+}
+
+// A type written after the colon: 1 for `int`, 21 for `float`, 2 + S for `dec(S)` with S from 0 to 18, and 0 for anything else.
+pub fn type_of[&w](word: &w [byte]) -> [] int {
+    if bytes.equal(word, "int") {
+        return 1;
+    }
+    if bytes.equal(word, "float") {
+        return 21;
+    }
+    if len(word) >= 6 && len(word) <= 7 && bytes.starts_with(word, "dec(") && int_of(word[len(word) - 1]) == ')' {
+        let digits = word[4..len(word) - 1];
+        var n = 0;
+        var i = 0;
+        while i < len(digits) {
+            if !bytes.is_digit(int_of(digits[i])) {
+                return 0;
+            }
+            n = n * 10 + bytes.digit_of(int_of(digits[i]));
+            i = i + 1;
+        }
+        if len(digits) == 2 && int_of(digits[0]) == '0' {
+            return 0;
+        }
+        if n <= 18 {
+            return 2 + n;
+        }
+    }
+    return 0;
+}
+
 pub fn parse_on[&h, &g](heap: &!h Heap, given: &g [byte]) -> [heap] On {
+    var names = buffer.empty(heap, 64);
+    var ends = vec.empty(heap, 16, 0);
+    var kinds = vec.empty(heap, 16, 0);
+    var types = vec.empty(heap, 8, 0);
+    var using = vec.empty(heap, 8, 0);
     var left = buffer.empty(heap, 32);
     var right = buffer.empty(heap, 32);
-    var side = 0;
+    var suffix = buffer.empty(heap, 16);
+    var pairs = 0;
     var status = 0;
+    var side = 0;
+    var insuffix = false;
     var lesc = false;
     var resc = false;
     var lsize = 0;
     var rsize = 0;
     var i = 0;
     let n = len(given);
-    while i < n && status == 0 {
-        let c = int_of(given[i]);
+    // position n is a comma that is not written: it ends the last pair
+    while status == 0 && i <= n {
         var literal = -1;
         var step = 1;
-        if c == 92 {
-            if i + 1 < n {
-                let d = int_of(given[i + 1]);
-                if d == ',' || d == 92 || d == '=' || d == ':' || d == '#' {
-                    literal = d;
-                    step = 2;
-                    if d == '#' && side == 0 && lsize == 0 {
-                        lesc = true;
-                    }
-                    if d == '#' && side == 1 && rsize == 0 {
-                        resc = true;
+        var cut = false;
+        if i == n {
+            cut = true;
+        } else {
+            let c = int_of(given[i]);
+            if c == 92 {
+                if i + 1 < n {
+                    let d = int_of(given[i + 1]);
+                    if d == ',' || d == 92 || d == '=' || d == ':' || d == '#' {
+                        literal = d;
+                        step = 2;
+                        if d == '#' && !insuffix && side == 0 && lsize == 0 {
+                            lesc = true;
+                        }
+                        if d == '#' && !insuffix && side == 1 && rsize == 0 {
+                            resc = true;
+                        }
+                    } else {
+                        status = 4;
                     }
                 } else {
                     status = 4;
                 }
+            } else if c == '=' {
+                if insuffix {
+                    status = 3;
+                } else if side == 0 {
+                    side = 1;
+                } else {
+                    status = 5;
+                }
+            } else if c == ',' {
+                cut = true;
+            } else if c == ':' {
+                if insuffix {
+                    status = 8;
+                } else {
+                    insuffix = true;
+                }
             } else {
-                status = 4;
+                literal = c;
             }
-        } else if c == '=' {
-            if side == 0 {
-                side = 1;
-            } else {
-                status = 5;
-            }
-        } else if c == ',' {
-            status = 2;
-        } else if c == ':' {
-            status = 3;
-        } else {
-            literal = c;
         }
         if literal >= 0 {
-            if side == 0 {
+            if insuffix {
+                suffix = buffer.push(heap, suffix, byte_of(literal));
+            } else if side == 0 {
                 left = buffer.push(heap, left, byte_of(literal));
                 lsize = lsize + 1;
             } else {
@@ -89,30 +158,98 @@ pub fn parse_on[&h, &g](heap: &!h Heap, given: &g [byte]) -> [heap] On {
                 rsize = rsize + 1;
             }
         }
+        if cut && status == 0 {
+            // the end of a pair
+            var lkind = 0 - 1;
+            var rkind = 0 - 1;
+            var t = 0;
+            if lsize == 0 || side == 1 && rsize == 0 {
+                status = 6;
+            }
+            if status == 0 {
+                if !lesc {
+                    borrow left as &lr in {
+                        lkind = query.position_of(buffer.bytes(lr));
+                    }
+                }
+                if !resc {
+                    borrow right as &rr in {
+                        rkind = query.position_of(buffer.bytes(rr));
+                    }
+                }
+                if side == 0 {
+                    if lkind >= 1 {
+                        status = 9;
+                    } else {
+                        borrow left as &lr in {
+                            right = buffer.append(heap, right, buffer.bytes(lr));
+                        }
+                        rkind = 0 - 1;
+                    }
+                }
+            }
+            if status == 0 && insuffix {
+                borrow suffix as &sr in {
+                    t = type_of(buffer.bytes(sr));
+                }
+                if t == 0 {
+                    status = 7;
+                }
+            }
+            if status == 0 && pairs == 8 {
+                status = 10;
+            }
+            if status == 0 {
+                borrow left as &lr in {
+                    names = buffer.append(heap, names, buffer.bytes(lr));
+                }
+                var total = 0;
+                borrow names as &nr in {
+                    total = buffer.size(nr);
+                }
+                ends = vec.push(heap, ends, total);
+                kinds = vec.push(heap, kinds, lkind);
+                borrow right as &rr in {
+                    names = buffer.append(heap, names, buffer.bytes(rr));
+                }
+                borrow names as &nr2 in {
+                    total = buffer.size(nr2);
+                }
+                ends = vec.push(heap, ends, total);
+                kinds = vec.push(heap, kinds, rkind);
+                types = vec.push(heap, types, t);
+                if side == 0 {
+                    using = vec.push(heap, using, 1);
+                } else {
+                    using = vec.push(heap, using, 0);
+                }
+                pairs = pairs + 1;
+                borrow mut left as &!lw in {
+                    buffer.clear(lw);
+                }
+                borrow mut right as &!rw in {
+                    buffer.clear(rw);
+                }
+                borrow mut suffix as &!sw in {
+                    buffer.clear(sw);
+                }
+                side = 0;
+                insuffix = false;
+                lesc = false;
+                resc = false;
+                lsize = 0;
+                rsize = 0;
+            }
+        }
         i = i + step;
     }
-    if status == 0 {
-        if side == 0 {
-            status = 1;
-        } else if lsize == 0 || rsize == 0 {
-            status = 6;
-        }
+    buffer.drop(heap, left);
+    buffer.drop(heap, right);
+    buffer.drop(heap, suffix);
+    if status == 0 && pairs == 0 {
+        status = 1;
     }
-    var lkind = 0 - 1;
-    var rkind = 0 - 1;
-    if status == 0 {
-        if !lesc {
-            borrow left as &lr in {
-                lkind = query.position_of(buffer.bytes(lr));
-            }
-        }
-        if !resc {
-            borrow right as &rr in {
-                rkind = query.position_of(buffer.bytes(rr));
-            }
-        }
-    }
-    return On { status: status, left: left, lkind: lkind, right: right, rkind: rkind };
+    return On { status: status, pairs: pairs, names: names, ends: ends, kinds: kinds, types: types, using: using };
 }
 
 // What is wrong with the flags of a join, added to `errs`.
@@ -132,29 +269,46 @@ pub fn check[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, i
         e = flags.problem(heap, e, "args.required-flag", "--join needs --on: the column of FILE and the column of the --join file whose cells are equal", "--on user=id", "--join --on");
     } else {
         let on = parse_on(heap, cli.text(args, parsed, table, "on"));
-        let On { status, left, lkind, right, rkind } = on;
-        let ostatus = status;
-        buffer.drop(heap, left);
-        buffer.drop(heap, right);
+        var ostatus = 0;
+        borrow on as &onr in {
+            ostatus = onr.status;
+        }
         var why = "";
         var hint = "--on user=id";
         if ostatus == 1 {
-            why = "--on is PROBE=BUILD: a column of FILE, an equals sign and a column of the --join file (the shared-name form --on NAME comes in a later version)";
-        } else if ostatus == 2 {
-            why = "--on takes one pair in this version: a join on several columns comes in a later version";
+            why = "--on is a list of pairs: PROBE=BUILD, a column of FILE, an equals sign and a column of the --join file, or one name that both files have";
         } else if ostatus == 3 {
-            why = "--on takes no type suffix in this version: keys are compared as text, byte for byte; a colon in a name is written with a backslash before it";
-            hint = "--on user=id, or --on 'a\\:b=c' for a column called a:b";
+            why = "a type goes at the end of a pair, after the build column: --on user=id:int, and never after the probe column; a colon in a name is written with a backslash before it";
+            hint = "--on user=id:int, or --on 'a\\:b=c' for a column called a:b";
         } else if ostatus == 4 {
             why = "a backslash in --on escapes only a comma, a backslash, an equals sign, a colon or a leading #";
         } else if ostatus == 5 {
             why = "--on has two equals signs in a pair: write a backslash before one that is part of a name";
             hint = "--on 'a\\=b=c'";
         } else if ostatus == 6 {
-            why = "a name in --on is empty";
+            why = "a name in --on is empty, or a pair is: a list is PROBE=BUILD,PROBE=BUILD with a comma between pairs and none at the end";
+        } else if ostatus == 7 {
+            why = "the type of a pair is :int, :float or :dec(S) with S from 0 to 18";
+            hint = "--on user=id:int, --on price=cost:dec(2)";
+        } else if ostatus == 8 {
+            why = "a pair has one type, at its end: --on user=id:int, and not --on user=id:int:int";
+        } else if ostatus == 9 {
+            why = "a position alone is not a name that both files share: write both sides, --on '#2=#2', or the name";
+            hint = "--on '#2=#2' or --on user";
+        } else if ostatus == 10 {
+            why = "--on takes 1 to 8 pairs";
+            hint = "join on fewer columns, or pipe a first join as csv into a second call";
         }
         if ostatus != 0 {
             e = flags.problem(heap, e, "args.bad-value", why, hint, "--on");
+        }
+        drop_on(heap, on);
+    }
+    if cli.has(parsed, table, "join-prefix") {
+        // (one lookup of the flag table for the type, not two: a lookup scans the table, and it is most of what a small call costs)
+        let kind = cli.text(args, parsed, table, "join-type");
+        if bytes.equal(kind, "semi") || bytes.equal(kind, "anti") {
+            e = flags.problem(heap, e, "args.conflict", "a semi or anti join gives the probe columns only, so there is no column of the --join file for --join-prefix to name", "drop --join-prefix", "--join-type --join-prefix");
         }
     }
     if grouped || inp.has_order || inp.has_sort || inp.has_top || inp.has_report {

@@ -198,83 +198,117 @@ fn find_column[&n, &e, &w](names: &n buffer.Buffer, ends: &e vec.Vec[int], name:
     return (0, column);
 }
 
-// What the two headers make of the join: the header of the joined row (probe names, then the build's, each with the prefix), the column of the key on each side, and how many columns
-// each side has. `ok` is false when a refusal was added, and also when the probe header is not known (`--explain` of a pipe), in which case `names` is the build's alone.
+// What the two headers make of the join: the header of the joined row (the probe's names, then the build's with the prefix before each and without the columns a shared-name key leaves out; for a
+// semi or anti join the probe's alone), the pairs of `--on` as columns (`keys`: three integers for each pair, the column of the probe, the column of the build and the type), which build columns the
+// answer shows (`kept`, in order; the ones a shared-name pair leaves out are not there), how many columns each side has (`np`, `nb`) and how many build columns the answer shows (`nk`).
+// `ok` is false when a refusal was added, and also when the probe header is not known (`--explain` of a pipe), in which case `names` is the build's alone.
 pub res struct United {
     names: buffer.Buffer,
     ends: vec.Vec[int],
-    pkey: int,
-    bkey: int,
+    keys: Box[[int]],
+    kept: Box[[int]],
+    pairs: int,
     np: int,
     nb: int,
+    nk: int,
     ok: bool,
 }
 
-pub fn take_header(u: United) -> [] (buffer.Buffer, vec.Vec[int]) {
-    let United { names, ends, pkey, bkey, np, nb, ok } = u;
-    return (names, ends);
+pub fn take_header(u: United) -> [] (buffer.Buffer, vec.Vec[int], Box[[int]], Box[[int]]) {
+    let United { names, ends, keys, kept, pairs, np, nb, nk, ok } = u;
+    return (names, ends, keys, kept);
 }
 
 pub fn drop_united[&h](heap: &!h Heap, u: United) -> [heap] int {
-    let United { names, ends, pkey, bkey, np, nb, ok } = u;
+    let United { names, ends, keys, kept, pairs, np, nb, nk, ok } = u;
     buffer.drop(heap, names);
     vec.drop(heap, ends);
+    unbox_slice(heap, keys);
+    unbox_slice(heap, kept);
     return np;
 }
 
-pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &c buffer.Buffer, bends: &d vec.Vec[int], probe_known: bool, shown_p: &s [byte], shown_b: &t [byte]) -> [heap, args] (United, fail.Errors) {
+// `jtype`: 0 inner, 1 left, 2 semi, 3 anti.
+pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &c buffer.Buffer, bends: &d vec.Vec[int], probe_known: bool, shown_p: &s [byte], shown_b: &t [byte], jtype: int) -> [heap, args] (United, fail.Errors) {
     let table = spec.flag_table();
     var e = errs;
     let np = vec.size(pends);
     let nb = vec.size(bends);
     let on = jnflags.parse_on(heap, cli.text(args, parsed, table, "on"));
-    let jnflags.On { status, left, lkind, right, rkind } = on;
-    let oleft = left;
-    let oright = right;
-    let olkind = lkind;
-    let orkind = rkind;
-    var bkey = 0;
-    var pkey = 0;
+    var pairs = 0;
+    borrow on as &onr in {
+        pairs = onr.pairs;
+    }
+    var keys = box_slice(heap, 3 * pairs + 3, 0);
+    var dropped = box_slice(heap, nb + 1, 0);
     var ok = true;
     // the build header first: its refusals come first
-    var bs = 0;
-    var bc = 0;
-    borrow oright as &rr in {
-        let (s2, c2) = find_column(bnames, bends, buffer.bytes(rr), orkind);
-        bs = s2;
-        bc = c2;
-        if s2 != 0 {
-            e = jnfail.key_column(heap, e, s2, "build", shown_b, buffer.bytes(rr), bnames, bends);
-        }
-    }
-    bkey = bc;
-    if bs != 0 {
-        ok = false;
-    }
-    if probe_known {
-        var ps = 0;
-        var pc = 0;
-        borrow oleft as &lr in {
-            let (s2, c2) = find_column(pnames, pends, buffer.bytes(lr), olkind);
-            ps = s2;
-            pc = c2;
+    var j = 0;
+    while j < pairs {
+        borrow on as &onr in {
+            let (s2, c2) = find_column(bnames, bends, jnflags.name_at(onr, 2 * j + 1), vec.get(onr.kinds, 2 * j + 1));
             if s2 != 0 {
-                e = jnfail.key_column(heap, e, s2, "probe", shown_p, buffer.bytes(lr), pnames, pends);
+                e = jnfail.key_column(heap, e, s2, "build", shown_b, jnflags.name_at(onr, 2 * j + 1), bnames, bends);
+                ok = false;
+            } else {
+                borrow mut keys as &!kw in {
+                    contents(kw)[3 * j + 1] = c2;
+                    contents(kw)[3 * j + 2] = vec.get(onr.types, j);
+                }
+                if vec.get(onr.using, j) == 1 {
+                    borrow mut dropped as &!dw in {
+                        contents(dw)[c2] = 1;
+                    }
+                }
             }
         }
-        pkey = pc;
-        if ps != 0 {
-            ok = false;
+        j = j + 1;
+    }
+    if probe_known {
+        j = 0;
+        while j < pairs {
+            borrow on as &onr in {
+                let (s2, c2) = find_column(pnames, pends, jnflags.name_at(onr, 2 * j), vec.get(onr.kinds, 2 * j));
+                if s2 != 0 {
+                    e = jnfail.key_column(heap, e, s2, "probe", shown_p, jnflags.name_at(onr, 2 * j), pnames, pends);
+                    ok = false;
+                } else {
+                    borrow mut keys as &!kw in {
+                        contents(kw)[3 * j] = c2;
+                    }
+                }
+            }
+            j = j + 1;
         }
     }
-    buffer.drop(heap, oleft);
-    buffer.drop(heap, oright);
+    jnflags.drop_on(heap, on);
+    // the build columns the answer shows
+    var nk = 0;
+    var kept = box_slice(heap, nb + 1, 0);
+    if jtype <= 1 {
+        j = 0;
+        borrow dropped as &dr in {
+            borrow mut kept as &!kw in {
+                while j < nb {
+                    if contents(dr)[j] == 0 {
+                        contents(kw)[nk] = j;
+                        nk = nk + 1;
+                    }
+                    j = j + 1;
+                }
+            }
+        }
+    }
     let prefix = cli.text(args, parsed, table, "join-prefix");
     var names = buffer.empty(heap, buffer.size(pnames) + buffer.size(bnames) + nb * len(prefix) + 1);
     var ends = vec.empty(heap, np + nb + 1, 0);
-    if ok && probe_known && jnfail.collisions(pnames, pends, bnames, bends, prefix) > 0 {
-        e = jnfail.collision(heap, e, args, parsed, pnames, pends, bnames, bends, prefix, shown_b, table);
-        ok = false;
+    if ok && probe_known && jtype <= 1 {
+        borrow dropped as &dr in {
+            if jnfail.collisions(pnames, pends, bnames, bends, prefix, contents(dr)) > 0 {
+                e = jnfail.collision(heap, e, args, parsed, pnames, pends, bnames, bends, prefix, shown_b, table, contents(dr));
+                ok = false;
+            }
+        }
     }
     if probe_known {
         names = buffer.append(heap, names, buffer.bytes(pnames));
@@ -284,19 +318,25 @@ pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t](heap: &!h Heap, args: &g Args, 
             i = i + 1;
         }
     }
-    var from = 0;
-    var j = 0;
-    while j < nb {
-        let to = vec.get(bends, j);
+    var k = 0;
+    while k < nk {
+        var col = 0;
+        borrow kept as &kr in {
+            col = contents(kr)[k];
+        }
+        var from = 0;
+        if col > 0 {
+            from = vec.get(bends, col - 1);
+        }
         names = buffer.append(heap, names, prefix);
-        names = buffer.append(heap, names, buffer.bytes(bnames)[from..to]);
+        names = buffer.append(heap, names, buffer.bytes(bnames)[from..vec.get(bends, col)]);
         var total = 0;
         borrow names as &nr in {
             total = buffer.size(nr);
         }
         ends = vec.push(heap, ends, total);
-        from = to;
-        j = j + 1;
+        k = k + 1;
     }
-    return (United { names: names, ends: ends, pkey: pkey, bkey: bkey, np: np, nb: nb, ok: ok && probe_known }, e);
+    unbox_slice(heap, dropped);
+    return (United { names: names, ends: ends, keys: keys, kept: kept, pairs: pairs, np: np, nb: nb, nk: nk, ok: ok && probe_known }, e);
 }

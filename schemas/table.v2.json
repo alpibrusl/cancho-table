@@ -981,7 +981,10 @@
                   "properties": {
                     "type": {
                       "enum": [
-                        "inner"
+                        "inner",
+                        "left",
+                        "semi",
+                        "anti"
                       ]
                     },
                     "probe": {
@@ -1005,9 +1008,8 @@
                             "$ref": "#/$defs/text_or_bytes"
                           },
                           "type": {
-                            "enum": [
-                              "text"
-                            ]
+                            "type": "string",
+                            "pattern": "^(text|int|float|dec\\([0-9]{1,2}\\))$"
                           },
                           "probe_position": {
                             "oneOf": [
