@@ -304,8 +304,12 @@ pub fn check[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, i
         }
         drop_on(heap, on);
     }
-    if cli.has(parsed, table, "join-prefix") && (bytes.equal(cli.text(args, parsed, table, "join-type"), "semi") || bytes.equal(cli.text(args, parsed, table, "join-type"), "anti")) {
-        e = flags.problem(heap, e, "args.conflict", "a semi or anti join gives the probe columns only, so there is no column of the --join file for --join-prefix to name", "drop --join-prefix", "--join-type --join-prefix");
+    if cli.has(parsed, table, "join-prefix") {
+        // (one lookup of the flag table for the type, not two: a lookup scans the table, and it is most of what a small call costs)
+        let kind = cli.text(args, parsed, table, "join-type");
+        if bytes.equal(kind, "semi") || bytes.equal(kind, "anti") {
+            e = flags.problem(heap, e, "args.conflict", "a semi or anti join gives the probe columns only, so there is no column of the --join file for --join-prefix to name", "drop --join-prefix", "--join-type --join-prefix");
+        }
     }
     if grouped || inp.has_order || inp.has_sort || inp.has_top || inp.has_report {
         e = flags.problem(heap, e, "args.conflict", "a join gives rows in this version: --group, --agg, --order-by, --sort, --top and --report do not take one yet", "write the join as --format csv and pipe it into a second call that groups, sorts or reports", "--join --group --agg --order-by --sort --top --report");

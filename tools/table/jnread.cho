@@ -85,6 +85,29 @@ fn nothing() -> [] finish.Counts {
     return finish.Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
 }
 
+// J1's hold of a build row, kept as it was for the build that J1 has (one pair of text, rows held): `hold_row` below is for the others, and the build of J1 is not made to pay for them. Hold build row `record` (whose cells are `cells`) under its key, the cell of column `key`; false when it does not fit within `limit` accounted bytes.
+fn hold_text[&h, &d, &c](heap: &!h Heap, t: jtab.JTab, scratch: buffer.Buffer, record: &d [byte], cells: &c [int], key: int, limit: int) -> [heap] (jtab.JTab, buffer.Buffer, bool) {
+    let first = cells[3 * key];
+    let last = cells[3 * key + 1];
+    if cells[3 * key + 2] == 0 {
+        let (t2, ok) = jtab.add(heap, t, record[first..last], record, limit);
+        return (t2, scratch, ok);
+    }
+    var s = scratch;
+    borrow mut s as &!sw in {
+        buffer.clear(sw);
+    }
+    s = query.unquote(heap, s, record[first..last]);
+    var t3 = t;
+    var ok2 = true;
+    borrow s as &sr in {
+        let (t4, ok3) = jtab.add(heap, t3, buffer.bytes(sr), record, limit);
+        t3 = t4;
+        ok2 = ok3;
+    }
+    return (t3, s, ok2);
+}
+
 // Hold `key` for build row `record` (the record itself for a join that shows build columns, the key alone for a semi or anti join).
 fn put[&h, &k, &r](heap: &!h Heap, t: jtab.JTab, key: &k [byte], record: &r [byte], limit: int, keys_only: bool) -> [heap] (jtab.JTab, bool) {
     if keys_only {
@@ -168,6 +191,9 @@ fn build_pass[&h, &f, &k](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: 
     var kscr = buffer.empty(heap, 64);
     var kbuf = buffer.empty(heap, 64);
     var kept = buffer.empty(heap, 64);
+    // J1's build (one pair of text, the rows held) has a hold of its own, `hold_text`
+    let bfast = simple && !keys_only;
+    let bkey = keys[1];
     var tally = box_slice(heap, engine.k_size(), 0);
     var cellbox = box_slice(heap, 3 * (nb + 1), 0);
     var quoted = false;
@@ -230,10 +256,21 @@ fn build_pass[&h, &f, &k](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: 
                                 rec = buffer.append(heap, rec, whole);
                                 rec = buffer.push(heap, rec, byte_of(10));
                             } else if engine.count_row(a, n, number, 0) {
-                                let (t2, k2, b2, answer) = hold_row(heap, jt, kscr, kbuf, line, cells, keys, pairs, simple, keys_only, limit);
-                                jt = t2;
-                                kscr = k2;
-                                kbuf = b2;
+                                var answer = 0;
+                                if bfast {
+                                    let (t2, k2, ok) = hold_text(heap, jt, kscr, line, cells, bkey, limit);
+                                    jt = t2;
+                                    kscr = k2;
+                                    if !ok {
+                                        answer = 1;
+                                    }
+                                } else {
+                                    let (t2, k2, b2, answer2) = hold_row(heap, jt, kscr, kbuf, line, cells, keys, pairs, simple, keys_only, limit);
+                                    jt = t2;
+                                    kscr = k2;
+                                    kbuf = b2;
+                                    answer = answer2;
+                                }
                                 if answer == 1 {
                                     a[engine.k_abort()] = 70;
                                     a[engine.k_abort_line()] = number;
@@ -278,10 +315,21 @@ fn build_pass[&h, &f, &k](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: 
                                         a[engine.k_abort_line()] = opened;
                                         going = false;
                                     } else if engine.count_row(a, m, opened, 0) {
-                                        let (t2, k2, b2, answer) = hold_row(heap, jt, kscr, kbuf, record, cells, keys, pairs, simple, keys_only, limit);
-                                        jt = t2;
-                                        kscr = k2;
-                                        kbuf = b2;
+                                        var answer = 0;
+                                        if bfast {
+                                            let (t2, k2, ok) = hold_text(heap, jt, kscr, record, cells, bkey, limit);
+                                            jt = t2;
+                                            kscr = k2;
+                                            if !ok {
+                                                answer = 1;
+                                            }
+                                        } else {
+                                            let (t2, k2, b2, answer2) = hold_row(heap, jt, kscr, kbuf, record, cells, keys, pairs, simple, keys_only, limit);
+                                            jt = t2;
+                                            kscr = k2;
+                                            kbuf = b2;
+                                            answer = answer2;
+                                        }
                                         if answer == 1 {
                                             a[engine.k_abort()] = 70;
                                             a[engine.k_abort_line()] = opened;
@@ -340,6 +388,94 @@ fn emit_one[&h, &i, &q, &c, &s, &w, &d, &a, &z](heap: &!h Heap, io: &!i Io, tree
         }
     }
     return (r2, s2, e2, k2);
+}
+
+// J1's probe, kept as it was (the inner join of one pair of text, no column left out): the path of J1 is not made to carry the cases J2 adds to it (`probe_one` below), because every instruction
+// added to it was paid by every probe row (docs/joins.md section 17: 59 instructions a row, 2.5 percent, when it did). One probe record whose cells are in `cells` (its first `np`): look its key up and give the engine one joined record for each build row of the key. The state is in `a` (the engine's
+// tally), `st` (this module's), and the buffers it answers.
+fn probe_inner[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z](heap: &!h Heap, io: &!i Io, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], prec: &d [byte], number: int, st: &!z [int], a: &!a [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, kscr: buffer.Buffer, np: int, nb: int, pkey: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, max_join: int) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var rows2 = rows;
+    var scratch2 = scratch;
+    var escr2 = escr;
+    var kept2 = kept;
+    var jrec2 = jrec;
+    var kscr2 = kscr;
+    let first = cells[3 * pkey];
+    let last = cells[3 * pkey + 1];
+    var chain = 0 - 1;
+    if cells[3 * pkey + 2] == 0 {
+        chain = jtab.first(jt, prec[first..last]);
+    } else {
+        borrow mut kscr2 as &!kw in {
+            buffer.clear(kw);
+        }
+        kscr2 = query.unquote(heap, kscr2, prec[first..last]);
+        borrow kscr2 as &kr in {
+            chain = jtab.first(jt, buffer.bytes(kr));
+        }
+    }
+    if chain < 0 {
+        return (rows2, scratch2, escr2, kept2, jrec2, kscr2);
+    }
+    var matches = 0;
+    var x = chain;
+    while x >= 0 {
+        matches = matches + 1;
+        x = jtab.next_row(jt, x);
+    }
+    if matches > st[s_max_matches()] {
+        st[s_max_matches()] = matches;
+    }
+    borrow mut jrec2 as &!jw in {
+        buffer.clear(jw);
+    }
+    jrec2 = buffer.append(heap, jrec2, prec);
+    jrec2 = buffer.push(heap, jrec2, byte_of(delim));
+    let keep = len(prec) + 1;
+    x = chain;
+    while x >= 0 {
+        if st[s_produced()] >= max_join {
+            a[engine.k_abort()] = 71;
+            a[engine.k_stop()] = 1;
+            a[engine.k_err_row()] = st[s_probe()];
+            a[engine.k_err_line()] = number;
+            a[engine.k_err_digits()] = matches;
+            a[engine.k_err_cond()] = st[s_max_matches()];
+            return (rows2, scratch2, escr2, kept2, jrec2, kscr2);
+        }
+        st[s_produced()] = st[s_produced()] + 1;
+        let brec = jtab.record(jt, x);
+        borrow mut jrec2 as &!jw in {
+            jw.used = keep;
+        }
+        jrec2 = buffer.append(heap, jrec2, brec);
+        let (m, open, bad) = reader.fields(brec, delim, bcells, nb);
+        var k = 0;
+        while k < nb {
+            cells[3 * (np + k)] = bcells[3 * k] + keep;
+            cells[3 * (np + k) + 1] = bcells[3 * k + 1] + keep;
+            cells[3 * (np + k) + 2] = bcells[3 * k + 2];
+            k = k + 1;
+        }
+        a[engine.k_records()] = st[s_produced()];
+        if st[s_produced()] > from {
+            borrow jrec2 as &jr in {
+                let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows2, scratch2, escr2, kept2, tree, cols, buffer.bytes(jr), cells, sel, picked, delim, as_csv, budget, number, limit, a);
+                rows2 = r2;
+                scratch2 = s2;
+                escr2 = e2;
+                kept2 = k2;
+            }
+            if a[engine.k_abort()] != 0 {
+                a[engine.k_err_row()] = st[s_probe()];
+            }
+        }
+        if a[engine.k_stop()] == 1 {
+            return (rows2, scratch2, escr2, kept2, jrec2, kscr2);
+        }
+        x = jtab.next_row(jt, x);
+    }
+    return (rows2, scratch2, escr2, kept2, jrec2, kscr2);
 }
 
 // One probe record whose cells are in `cells` (its first `np`): look its key up, and give the engine what the join type says: one joined record for each build row of the key (inner, left), the
@@ -519,6 +655,9 @@ fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0: li
     var rec = buffer.empty(heap, 256);
     var tally = box_slice(heap, engine.k_size(), 0);
     var state = box_slice(heap, s_size(), 0);
+    // J1's path (an inner join of one pair of text, no column left out) has a probe of its own, `probe_inner`
+    let fast = jtype == 0 && simple && nk == nb;
+    let pkey = keys[0];
     var quoted = false;
     var seps = 0;
     var opened = 0;
@@ -604,6 +743,14 @@ fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0: li
                                         a[engine.k_first_found()] = n;
                                     }
                                     a[engine.k_ragged()] = a[engine.k_ragged()] + 1;
+                                } else if fast {
+                                    let (r2, s2, e2, k2, j2, q2) = probe_inner(heap, io, jt, tree, cols, sel, cells, bcells, line, number, st, a, rows, scratch, escr, kept, jrec, kscr, np, nb, pkey, delim, as_csv, from, limit, budget, picked, max_join);
+                                    rows = r2;
+                                    scratch = s2;
+                                    escr = e2;
+                                    kept = k2;
+                                    jrec = j2;
+                                    kscr = q2;
                                 } else {
                                     let (r2, s2, e2, k2, j2, q2, b2) = probe_one(heap, io, jt, tree, cols, sel, cells, bcells, line, number, st, a, keys, kmap, rows, scratch, escr, kept, jrec, kscr, kbuf, np, nb, delim, as_csv, from, limit, budget, picked, max_join);
                                     rows = r2;
@@ -656,6 +803,14 @@ fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0: li
                                                 a[engine.k_first_found()] = m;
                                             }
                                             a[engine.k_ragged()] = a[engine.k_ragged()] + 1;
+                                        } else if fast {
+                                            let (r2, s2, e2, k2, j2, q2) = probe_inner(heap, io, jt, tree, cols, sel, cells, bcells, record, opened, st, a, rows, scratch, escr, kept, jrec, kscr, np, nb, pkey, delim, as_csv, from, limit, budget, picked, max_join);
+                                            rows = r2;
+                                            scratch = s2;
+                                            escr = e2;
+                                            kept = k2;
+                                            jrec = j2;
+                                            kscr = q2;
                                         } else {
                                             let (r2, s2, e2, k2, j2, q2, b2) = probe_one(heap, io, jt, tree, cols, sel, cells, bcells, record, opened, st, a, keys, kmap, rows, scratch, escr, kept, jrec, kscr, kbuf, np, nb, delim, as_csv, from, limit, budget, picked, max_join);
                                             rows = r2;
