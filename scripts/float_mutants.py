@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_float", "test_rules", "test_numbers"]
+TESTS = ["test_put_float", "test_float", "test_rules", "test_numbers"]
 
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file.
 MUTANTS = [
@@ -46,6 +46,12 @@ MUTANTS = [
     ("a whole number is written without its point", "flt.cho", "                o = buffer.append(heap, o, \".0\");", "                o = buffer.append(heap, o, \"\");"),
     ("a number below one has a zero too few after the point", "flt.cho", "                while z < 0 - point {", "                while z < 0 - point - 1 {"),
     ("zero is written without its point", "flt.cho", "        return buffer.append(heap, out, \"0.0\");", "        return buffer.append(heap, out, \"0\");"),
+    # the guard of a double that is not finite (issue #59)
+    ("a key that is infinite falls through to the digit split", "flt.cho", "    if magnitude & 0x7fffffffffffffff >= 0x7ff0000000000000 {", "    if magnitude & 0x7fffffffffffffff > 0x7ff0000000000000 {"),
+    ("infinity is written as nan", "flt.cho", "        if magnitude & 0x7fffffffffffffff > 0x7ff0000000000000 {", "        if magnitude & 0x7fffffffffffffff >= 0x7ff0000000000000 {"),
+    ("minus infinity is written without its sign", "flt.cho", "        if key < 0 {\n            return buffer.append(heap, out, \"-inf\");", "        if false && key < 0 {\n            return buffer.append(heap, out, \"-inf\");"),
+    ("a negative key is tested without being flipped to its magnitude", "flt.cho", "    var magnitude = key;\n    if key < 0 {\n        magnitude = key ^ 0x7fffffffffffffff;\n    }", "    var magnitude = key;"),
+    ("nan is written as std.fmt writes it", "flt.cho", "            return buffer.append(heap, out, \"nan\");", "            return buffer.append(heap, out, \"NaN\");"),
     # the condition and the plan
     ("the literal that is not finite is said to be not a number", "expr.cho", "                } else if bad == 10 {\n                    what = 19;", "                } else if bad == 10 {\n                    what = 18;"),
     ("a float verdict takes the code of another", "expr.cho", "            return bad - 2;", "            return bad - 1;"),

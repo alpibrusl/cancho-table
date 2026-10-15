@@ -1,0 +1,56 @@
+// The probe of scripts/put_float_edge.py: `flt.put_float` driven from the command line. Each argument is a key (the signed decimal `int` of `flt.key_of`, as
+// numbers_ref.float_key computes it); one line a key, the text `put_float` writes for it.
+import std.buffer;
+import std.io as console;
+import flt;
+
+fn number[&a](s: &a [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    var negative = false;
+    if len(s) > 0 && int_of(s[0]) == '-' {
+        negative = true;
+        at = 1;
+    }
+    while at < len(s) {
+        n = n * 10 + int_of(s[at]) - '0';
+        at = at + 1;
+    }
+    if negative {
+        return 0 - n;
+    }
+    return n;
+}
+
+fn run[&i, &h, &g](io: &!i Io, heap: &!h Heap, args: &g Args) -> [io_write, heap, args] int {
+    var at = 1;
+    while at < arg_count(args) {
+        var out = buffer.empty(heap, 64);
+        out = flt.put_float(heap, out, number(arg(args, at)));
+        out = buffer.push(heap, out, byte_of(10));
+        borrow out as &b in {
+            buffer.write(io, b);
+        }
+        buffer.drop(heap, out);
+        at = at + 1;
+    }
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    var status = 0;
+    borrow mut io as &!i in {
+        borrow mut heap as &!h in {
+            borrow args as &g in {
+                status = run(i, h, g);
+            }
+        }
+    }
+    release(io);
+    release(heap);
+    release(args);
+    return status;
+}
