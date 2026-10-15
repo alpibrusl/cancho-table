@@ -170,6 +170,9 @@ class Mixed(Base):
         # a rest that does not translate: the mix is named, with no repair
         d = doc_of(self.query("select id, count(*) from 'q.csv' where a = 'x' or b = 'y' and c = 'z'"))
         self.assertEqual(d["error"]["repair"]["kind"], "none")
+        # the where clause is written before an order by the grouping cannot have is found: still no repair, the rest does not translate
+        d = doc_of(self.query("select a, count(*) from 'q.csv' where a = 'x' or b = 'y' and c = 'z' group by a order by b"))
+        self.assertEqual((d["error"]["rule"], d["error"]["repair"]["kind"]), ("query.mixed-and-or", "none"))
         # offered when the rest is whole
         d = doc_of(self.query("select id from 'q.csv' where a = 'x' or b = 'y' and c = 'z' order by id desc limit 2"))
         self.assertEqual([o["argv"][o["argv"].index("--where") + 1] for o in d["error"]["repair"]["options"]], ["a = 'x' or (b = 'y' and c = 'z')", "(a = 'x' or b = 'y') and c = 'z'"])

@@ -164,8 +164,11 @@ class Order(unittest.TestCase):
             s.write("p.csv", "k,v\nb,p1\na,p2\nb,p3\nz,p4\na,p5\n")
             s.write("b.csv", "id,w\na,b1\nb,b2\na,b3\nb,b4\nq,b5\n")
             base = ["--root", s.dir, "--join", "b.csv", "--on", "k=id"]
-            r = run(*base, "--where", "w = b3 or w = b4", "p.csv")
+            r = run(*base, "--where", "w = b3 or", "p.csv")
             self.assertEqual(r.first_rule(), "where.syntax")
+            # `or` and parentheses work on the joined row (docs/or-and-columns.md)
+            r = run(*base, "--where", "(w = b3 or w = b4) and v != p5", "--select", "v,w", "--format", "csv", "p.csv")
+            self.assertEqual(r.stdout.decode().splitlines(), ["v,w", "p1,b4", "p2,b3", "p3,b4"])
             r = run(*base, "--where", "w != b1 and v != p1", "--select", "v,w", "--format", "csv", "p.csv")
             self.assertEqual(r.stdout.decode().splitlines(), ["v,w", "p2,b3", "p3,b2", "p3,b4", "p5,b3"])
             # a page: --from counts joined rows, and the cursor is the next --from
