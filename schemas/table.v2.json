@@ -851,13 +851,16 @@
                         "type report",
                         "grouped single pass",
                         "sorted rows",
-                        "stream rows"
+                        "stream rows",
+                        "join: build then stream"
                       ]
                     },
                     "reads": {
                       "enum": [
                         "all rows",
-                        "until the page is full"
+                        "until the page is full",
+                        "the whole build file, then the probe until the page is full",
+                        "the whole build file, then all the probe rows"
                       ]
                     },
                     "rows_held": {
@@ -899,6 +902,10 @@
                           "minimum": 0
                         },
                         "max_state_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "max_join_rows": {
                           "type": "integer",
                           "minimum": 0
                         }
@@ -968,6 +975,215 @@
                   "items": {
                     "$ref": "#/$defs/text_or_bytes"
                   }
+                },
+                "join": {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "inner"
+                      ]
+                    },
+                    "probe": {
+                      "$ref": "#/$defs/text_or_bytes"
+                    },
+                    "build": {
+                      "$ref": "#/$defs/text_or_bytes"
+                    },
+                    "role_choice": {
+                      "type": "string"
+                    },
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "probe": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "build": {
+                            "$ref": "#/$defs/text_or_bytes"
+                          },
+                          "type": {
+                            "enum": [
+                              "text"
+                            ]
+                          },
+                          "probe_position": {
+                            "oneOf": [
+                              {
+                                "type": "null"
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            ]
+                          },
+                          "build_position": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        },
+                        "required": [
+                          "probe",
+                          "build",
+                          "type",
+                          "probe_position",
+                          "build_position"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "output_columns": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      ]
+                    },
+                    "prefix": {
+                      "$ref": "#/$defs/text_or_bytes"
+                    },
+                    "using": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/text_or_bytes"
+                      }
+                    },
+                    "build_state": {
+                      "type": "object",
+                      "properties": {
+                        "file_bytes": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          ]
+                        },
+                        "header_bytes": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "accounted_at_most": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          ]
+                        },
+                        "budget": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "may_pass_bound": {
+                          "type": "boolean"
+                        },
+                        "counted": {
+                          "type": "string"
+                        },
+                        "swap": {
+                          "type": "object",
+                          "properties": {
+                            "offered": {
+                              "type": "boolean"
+                            },
+                            "reason": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "offered",
+                            "reason"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "file_bytes",
+                        "header_bytes",
+                        "accounted_at_most",
+                        "budget",
+                        "may_pass_bound",
+                        "counted",
+                        "swap"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "max_join_rows": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "order": {
+                      "type": "string"
+                    },
+                    "work": {
+                      "type": "object",
+                      "properties": {
+                        "class": {
+                          "type": "string"
+                        },
+                        "first_output_after": {
+                          "type": "string"
+                        },
+                        "threads": {
+                          "type": "object",
+                          "properties": {
+                            "requested": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "effective": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "reason": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "requested",
+                            "effective",
+                            "reason"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "class",
+                        "first_output_after",
+                        "threads"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "probe",
+                    "build",
+                    "role_choice",
+                    "keys",
+                    "output_columns",
+                    "prefix",
+                    "using",
+                    "build_state",
+                    "max_join_rows",
+                    "order",
+                    "work"
+                  ],
+                  "additionalProperties": false
                 }
               },
               "required": [

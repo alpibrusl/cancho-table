@@ -1,0 +1,208 @@
+edition 5;
+
+module jnfail;
+
+// The refusals that only a join raises (docs/joins.md sections 4.1, 5.6, 6.3 and 6.5): a column of `--on` that a header lacks or has twice, the same name on both sides, the build
+// past the bound, and more rows than `--max-join-rows`. Every one names which input it is about (`detail.input`, `probe` or `build`) and carries the facts the run knows.
+// The other refusals of a join (a bad quote, a ragged row, a long line, a typed `--where` read) are the rules of one file and are raised by `finish.explain` as for a file, with
+// that file's path.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.vec;
+import finish;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.text;
+
+// The header's names as a json array in the detail: at most `most`, and whether there were more.
+fn put_names[&h, &n, &d](heap: &!h Heap, w: json.Writer, key: &static [byte], names: &n buffer.Buffer, ends: &d vec.Vec[int], most: int) -> [heap] json.Writer {
+    var o = json.put_key(heap, w, key);
+    o = json.begin_array(heap, o);
+    var j = 0;
+    var start = 0;
+    while j < vec.size(ends) && j < most {
+        let to = vec.get(ends, j);
+        o = text.put(heap, o, buffer.bytes(names)[start..to]);
+        start = to;
+        j = j + 1;
+    }
+    return json.end_array(heap, o);
+}
+
+// A name `--on` gave that the header of `input` does not have (status 1) or has more than once (status 2): `column.unknown` and `column.ambiguous`, as `--where` and
+// `--select` refuse a name, with the header listed.
+pub fn key_column[&h, &n, &d, &s, &w](heap: &!h Heap, e: fail.Errors, status: int, input: &static [byte], shown: &s [byte], wanted: &w [byte], names: &n buffer.Buffer, ends: &d vec.Vec[int]) -> [heap] fail.Errors {
+    var rule = "column.unknown";
+    var what = "--on names a column that the header does not have";
+    var hint = "pick from detail.available: the left name is a column of FILE and the right one a column of the --join file";
+    if status == 2 {
+        rule = "column.ambiguous";
+        what = "--on names a column that the header has more than once";
+        hint = "name it by position, as #3 for the third column";
+    }
+    var o = fail.open_in(heap, finish.extra(), rule, what, hint);
+    o = fail.repair_none(heap, o, "which column was meant is not known; detail.available lists the header");
+    o = fail.detail_open(heap, o);
+    o = fail.detail_str(heap, o, "flag", "--on");
+    o = fail.detail_str(heap, o, "input", input);
+    o = fail.detail_text(heap, o, "path", shown);
+    o = fail.detail_text(heap, o, "name", wanted);
+    o = fail.detail_int(heap, o, "columns", vec.size(ends));
+    o = put_names(heap, o, "available", names, ends, 50);
+    o = fail.detail_bool(heap, o, "available_truncated", vec.size(ends) > 50);
+    return fail.add(heap, e, o);
+}
+
+// Whether build column `j`, written with `prefix` before it, is the name of a column of the probe header.
+fn collides[&a, &b, &x, &y, &p](pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], j: int, prefix: &p [byte]) -> [] bool {
+    var from = 0;
+    if j > 0 {
+        from = vec.get(bends, j - 1);
+    }
+    let name = buffer.bytes(bnames)[from..vec.get(bends, j)];
+    var i = 0;
+    var start = 0;
+    while i < vec.size(pends) {
+        let to = vec.get(pends, i);
+        let other = buffer.bytes(pnames)[start..to];
+        if len(other) == len(prefix) + len(name) && bytes.starts_with(other, prefix) && bytes.equal(other[len(prefix)..len(other)], name) {
+            return true;
+        }
+        start = to;
+        i = i + 1;
+    }
+    return false;
+}
+
+// How many build columns would collide with the probe header under `prefix`.
+pub fn collisions[&a, &b, &x, &y, &p](pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], prefix: &p [byte]) -> [] int {
+    var n = 0;
+    var j = 0;
+    while j < vec.size(bends) {
+        if collides(pnames, pends, bnames, bends, j, prefix) {
+            n = n + 1;
+        }
+        j = j + 1;
+    }
+    return n;
+}
+
+// The name of the build file without its directory and its last extension, then an underscore: the prefix the repair suggests.
+fn stem_prefix[&h, &s](heap: &!h Heap, shown: &s [byte]) -> [heap] buffer.Buffer {
+    var begin = 0;
+    var i = 0;
+    while i < len(shown) {
+        if int_of(shown[i]) == '/' {
+            begin = i + 1;
+        }
+        i = i + 1;
+    }
+    var end = len(shown);
+    var k = begin + 1;
+    while k < len(shown) {
+        if int_of(shown[k]) == '.' {
+            end = k;
+        }
+        k = k + 1;
+    }
+    var out = buffer.empty(heap, 32);
+    if end > begin {
+        out = buffer.append(heap, out, shown[begin..end]);
+    } else {
+        out = buffer.append(heap, out, "join");
+    }
+    return buffer.push(heap, out, byte_of('_'));
+}
+
+// `join.column-collision`: a name that both headers have, with the prefix given (or ""). Nothing is renamed. The repair is the invocation with `--join-prefix` and the stem of the build
+// file's name, offered only when no prefix was given and the result has no collision; otherwise there is none.
+pub fn collision[&h, &g, &p, &a, &b, &x, &y, &q, &s](heap: &!h Heap, e: fail.Errors, args: &g Args, parsed: &p cli.Parsed, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], prefix: &q [byte], shown: &s [byte], table: &static [byte]) -> [heap, args] fail.Errors {
+    var o = fail.open_in(heap, finish.extra(), "join.column-collision", "a column name is in both files, and the joined row would have it twice (nothing is renamed on the way)", "give the --join file's columns a prefix with --join-prefix, or select and name them by position");
+    let given = cli.has(parsed, table, "join-prefix");
+    let stem = stem_prefix(heap, shown);
+    var good = false;
+    borrow stem as &sr in {
+        good = !given && collisions(pnames, pends, bnames, bends, buffer.bytes(sr)) == 0;
+    }
+    if good {
+        var c = fail.choose_open(heap, o);
+        c = fail.choose_option_open(heap, c);
+        var i = 0;
+        while i < arg_count(args) {
+            c = fail.choose_arg(heap, c, arg(args, i));
+            i = i + 1;
+        }
+        c = fail.choose_arg(heap, c, "--join-prefix");
+        borrow stem as &sr in {
+            c = fail.choose_arg(heap, c, buffer.bytes(sr));
+        }
+        c = fail.choose_option_close(heap, c);
+        o = fail.choose_close(heap, c);
+    } else if given {
+        o = fail.repair_none(heap, o, "a prefix was given and the names still collide: choose another one");
+    } else {
+        o = fail.repair_none(heap, o, "the file name as a prefix would collide too: choose a prefix");
+    }
+    buffer.drop(heap, stem);
+    o = fail.detail_open(heap, o);
+    o = fail.detail_text(heap, o, "path", shown);
+    o = json.put_key(heap, o, "columns");
+    o = json.begin_array(heap, o);
+    var listed = 0;
+    var found = 0;
+    var j = 0;
+    while j < vec.size(bends) {
+        if collides(pnames, pends, bnames, bends, j, prefix) {
+            found = found + 1;
+            if listed < 32 {
+                var from = 0;
+                if j > 0 {
+                    from = vec.get(bends, j - 1);
+                }
+                o = text.put(heap, o, buffer.bytes(bnames)[from..vec.get(bends, j)]);
+                listed = listed + 1;
+            }
+        }
+        j = j + 1;
+    }
+    o = json.end_array(heap, o);
+    o = fail.detail_int(heap, o, "collisions", found);
+    o = fail.detail_text(heap, o, "prefix", prefix);
+    return fail.add(heap, e, o);
+}
+
+// `limit.state-too-large` for the build: the rows already held fit, the one named does not. Everything in it is exact; nothing is projected (the rest of the file is unread).
+pub fn build_too_large[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], limit: int, held: int, rows_held: int, row: int, line: int, bytes_read: int, file_bytes: int) -> [heap] fail.Errors {
+    var o = fail.open_in(heap, finish.extra(), "limit.state-too-large", "the --join file is held in memory and the rows held would pass --max-state-bytes", "make the smaller file the --join file (the rows and columns of the answer then change), or raise --max-state-bytes, up to the ceiling introspect names: it counts the bytes the join holds, and resident memory can be up to about three times that while the build grows. There is no join on disk");
+    o = fail.repair_none(heap, o, "the bytes the rest of the file needs are not known; the number that is raises the flag, up to the ceiling");
+    o = fail.detail_open(heap, o);
+    o = fail.detail_str(heap, o, "holder", "join-build");
+    o = fail.detail_str(heap, o, "input", "build");
+    o = fail.detail_text(heap, o, "path", shown);
+    o = fail.detail_int(heap, o, "limit", limit);
+    o = fail.detail_int(heap, o, "held", held);
+    o = fail.detail_int(heap, o, "rows_held", rows_held);
+    o = fail.detail_int(heap, o, "build_row", row);
+    o = fail.detail_int(heap, o, "build_line", line);
+    o = fail.detail_int(heap, o, "build_bytes_read", bytes_read);
+    o = fail.detail_int(heap, o, "build_file_bytes", file_bytes);
+    return fail.add(heap, e, o);
+}
+
+// `limit.too-many-join-rows`: the row that would be the one past `--max-join-rows`, of the probe row named; `matches` is the exact number of build rows its key has, and
+// `max_matches` the most any probe row up to it had.
+pub fn too_many_rows[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], limit: int, probe_row: int, probe_line: int, matches: int, max_matches: int) -> [heap] fail.Errors {
+    var o = fail.open_in(heap, finish.extra(), "limit.too-many-join-rows", "the join would produce more rows than --max-join-rows", "if detail.matches is large the --join file repeats this key: remove the duplicates, or make the other file the --join file, otherwise raise --max-join-rows, up to the ceiling introspect names, or page with --limit");
+    o = fail.repair_none(heap, o, "which of the two files should be changed is not known");
+    o = fail.detail_open(heap, o);
+    o = fail.detail_str(heap, o, "input", "probe");
+    o = fail.detail_text(heap, o, "path", shown);
+    o = fail.detail_int(heap, o, "limit", limit);
+    o = fail.detail_int(heap, o, "probe_row", probe_row);
+    o = fail.detail_int(heap, o, "probe_line", probe_line);
+    o = fail.detail_int(heap, o, "matches", matches);
+    o = fail.detail_int(heap, o, "max_matches_so_far", max_matches);
+    return fail.add(heap, e, o);
+}

@@ -246,6 +246,9 @@ fn class_text(c: int) -> [] &static [byte] {
     if c == 3 {
         return "sorted rows";
     }
+    if c == 5 {
+        return "join: build then stream";
+    }
     return "stream rows";
 }
 
@@ -306,7 +309,7 @@ fn note[&h, &d](heap: &!h Heap, o: buffer.Buffer, first: bool, sentence: &d [byt
 
 // The document, `{"explain": {...}}`, for a plan whose header (when it has been read) has been resolved. `resolved` says that `cols` holds, for each name of the plan, the
 // column it is; `head` is the json array of the answer's columns when the plan names columns (`frame.prepare`), and `names` and `ends` the header.
-pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer) -> [heap, args] buffer.Buffer {
+pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer, jn: &j [byte]) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let reporting = query.reporting(tree);
     let ns = query.count_of(tree, 0);
@@ -358,10 +361,20 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
     } else if mode == 1 {
         class = 4;
     }
+    let joining = len(jn) > 0;
+    if joining {
+        class = 5;
+    }
     let unbounded = limit >= 1000000000000000;
     var reads = "all rows";
     if class == 4 && !unbounded {
         reads = "until the page is full";
+    }
+    if class == 5 {
+        reads = "the whole build file, then the probe until the page is full";
+        if unbounded {
+            reads = "the whole build file, then all the probe rows";
+        }
     }
     var wanted = 0;
     if class == 3 {
@@ -384,7 +397,9 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
         if mode == 2 || ordering {
             row_from = 0;
         }
-        if stdin {
+        if joining {
+            why = "the join is read on one core";
+        } else if stdin {
             why = "standard input is read on one core";
         } else if mode == 0 {
             why = "the shape is counted on one core";
@@ -707,9 +722,13 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
         o = buffer.append(heap, o, ",\"max_sort_rows\":");
         o = buffer.push_nat(heap, o, max_sort);
     }
-    if class == 2 || class == 3 || class == 1 {
+    if class == 2 || class == 3 || class == 1 || class == 5 {
         o = buffer.append(heap, o, ",\"max_state_bytes\":");
         o = buffer.push_nat(heap, o, max_state);
+    }
+    if class == 5 {
+        o = buffer.append(heap, o, ",\"max_join_rows\":");
+        o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "max-join-rows"));
     }
     o = buffer.append(heap, o, "},\"threads\":{\"requested\":");
     o = buffer.push_nat(heap, o, requested);
@@ -777,7 +796,7 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
     if float_sum {
         o = rule(heap, o, "agg.float-overflow");
     }
-    if as_csv || ordering {
+    if as_csv || ordering || joining {
         o = rule(heap, o, "limit.too-many-rows");
     }
     if mode != 0 && !as_csv {
@@ -792,8 +811,14 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
     if class == 3 {
         o = rule(heap, o, "limit.too-many-sort-rows");
     }
-    if class == 2 || class == 3 || class == 1 {
+    if class == 2 || class == 3 || class == 1 || class == 5 {
         o = rule(heap, o, "limit.state-too-large");
+    }
+    if class == 5 {
+        o = rule(heap, o, "limit.too-many-join-rows");
+        o = rule(heap, o, "join.column-collision");
+        o = rule(heap, o, "column.unknown");
+        o = rule(heap, o, "column.ambiguous");
     }
     // notes: advice, not refusals
     o = buffer.append(heap, o, "]},\"notes\":[");
@@ -840,6 +865,21 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
         }
         buffer.drop(heap, sentence);
         first_note = false;
+    }
+    if joining {
+        if !first_note {
+            o = buffer.push(heap, o, byte_of(','));
+        }
+        o = text.append_json(heap, o, "an empty key matches an empty key (there is no null): a probe row and a build row whose key cells are both empty are a pair");
+        first_note = false;
+        if requested > 1 {
+            o = buffer.push(heap, o, byte_of(','));
+            o = text.append_json(heap, o, "--threads has no effect on a join: it is read on one core, with the same bytes");
+        }
+        o = buffer.append(heap, o, "],\"join\":");
+        o = buffer.append(heap, o, jn);
+        o = buffer.append(heap, o, "}}");
+        return o;
     }
     o = buffer.append(heap, o, "]}}");
     return o;
@@ -892,6 +932,15 @@ pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
         }
     }
     file_close(file);
+    return conclude(heap, args, parsed, head, size, stdin, as_json, shown, delim, mode, as_csv, from, limit, budget, top, tree0, names_at, e, payload, "");
+}
+
+// The rest of `settle`, once the header is read (`head`) and the size of the input is known (`size`, -1 when it is not): the plan resolved against the header, a refusal of the run
+// raised as the run raises it, and otherwise the document. `jn` is the text of the `join` member of the document (a join, `jnexplain.cho`) or empty.
+pub fn conclude[&h, &g, &p, &s, &j](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, head: Head, size: int, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree0: query.Query, names_at: int, errs: fail.Errors, payload0: buffer.Buffer, jn: &j [byte]) -> [heap, args] (query.Query, fail.Errors, buffer.Buffer) {
+    let table = spec.flag_table();
+    var e = errs;
+    var payload = payload0;
     let Head { names, ends, got, abort, abort_line, long_length, errno, consumed, bytes_read } = head;
     var flagged = "";
     if cli.has(parsed, table, "sort") {
@@ -963,7 +1012,7 @@ pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
                     borrow ends as &er in {
                         borrow shown_head as &hr in {
                             buffer.drop(heap, payload);
-                            payload = document(heap, args, parsed, tq, stdin, as_json, shown, delim, mode, as_csv, from, limit, top, size, got, consumed, bytes_read, got && mode != 0, contents(cr), nr, er, hr);
+                            payload = document(heap, args, parsed, tq, stdin, as_json, shown, delim, mode, as_csv, from, limit, top, size, got, consumed, bytes_read, got && mode != 0, contents(cr), nr, er, hr, jn);
                         }
                     }
                 }

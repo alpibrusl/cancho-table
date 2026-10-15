@@ -154,17 +154,36 @@ def explain_document():
             "columns": {"oneOf": [{"type": "null"}, {"type": "array", "items": TB}]},
         }),
         "work": obj({
-            "class": {"enum": ["shape", "type report", "grouped single pass", "sorted rows", "stream rows"]},
-            "reads": {"enum": ["all rows", "until the page is full"]},
+            "class": {"enum": ["shape", "type report", "grouped single pass", "sorted rows", "stream rows", "join: build then stream"]},
+            "reads": {"enum": ["all rows", "until the page is full", "the whole build file, then the probe until the page is full", "the whole build file, then all the probe rows"]},
             "rows_held": NULLABLE_NAT,
             "bounds": obj({
-                "max_rows": NAT, "max_line_bytes": NAT, "max_bytes": NAT, "max_groups": NAT, "max_distinct": NAT, "max_sort_rows": NAT, "max_state_bytes": NAT,
+                "max_rows": NAT, "max_line_bytes": NAT, "max_bytes": NAT, "max_groups": NAT, "max_distinct": NAT, "max_sort_rows": NAT, "max_state_bytes": NAT, "max_join_rows": NAT,
             }, required=["max_rows", "max_line_bytes"]),
             "threads": obj({"requested": {"type": "integer", "minimum": 1}, "effective": {"type": "integer", "minimum": 1}, "reason": {"oneOf": [{"type": "null"}, {"type": "string"}]}}),
         }, required=["class", "reads", "bounds", "threads"]),
         "refusals": obj({"possible": {"type": "array", "items": RULE}}),
         "notes": {"type": "array", "items": TB},
-    })})
+        # a join (docs/joins.md section 8.4): the sides, the key, the columns, what the build can hold, the bound and the work
+        "join": obj({
+            "type": {"enum": ["inner"]},
+            "probe": TB,
+            "build": TB,
+            "role_choice": {"type": "string"},
+            "keys": {"type": "array", "items": obj({"probe": TB, "build": TB, "type": {"enum": ["text"]},
+                                                    "probe_position": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},
+                                                    "build_position": {"type": "integer", "minimum": 1}})},
+            "output_columns": NULLABLE_NAT,
+            "prefix": TB,
+            "using": {"type": "array", "items": TB},
+            "build_state": obj({"file_bytes": NULLABLE_NAT, "header_bytes": NAT, "accounted_at_most": NULLABLE_NAT, "budget": NAT, "may_pass_bound": {"type": "boolean"},
+                                "counted": {"type": "string"}, "swap": obj({"offered": {"type": "boolean"}, "reason": {"type": "string"}})}),
+            "max_join_rows": NAT,
+            "order": {"type": "string"},
+            "work": obj({"class": {"type": "string"}, "first_output_after": {"type": "string"},
+                         "threads": obj({"requested": {"type": "integer", "minimum": 1}, "effective": {"type": "integer", "minimum": 1}, "reason": {"type": "string"}})}),
+        }),
+    }, required=["source", "plan", "output", "work", "refusals", "notes"])})
 
 
 def discover_document():

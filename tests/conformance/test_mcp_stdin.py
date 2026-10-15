@@ -303,6 +303,36 @@ class Surface(unittest.TestCase):
             self.assertIn(b"--max-input", p.stderr)
 
 
+class Join(unittest.TestCase):
+    """`stdin` and `join` (docs/joins.md 3.1): the text is the probe side and a file under the root is the build side; `join` is a second file, not a second input text."""
+
+    def test_the_text_is_the_probe_and_the_file_is_the_build(self):
+        d = root()
+        (d / "dim.csv").write_bytes(b"id,name\n1,ann\n2,bob\n2,bobby\n")
+        text = "id,v\n2,x\n9,y\n1,z\n2,w\n"
+        for plan in ({"join": "dim.csv", "on": "id=id", "join-prefix": "d_"}, {"join": "dim.csv", "on": "id=id", "join-prefix": "d_", "format": "csv"},
+                     {"join": "dim.csv", "on": "id=id", "join-prefix": "d_", "select": "v,d_name", "limit": 2},
+                     {"join": "dim.csv", "on": "id=id"}, {"join": "nope.csv", "on": "id=id"}, {"join": "-", "on": "id=id"}, {"join": "../x.csv", "on": "id=id"},
+                     {"join": "dim.csv", "on": "id=id", "join-prefix": "d_", "explain": True}):
+            with self.subTest(plan=plan):
+                r = one({"stdin": text, **plan})
+                code, out, err = cli(plan, text)
+                self.assertEqual(r["result"]["content"][0]["text"].encode(), out.decode("utf-8", "replace").encode())
+                self.assertEqual(r["result"]["_meta"]["exit_code"], code)
+        r = one({"stdin": text, "join": "dim.csv", "on": "id=id", "join-prefix": "d_", "format": "csv"})
+        self.assertEqual(r["result"]["content"][0]["text"], "id,v,d_id,d_name\n2,x,2,bob\n2,x,2,bobby\n1,z,1,ann\n2,w,2,bob\n2,w,2,bobby\n")
+
+    def test_the_stdin_text_never_reaches_the_build_side(self):
+        d = root()
+        (d / "dim.csv").write_bytes(b"id,name\n1,ann\n")
+        # the text names a build-looking table: it is still the probe, and the build is the file
+        r = one({"stdin": "id,name\n1,FROM-STDIN\n", "join": "dim.csv", "on": "id=id", "join-prefix": "d_", "format": "csv"})
+        self.assertEqual(r["result"]["content"][0]["text"], "id,name,d_id,d_name\n1,FROM-STDIN,1,ann\n")
+        # a file and stdin together are still refused
+        r = one({"file": "data.csv", "stdin": "a\n", "join": "dim.csv", "on": "id=id"})
+        self.assertEqual(r["error"]["data"]["rule"], "mcp.input-conflict")
+
+
 class Equivalence(unittest.TestCase):
     """The same bytes as `table -`, over MCP and over the CLI, for the same input."""
 

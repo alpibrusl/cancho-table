@@ -231,6 +231,23 @@ CORPUS = [
     {"file": "data.csv", "explain": True, "rows": True},
     {"file": "data.csv", "explain": True, "select": "nosuch"},
     {"file": "nope.csv", "explain": True, "select": "id"},
+    # a join (docs/joins.md): the `join` property is a file beneath the root, as `file` is
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "select": "id,status,q_name", "limit": 10},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "select": "id,q_name,q_note", "format": "csv", "where": "id:int < 5"},
+    {"file": "quoted.csv", "join": "data.csv", "on": "id=id", "join-prefix": "d_", "select": "id,name,d_path", "limit": 5},
+    {"file": "quoted.csv", "join": "semi.csv", "on": "id=id", "join-prefix": "s_", "delimiter": ",", "select": "name,s_name"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id"},
+    {"file": "data.csv", "join": "nope.csv", "on": "id=id"},
+    {"file": "data.csv", "join": "../secret/outside.csv", "on": "id=leak"},
+    {"file": "data.csv", "join": "out.csv", "on": "id=leak"},
+    {"file": "data.csv", "join": "-", "on": "id=id"},
+    {"file": "data.csv", "join": "quoted.csv"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=nope", "join-prefix": "q_"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "group": "status"},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "max-state-bytes": 100},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "max-join-rows": 1},
+    {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "join-prefix": "q_", "explain": True, "threads": 4},
+    {"file": "data.csv", "join": "ragged.csv", "on": "id=a"},
 ]
 
 
@@ -325,6 +342,57 @@ class Differential(unittest.TestCase):
         self.assertEqual(responses[2]["result"], {})
 
 
+class JoinCalls(unittest.TestCase):
+    """`join` is a second file beneath the served root, confined by the tool as `file` is; the server adds no check of its own on a path (docs/joins.md 3.1)."""
+
+    def test_the_schema_has_the_flags_of_a_join(self):
+        [r], _ = talk(root(), [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        props = r["result"]["tools"][0]["inputSchema"]["properties"]
+        for p in ("join", "on", "join-type", "join-prefix", "max-join-rows"):
+            self.assertIn(p, props, p)
+        self.assertEqual((props["join"]["type"], props["join-type"]["enum"], props["max-join-rows"]["maximum"]), ("string", ["inner"], 1000000000))
+
+    def test_the_forms_of_a_path_for_join_are_the_forms_of_file(self):
+        secret = str(fixtures() / "secret" / "outside.csv")
+        cases = [
+            ("../secret/outside.csv", "path.dotdot"),
+            ("sub/../data.csv", "path.dotdot"),
+            ("..", "path.dotdot"),
+            ("./../root/data.csv", "path.dotdot"),
+            (secret, "path.outside-root"),
+            ("/etc/passwd", "path.outside-root"),
+            ("/", "path.outside-root"),
+            ("", None),
+            ("out.csv", "path.symlink"),
+            ("rel.csv", "path.symlink"),
+            ("link.csv", "path.symlink"),
+            ("linkdir/in.csv", "path.symlink"),
+            ("secretdir/outside.csv", "path.symlink"),
+            ("x" * 5000, "path.too-long"),
+        ]
+        for path, rule in cases:
+            with self.subTest(path=path[:40]):
+                arguments = {"file": "sub/in.csv", "join": path, "on": "s=#1"}
+                r = one(root(), arguments)
+                self.assertNotIn("TOPSECRET", json.dumps(r))
+                result = r["result"]
+                direct = cli(root(), arguments)
+                self.assertEqual(result["_meta"]["exit_code"], direct.status)
+                self.assertEqual(result["content"][0]["text"].encode(), direct.stdout)
+                self.assertTrue(result["isError"])
+                if rule:
+                    self.assertEqual(result["structuredContent"]["error"]["rule"], rule)
+
+    def test_a_join_that_looks_like_a_flag_is_a_file_name_and_the_dash_is_refused(self):
+        r = one(root(), {"file": "data.csv", "join": "--root=/", "on": "id=id"})["result"]
+        self.assertEqual(r["structuredContent"]["error"]["rule"], "io.not-found")
+        self.assertEqual(r["content"][0]["text"].encode(), cli(root(), {"file": "data.csv", "join": "--root=/", "on": "id=id"}).stdout)
+        r = one(root(), {"file": "data.csv", "join": "-", "on": "id=id"})["result"]
+        self.assertEqual((r["isError"], r["structuredContent"]["error"]["rule"]), (True, "args.bad-value"))
+        r = one(root(), {"file": "data.csv", "join": "quoted.csv", "on": "id=id", "select": "--root=/", "join-prefix": "--root=/"})["result"]
+        self.assertTrue(r["isError"])
+
+
 class Schema(unittest.TestCase):
     """The input schema is `introspect`'s, and follows it."""
 
@@ -365,11 +433,14 @@ class Schema(unittest.TestCase):
                 self.assertNotIn("type", p)
             elif kind == "text":
                 self.assertEqual((p["type"], p["minLength"]), ("string", 1))
+            elif kind in ("path", "any"):
+                self.assertEqual(p["type"], "string")
+                self.assertNotIn("minLength", p)
             elif kind == "bool":
                 self.assertEqual(p["type"], "boolean")
             else:
                 self.fail("a flag kind this test does not know: %s" % f["kind"])
-        self.assertEqual(kinds_seen, {"nat", "text", "choice", "bool"})
+        self.assertEqual(kinds_seen, {"nat", "text", "choice", "bool", "path", "any"})
         # The operand: one FILE, optional as the tool's is, for standard input, which the server offers as `stdin` (docs/mcp.md section 12, held by test_mcp_stdin.py):
         # a call gives exactly one of the two, which the server checks, so neither is `required` in the schema.
         [operand] = d["operands"]
