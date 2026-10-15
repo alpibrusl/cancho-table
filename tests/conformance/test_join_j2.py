@@ -483,7 +483,7 @@ class Flags(unittest.TestCase):
     def test_forms_of_on_that_are_refused(self):
         bad = {"": "empty", "k": "a name that is only one side and not in the other header is column.unknown, see below", "k=": "empty", "=id": "empty", "k=id=w": "two equals",
                "k:int=id": "a type on the left side", "k:int=id:int": "a type on both", "k=id:": "empty type", "k=id:integer": "unknown type", "k=id:int:int": "two types",
-               "k=id:dec": "no scale", "k=id:dec()": "no scale", "k=id:dec(19)": "scale", "k=id:dec(-1)": "scale", "k=id:dec(x)": "scale", "k=id:DEC(2)": "case", "k=id:INT": "case", "k=id:Float": "case",
+               "k=id:dec": "no scale", "k=id:dec()": "no scale", "k=id:dec(19)": "scale", "k=id:dec(05)": "a leading zero", "k=id:dec(00)": "a leading zero", "k=id:dec(-1)": "scale", "k=id:dec(x)": "scale", "k=id:DEC(2)": "case", "k=id:INT": "case", "k=id:Float": "case",
                "k\\x=id": "bad escape", "k=id\\": "trailing backslash", "k=id,": "empty pair", ",k=id": "empty pair", "k=id,,v=w": "empty pair", "#1": "bare position", "#1:int": "bare position typed",
                ",".join("a%d=b%d" % (i, i) for i in range(9)): "nine pairs"}
         for on, why in bad.items():
@@ -494,6 +494,12 @@ class Flags(unittest.TestCase):
                 self.assertEqual((r.status, r.first_rule()), (2, "args.bad-value"), why)
                 if on:
                     self.assertEqual(r.error()["detail"]["flags"], "--on")
+
+    def test_the_reason_of_a_refused_on_is_the_right_one(self):
+        for on, word in (("k:int=id", "end of a pair"), ("k=id:int:int", "one type"), ("k=id:bogus", "S from 0 to 18"), ("#2", "not a name that both files share"), ("a=b,", "empty")):
+            r = run("--root", self.s.dir, "--join", "b.csv", "--on", on, "p.csv")
+            self.assertEqual((r.status, r.first_rule()), (2, "args.bad-value"), on)
+            self.assertIn(word, r.error()["message"], on)
 
     def test_a_bare_name_is_using_and_needs_the_name_on_both_sides(self):
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k", "p.csv")
