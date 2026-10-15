@@ -158,6 +158,11 @@ otherwise said to be inferred.
     of snappy/zstd/gzip is in cancho's `std`, and its gain over CSV (column pruning) implies a column-wise engine.
 11. **Cheap paging**: `--from N` re-reads the file from the start, so paging a huge file is quadratic. An index file
     or a seekable cursor would fix it and is out of scope until someone pages a large file.
+12. **Externally comparable named benchmarks** (the H2O/DuckDB-Labs `db-benchmark` groupby and join, the 1 Billion Row Challenge, ClickBench, taxi-style queries,
+    simdjson's files as a correctness corpus; TPC-H and TPC-DS out of scope). **Designed, adopted in principle by the maintainer; nothing is built or measured:**
+    [`docs/named-benchmarks.md`](named-benchmarks.md) has the sources, the question-by-question mapping to `table` commands, the questions `table` cannot express and what blocks each
+    (for example the median and standard deviation, a difference of two aggregates, per-group top-k, the six-key grouping above the 1,000,000 group ceiling, text `min`/`max`, a year or a
+    length of a column, `not contains`), the method and gates, the scale ladder and the stages NB1 to NB8.
 
 ## Friction in the contract package (cancho-tools), from building this
 
