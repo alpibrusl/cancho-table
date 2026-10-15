@@ -696,7 +696,7 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
                 while e < key_item && known && !shadowed {
                     let (other, other_known) = label_of(heap, q, m, items, e);
                     borrow other as &orr in {
-                        shadowed = other_known && bytes.equal(buffer.bytes(orr), buffer.bytes(lr));
+                        shadowed = other_known && bytes.equal(buffer.bytes(orr), buffer.bytes(lr)) && (alias_of(m, items, e) >= 0 || alias_of(m, items, key_item) >= 0);
                     }
                     buffer.drop(heap, other);
                     e = e + 1;

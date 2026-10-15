@@ -249,3 +249,26 @@ def sqlite_answer(names, rows, picks, aliases, where=None, order_cols=None, grou
     cur = con.execute("SELECT %s FROM t ORDER BY t.__row" % ", ".join(items))
     labels = [d[0] for d in cur.description]
     return labels, [list(r) for r in cur.fetchall()]
+
+
+# ---- the cases whose reading slice B1 moved ----------------------------------------------------------------------------------------------------
+
+def reading_of(text, module):
+    try:
+        module.translate(text)
+        return ("ok",)
+    except module.QueryError as e:
+        if e.kind == "mixed":
+            return ("mixed", e.offset)
+        if e.kind == "too-long":
+            return ("too-long",)
+        return (e.kind, e.offset, e.expected if e.kind in ("syntax", "group-mismatch") else e.feature)
+
+
+def b1_changed(text):
+    """Whether the reference front end of slice B1 (query_ref.py) reads this query differently from the one of slice A2 (query_ref_a2.py, frozen): it has an `as`, and the tool follows B1. The goldens of
+    the earlier slices hold their other cases to main's bytes, and test_rename_b1_compat.py holds these to the reference of B1."""
+    import query_ref
+    import query_ref_a2
+    lat = text.encode("utf-8").decode("latin-1")
+    return reading_of(lat, query_ref_a2) != reading_of(lat, query_ref)

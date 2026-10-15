@@ -451,6 +451,19 @@ class Refusals(Base):
         self.assertEqual(r.error()["repair"], None, r)
         self.assertIn("TARGET=NEW", r.error()["hint"])
 
+    def test_ten_digits_after_a_hash_are_a_label_and_nine_are_a_position(self):
+        self.s.write("h.csv", "#1234567890,#123456789\n1,2\n")
+        r = self.r("--select", "\\#1234567890", "--rename", "#1234567890=x", "h.csv")
+        self.assertEqual(r.data()["columns"], ["x"], r)
+        r = self.r("--select", "\\#123456789", "--rename", "#123456789=x", "h.csv")
+        self.assertEqual((r.first_rule(), r.status), ("rename.unknown-target", 3), r)
+        r = self.r("--select", "\\#123456789", "--rename", "\\#123456789=x", "h.csv")
+        self.assertEqual(r.data()["columns"], ["x"], r)
+        # a `#` and something that is not digits is a label (a position is `#` and digits and nothing else), as in --select
+        self.s.write("k.csv", "#abc,#1a,#\n1,2,3\n")
+        r = self.r("--select", "\\#abc,\\#1a,\\#", "--rename", "#abc=x,#1a=y,#=z", "k.csv")
+        self.assertEqual(r.data()["columns"], ["x", "y", "z"], r)
+
     def test_the_rename_that_repairs_the_duplicate_is_accepted(self):
         r = self.r("--select", "a,a", "--rename", "#2=a2", "--format", "jsonl", "f.csv")
         self.assertEqual(r.status, 0, r)
@@ -727,14 +740,32 @@ class Parallel(unittest.TestCase):
 
 class Mcp(unittest.TestCase):
     def test_a_call_with_rename_is_the_cli_byte_for_byte(self):
+        import shutil
+        import tempfile
         import test_mcp
-        root = test_mcp.fixtures() / "root"
-        arguments = {"file": "data.csv", "select": "id,note", "rename": "id=key", "limit": 3}
-        direct = test_mcp.cli(root, arguments)
-        self.assertEqual(direct.status, 0, direct)
-        got = test_mcp.one(root, arguments)["result"]
-        self.assertEqual(got["content"][0]["text"].encode(), direct.stdout)
-        self.assertEqual(json.loads(direct.stdout)["data"]["columns"], ["key", "note"])
+        root = tempfile.mkdtemp(prefix="mcp-rn-")
+        try:
+            with open(os.path.join(root, "data.csv"), "w") as f:
+                f.write("id,note,n\n1,a,5\n2,b,6\n3,c,7\n4,d,8\n")
+            test_mcp.BUILT.clear()              # (test_mcp's teardown removed the server it built, and this builds its own)
+            arguments = {"file": "data.csv", "select": "id,note", "rename": "id=key", "limit": 3}
+            direct = test_mcp.cli(root, arguments)
+            self.assertEqual(direct.status, 0, direct)
+            got = test_mcp.one(root, arguments)["result"]
+            self.assertEqual(got["content"][0]["text"].encode(), direct.stdout)
+            self.assertEqual(json.loads(direct.stdout)["data"]["columns"], ["key", "note"])
+            # a refusal is the CLI's too
+            bad = {"file": "data.csv", "select": "id", "rename": "zz=x"}
+            direct = test_mcp.cli(root, bad)
+            self.assertEqual(direct.first_rule(), "rename.unknown-target", direct)
+            got = test_mcp.one(root, bad)["result"]
+            self.assertEqual(got["content"][0]["text"].encode(), direct.stdout)
+            self.assertTrue(got["isError"])
+        finally:
+            for built in test_mcp.BUILT.values():
+                shutil.rmtree(built.parent, ignore_errors=True)
+            test_mcp.BUILT.clear()
+            shutil.rmtree(root, ignore_errors=True)
 
 
 # ---- G-FUZZ ---------------------------------------------------------------------------------------------------------------------------

@@ -649,7 +649,8 @@ def _translate(ast):
                         raise QueryError("unsupported", at, feature="order-by-position", hint="--sort names output columns by their header name: name the column instead of its position")
                     j = ast["group"].index(k[0])
             key = alias_of(items[j]) or item_label(items[j])
-            if any((alias_of(it) or item_label(it)) == key for it in items[:j]):
+            # (only when an alias is involved: two aggregates of one label and no alias are what main always sorted by the first of)
+            if any((alias_of(it) or item_label(it)) == key and (alias_of(it) is not None or alias_of(items[j]) is not None) for it in items[:j]):
                 raise QueryError("group-mismatch", at, expected=WHAT_SORT_AMBIGUOUS)
             if key.startswith("-"):
                 raise QueryError("unsupported", at, feature="order-by-dash-name", hint="--sort has no escape for a name that starts with -")

@@ -57,9 +57,8 @@ MUTANTS = [
      "        if false && len(query.rename_text(tree)) > 0 {\n            let (l3, e3, a3, b3) = renamed(heap, tree, labels, lends);\n            labels = l3;\n            lends = e3;\n            if a3 != 0 {\n                abort = a3;\n                bad = b3;\n            }\n        }\n        head = buffer.push(heap, head, byte_of('['));\n        m = 0;"),
     ("the abort of a rename is the next rule's", "frame.cho", "return (labels, lends, 61 + why, at * 4096 + first);", "return (labels, lends, 62 + why, at * 4096 + first);"),
     ("the item at fault is decoded wrongly", "frame.cho", "return (labels, lends, 61 + why, at * 4096 + first);", "return (labels, lends, 61 + why, at * 4095 + first);"),
-    ("a rename of rows writes the labels twice for json lines", "frame.cho", "} else if !query.reporting(tree) && len(query.rename_text(tree)) > 0 {", "} else if !query.reporting(tree) && len(query.rename_text(tree)) > 99 {"),
     # ---- the plan and the flag (query.cho, inputs.cho, table.cho)
-    ("the plan keeps no rename", "query.cho", "rename: buffer.append(heap, rename, text) };", "rename: rename };"),
+    ("the plan keeps no rename", "query.cho", "rename: buffer.append(heap, rename, text) };", "rename: buffer.append(heap, rename, text[0..0]) };"),
     ("--rename is never looked up", "inputs.cho", "bytes.starts_with(a, \"--rename\")", "bytes.starts_with(a, \"--renamx\")"),
     ("--rename is never given", "inputs.cho", "has_rename: has_rename, select_text", "has_rename: false, select_text"),
     ("a rename is allowed with the shape", "table.cho", "e = relfail.check(heap, e, rename_t, mode == 0, has_report, inp.has_query);", "e = relfail.check(heap, e, rename_t, mode == 99, has_report, inp.has_query);"),
@@ -99,7 +98,8 @@ MUTANTS = [
     ("an alias does not win in the order by of a grouping", "qtrans.cho", "if hits == 1 {\n                    key_item = which;", "if hits == 99 {\n                    key_item = which;"),
     ("two aliases of one name are not refused in rows", "qtrans.cho", "if hits > 1 {\n                    qarena.fail(m, 3, 46, m[r + 6]);", "if hits > 99 {\n                    qarena.fail(m, 3, 46, m[r + 6]);"),
     ("two aliases of one name are not refused in a grouping", "qtrans.cho", "if hits > 1 {\n                    qarena.fail(m, 3, 46, where_key);", "if hits > 99 {\n                    qarena.fail(m, 3, 46, where_key);"),
-    ("a sort label an earlier column has is accepted", "qtrans.cho", "shadowed = other_known && bytes.equal(buffer.bytes(orr), buffer.bytes(lr));", "shadowed = false;"),
+    ("a sort label an earlier column has is accepted", "qtrans.cho", "shadowed = other_known && bytes.equal(buffer.bytes(orr), buffer.bytes(lr)) && (alias_of(m, items, e) >= 0 || alias_of(m, items, key_item) >= 0);", "shadowed = false;"),
+    ("a sort label an earlier column has is refused without an alias (a break of main's compatibility)", "qtrans.cho", "&& (alias_of(m, items, e) >= 0 || alias_of(m, items, key_item) >= 0);", ";"),
     ("--sort names the header's name and not the alias", "qtrans.cho", "if a >= 0 {\n        return (decode(heap, q, m, a), true);", "if a >= 99 {\n        return (decode(heap, q, m, a), true);"),
     ("the repair of a grouping drops the alias of an aggregate", "qrepair.cho", "if m[items + 8 * i + 7] > 0 {", "if false {"),
     # ---- the rule table
@@ -111,6 +111,8 @@ MUTANTS = [
 
 # Equivalent mutants, left out of MUTANTS with the reason (each was tried, built and survived the suite, and the reason is why it must):
 EQUIVALENT = [
+    ("a rename of rows writes the labels twice for json lines", "frame.cho", "} else if !query.reporting(tree) && len(query.rename_text(tree)) > 0 {", "} else if !query.reporting(tree) && len(query.rename_text(tree)) > 99 {",
+     "the labels of a selection are written once more after the rename's, but `jout.with_template` reads the first `named` (the places picked) of them, and the check of two equal keys reads the same ones: the extra labels are never looked at"),
     ("the plan of a worker thread has no rename", "query.cho", "rename: copy_buffer(heap, plan.rename) };", "rename: buffer.empty(heap, 1) };",
      "`duplicate` gives a worker its own plan, and the labels are written once, by the parent, in `frame.prepare` before any worker is started; no thread reads the rename, so a copy that drops it is not seen"),
     ("the labels of a header the rename refused are not written", "frame.cho", "while m < ng + na && abort == 0 {", "while m < ng + na {",

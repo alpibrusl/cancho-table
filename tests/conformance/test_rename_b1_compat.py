@@ -15,10 +15,16 @@ import random
 import tempfile
 import unittest
 
+import not_a2_cases as K
+import or_a0
 import query_gen
+import query_ref
+import query_ref_a2
 import procs as subprocess
-from harness import ROOT, binary, run, run_argv
+import test_or_a1_compat as C1
+from harness import ROOT, Scratch, binary, run, run_argv
 
+CHANGES = pathlib.Path(__file__).resolve().parent / "rename_b1_compat_changes.json"
 CORPUS_MD5 = "fccb01b66dd7518d74611219a6c5aa29"
 EXPLAIN_MD5 = os.environ.get("RENAME_B1_EXPLAIN_MD5", "0c1ac7d875b01542d20b7d3fe9af2b28")
 BASE = os.environ.get("RENAME_B1_BASE")
@@ -101,6 +107,56 @@ class Today(unittest.TestCase):
         self.assertIn(OLD_HINT, old["output.duplicate-column"]["summary"])
         self.assertIn(NEW_HINT, new["output.duplicate-column"]["summary"])
         self.assertEqual(new["output.duplicate-column"]["summary"].replace(NEW_HINT, OLD_HINT), old["output.duplicate-column"]["summary"])
+
+
+def lat(text):
+    return text.encode("utf-8").decode("latin-1")
+
+
+class Goldens(unittest.TestCase):
+    """The cases of the goldens of A0, A1 and A2 (5,585 of them: not_a2_base_golden.json) that slice B1 reads differently from slice A2: the queries with an `as`. The other tests of the goldens hold
+    every other case to main's bytes (or to the reference of its own slice) and leave these to this one: each gives what the reference of B1 (query_ref.py) says, and the list is written down."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.s = Scratch()
+        cls.s.write("t.csv", or_a0.DATA)
+        cls.dir = str(cls.s.dir)
+        cases = {}
+        for kind, argv in list(or_a0.golden_cases()) + list(K.cases()):
+            cases[or_a0.case_id(kind, argv)] = (kind, argv)
+        cls.cases = {cid: v for cid, v in cases.items() if C1.expr_b1(v[1])}
+        cls.now = {row[0]: row for row in or_a0.run_cases(list(cls.cases.values()), cls.dir, run)}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.s.cleanup()
+
+    def test_each_case_the_grammar_of_as_moves_gives_the_reference_reading(self):
+        golden = json.loads(K.GOLDEN.read_text())["cases"]
+        changes = []
+        for cid, (kind, argv) in sorted(self.cases.items()):
+            expr = C1.expression_of(argv)
+            self.assertEqual(expr[0], "query")
+            self.assertRegex(expr[1].lower(), r"\bas\b", expr)
+            want = C1.reading_query(lat(expr[1]), query_ref)
+            before = C1.reading_query(lat(expr[1]), query_ref_a2)
+            args = [a.replace("{DIR}", self.dir) for a in argv]
+            doc = None if kind in ("csv", "jsonl", "query-csv") else C1.as_doc(run(*args))
+            tool = C1.tool_query(expr[1], doc)
+            if tool == ("literal",):
+                tool = ("ok",)
+            if tool is not None:
+                self.assertEqual(tool, want, "%s %r" % (cid, expr))
+            row = self.now[cid]
+            g = golden.get(cid)
+            changes.append([cid, kind, expr[1], list(before), list(want), None if g is None else [g[0], g[1]], [row[1], row[2]]])
+        self.assertGreaterEqual(len(changes), 2)         # (the goldens hold two queries with an `as`: the rest of the alias cases are the generated ones of test_rename_b1.py)
+        if os.environ.get("RENAME_B1_WRITE"):
+            CHANGES.write_text(json.dumps({"count": len(changes), "changes": changes}, sort_keys=True, indent=0, separators=(",", ":")) + "\n")
+        recorded = json.loads(CHANGES.read_text())
+        self.assertEqual(recorded["count"], len(changes))
+        self.assertEqual(recorded["changes"], json.loads(json.dumps(changes)), "the list of changed cases moved: regenerate it with RENAME_B1_WRITE=1 and read the diff")
 
 
 if __name__ == "__main__":

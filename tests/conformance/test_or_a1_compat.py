@@ -24,9 +24,10 @@ import unittest
 import not_a2 as N
 import or_a0
 import or_a1 as O
-import query_ref
 import query_ref_a0
 import query_ref_a1
+import query_ref_a2 as query_ref          # the grammar of A2, frozen: slice B1 (`as`) came after this file, and test_rename_b1_compat.py holds the cases it moved
+import rename_b1
 from harness import Scratch, binary, run, run_argv
 
 CHANGES = pathlib.Path(__file__).resolve().parent / "or_a1_compat_changes.json"
@@ -110,6 +111,12 @@ def tool_query(text, doc):
     return ("ok",)
 
 
+def expr_b1(argv):
+    """Whether the expression of a case is a query that slice B1 reads differently from slice A2."""
+    expr = expression_of(argv)
+    return expr is not None and expr[0] == "query" and rename_b1.b1_changed(expr[1])
+
+
 def as_doc(r):
     try:
         lines = r.stdout.decode("utf-8").splitlines()
@@ -143,6 +150,7 @@ class Compat(unittest.TestCase):
             row = self.now[cid]
             expr = expression_of(argv)
             r_old = r_new = r_a2 = None
+            b1 = expr_b1(argv)
             if expr is not None and expr[0] == "where":
                 r_old, r_new = reading_where(expr[1], True), reading_where(expr[1], False)
             elif expr is not None:
@@ -160,9 +168,14 @@ class Compat(unittest.TestCase):
                 continue
             if r_old == r_new:
                 same += 1
+                if b1:
+                    continue                      # slice B1 reads it differently from slice A2: held by test_rename_b1_compat.py
                 self.assertEqual((row[1], row[2], row[3]), (g_status, g_rule, g_sha), "%s %r: read the same by both grammars, so main's bytes" % (cid, expr))
                 if cid in a0:
                     self.assertEqual((row[1], row[2], row[4]), (a0[cid][0], a0[cid][1], a0[cid][3]), cid)
+                continue
+            if b1:
+                changes.append([cid, kind, expr[1], list(r_old), list(r_new)])
                 continue
             # read differently: the answer is the one the new reference gives
             self.assertNotEqual((row[1], row[2], row[3]), (g_status, g_rule, g_sha), "%s %r: the references say the grammars differ, and the tool answered main's bytes" % (cid, expr))
