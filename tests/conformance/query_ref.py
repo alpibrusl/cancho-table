@@ -38,6 +38,9 @@ DIGITS = re.compile(r"[0-9]+")
 WHAT_COLUMN = "a column"
 WHAT_ITEM = "a column, *, or an aggregate: count(*), sum(x), min(x), max(x), mean(x), count(distinct x)"
 WHAT_KEYWORD = ' (a name that is a keyword is written "like this")'
+WHAT_ALIAS = "a name after as" + WHAT_KEYWORD
+WHAT_ALIAS_AMBIGUOUS = "an order by name that is the alias of one column of the answer only"
+WHAT_SORT_AMBIGUOUS = "an order by name that no earlier column of the answer has"
 WHAT_CEILING = "fewer conditions or values: the ceiling is 64 conditions and 1024 values"
 WHAT_DEPTH = "fewer nested parentheses: the ceiling is 8"
 MAX_DEPTH = 8
@@ -270,9 +273,17 @@ class P:
                 if e[1] is not None:
                     raise QueryError("unsupported", at, feature="cast-in-select",
                                      hint="a type is part of how a column is read in a condition, a sort or an aggregate; selecting a column returns its text")
-                out.append(("col", e[0], at))
+                out.append(("col", e[0], at, None))
             if self.word() == "as":
-                raise QueryError("unsupported", self.peek()[2], feature="alias", hint="a column keeps its header name and an aggregate its name (sum:bytes); there is no renaming")
+                self.k += 1
+                t = self.peek()
+                if t[0] == "ID" and (t[1].lower() in RESERVED or t[1].lower() in FUTURE) or t[0] not in ("ID", "QID"):
+                    raise QueryError("syntax", t[2], expected=WHAT_ALIAS)
+                self.k += 1
+                if out[-1][0] == "agg":
+                    out[-1][1]["alias"] = t[1]
+                else:
+                    out[-1] = out[-1][:3] + (t[1],)
             if not self.eat_sym(","):
                 return out
 
@@ -529,6 +540,27 @@ def same_agg(a, b):
     return a["fn"] == b["fn"] and a.get("arg") == b.get("arg") and a.get("scale") == b.get("scale")
 
 
+def alias_of(item):
+    """the name an item of the select list is given by `as`, or None."""
+    return item[3] if item[0] == "col" else (item[1].get("alias") if item[0] == "agg" else None)
+
+
+def rename_new(name):
+    """a new label as --rename's list writes it: a backslash before a comma, a backslash and a leading #."""
+    s = name.replace("\\", "\\\\").replace(",", "\\,")
+    return "\\" + s if s.startswith("#") else s
+
+
+def item_label(item):
+    """the label an item has before any rename (None when it is a position, whose header name the front end does not know)."""
+    if item[0] == "col":
+        return item[1][1] if item[1][0] == "name" else None
+    a = item[1]
+    if a["fn"] == "count":
+        return "count"
+    return None if a["arg"][0][0] == "pos" else agg_label(a)
+
+
 def translate(q):
     """Return (argv, source): argv the flags, source ('file', name) or ('stdin', None) or None. `q` is str (Latin-1 view of the bytes) or bytes."""
     if isinstance(q, bytes):
@@ -603,13 +635,22 @@ def _translate(ast):
                     raise QueryError("group-mismatch", at, expected="an aggregate that is in the select list")
                 if k.get("arg") and k["arg"][0][0] == "pos":
                     raise QueryError("unsupported", at, feature="order-by-position", hint="--sort names output columns by their header name: name the column instead of its position")
-                key = agg_label(k)
+                j = [n for n, it in enumerate(items) if it[0] == "agg" and same_agg(k, it[1])][0]
             else:
-                if k[1] is not None or k[0] not in ast["group"]:
-                    raise QueryError("group-mismatch", at, expected="a group by column or an aggregate of the select list")
-                if k[0][0] == "pos":
-                    raise QueryError("unsupported", at, feature="order-by-position", hint="--sort names output columns by their header name: name the column instead of its position")
-                key = k[0][1]
+                hits = [n for n, it in enumerate(items) if k[1] is None and k[0][0] == "name" and alias_of(it) == k[0][1]]
+                if len(hits) > 1:
+                    raise QueryError("group-mismatch", at, expected=WHAT_ALIAS_AMBIGUOUS)
+                if hits:
+                    j = hits[0]
+                else:
+                    if k[1] is not None or k[0] not in ast["group"]:
+                        raise QueryError("group-mismatch", at, expected="a group by column or an aggregate of the select list")
+                    if k[0][0] == "pos":
+                        raise QueryError("unsupported", at, feature="order-by-position", hint="--sort names output columns by their header name: name the column instead of its position")
+                    j = ast["group"].index(k[0])
+            key = alias_of(items[j]) or item_label(items[j])
+            if any((alias_of(it) or item_label(it)) == key for it in items[:j]):
+                raise QueryError("group-mismatch", at, expected=WHAT_SORT_AMBIGUOUS)
             if key.startswith("-"):
                 raise QueryError("unsupported", at, feature="order-by-dash-name", hint="--sort has no escape for a name that starts with -")
             argv += ["--sort", ("-" if desc else "") + key]
@@ -619,8 +660,17 @@ def _translate(ast):
                 if kind == "agg":
                     raise QueryError("group-mismatch", at, expected="a column (an aggregate needs a group by or an aggregate select list)")
                 col, ty = k
+                if col[0] == "name":
+                    hits = [it for it in items if alias_of(it) == col[1]]
+                    if len(hits) > 1:
+                        raise QueryError("group-mismatch", at, expected=WHAT_ALIAS_AMBIGUOUS)
+                    if hits:
+                        col = hits[0][1]
                 keys.append(("-" if desc else "") + order_name(col) + type_suffix(ty))
             argv += ["--order-by", ",".join(keys)]
+    aliased = [(n, alias_of(it)) for n, it in enumerate(items) if alias_of(it) is not None]
+    if aliased:
+        argv += ["--rename", ",".join("#%d=%s" % (n + 1, rename_new(a)) for n, a in aliased)]
     if ast["limit"] is not None:
         argv += ["--limit", str(ast["limit"])]
     if ast["offset"] is not None:

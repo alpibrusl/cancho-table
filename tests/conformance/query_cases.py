@@ -179,7 +179,8 @@ PINNED = [
 
 # Slice A2 (`not`, docs/or-and-columns.md section 17) turned this row into an answer. It stays in PINNED because the goldens of the earlier slices name their cases by the text of the query
 # (or_a0.QUERY_HAND), and it is listed under ACCEPTED below as what it is now.
-RETIRED = [row for row in PINNED if row[0] == "select a from 'f' where b not in (1)"]
+RETIRED = [row for row in PINNED if row[0] in ("select a from 'f' where b not in (1)", "select a as b from 'f'")]
+# (slice B1 turned `select a as b from 'f'`, which was query.unsupported "alias" at 9, into an answer: it is under ACCEPTED, and `as` is read by the places of B_PINNED)
 
 # The places the grammar of `not` can fail (slice A2), each pinned: the rule, the byte offset, the words or the feature. The offsets are the reference front end's and were read by hand.
 NOT_PINNED = [
@@ -206,11 +207,39 @@ NOT_PINNED = [
     ("select a from 'f' where b not in (1", 'syntax', 35, ', or )'),
     ("select a from 'f' order by not a", 'syntax', 27, 'a column (a name that is a keyword is written "like this")'),
 ]
+ALIAS_WORDS = 'a name after as (a name that is a keyword is written "like this")'
+# The places `as` (slice B1, docs/or-and-columns.md section 8.2) can fail, each pinned; the offsets are the reference front end's, read by hand.
+B_PINNED = [
+    ("select a as from 'f'", 'syntax', 12, ALIAS_WORDS),
+    ("select a as 5 from 'f'", 'syntax', 12, ALIAS_WORDS),
+    ("select a as #2 from 'f'", 'syntax', 12, ALIAS_WORDS),
+    ("select a as 'x' from 'f'", 'syntax', 12, ALIAS_WORDS),
+    ("select a as select from 'f'", 'syntax', 12, ALIAS_WORDS),
+    ("select a as like from 'f'", 'syntax', 12, ALIAS_WORDS),
+    ("select a as", 'syntax', 11, ALIAS_WORDS),
+    ("select a as ,b", 'syntax', 12, ALIAS_WORDS),
+    ("select count(*) as from 'f'", 'syntax', 19, ALIAS_WORDS),
+    ("select a as b as c from 'f'", 'syntax', 14, 'the end of the query (one statement)'),
+    ("select * as x from 'f'", 'syntax', 9, 'the end of the query (one statement)'),
+    ("select a as \"\" from 'f'", 'unsupported', 12, 'empty-name'),
+    ("select a as x, b as x from 'f' order by x", 'group-mismatch', 40, 'an order by name that is the alias of one column of the answer only', 'a as x, b as x', ''),
+    ("select g as x, count(*) as x from 'f' group by g order by x", 'group-mismatch', 58, 'an order by name that is the alias of one column of the answer only', 'g as x, count(*) as x', 'g'),
+    ("select g, count(*) as g from 'f' group by g order by g", 'group-mismatch', 53, 'an order by name that no earlier column of the answer has', 'g, count(*) as g', 'g'),
+    ("select g as k, count(*) from 'f' group by g order by k::int", 'group-mismatch', 53, 'a group by column or an aggregate of the select list', 'g as k, count(*)', 'g'),
+    ("select a as x from 'f' group by x", 'group-mismatch', 7, 'the select list is the group by columns in the same order, then the aggregates', 'a as x', 'x'),
+]
 REFUSALS = [row for row in PINNED if row not in RETIRED]
-ALL_REFUSALS = REFUSALS + NOT_PINNED          # what test_query.py pins; the fuzz tests of the other modules seed from REFUSALS, whose size sets the mix they draw
+ALL_REFUSALS = REFUSALS + NOT_PINNED + B_PINNED          # what test_query.py pins; the fuzz tests of the other modules seed from REFUSALS, whose size sets the mix they draw
 
 # (query, the flags it translates to, the source)
 ACCEPTED = [
+    ("select a as b from 'f'", ['--select', 'a', '--rename', '#1=b'], ('file', 'f')),
+    ("select a as \"x,y\", b as \"#1\" from 'f'", ['--select', 'a,b', '--rename', '#1=x\\,y,#2=\\#1'], ('file', 'f')),
+    ("select g as k, count(*) as n from 'f' group by g order by n desc", ['--group', 'g', '--agg', 'count', '--sort', '-n', '--rename', '#1=k,#2=n'], ('file', 'f')),
+    ("select a as b, b as a from 'f' order by b desc", ['--select', 'a,b', '--order-by', '-a', '--rename', '#1=b,#2=a'], ('file', 'f')),
+    ("select b, a as b from 'f' order by b", ['--select', 'b,a', '--order-by', 'a', '--rename', '#2=b'], ('file', 'f')),
+    ("select g as count, count(*) from 'f' group by g order by count", ['--group', 'g', '--agg', 'count', '--sort', 'count', '--rename', '#1=count'], ('file', 'f')),
+    ("select a as x from 'f' where x = 1 order by x::int desc, a", ['--select', 'a', '--where', 'x = 1', '--order-by', '-a:int,a', '--rename', '#1=x'], ('file', 'f')),
     ("select a from 'f' where b not in (1)", ['--select', 'a', '--where', 'b not in (1)'], ('file', 'f')),
     ("select a from 'f' where not b = 1", ['--select', 'a', '--where', 'not (b = 1)'], ('file', 'f')),
     ("select a from 'f' where not (b = 1 or c = 2) and d not contains 'x'", ['--select', 'a', '--where', 'not (b = 1 or c = 2) and d not contains \'x\''], ('file', 'f')),
