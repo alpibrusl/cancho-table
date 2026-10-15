@@ -39,10 +39,12 @@ WHAT_COLUMN = "a column"
 WHAT_ITEM = "a column, *, or an aggregate: count(*), sum(x), min(x), max(x), mean(x), count(distinct x)"
 WHAT_KEYWORD = ' (a name that is a keyword is written "like this")'
 WHAT_CEILING = "fewer conditions or values: the ceiling is 64 conditions and 1024 values"
+WHAT_DEPTH = "fewer nested parentheses: the ceiling is 8"
+MAX_DEPTH = 8
 
 
 class QueryError(Exception):
-    """kind: syntax | unsupported | group-mismatch | too-long. offset: byte offset in the query."""
+    """kind: syntax | unsupported | group-mismatch | too-long | mixed (and with or at one level, at the connective). offset: byte offset in the query."""
 
     def __init__(self, kind, offset, expected=None, feature=None, hint=None):
         super().__init__("%s at %s: %s" % (kind, offset, expected or feature))
@@ -126,6 +128,8 @@ def lex(q):
 class P:
     def __init__(self, q):
         self.q, self.t, self.k = q, lex(q), 0
+        self.mix = None
+        self.conds, self.wh = [], []
 
     def peek(self, d=0):
         return self.t[min(self.k + d, len(self.t) - 1)]
@@ -272,55 +276,93 @@ class P:
             if not self.eat_sym(","):
                 return out
 
-    def cond(self):
-        conds = []
+    def leaf(self, at):
+        """One condition, appended to self.conds (the leaves) and to self.items (the where clause in order)."""
+        e = self.expr(WHAT_COLUMN)
+        w = self.word()
+        t = self.peek()
+        if t[0] == "SYM" and t[1] in ("=", "!=", "<>", "<", "<=", ">", ">="):
+            self.k += 1
+            op = "!=" if t[1] == "<>" else t[1]
+            nxt = self.peek()
+            if nxt[0] in ("QID", "POS") or (nxt[0] == "ID" and nxt[1].lower() not in ("null", "true", "false")):
+                raise QueryError("unsupported", nxt[2], feature="column-comparison", hint="a condition compares a column with a value, not with another column")
+            self.conds.append({"col": e, "op": op, "vals": [self.literal()], "at": at})
+        elif w == "contains":
+            self.k += 1
+            if e[1] is not None:
+                raise QueryError("syntax", t[2], expected="a typed column is compared with = != < <= > >= or in, not contains")
+            self.conds.append({"col": e, "op": "contains", "vals": [self.literal()], "at": at})
+        elif w == "in":
+            self.k += 1
+            self.expect_sym("(", "( and a list of values")
+            vals = [self.literal()]
+            while self.eat_sym(","):
+                if len(vals) >= MAX_VALUES:
+                    raise QueryError("syntax", self.peek()[2], expected=WHAT_CEILING)
+                vals.append(self.literal())
+            self.expect_sym(")", ", or )")
+            self.conds.append({"col": e, "op": "in", "vals": vals, "at": at})
+        elif w in ("like", "ilike", "between", "is", "not"):
+            feat = {"like": "like", "ilike": "like", "between": "between", "is": "is-null", "not": "not"}[w]
+            hints = {"like": "contains 'text' finds a substring; there are no patterns",
+                     "between": "write two conditions: x >= a and x <= b",
+                     "is-null": "there is no null: an empty cell is the empty text, x = ''",
+                     "not": "write the opposite comparison: != for =, in has no negation"}
+            raise QueryError("unsupported", t[2], feature=feat, hint=hints[feat])
+        else:
+            raise QueryError("syntax", t[2], expected="= != <> < <= > >= contains in")
+        self.wh.append(self.conds[-1])
+
+    def unit(self, depth):
+        at = self.peek()[2]
+        if len(self.conds) >= MAX_CONDITIONS:
+            raise QueryError("syntax", at, expected=WHAT_CEILING)
+        if self.peek()[:2] == ("SYM", "("):
+            if depth >= MAX_DEPTH:
+                raise QueryError("syntax", at, expected=WHAT_DEPTH)
+            self.k += 1
+            self.wh.append("(")
+            self.level(depth + 1)
+            self.expect_sym(")", ")")
+            self.wh.append(")")
+        else:
+            self.leaf(at)
+
+    def level(self, depth):
+        kind = None
         while True:
-            at = self.peek()[2]
-            if len(conds) >= MAX_CONDITIONS:
-                raise QueryError("syntax", at, expected=WHAT_CEILING)
-            e = self.expr(WHAT_COLUMN)
-            w = self.word()
-            t = self.peek()
-            if t[0] == "SYM" and t[1] in ("=", "!=", "<>", "<", "<=", ">", ">="):
-                self.k += 1
-                op = "!=" if t[1] == "<>" else t[1]
-                nxt = self.peek()
-                if nxt[0] in ("QID", "POS") or (nxt[0] == "ID" and nxt[1].lower() not in ("null", "true", "false")):
-                    raise QueryError("unsupported", nxt[2], feature="column-comparison", hint="a condition compares a column with a value, not with another column")
-                conds.append({"col": e, "op": op, "vals": [self.literal()], "at": at})
-            elif w == "contains":
-                self.k += 1
-                if e[1] is not None:
-                    raise QueryError("syntax", t[2], expected="a typed column is compared with = != < <= > >= or in, not contains")
-                conds.append({"col": e, "op": "contains", "vals": [self.literal()], "at": at})
-            elif w == "in":
-                self.k += 1
-                self.expect_sym("(", "( and a list of values")
-                vals = [self.literal()]
-                while self.eat_sym(","):
-                    if len(vals) >= MAX_VALUES:
-                        raise QueryError("syntax", self.peek()[2], expected=WHAT_CEILING)
-                    vals.append(self.literal())
-                self.expect_sym(")", ", or )")
-                conds.append({"col": e, "op": "in", "vals": vals, "at": at})
-            elif w in ("like", "ilike", "between", "is", "not"):
-                feat = {"like": "like", "ilike": "like", "between": "between", "is": "is-null", "not": "not"}[w]
-                hints = {"like": "contains 'text' finds a substring; there are no patterns",
-                         "between": "write two conditions: x >= a and x <= b",
-                         "is-null": "there is no null: an empty cell is the empty text, x = ''",
-                         "not": "write the opposite comparison: != for =, in has no negation"}
-                raise QueryError("unsupported", t[2], feature=feat, hint=hints[feat])
-            else:
-                raise QueryError("syntax", t[2], expected="= != <> < <= > >= contains in")
-            if self.eat_word("and"):
-                continue
-            if self.word() == "or":
-                raise QueryError("unsupported", self.peek()[2], feature="or", hint="only and; a set of values of one column is col in ('a', 'b')")
-            if self.peek()[:2] == ("SYM", "("):
-                raise QueryError("unsupported", self.peek()[2], feature="parentheses", hint="conditions joined by and, nothing grouped")
-            return conds
+            self.unit(depth)
+            here = self.peek()[2]
+            c = self.word()
+            if c not in ("and", "or"):
+                return
+            self.k += 1
+            if kind is None:
+                kind = c
+            elif kind != c and self.mix is None:
+                self.mix = here
+            self.wh.append(c)
+
+    def cond(self):
+        self.conds, self.wh = [], []
+        self.level(0)
+        return self.conds
 
     def parse(self):
+        try:
+            q = self.statement()
+        except QueryError:
+            if self.mix is not None:
+                raise QueryError("mixed", self.mix)
+            raise
+        if self.mix is not None:
+            raise QueryError("mixed", self.mix)
+        q["items"] = q["items"]
+        q["where"] = self.wh
+        return q
+
+    def statement(self):
         self.expect_word("select", "select")
         items_at = self.peek()[2]
         items = self.items()
@@ -382,8 +424,6 @@ class P:
         if t[0] != "END":
             if t[0] == "ID" and t[1].lower() in ("union", "intersect", "except"):
                 raise QueryError("unsupported", t[2], feature="union", hint="one statement")
-            if t[0] == "ID" and t[1].lower() == "or":
-                raise QueryError("unsupported", t[2], feature="or", hint="only and")
             raise QueryError("syntax", t[2], expected="the end of the query (one statement)")
         return q
 
@@ -466,6 +506,16 @@ def translate(q):
         raise
 
 
+def translate_ignoring_mix(q):
+    """The flags of a query that is whole but for `and` mixed with `or` at one level (the clause is written as it stands): what the repair of `query.mixed-and-or` starts from."""
+    if isinstance(q, bytes):
+        q = q.decode("latin-1")
+    p = P(q)
+    ast = p.statement()
+    ast["where"] = p.wh
+    return _translate(ast)
+
+
 def _translate(ast):
     items, argv = ast["items"], []
     aggs = [i[1] for i in items if i[0] == "agg"]
@@ -490,15 +540,20 @@ def _translate(ast):
         if not star:
             argv += ["--select", ",".join(list_name(c[1]) for c in cols)]
     if ast["conds"]:
-        parts = []
-        for c in ast["conds"]:
-            col, ty = c["col"]
-            w = where_word(col) + type_suffix(ty)
-            if c["op"] == "in":
-                parts.append(w + " in (" + ", ".join(where_value(v) for v in c["vals"]) + ")")
+        text = ""
+        for c in ast["where"]:
+            if c in ("(", ")"):
+                text += c
+            elif isinstance(c, str):
+                text += " %s " % c
             else:
-                parts.append("%s %s %s" % (w, c["op"], where_value(c["vals"][0])))
-        argv += ["--where", " and ".join(parts)]
+                col, ty = c["col"]
+                w = where_word(col) + type_suffix(ty)
+                if c["op"] == "in":
+                    text += w + " in (" + ", ".join(where_value(v) for v in c["vals"]) + ")"
+                else:
+                    text += "%s %s %s" % (w, c["op"], where_value(c["vals"][0]))
+        argv += ["--where", text]
     if ast["order"]:
         if grouped:
             if len(ast["order"]) != 1:

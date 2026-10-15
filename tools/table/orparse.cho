@@ -1,0 +1,404 @@
+edition 5;
+
+module orparse;
+
+// `--where` with `or` and parentheses (docs/or-and-columns.md sections 3 and 4): the whole grammar,
+//
+//     EXPR  := ALL | ANY | UNIT
+//     ALL   := UNIT "and" UNIT { "and" UNIT }          ANY := UNIT "or" UNIT { "or" UNIT }
+//     UNIT  := COND | "(" EXPR ")"
+//
+// A level is all `and` or all `or`: `a and b or c` is `where.mixed-and-or`, and the repair offers the two ways to read it. A condition is read by `expr.parse_cond`, as it always was.
+// At most 8 levels of parentheses and 64 conditions (the leaves, wherever they are).
+//
+// The expression is read into a tree of records in one vector (`tree`: a leaf `[0, its number, start, end]`, a group `[3, its child, start, end]`, a level `[1 and | 2 or | 4 mixed, where its
+// children are, how many, start]`, the children being pairs `[the connective before it, the node]`), and a tree that holds an `or` is compiled to the branch program of `query.flow`: for each
+// condition, the condition to run next when it is true and when it is false. A conjunction has no program, and is evaluated by the loop that has always evaluated it.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import expr;
+import query;
+
+// the most levels of parentheses (a choice of the document: the parser recurses once for each)
+pub fn depth_limit() -> [] int {
+    return 8;
+}
+
+// `what` for the mixing of `and` and `or` at one level: not a word of `expr.expected` but a rule of its own
+pub fn mixed() -> [] int {
+    return 30;
+}
+
+fn push4[&h](heap: &!h Heap, v: vec.Vec[int], a: int, b: int, c: int, d: int) -> [heap] vec.Vec[int] {
+    var o = vec.push(heap, v, a);
+    o = vec.push(heap, o, b);
+    o = vec.push(heap, o, c);
+    return vec.push(heap, o, d);
+}
+
+// The word at `at` as a connective: 1 for `and`, 2 for `or`, 0 for anything else (a quoted word is a name, never a connective).
+fn connective[&h, &s](heap: &!h Heap, src: &s [byte], at: int) -> [heap] (int, int) {
+    let (word, after, quoted, status, e1, e2) = expr.read_word(heap, buffer.empty(heap, 4), src, at);
+    var c = 0;
+    borrow word as &wr in {
+        if status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "and") {
+            c = 1;
+        } else if status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "or") {
+            c = 2;
+        }
+    }
+    buffer.drop(heap, word);
+    return (c, after);
+}
+
+// One level at `from`, `UNIT { connective UNIT }`, inside `depth` parentheses; `leaves` conditions have been read before it. It stops at the end of the text or at a `)` it does not
+// consume. Answers the plan, the tree, where it stopped, the number of conditions read, the node, what / where when it is not whole, and whether an `or` was met. With `tolerant`, a level that
+// mixes `and` and `or` is read (as kind 4) instead of refused: that is how the repair reads an expression in order to say it in two ways.
+fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byte], from: int, depth: int, leaves0: int, tolerant: bool, hasor0: bool) -> [heap] (query.Query, vec.Vec[int], int, int, int, int, int, bool) {
+    var plan = q;
+    var tr = tr0;
+    var leaves = leaves0;
+    var hasor = hasor0;
+    var what = 0;
+    var at = 0;
+    var kids = vec.empty(heap, 8, 0);
+    var count = 0;
+    var kind = 0;
+    var conn = 0;
+    var more = true;
+    var i = expr.skip_space(src, from);
+    let start = i;
+    var last = 0;
+    while more && what == 0 {
+        i = expr.skip_space(src, i);
+        var node = 0;
+        if leaves >= 64 {
+            what = 11;
+            at = i;
+        } else if i < len(src) && int_of(src[i]) == '(' {
+            if depth >= depth_limit() {
+                what = 21;
+                at = i;
+            } else {
+                let opened = i;
+                let (p2, t2, after, l2, child, w2, a2, o2) = level(heap, plan, tr, src, i + 1, depth + 1, leaves, tolerant, hasor);
+                plan = p2;
+                tr = t2;
+                leaves = l2;
+                hasor = o2;
+                what = w2;
+                at = a2;
+                if what == 0 {
+                    i = expr.skip_space(src, after);
+                    if i < len(src) && int_of(src[i]) == ')' {
+                        i = i + 1;
+                        borrow tr as &sz in {
+                            node = vec.size(sz);
+                        }
+                        tr = push4(heap, tr, 3, child, opened, i);
+                    } else {
+                        what = 22;
+                        at = i;
+                    }
+                }
+            }
+        } else {
+            let (p1, after, w1, a1) = expr.parse_cond(heap, plan, src, i);
+            plan = p1;
+            what = w1;
+            at = a1;
+            if what == 0 {
+                borrow tr as &sz in {
+                    node = vec.size(sz);
+                }
+                tr = push4(heap, tr, 0, leaves, i, after);
+                leaves = leaves + 1;
+                i = after;
+            }
+        }
+        if what == 0 {
+            kids = vec.push(heap, kids, conn);
+            kids = vec.push(heap, kids, node);
+            count = count + 1;
+            last = node;
+            i = expr.skip_space(src, i);
+            if i >= len(src) || int_of(src[i]) == ')' {
+                more = false;
+            } else {
+                let (c, after_c) = connective(heap, src, i);
+                if c == 0 {
+                    if depth == 0 {
+                        what = 4;
+                    } else {
+                        what = 22;
+                    }
+                    at = i;
+                } else {
+                    if kind == 0 {
+                        kind = c;
+                    } else if kind != c && kind != 4 {
+                        if tolerant {
+                            kind = 4;
+                        } else {
+                            what = mixed();
+                            at = i;
+                        }
+                    }
+                    if c == 2 {
+                        hasor = true;
+                    }
+                    conn = c;
+                    i = expr.skip_space(src, after_c);
+                }
+            }
+        }
+    }
+    var node = last;
+    if what == 0 && count > 1 {
+        var at_kids = 0;
+        borrow tr as &sz in {
+            at_kids = vec.size(sz);
+        }
+        var j = 0;
+        borrow kids as &kr in {
+            while j < 2 * count {
+                tr = vec.push(heap, tr, vec.get(kr, j));
+                j = j + 1;
+            }
+        }
+        borrow tr as &sz in {
+            node = vec.size(sz);
+        }
+        tr = push4(heap, tr, kind, at_kids, count, start);
+    }
+    vec.drop(heap, kids);
+    return (plan, tr, i, leaves, node, what, at, hasor);
+}
+
+// The number of the first condition under `node`.
+fn first_leaf[&n](tr: &n vec.Vec[int], node: int) -> [] int {
+    let kind = vec.get(tr, node);
+    if kind == 0 {
+        return vec.get(tr, node + 1);
+    }
+    if kind == 3 {
+        return first_leaf(tr, vec.get(tr, node + 1));
+    }
+    return first_leaf(tr, vec.get(tr, vec.get(tr, node + 1) + 1));
+}
+
+// Compile `node` to the program, given where to go when it is true (`t`) and when it is false (`f`): a leaf writes its two exits; `A and B` runs `A` with (the first condition of `B`, `f`) and
+// `B` with (`t`, `f`); `A or B` is the dual. Every exit is a condition after the leaf's own, or -1 (kept) or -2 (dropped).
+fn emit[&n, &p](tr: &n vec.Vec[int], flow: &!p vec.Vec[int], node: int, t: int, f: int) -> [] int {
+    let kind = vec.get(tr, node);
+    if kind == 0 {
+        let leaf = vec.get(tr, node + 1);
+        vec.set(flow, 2 * leaf, t);
+        vec.set(flow, 2 * leaf + 1, f);
+        return 0;
+    }
+    if kind == 3 {
+        return emit(tr, flow, vec.get(tr, node + 1), t, f);
+    }
+    let at = vec.get(tr, node + 1);
+    let count = vec.get(tr, node + 2);
+    var j = 0;
+    while j < count {
+        let kid = vec.get(tr, at + 2 * j + 1);
+        var next = 0 - 1;
+        if j + 1 < count {
+            next = first_leaf(tr, vec.get(tr, at + 2 * j + 3));
+        }
+        if kind == 1 {
+            if j + 1 < count {
+                emit(tr, flow, kid, next, f);
+            } else {
+                emit(tr, flow, kid, t, f);
+            }
+        } else if j + 1 < count {
+            emit(tr, flow, kid, t, next);
+        } else {
+            emit(tr, flow, kid, t, f);
+        }
+        j = j + 1;
+    }
+    return 0;
+}
+
+// The expression read into the plan. Answers the plan and, for what and the offset, 0 and 0 when it is whole, else what was expected (`expr.expected`; `mixed()` for `and` mixed with `or`) and
+// where, as a byte offset into the expression. A plan that holds an `or` carries its branch program.
+pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (query.Query, int, int) {
+    var tr = vec.empty(heap, 64, 0);
+    let (p, t2, after, leaves, node, w, a, hasor) = level(heap, q, tr, src, 0, 0, 0, false, false);
+    var plan = p;
+    var what = w;
+    var at = a;
+    if what == 0 {
+        let i = expr.skip_space(src, after);
+        if i < len(src) {
+            what = 4;
+            at = i;
+        }
+    }
+    plan = query.bump(plan, 1, leaves);
+    if what == 0 && hasor {
+        var flow = vec.empty(heap, 2 * leaves + 1, 0);
+        var j = 0;
+        while j < 2 * leaves {
+            flow = vec.push(heap, flow, 0);
+            j = j + 1;
+        }
+        borrow t2 as &tr2 in {
+            borrow mut flow as &!fw in {
+                emit(tr2, fw, node, 0 - 1, 0 - 2);
+            }
+        }
+        borrow flow as &fr in {
+            plan = query.with_flow(heap, plan, fr);
+        }
+        vec.drop(heap, flow);
+    }
+    vec.drop(heap, t2);
+    return (plan, what, at);
+}
+
+// ---- the two readings of a mix ------------------------------------------------------------------------------------------------
+
+// The unit `j` of the level at `at` (the node), and the connective before it.
+fn unit_at[&n](tr: &n vec.Vec[int], at: int, j: int) -> [] int {
+    return vec.get(tr, at + 2 * j + 1);
+}
+
+fn conn_at[&n](tr: &n vec.Vec[int], at: int, j: int) -> [] int {
+    return vec.get(tr, at + 2 * j);
+}
+
+fn put_conn[&h](heap: &!h Heap, out: buffer.Buffer, c: int) -> [heap] buffer.Buffer {
+    if c == 1 {
+        return buffer.append(heap, out, " and ");
+    }
+    return buffer.append(heap, out, " or ");
+}
+
+// The text of `node`, its conditions as written and its connectives and parentheses as the tree has them. A level that mixes is written by `policy`: 0 `and` before `or` (SQL's
+// precedence), 1 left to right, each change of connective closing the group so far.
+fn render[&h, &s, &n](heap: &!h Heap, out: buffer.Buffer, src: &s [byte], tr: &n vec.Vec[int], node: int, policy: int) -> [heap] buffer.Buffer {
+    var o = out;
+    let kind = vec.get(tr, node);
+    if kind == 0 {
+        return buffer.append(heap, o, src[vec.get(tr, node + 2)..vec.get(tr, node + 3)]);
+    }
+    if kind == 3 {
+        o = buffer.push(heap, o, byte_of('('));
+        o = render(heap, o, src, tr, vec.get(tr, node + 1), policy);
+        return buffer.push(heap, o, byte_of(')'));
+    }
+    let at = vec.get(tr, node + 1);
+    let count = vec.get(tr, node + 2);
+    var j = 0;
+    if kind != 4 {
+        while j < count {
+            if j > 0 {
+                o = put_conn(heap, o, kind);
+            }
+            o = render(heap, o, src, tr, unit_at(tr, at, j), policy);
+            j = j + 1;
+        }
+        return o;
+    }
+    if policy == 0 {
+        while j < count {
+            var e = j;
+            while e + 1 < count && conn_at(tr, at, e + 1) == 1 {
+                e = e + 1;
+            }
+            if j > 0 {
+                o = buffer.append(heap, o, " or ");
+            }
+            if e > j {
+                o = buffer.push(heap, o, byte_of('('));
+            }
+            var m = j;
+            while m <= e {
+                if m > j {
+                    o = buffer.append(heap, o, " and ");
+                }
+                o = render(heap, o, src, tr, unit_at(tr, at, m), policy);
+                m = m + 1;
+            }
+            if e > j {
+                o = buffer.push(heap, o, byte_of(')'));
+            }
+            j = e + 1;
+        }
+        return o;
+    }
+    var acc = render(heap, buffer.empty(heap, 64), src, tr, unit_at(tr, at, 0), policy);
+    var cur = 0;
+    j = 1;
+    while j < count {
+        let c = conn_at(tr, at, j);
+        if cur == 0 {
+            cur = c;
+        } else if c != cur {
+            var wrapped = buffer.push(heap, buffer.empty(heap, 64), byte_of('('));
+            borrow acc as &ar in {
+                wrapped = buffer.append(heap, wrapped, buffer.bytes(ar));
+            }
+            buffer.drop(heap, acc);
+            acc = buffer.push(heap, wrapped, byte_of(')'));
+            cur = c;
+        }
+        acc = put_conn(heap, acc, c);
+        acc = render(heap, acc, src, tr, unit_at(tr, at, j), policy);
+        j = j + 1;
+    }
+    borrow acc as &ar in {
+        o = buffer.append(heap, o, buffer.bytes(ar));
+    }
+    buffer.drop(heap, acc);
+    return o;
+}
+
+// Whether `text` is an expression of the grammar, whole.
+fn whole[&h, &s](heap: &!h Heap, text: &s [byte]) -> [heap] bool {
+    let (p, w, a) = parse(heap, query.empty(heap), text);
+    query.drop(heap, p);
+    return w == 0;
+}
+
+// The two readings of an expression that mixes `and` and `or` at some level (section 3.3): (the reading by precedence, whether it is offered, the reading left to right, whether it is
+// offered). A reading is offered only if the grammar takes it whole (a reading can pass the 8 levels of parentheses). Nothing is offered for an expression that is not otherwise whole.
+pub fn readings[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] (buffer.Buffer, bool, buffer.Buffer, bool) {
+    let (p, t2, after, leaves, node, w, a, hasor) = level(heap, query.empty(heap), vec.empty(heap, 64, 0), src, 0, 0, 0, true, false);
+    query.drop(heap, p);
+    var ok = w == 0 && expr.skip_space(src, after) >= len(src);
+    var r0 = buffer.empty(heap, 1);
+    var r1 = buffer.empty(heap, 1);
+    var ok0 = false;
+    var ok1 = false;
+    if ok {
+        borrow t2 as &tr in {
+            buffer.drop(heap, r0);
+            buffer.drop(heap, r1);
+            r0 = render(heap, buffer.empty(heap, len(src) + 16), src, tr, node, 0);
+            r1 = render(heap, buffer.empty(heap, len(src) + 16), src, tr, node, 1);
+        }
+        borrow r0 as &rr in {
+            ok0 = whole(heap, buffer.bytes(rr));
+        }
+        borrow r1 as &rr in {
+            ok1 = whole(heap, buffer.bytes(rr));
+            borrow r0 as &r0r in {
+                // two ways of saying the same text are one reading (`a and b or c` is the same by precedence and from the left)
+                if bytes.equal(buffer.bytes(r0r), buffer.bytes(rr)) {
+                    ok1 = false;
+                }
+            }
+        }
+    }
+    vec.drop(heap, t2);
+    return (r0, ok0, r1, ok1);
+}

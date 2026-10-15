@@ -376,10 +376,26 @@ pub fn parse_float[&d](data: &d [byte]) -> [] (int, int) {
 }
 
 // The key as text: the shortest decimal that reads back to the same double, positional from 1e-6 up to 1e21 and always with a point (`0.1`, `100.0`,
-// `12345.67`), scientific outside (`1e21`, `1.5e-7`), `0.0` for zero.
+// `12345.67`), scientific outside (`1e21`, `1.5e-7`), `0.0` for zero. A key that stands for a double that is not finite is written `inf`, `-inf` or `NaN`
+// (a JSON writer checks finiteness first: docs/numbers.md 1.1).
 pub fn put_float[&h](heap: &!h Heap, out: buffer.Buffer, key: int) -> [heap] buffer.Buffer {
     if key == 0 {
         return buffer.append(heap, out, "0.0");
+    }
+    // Not finite (the exponent field all ones: the readers never make such a key, a consumer's computed double can): `inf`, `-inf`, `NaN` (every NaN, either sign, as `std.fmt.float_into` spells it). Without this the
+    // text of `std.fmt.float_into` (`inf`, `NaN`) was split as digits and an exponent and came out as `i.nf`, `N.aN` (issue #59).
+    var magnitude = key;
+    if key < 0 {
+        magnitude = key ^ 0x7fffffffffffffff;
+    }
+    if magnitude & 0x7fffffffffffffff >= 0x7ff0000000000000 {
+        if magnitude & 0x7fffffffffffffff > 0x7ff0000000000000 {
+            return buffer.append(heap, out, "NaN");
+        }
+        if key < 0 {
+            return buffer.append(heap, out, "-inf");
+        }
+        return buffer.append(heap, out, "inf");
     }
     let x = float_of_key(key);
     var o = out;

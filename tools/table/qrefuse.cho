@@ -16,11 +16,15 @@ import qrepair;
 import qtext;
 import qtrans;
 import toolbox.fail;
+import wrepair;
 
 // The error so far: its code, rule, message and hint.
 fn start[&h](heap: &!h Heap, kind: int, code: int) -> [heap] json.Writer {
     if kind == 2 {
         return fail.open_in(heap, finish.extra(), "query.unsupported", "--query uses something this language leaves out: detail.feature names it", qtext.hint(code));
+    }
+    if kind == 5 {
+        return fail.open_in(heap, finish.extra(), "query.mixed-and-or", "--query uses and and or at one level of its where: which of them goes first is not guessed", wrepair.hint());
     }
     if kind == 3 {
         return fail.open_in(heap, finish.extra(), "query.group-mismatch", "--query selects something other than its grouping", "a grouping selects its group by columns first, in the same order, then aggregates, and has at least one: select a, count(*) from 'f.csv' group by a");
@@ -47,6 +51,8 @@ pub fn refuse[&h, &q, &t, &g](heap: &!h Heap, errs: fail.Errors, q: &q [byte], t
     w = fail.detail_int(heap, w, "offset", offset);
     if kind == 2 {
         w = fail.detail_str(heap, w, "feature", qtext.feature(code));
+    } else if kind == 5 {
+        // no word of expectation: the connective is the one that mixes
     } else {
         w = fail.detail_str(heap, w, "expected", qtext.expected(code));
     }

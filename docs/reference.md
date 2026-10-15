@@ -55,8 +55,8 @@ status,count,sum:bytes
   its row and column, never a coercion or a float); **`COLUMN:dec(S)` compares as an exact
   decimal of at most `S` fractional digits** (never rounded: more digits is a refusal, as is
   a cell that is not a decimal; `1.5` and `1.50` are one value, `docs/numbers.md`); **`COLUMN:float` compares the nearest doubles** (no `inf`, no `nan`,
-  no negative zero; `min`, `max`, `distinct`, `count` and the exact `sum` and `mean` of a float column too); conditions stop at the first false,
-  so `x != '' and x:int > 5` guards an empty cell. A malformed expression is
+  no negative zero; `min`, `max`, `distinct`, `count` and the exact `sum` and `mean` of a float column too); conditions stop at the first that decides the level they are in (false in an `and`, true in an `or`),
+  so `x != '' and x:int > 5` and `x = '' or x:int > 5` guard an empty cell; `or` and parentheses group them (a level is all `and` or all `or`, a mix is `where.mixed-and-or`). A malformed expression is
   `where.syntax` with the byte offset of the error. It composes with `--select` and
   paging, and is applied before grouping;
 * **group and aggregate**: `--group NAMES --agg count,sum:COL,min:COL,max:COL,mean:COL@N,distinct:COL

@@ -277,6 +277,17 @@ class Semantics(unittest.TestCase):
         finally:
             s.cleanup()
 
+    def test_or_and_parentheses_in_where_work_on_the_joined_row(self):
+        # slice A1 of docs/or-and-columns.md: --where is evaluated whole on the joined row, padded cells included
+        probe = "k,v\na,1\nb,2\nz,3\n"
+        build = "id,w\na,5\nb,6\n"
+        out = self.lines(self.join(probe, build, "k=id", "left", extra=["--where", "(v:int = 1 or w = 6) and k != 'q'"]))
+        self.assertEqual(out, ["k,v,id,w", "a,1,a,5", "b,2,b,6"])
+        out = self.lines(self.join(probe, build, "k=id", "left", extra=["--where", "w = '' or w = 5"]))
+        self.assertEqual(out, ["k,v,id,w", "a,1,a,5", "z,3,,"])
+        out = self.lines(self.join(probe, build, "k=id", "anti", extra=["--where", "k = z or k = a"]))
+        self.assertEqual(out, ["k,v", "z,3"])
+
     def test_a_probe_on_standard_input(self):
         for jt in JTYPES[1:]:
             r1 = self.join("k,v\na,1\nz,2\n", "id,w\na,A\n", "k=id", jt)
@@ -390,6 +401,12 @@ class TypedRefusals(unittest.TestCase):
         self.assertEqual((d["input"], d["column"], d["value"]), ("build", "id", "bad"))
         r = self.go("a,k\n1,1\n", "x,y,z,id\n9,8,7,bad\n", "k=id:int")
         self.assertEqual((r.error()["detail"]["input"], r.error()["detail"]["column"]), ("build", "id"))
+
+    def test_a_float_key_of_more_than_1100_bytes_is_refused_as_too_long(self):
+        r = self.go("k\n" + "1" * 1101 + "\n", "id\n1\n", "k=id:float")
+        self.assertEqual((r.status, r.first_rule()), (8, "limit.number-too-long"))
+        r = self.go("k\n1\n", "id\n0." + "0" * 1100 + "1\n", "k=id:float")
+        self.assertEqual((r.first_rule(), r.error()["detail"]["input"]), ("limit.number-too-long", "build"))
 
     def test_a_text_join_never_reads_a_number(self):
         r = self.go("k\nbad\n", "id\nworse\n", "k=id", "inner", fmt="csv")
