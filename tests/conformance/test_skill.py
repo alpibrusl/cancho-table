@@ -54,7 +54,7 @@ SAMPLE = {
     "--max-groups": "100", "--max-distinct": "100", "--max-state-bytes": "100000", "--threads": "1",
     "--report": "types", "--chunk-bytes": "100000", "--parallel-min-bytes": "100000", "--format": "json",
     "--query": "select host, count(*) group by host",
-    "--rename": "host=h", "--join": "sales.csv", "--on": "host=host", "--join-type": "inner", "--join-prefix": "r_", "--max-join-rows": "1000000",
+    "--rename": "host=h", "--join-where": "host = a", "--join": "sales.csv", "--on": "host=host", "--join-type": "inner", "--join-prefix": "r_", "--max-join-rows": "1000000",
 }
 REFUSALS = {"args.conflict", "args.required-flag"}
 # What each form's line in the usage lists: the flags the code takes for the form and does something with
@@ -68,7 +68,7 @@ FORM_FLAGS = {
     "report": (COMMON | PAGED | {"--report", "--select", "--where"}) - {"--top"},
     "all": COMMON | (PAGED - {"--top", "--max-state-bytes"}) | {"--rows", "--rename"},
     "query": COMMON | PAGED | {"--query", "--max-sort-rows", "--max-groups", "--max-distinct"},
-    "join": COMMON | {"--join", "--on", "--join-type", "--join-prefix", "--max-join-rows", "--select", "--where", "--rename", "--limit", "--from", "--max-bytes", "--max-state-bytes", "--threads"},
+    "join": COMMON | {"--join", "--on", "--join-type", "--join-prefix", "--join-where", "--max-join-rows", "--select", "--where", "--group", "--agg", "--sort", "--order-by", "--top", "--rename", "--limit", "--from", "--max-bytes", "--max-groups", "--max-distinct", "--max-sort-rows", "--max-state-bytes", "--threads"},
 }
 FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"], "all": ["--rows"], "query": ["--query", "select host, count(*) group by host"], "join": ["--join", "sales.csv", "--on", "host=host", "--join-prefix", "r_"]}
 
@@ -134,6 +134,8 @@ class Usage(unittest.TestCase):
                         extra = ["--order-by", "host"] + extra
                     if flag == "--sort":
                         extra = [flag, SAMPLE[flag]]
+                    if form == "join" and flag in ("--sort", "--top", "--agg"):
+                        extra = ["--group", "host"] + extra
                     if flag == "--format":
                         extra = [flag, "text" if form == "shape" else "csv"]
                     got = refusals(s, base + extra)
