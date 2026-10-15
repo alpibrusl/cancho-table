@@ -88,7 +88,6 @@ MUTANTS = [
     ("the query's mix is not noticed", "qparse.cho", "} else if kind != connective && m[qarena.s_mix()] == 0 {", "} else if false {"),
     ("the query's mix is noticed at its end", "qparse.cho", "m[qarena.s_mix()] = here + 1;", "m[qarena.s_mix()] = start_of(m, 0) + 1;"),
     ("the query's group is not closed", "qparse.cho", "if expect_sym(m, qlex.y_close(), 8) != 0 {\n            return 1;\n        }\n        structure(m, 0 - 2, close);", "structure(m, 0 - 2, close);"),
-    ("the query's ceiling of conditions is 65", "qparse.cho", "if m[qarena.s_cond_count()] >= 64 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    let (c, t) = typed", "if m[qarena.s_cond_count()] >= 65 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    let (c, t) = typed"),
     ("a unit does not count its conditions at its start (a group or a not is the 65th unit)", "qparse.cho", "if m[qarena.s_cond_count()] >= 64 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    if is_word(q, m, 0, \"not\") {", "if false {\n        return qarena.fail(m, 1, 27, at);\n    }\n    if is_word(q, m, 0, \"not\") {"),
     ("an or after the where clause is still the feature or", "qparse.cho", "if qarena.tok_kind(m, i) == qlex.t_id() && in_list(q, a, qarena.tok_end(m, i), \"union intersect except\") {", "if qarena.tok_kind(m, i) == qlex.t_id() && lower_eq(q, a, qarena.tok_end(m, i), \"or\") {\n            return qarena.fail(m, 2, 71, a);\n        }\n        if qarena.tok_kind(m, i) == qlex.t_id() && in_list(q, a, qarena.tok_end(m, i), \"union intersect except\") {"),
     ("an or is translated as an and", "qtrans.cho", "text = buffer.append(heap, text, \" or \");", "text = buffer.append(heap, text, \" and \");"),
@@ -105,7 +104,6 @@ MUTANTS = [
 # ---- slice A2: `not` (docs/or-and-columns.md section 17)
 A2_MUTANTS = [
     # the grammar of --where: where `not` is a keyword
-    ("not before = is the keyword (a column called not)", "orparse.cho", "if c == '=' || c == '!' || c == '<' || c == '>' {\n        return (0, 0);\n    }", "if false {\n        return (0, 0);\n    }"),
     ("not before in is the keyword (a column called not)", "orparse.cho", "!(bytes.equal(buffer.bytes(wr), \"in\") || bytes.equal(buffer.bytes(wr), \"contains\")", "!(bytes.equal(buffer.bytes(wr), \"i\") || bytes.equal(buffer.bytes(wr), \"contains\")"),
     ("not before contains is the keyword (a column called not)", "orparse.cho", "|| bytes.equal(buffer.bytes(wr), \"contains\") || bytes.equal(buffer.bytes(wr), \"not\"));", "|| bytes.equal(buffer.bytes(wr), \"c\") || bytes.equal(buffer.bytes(wr), \"not\"));"),
     ("not before not is the keyword (not not in)", "orparse.cho", "|| bytes.equal(buffer.bytes(wr), \"not\"));", "|| bytes.equal(buffer.bytes(wr), \"n\"));"),
@@ -134,7 +132,6 @@ A2_MUTANTS = [
     ("not contains is the plain contains", "expr.cho", "return (1, 0, after2, 0, 0, true);", "return (1, 0, after2, 0, 0, false);"),
     ("a not before neither in nor contains is refused with the words of the operator", "expr.cho", "return (0, 0, at, 24, at, false);", "return (0, 0, at, 2, at, false);"),
     ("a not before neither in nor contains is refused at the not", "expr.cho", "return (0, 0, at, 24, at, false);", "return (0, 0, from, 24, from, false);"),
-    ("the conjunction reader of A0 takes a negated condition", "expr.cho", "if what == 0 && negative {", "if what == 0 && false {"),
     # the repair of not COND
     ("the complement of = is =", "expr.cho", "if c == '=' {\n        instead = \"!=\";", "if c == '=' {\n        instead = \"=\";"),
     ("the complement of != is !=", "expr.cho", "} else if c == '!' {\n        instead = \"=\";", "} else if c == '!' {\n        instead = \"!=\";"),
@@ -229,6 +226,9 @@ EQUIVALENT = [e + (UNREACHED,) for e in A0_MUTANTS] + [
      "the corrected expression is parsed again by `parse`, with the column's type, and that is where a literal the type does not take is refused (the tests kill the mutant that skips that parse); the first reading only finds where each value ends, which the type does not change"),
     ("or_chain: one condition is a chain", "qparse.cho", "if leaves < 2 || is_word(q, m, 0, \"and\") {", "if leaves < 1 || is_word(q, m, 0, \"and\") {",
      "`or_chain` is asked only for a query refused at an `or` after a condition, so the clause has two conditions by the time its first `or` is met, and a clause of one condition is never asked"),
+    ("the query's ceiling of conditions is 65", 'qparse.cho', 'if m[qarena.s_cond_count()] >= 64 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    let (c, t) = typed', 'if m[qarena.s_cond_count()] >= 65 {\n        return qarena.fail(m, 1, 27, at);\n    }\n    let (c, t) = typed', '`unit` tests the count of conditions before it calls `condition`, and `condition` is called from `unit` only, so the test inside `condition` (kept from slice A1, where a group had a test of its own beside it) can never be the one that fires; the mutants of the test in `unit` are killed'),
+    ('not before = is the keyword (a column called not)', 'orparse.cho', "if c == '=' || c == '!' || c == '<' || c == '>' {\n        return (0, 0);\n    }", 'if false {\n        return (0, 0);\n    }', 'after `not`, a word that starts with `=`, `!`, `<` or `>` is not a word at all (`read_word` answers status 1 for a delimiter), so `refuse` stays false and the answer is the same; the branch says it in one line and the mutant that removes it cannot change an answer'),
+    ('the conjunction reader of A0 takes a negated condition', 'expr.cho', 'if what == 0 && negative {', 'if what == 0 && false {', '`expr.parse` (the reader of `COND { and COND }` of slice A0) is called only by `expr.or_in` on its own output (`COLUMN in (...)`, never negated) and by the repair of a query that A1 made unreachable (docs/or-and-columns.md section 16 note 8): no input of the binary reaches it with a negated condition'),
 ]
 
 if __name__ == "__main__":

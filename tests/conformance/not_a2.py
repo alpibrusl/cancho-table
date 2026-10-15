@@ -417,6 +417,8 @@ def repair_not(s):
             if e.kind != "syntax" or e.code != 23:
                 return None
             not_at, j = e.not_at, e.offset
+            if cur[not_at:not_at + 3] != "not":
+                return None          # the word was written with a backslash in it (`\not`, `n\ot`): the repair does not guess where it begins
             try:
                 lf, end = leaf(cur, j, 0)
             except Refused:

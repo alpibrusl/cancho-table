@@ -489,7 +489,7 @@ class Offsets(Base):
         texts += [" and ".join("a not in (%d)" % i for i in range(n)) for n in (63, 64, 65)] + [" or ".join("not (a = %d)" % i for i in range(n)) for n in (63, 64, 65)]
         texts += ["a not in (%s)" % ", ".join(str(i) for i in range(n)) for n in (1023, 1024, 1025)]
         texts += ["not (a = 1) " + c + " not" for c in ("and", "or")] + ["not", "not ()", "not (", "not )", "a not", "a not in", "a not in (", "a not contains", "a not = 1", "not 'a' = 1", "not a", "not not = 1", "not not in (1)",
-                                                                       "not  not  in  (1)", "'not' (a = 1)", "not'(a = 1)", "(not = 1)", "not = 1 or not in (2)", "not contains x and not not contains y"]
+                                                                       "not  not  in  (1)", "\\not a = 1", "n\\ot a = 1", "a = 1 and \\not b < 2", "a = 1 and n\\ot b < 2", "x = 1 and not b < 2 and \\not c < 2", "'not' (a = 1)", "not'(a = 1)", "(not = 1)", "not = 1 or not in (2)", "not contains x and not not contains y"]
         texts = [t for t in texts if t != ""]        # an empty --where is no --where
         seen = {"ok": 0, "syntax": 0, "mixed": 0, "repair": 0, "norepair": 0}
 
