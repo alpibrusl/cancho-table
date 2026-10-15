@@ -14,6 +14,8 @@
 >
 > **Update 2026-10-15 (the pull request that adds section 16): slice J1 is built** (`--join`, `--on`, `--join-type inner`, `--join-prefix`, `--max-join-rows`, rows out, one core), and section 16 says what it is, where it differs from this document, its gates and its numbers.
 >
+> **Update 2026-10-15 (the pull request that adds section 17): slice J2 is built** (`--join-type left|semi|anti`, typed keys `:int`, `:dec(S)`, `:float`, a list of up to 8 pairs, the shared-name key `--on NAME`, the padding of a left join), and section 17 says what it is, where it differs from this document, its gates and its numbers. Where it corrects an earlier sentence the sentence says "Corrected by section 17" in place.
+>
 > References to code are to `origin/main` at `072ce15` (`file:line`). The branch that adds columns renaming
 > (`docs/or-and-columns.md` in the request) **does not exist**: there is no such file and `gh pr list` shows no open pull
 > request on 2026-10-14, so section 4 defines the minimal prefixing rule itself and says what a rename feature would replace.
@@ -245,7 +247,7 @@ chooses the type that both can be read as (`:dec(1)` reads `1` and `1.0`; that i
 
 * **A typed key with an empty cell is a refusal**, as it is everywhere (`docs/filter.md:88-98`; measured: `--group k:int` on a file with an empty cell is `value.not-integer`). The
   repair that the tool already teaches is a guard: for the build side `--join-where "k != ''"`; for the probe side `--where "k != '' and ..."` (section 8.1 makes the leading text
-  condition run before the key is read, so the guard works).
+  condition run before the key is read, so the guard works). **Corrected by section 17.2:** J2 has neither `--join-where` nor the split of `--where` (both are J3), so in J2 `--where` runs after the join and the key is read first; the refusal of J2 teaches the repairs it has (read the pair as text, or correct the file) and not this guard.
 * **A text key with an empty cell is a key: it matches an empty cell.** Argument: (1) `table` says it has no null and that an empty cell is the empty text
   (`docs/query.md:81`), `name = ''` works, and `--group` makes `''` a group (measured: `--group k` over `,a` and `1,b` gives the groups `` and `1`); the join's equality is the
   `where`'s equality; (2) the alternative, "an empty key never matches" (SQL's behaviour for null), makes an inner join answer about fewer rows than the file has, which is
@@ -310,7 +312,7 @@ shorten the probe). This is stated in `--explain`'s `work`.
 | rows | the held records, concatenated, in build file order, in one buffer | record length |
 | `start`, `next` | per held row: where its record starts in the buffer, and the next row of the same key (or -1) | 16 |
 
-**Accounted bytes (choice, a formula; the gate A of section 10 holds the allocation to it):**
+**Accounted bytes (choice, a formula; the gate A of section 10 holds the allocation to it).** *Corrected by section 17.2 for J2: a key is the cell for one pair of text, 8 bytes for one typed pair, and several pairs carry 4 bytes of length before each component; a `semi` or `anti` join holds the keys alone, at key bytes + 44 and no row.*
 
 ```
 accounted = sum over held rows (record_bytes + 16)  +  sum over distinct keys (key_bytes + 60)
@@ -526,7 +528,7 @@ Gram (Linux x86-64) counterparts of EQ, IB, A, ST (with `strace`) and TH are req
 |---|---|---|
 | **J0** | this document; spikes S0 and S1 (section 15: run, results below) | the design is falsifiable: the table can be shared, and the accounted bytes can be related to the resident |
 | **J1** | `--join`, `--on` (text keys, no suffix), `--join-type inner`, `--join-prefix`, `join.column-collision`, csv x csv, rows out, `--max-join-rows`, the build bound with `limit.state-too-large` (no repair yet), `--threads` accepted and ignored | the semantics against the oracle (O), the defined order, the formula and the exact bound (A), the shared loops untouched (EQ, IB), the authority unchanged (AU) |
-| **J2** | `left`, `semi`, `anti`; typed keys; composite keys; USING; padding | the null-free semantics: padded cells and typed refusals (O-shapes), `anti` as the answer to "no match" |
+| **J2** | `left`, `semi`, `anti`; typed keys; composite keys; USING; padding. **Built: section 17** | the null-free semantics: padded cells and typed refusals (O-shapes), `anti` as the answer to "no match" |
 | **J3** | `--where` split (probe/build/after), `--join-where`; `--group`, `--agg`, `--order-by`, `--top`, `--limit`, `--from` over joined rows with the shared budget; `--explain` | the pushdown definition equals the unpushed one except for the key read (a test pair for each), the shared budget (A), the plan document (EXPL) |
 | **J3b** | the query form, `semi`/`anti` contextual, the `query.unsupported` features | Q-EQ, and that no query valid before changes |
 | **J4** | standard input as the probe (the generated copy of the loop, `scripts/stream.py --check`), MCP `join` and `stdin` | ST, MCP |
@@ -813,3 +815,33 @@ So **1.48 to 2.77 times** on these eight shapes, worse than the spike's 1.65 to 
 | text keys, 1M x 1M | 0.527 s (0.542) | 0.398 | 0.173 | 0.967 |
 
 Peak resident (once per tool, MB): `table` 17, 21, 146, 189; DuckDB 73, 70, 112, 163 (1 thread); csvtk 344, 370, 623, 668. `table` selected `id,k,v,b_name` at `--max-state-bytes 1073741824` (the 1M builds are refused by the default, 6.2). **Against the targets of section 12:** not slower than DuckDB at one thread: **met on the two 100k cases, missed on the two 1M x 1M cases** (0.47 and 0.53 against 0.35 and 0.40 s); resident memory under csvtk's: met on all four; the faster-than-DuckDB-at-8-threads target belongs to J6. The 1M x 1M cases are the build's: the estimate of section 12 (0.25 to 0.50 s) held for the upper end, and section 15.1's 70 ms for the spike's build was a lower bound, as it said. Not measured: a quiet machine, Linux, build sides above 1,048,577 rows, other widths.
+
+## 17. J2 as built (2026-10-15)
+
+> Everything below is **measured** unless it says *computed* or *reading*. Conditions: one Mac (Apple M4 Max, 16 cores, 64 GB, macOS 26.2, arm64), **loaded by other sessions' work** (load average 10 to 50 on 16 cores during the runs), compiler `cancho` e47d647, DuckDB 1.5.6, SQLite 3.53.4, csvtk 0.38.0 where named; and gram (Linux x86-64, 16 cores, Python 3.14.4, valgrind, `perf_event_paranoid` 4: no instruction counter, no DuckDB), where the gates say so. Where a figure is from gram it says "gram".
+
+### 17.1 What was built
+
+`--join-type inner|left|semi|anti`; `--on` is a comma list of 1 to 8 pairs, each `PROBE=BUILD` or one `NAME` that both files have (the shared-name form, USING), with an optional type at the end of the pair, `:int`, `:dec(S)` (S from 0 to 18) or `:float`, which reads both cells as that type. The rest is J1's: rows out as csv, json or json lines, `--select`, `--where`, `--limit`, `--from`, the probe on standard input, one core.
+
+* **Left**: the inner join, and a probe row with no build row once, in its place, with every build cell the empty text. The padded record is the probe record and one delimiter for each build cell shown.
+* **Semi** and **anti**: the probe row, once, with its own cells, if its key has a build row (semi) or has none (anti). The build holds the keys alone (`jtab.add_key`): no row, no chain.
+* **Keys**: one pair of text is the cell's bytes, read in place as in J1; one typed pair is the 8 bytes of the value (the value plus 2^63, big endian: `007` and `7`, `-0` and `0`, `1.5` and `1.50` at `:dec(2)`, the spellings of one double, are one key); several pairs are each component preceded by 4 bytes of length (`jnkey.cho`), so `(ab, c)` and `(a, bc)` are two keys. A typed cell that is not of its type, an empty one included, is refused by the rule the rest of the tool uses (`value.not-integer` and the others), with `detail.context "join"`, `detail.input` (`probe` or `build`), `detail.pair` (from 1), `detail.column` (by the name its own header gives it), `detail.row` and `detail.line` of its own file, `detail.value`, and `scale`, `digits` or `direction` where the rule has them. The build file is read first (its rows in file order, the pairs of a row left to right), then the probe.
+* **USING**: `--on id` is `id=id`, and the build's `id` is left out of the joined header and cells (`--on id:int` types it; the probe's spelling is shown). `--on id=id:int --join-prefix r_` shows both.
+* **Padding**: a typed read of a padded cell is refused like any empty cell, and the refusal says `detail.padded: true` when the cell is a build column of a padded row (and says nothing of the kind for a real empty cell of a matched row, or for a cell of the probe).
+* Code: `jnkey.cho` (new), and changes to `jnflags`, `jnhead`, `jnread`, `jtab`, `jnfail`, `jnexplain`, `explain` (the `join` member and its notes), `finish` (the rule texts and the `padded` detail) and `spec` (the help of the flags). **The authority row is unchanged** (`scripts/manifest.py --check`).
+
+### 17.2 Where J2 differs from sections 1 to 16 (every narrow reading)
+
+1. **A type goes at the end of a pair only.** `--on k:int=id` is `args.bad-value` (a type before the equals sign), as are two types, an unknown type, `:dec` with no scale or a scale above 18 or with a leading zero, a type in capitals, an empty pair, an empty name, and a ninth pair. The section 2.1 grammar says "an optional single suffix at the end of the pair"; the rest is this slice's reading of it.
+2. **A position alone is not a shared name.** `--on '#2'` is `args.bad-value` (write `#2=#2`): `#N` is a position in the file's own header, so it names no column that two files share, and silently choosing one meaning would be a guess.
+3. **`--join-prefix` with `semi` or `anti` is `args.conflict`.** Section 4 says those joins show the probe header only; a prefix would name nothing, and a flag that is accepted and ignored is the thing this tool refuses.
+4. **The guard of 5.3 does not exist in J2.** `--join-where` and the split of `--where` are J3. In J2 `--where` runs after the join, and the key is read first, so the refusal of a typed key cell teaches what J2 has (write the pair without its type, or correct the file) and not the guard.
+5. **USING holds the whole build record.** The column is left out of the joined header and cells, not out of the held record, so the accounted bytes are the same with and without USING (section 6.2's formula), and the memory saved by holding fewer columns is J7's.
+6. **Accounted bytes, the formula as built.** Inner and left: `sum over held rows (record bytes + 16) + sum over distinct keys (key bytes + 60)`, as before, with `key bytes` the stored key: the cell (one pair of text), 8 (one typed pair), `sum (4 + component)` (several pairs; a typed component is 8). Semi and anti: `sum over distinct keys (key bytes + 44)` (4 + 24 + 16: a length, the entry of three integers, the slots at the minimum load; no `head` and `tail`), and a key already held costs nothing. `detail.rows_held` of the refusal is 0 for them.
+7. **`--max-join-rows` counts the rows produced**, padded rows and the rows of a semi or anti join included. `detail.matches` is the build rows of the probe row's key for inner and left, 0 for a padded or an anti row, and **1 for a semi row** (the build keeps no chain, so the exact count is not known; 1 is the least it can be).
+8. **The upper bound of `--explain`** gains `extra`: 12 bytes for each pair when a pair is typed or there are several (0 for one pair of text, J1's bound unchanged), and for a keys-only build `body + (44 + extra) * rows`. `data.explain.join` has `type`, one key entry per pair with `type` `text`, `int`, `float` or `dec(S)`, `using` (the shared names for inner and left; empty for semi and anti), `output_columns`; `refusals.possible` adds the `value.*` of the key types; the notes say what an empty key, a typed key and a padded cell are.
+9. **The refusals of a typed key do not go through `finish.explain`'s tally of `--where`** (they are `jnfail.typed_key`), and the `padded` detail is carried into the `--where` refusals by `err_fn` 77 (the context stays `where`).
+10. **The paths of J1 are kept as they were.** The first J2 probe was one function for every shape, and it cost the inner join of one text pair **+59 instructions a row (2.5 percent, gram, callgrind)**, over the bound of 1.01; J1's probe and build hold are now functions of their own (`probe_inner`, `hold_text`), chosen once per run, and the general ones (`probe_one`, `hold_row`) take every other shape.
+11. **The flag table is scanned by every lookup**, and J2's longer help makes it 8.7 percent longer (18,450 to 20,055 bytes). `toolbox.cli.index_of` is 94 percent of the instructions of a join of one row (about 1.1 million instructions for each of 54 lookups), so a one-row join costs about 12 million instructions (gram, callgrind) more than before and a non-join call about 0.33 million more. This is a fixed cost, not a cost per row; the lookup is in the contract package and is not changed here.
+
