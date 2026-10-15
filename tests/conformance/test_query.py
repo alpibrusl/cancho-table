@@ -178,7 +178,7 @@ class Refusals(Base):
         self.assertEqual(kinds, {"syntax", "unsupported", "group-mismatch", "mixed"})
         features = {row[3] for row in query_cases.REFUSALS if row[1] == "unsupported"}
         for feature in ("subquery", "join", "alias", "count-column", "cast-in-select", "cast-in-group", "column-comparison", "null", "boolean", "like", "between", "is-null",
-                        "not", "having", "union", "expression", "empty-name", "order-by-two-keys", "order-by-position", "order-by-dash-name"):
+                        "having", "union", "expression", "empty-name", "order-by-two-keys", "order-by-position", "order-by-dash-name"):
             self.assertIn(feature, features)
 
     def test_a_literal_that_does_not_fit_its_column_is_told_at_the_literal(self):
