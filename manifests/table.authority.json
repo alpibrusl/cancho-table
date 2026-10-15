@@ -611,7 +611,6 @@
     "type_name",
     "type_name",
     "type_of",
-    "typed_abort",
     "typed_groups",
     "typed_mention",
     "under",
@@ -647,5 +646,5 @@
   ],
   "folded_operators": 284,
   "folded_calls": 0,
-  "functions": 1091
+  "functions": 1090
 }

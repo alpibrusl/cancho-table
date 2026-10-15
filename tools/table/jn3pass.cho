@@ -296,7 +296,7 @@ fn filter3[&h, &w, &j, &q, &c, &l, &d, &e, &a](heap: &!h Heap, jwt: &w query.Que
 }
 
 // One joined row (or a semi or anti join's probe row) to the groups or the sorter: counted against `--max-join-rows` (past it the abort is 71, as `jnread.emit_one` has it) and added to its group or held.
-// `padded` says that the build cells of `record` are the padding of a left join, so that a refused read of one of them (a column from `np` on) says so: 100 is added to `err_fn` (`finish.explain`).
+// `padded` says that the build cells of `record` are the padding of a left join, so that a refused read of one of them (a column from `np` on) says so: 100 is added to `err_fn` (`finish.explain`). (`err_col` is set by a refused cell and by nothing else here, so a limit that is passed has `err_col` 0, which is below `np`.)
 fn emit_g[&h, &q, &c, &w, &d, &a, &z](heap: &!h Heap, groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, tree: &q query.Query, cols: &c [int], cells: &w [int], record: &d [byte], number: int, st: &!z [int], a: &!a [int], max_groups: int, max_distinct: int, gstate: int, filtering: bool, fast_ok: bool, max_join: int, matches: int, padded: bool, np: int) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer) {
     if st[s_produced()] >= max_join {
         a[engine.k_abort()] = 71;
@@ -342,16 +342,11 @@ fn emit_g[&h, &q, &c, &w, &d, &a, &z](heap: &!h Heap, groups: agg.Groups, escr: 
     }
     if a[engine.k_abort()] != 0 {
         a[engine.k_err_row()] = st[s_probe()];
-        if padded && a[engine.k_err_col()] >= np && typed_abort(a[engine.k_abort()]) {
+        if padded && a[engine.k_err_col()] >= np {
             a[engine.k_err_fn()] = a[engine.k_err_fn()] + 100;
         }
     }
     return (g, e2, k2);
-}
-
-// Whether `abort` is the refusal of a cell that is not of its type (`finish.explain`: the integers 11, 12, 16, 17, the decimals 22 to 24 and 26 to 28, the floats 29 to 33 and 37 to 41).
-fn typed_abort(abort: int) -> [] bool {
-    return abort == 11 || abort == 12 || abort == 16 || abort == 17 || abort >= 22 && abort <= 24 || abort >= 26 && abort <= 33 || abort >= 37 && abort <= 41;
 }
 
 // `jnread.probe_one` for a plan that groups or sorts: look the key up and give the groups what the join type says (one joined record for each build row of the key, the padded record when there is none for a
