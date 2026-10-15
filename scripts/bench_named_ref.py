@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""The reference answers of db-benchmark's groupby questions q1 to q5 (and q10), and the gates that hold `table` to them before anything is timed.
+"""The reference answers of db-benchmark's groupby questions q1 to q5 (and q10, with --q10), and the gates that hold `table` to them before anything is timed.
 NB1 of docs/named-benchmarks.md. **This script times nothing.**
 
     python3 scripts/bench_named_ref.py FILE --layout [--rows N --k K]     # the file is exactly the documented layout (gate a)
     python3 scripts/bench_named_ref.py FILE --answers                      # print the reference answers and their chk
     python3 scripts/bench_named_ref.py FILE --cross-check                  # the same answers by SQLite (a second, independent path)
     python3 scripts/bench_named_ref.py FILE --gate [--table build/table]   # table's q1-q5, flag form and --query form, equal the reference (gate b);
-                                                                         # q6-q9 refused as classified, q10 still a defect (gate c)
+                                                                         # q6-q9 refused as classified (gate c); a class D entry must still trap
 
 The reference reads the **written file** with the standard library only (no pandas, no numpy), in one streaming pass, and does exact integer arithmetic: the
 `v` columns as integers, `v3` as an integer count of millionths (never a float), a mean as an exact rational rounded half to even at the scale asked, which is
