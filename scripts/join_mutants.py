@@ -17,10 +17,10 @@ sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(_
 import mutlib  # noqa: E402
 
 # cheap classes first: a killed mutant stops at the first failure (mutlib runs `unittest -f`)
-TESTS = ["test_join.Keys", "test_join.Columns", "test_join.Flags", "test_join.DataRefusals", "test_join.Order", "test_join.MaxJoinRows", "test_join.Stdin", "test_join.Explain",
-         "test_join_j2.Flags", "test_join_j2.Semantics", "test_join_j2.TypedRefusals", "test_join_j2.Explain", "test_join_j2.Threads", "test_join_j2.Oracle", "test_join.Oracle",
-         "test_join_j2.Accounting", "test_join.Accounting", "test_join.Introspect", "test_rules", "test_authority", "test_skill",
-         "test_join_j3.Pairs", "test_join_j3.JoinWhere", "test_join_j3.Groups", "test_join_j3.Padded", "test_join_j3.Guard", "test_join_j3.Explain", "test_join_j3.Combinations", "test_join_j3.Accounting", "test_join_j3.Oracle", "test_join_j3.PipeEquivalence"]
+TESTS = ["test_join_j3.Pairs", "test_join_j3.JoinWhere", "test_join_j3.Groups", "test_join_j3.Padded", "test_join_j3.Guard", "test_join_j3.Explain", "test_join_j3.Combinations",
+         "test_join.Keys", "test_join.Columns", "test_join.Flags", "test_join.DataRefusals", "test_join.Order", "test_join.MaxJoinRows", "test_join.Stdin", "test_join.Explain",
+         "test_join_j2.Flags", "test_join_j2.Semantics", "test_join_j2.TypedRefusals", "test_join_j2.Explain", "test_join_j2.Threads", "test_join_j3.Accounting", "test_join_j3.PipeEquivalence", "test_join_j3.Oracle",
+         "test_join_j2.Oracle", "test_join.Oracle", "test_join_j2.Accounting", "test_join.Accounting", "test_join.Introspect", "test_rules", "test_authority", "test_skill"]
 
 MUTANTS = [
     # how a key is read and compared

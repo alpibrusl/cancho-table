@@ -253,6 +253,19 @@ class Pairs(Fixture):
                 with self.subTest(a + jt):
                     self.pair(a, b, jtype=jt)
 
+    def test_a_quoted_cell_that_holds_a_quote_is_compared_as_the_text_inside_its_quotes_in_the_run(self):
+        # the cell is read through the scratch (the doubled quote is one quote), probe side and build side
+        probe = 'pk,pg,pv\na,"say ""hi""",1\nb,x,2\na,"say ""hi""",3\n'
+        build = 'bk,bg,bv\na,"say ""hi""",10\na,y,20\n'
+        for jt in JTYPES:
+            for text in ("pg = 'say \"hi\"'", "pg != 'say \"hi\"'", "pg not in ('say \"hi\"', 'q')", "pg contains 'hi'"):
+                with self.subTest(jt + " " + text):
+                    self.pair(text, "(" + text + ")", probe=probe, build=build, jtype=jt)
+        got = self.pair("pg = 'say \"hi\"'", "(pg = 'say \"hi\"')", probe=probe, build=build)
+        self.assertEqual(got, ['pk,pg,pv,bk,bg,bv', 'a,"say ""hi""",1,a,"say ""hi""",10', 'a,"say ""hi""",1,a,y,20', 'a,"say ""hi""",3,a,"say ""hi""",10', 'a,"say ""hi""",3,a,y,20'])
+        got = self.pair("bg = 'say \"hi\"'", "(bg = 'say \"hi\"')", probe=probe, build=build)
+        self.assertEqual(got, ['pk,pg,pv,bk,bg,bv', 'a,"say ""hi""",1,a,"say ""hi""",10', 'a,"say ""hi""",3,a,"say ""hi""",10'])
+
     def test_the_one_difference_is_which_cells_a_typed_key_read_can_refuse_probe_side(self):
         probe = "pk,pg\n1,x\n,q\n2,x\n"
         build = "bk,bg\n1,a\n2,b\n"
