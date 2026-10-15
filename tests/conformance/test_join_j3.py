@@ -556,6 +556,31 @@ class Padded(Fixture):
         self.assertEqual(self.rows(self.go(["--group", "pg", "--agg", "count,distinct:bg"], jtype="left")), ["pg,count,distinct:bg", "q,1,1", "x,5,3", "y,1,1"])
 
 
+class SortedUsing(Fixture):
+    """The sorter holds the record the answer shows and splits it again at the end."""
+
+    def test_a_quoted_build_cell_survives_the_sort_when_a_shared_name_key_leaves_a_column_out(self):
+        r = self.go(["--order-by", "v"], probe="id,v\na,2\nb,1\n", build='id,w\na,"x,y"\nb,"say ""hi"""\n', on="id")
+        self.assertEqual(r.stdout.decode().splitlines(), ["id,v,w", 'b,1,"say ""hi"""', 'a,2,"x,y"'])
+        r = self.go(["--order-by", "v"], probe="id,v\na,2\nb,1\n", build='id,w\na,"x,y"\nb,"say ""hi"""\n', on="id", jtype="left")
+        self.assertEqual(r.stdout.decode().splitlines(), ["id,v,w", 'b,1,"say ""hi"""', 'a,2,"x,y"'])
+
+    def test_nothing_of_the_build_is_left_to_show(self):
+        r = self.go(["--order-by", "-v"], probe="id,v\na,1\nb,2\nc,3\n", build="id\na\nc\n", on="id")
+        self.assertEqual(r.stdout.decode().splitlines(), ["id,v", "c,3", "a,1"])
+        r = self.go(["--order-by", "-v"], probe="id,v\na,1\nb,2\nc,3\n", build="id\na\nc\n", on="id", jtype="left")
+        self.assertEqual(r.stdout.decode().splitlines(), ["id,v", "c,3", "b,2", "a,1"])
+
+    def test_a_decimal_condition_of_a_grouping_over_a_padded_cell_says_it_was_padded(self):
+        r = self.go(["--group", "pg", "--where", "bv:dec(2) > 0"], jtype="left", fmt="json")
+        d = r.error()["detail"]
+        self.assertEqual((r.first_rule(), d["context"], d["column"], d.get("padded")), ("value.not-decimal", "where", "bv", True))
+        r = self.go(["--group", "pg", "--where", "bv:float > 0"], jtype="left", fmt="json")
+        self.assertEqual((r.first_rule(), r.error()["detail"].get("padded")), ("value.not-float", True))
+        r = self.go(["--group", "pg", "--where", "bv:int > 0"], jtype="left", fmt="json")
+        self.assertEqual((r.first_rule(), r.error()["detail"].get("padded")), ("value.not-integer", True))
+
+
 class Guard(Fixture):
     """The repair of 5.3, now that the filter that runs before the key is read exists: an empty typed key cell is answered with the guard."""
 
