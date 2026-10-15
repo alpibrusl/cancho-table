@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""J1 (docs/joins.md section 12 and 16): the join of `table` against DuckDB and csvtk on the four cases of the baseline.
+
+    python3 scripts/join_bench.py [--dir DIR] [--runs 5] [--bin build/table] [--json out.json] [--cases int-100k,text-100k,int-1m,text-1m]
+
+The files are the baseline's (section 12; `gen` below writes them from seed 7): the probe `id,k,v` of 1,000,000 rows with `k` uniform over the build's keys, the build `k,name` with unique
+keys in random order, integer keys or text keys of about 14 bytes (`u%08x-%d`), 100,000 or 1,000,000 build rows. Every probe row matches exactly one build row, so the answer is 1,000,000
+rows of `id,k,v,name`. **Before any timing every contender's whole output is checked against a Python join** (the rows sorted, their md5 and count; and for `table`, whose order is
+defined, the rows in the probe's order), and the run stops on a difference. Timing: wall clock around the process, output to /dev/null (DuckDB: `COPY (...) TO '/dev/null'`), the
+minimum of `--runs` interleaved rounds (the order rotating), the median beside it. Peak resident set once per tool (`/usr/bin/time -l`). DuckDB reads with type detection on (its default; it
+does more work than `table` does) at one thread and at its default; csvtk is `csvtk join -f k probe build`. Nothing is tuned. A machine that is loaded by other work is stated, with the
+load average before and after.
+"""
+import argparse
+import hashlib
+import json
+import os
+import pathlib
+import platform
+import random
+import re
+import shutil
+import statistics
+import sys
+import tempfile
+import time
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+CASES = {"int-100k": ("int", 100_000), "text-100k": ("text", 100_000), "int-1m": ("int", 1_000_000), "text-1m": ("text", 1_000_000)}
+
+
+def gen(d, kind, n, probes=1_000_000):
+    """The probe and the build file of a case (seed 7); also the keys of the build in file order."""
+    rnd = random.Random(7)
+    if kind == "int":
+        keys = [str(v) for v in rnd.sample(range(10 * n), n)]
+    else:
+        keys = ["u%08x-%d" % (rnd.getrandbits(32), i) for i in range(n)]
+    names = ["n%d" % i for i in range(n)]
+    build = d / ("build-%s-%d.csv" % (kind, n))
+    probe = d / ("probe-%s-%d.csv" % (kind, n))
+    if not build.exists():
+        with open(build, "w", newline="\n") as f:
+            f.write("k,name\n")
+            f.write("".join("%s,%s\n" % (k, nm) for k, nm in zip(keys, names)))
+    if not probe.exists():
+        with open(probe, "w", newline="\n") as f:
+            f.write("id,k,v\n")
+            f.write("".join("%d,%s,%d\n" % (i, keys[rnd.randrange(n)], rnd.randrange(100000)) for i in range(probes)))
+    return probe, build, keys, names
+
+
+def truth(probe, build):
+    """The join by Python, in the probe's order: the rows as bytes, and their sorted md5."""
+    index = {}
+    with open(build, "rb") as f:
+        f.readline()
+        for line in f:
+            k, name = line.rstrip(b"\n").split(b",")
+            index.setdefault(k, []).append(name)
+    rows = []
+    with open(probe, "rb") as f:
+        f.readline()
+        for line in f:
+            i, k, v = line.rstrip(b"\n").split(b",")
+            for name in index.get(k, ()):
+                rows.append(b",".join((i, k, v, name)))
+    return rows
+
+
+def digest(rows):
+    return hashlib.md5(b"\n".join(sorted(rows))).hexdigest(), len(rows)
+
+
+def contenders(a, d, probe, build):
+    out = {}
+    out["table"] = [a.bin, "--root", str(d), "--join", build.name, "--on", "k=k", "--join-prefix", "b_", "--select", "id,k,v,b_name", "--format", "csv", "--max-state-bytes", "1073741824", probe.name]
+    if shutil.which("duckdb"):
+        sql = "COPY (SELECT a.id,a.k,a.v,b.name FROM read_csv('%s') a JOIN read_csv('%s') b ON a.k=b.k) TO '%%s' (FORMAT CSV, HEADER)" % (probe, build)
+        out["duckdb-1"] = ["duckdb", "-c", "SET threads=1; " + sql]
+        out["duckdb"] = ["duckdb", "-c", sql]
+    if shutil.which("csvtk"):
+        out["csvtk"] = ["csvtk", "join", "-f", "k", str(probe), str(build)]
+    return out
+
+
+def run_to(argv, sink):
+    """Run, standard output to `sink` (a path, or /dev/null); for duckdb the COPY target is the sink."""
+    argv = [x % sink if x.startswith(("COPY", "SET threads")) and "%s" in x else x for x in argv]
+    return argv
+
+
+def wall(argv, sink):
+    argv = run_to(argv, sink)
+    t = time.perf_counter()
+    if argv[0] == "duckdb":
+        p = subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    else:
+        with open(sink, "wb") as o:
+            p = subprocess.run(argv, stdout=o, stderr=subprocess.PIPE)
+    dt = time.perf_counter() - t
+    if p.returncode:
+        sys.exit("%s: exit %d: %s" % (argv[0], p.returncode, p.stderr[-300:]))
+    return dt
+
+
+def rss_of(argv, sink):
+    argv = run_to(argv, sink)
+    cmd = ["/usr/bin/time", "-l"] if sys.platform == "darwin" else ["/usr/bin/time", "-v"]
+    with open(sink if argv[0] != "duckdb" else os.devnull, "wb") as o:
+        p = subprocess.run(cmd + argv, stdout=o, stderr=subprocess.PIPE)
+    err = p.stderr.decode()
+    if sys.platform == "darwin":
+        return int(re.search(r"(\d+)\s+maximum resident set size", err).group(1))
+    return int(re.search(r"Maximum resident set size \(kbytes\): (\d+)", err).group(1)) * 1024
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dir", default="")
+    ap.add_argument("--runs", type=int, default=5)
+    ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
+    ap.add_argument("--json", default="")
+    ap.add_argument("--cases", default=",".join(CASES))
+    a = ap.parse_args()
+    d = pathlib.Path(a.dir) if a.dir else pathlib.Path(tempfile.mkdtemp(prefix="join-bench-"))
+    d.mkdir(parents=True, exist_ok=True)
+    load0 = os.getloadavg()
+    print("machine %s %s, %s cores; load average before %s; %s; minimum of %d interleaved rounds (median in brackets)" % (platform.platform(), platform.machine(), os.cpu_count(), load0, a.bin, a.runs))
+    for tool in ("duckdb", "csvtk"):
+        if shutil.which(tool):
+            print(tool, subprocess.run([tool, "--version" if tool == "duckdb" else "version"], capture_output=True, text=True).stdout.strip().splitlines()[0])
+    result = {"machine": platform.platform() + " " + platform.machine(), "cores": os.cpu_count(), "load_before": load0, "runs": a.runs, "cases": {}}
+    sink = str(d / "out.csv")
+    for name in a.cases.split(","):
+        kind, n = CASES[name]
+        probe, build, keys, names = gen(d, kind, n)
+        want = truth(probe, build)
+        wd = digest(want)
+        cs = contenders(a, d, probe, build)
+        # correctness first: every contender's whole output
+        for tool, argv in cs.items():
+            argv2 = run_to(argv, sink)
+            with open(sink, "wb") as o:
+                p = subprocess.run(argv2, stdout=o if argv2[0] != "duckdb" else subprocess.DEVNULL, stderr=subprocess.PIPE)
+            if p.returncode:
+                sys.exit("%s %s: exit %d %s" % (name, tool, p.returncode, p.stderr[-300:]))
+            lines = pathlib.Path(sink).read_bytes().split(b"\n")
+            if lines and lines[-1] == b"":
+                lines.pop()
+            rows = [l.replace(b'"', b"") for l in lines[1:]]
+            if digest(rows) != wd:
+                sys.exit("%s %s: the output is not the Python join (%s against %s)" % (name, tool, digest(rows), wd))
+            if tool == "table" and rows != want:
+                sys.exit("%s table: the order is not the probe's" % name)
+        times = {t: [] for t in cs}
+        for r in range(a.runs):
+            order = list(cs)
+            k = r % len(order)
+            order = order[k:] + order[:k]
+            if r % 2:
+                order.reverse()
+            for t in order:
+                times[t].append(wall(cs[t], sink if cs[t][0] != "duckdb" else os.devnull))
+        rss = {t: rss_of(cs[t], sink if cs[t][0] != "duckdb" else os.devnull) for t in cs}
+        print("\n%s: %d probe rows x %d build rows, %d output rows, probe %.1f MB, build %.1f MB" % (name, 1_000_000, n, len(want), probe.stat().st_size / 1e6, build.stat().st_size / 1e6))
+        for t in cs:
+            print("  %-9s %7.3f s (median %.3f)   peak resident %5.0f MB" % (t, min(times[t]), statistics.median(times[t]), rss[t] / 1e6))
+        result["cases"][name] = {"rows": len(want), "times": times, "rss": rss, "probe_bytes": probe.stat().st_size, "build_bytes": build.stat().st_size}
+    result["load_after"] = os.getloadavg()
+    print("\nload average after %s" % (result["load_after"],))
+    if a.json:
+        pathlib.Path(a.json).write_text(json.dumps(result, indent=1) + "\n")
+    if not a.dir:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+main()

@@ -791,7 +791,7 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
     if float_sum {
         o = rule(heap, o, "agg.float-overflow");
     }
-    if as_csv || ordering {
+    if as_csv || ordering || joining {
         o = rule(heap, o, "limit.too-many-rows");
     }
     if mode != 0 && !as_csv {

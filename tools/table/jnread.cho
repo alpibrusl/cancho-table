@@ -565,7 +565,7 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
     var cols = box_slice(heap, 1, 0);
     var sel = box_slice(heap, 1, 0);
     var cellbox = box_slice(heap, 1, 0);
-    var head = buffer.empty(heap, 1);
+    var head = buffer.append(heap, buffer.empty(heap, 4), "[]");
     var labels = buffer.empty(heap, 1);
     var lends = vec.empty(heap, 1, 0);
     var lead = buffer.empty(heap, 1);
@@ -730,7 +730,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt](heap: &!h Heap, args: &g Args,
     let table = spec.flag_table();
     var e = errs;
     var c = nothing();
-    var head = buffer.empty(heap, 1);
+    var head = buffer.append(heap, buffer.empty(heap, 4), "[]");
     var rows = buffer.empty(heap, 1);
     var names = buffer.empty(heap, 1);
     var ends = vec.empty(heap, 1, 0);

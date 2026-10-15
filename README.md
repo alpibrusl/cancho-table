@@ -257,6 +257,13 @@ Zed,1,64
 ```
 <!-- /gen:t-group -->
 
+### Join two files
+
+`--join FILE --on PROBE=BUILD` joins the file you name (or standard input) with a second one. The operand is the **probe** side and is streamed; the `--join` file is the **build** side and is held whole in memory, counted in `--max-state-bytes`. A key is compared as text, byte for byte (`007` is not `7`, and an empty cell matches an empty cell: there is no null). The answer is each probe row, in the probe's order, once for every build row with its key, in the build's order, followed by that row's cells. Two files that share a column name are refused as `join.column-collision`, and the refusal offers the invocation with a `--join-prefix`. This is the first slice: inner join, rows out ([docs/joins.md](docs/joins.md)).
+
+<!-- gen:t-join -->
+<!-- /gen:t-join -->
+
 ### Ask in a small SQL
 
 `--query` takes one statement of a small subset of SQL (`select`, `from`, `where` with `and`, `group by`, `order by`, `limit` and `offset`) and means exactly the flags it is translated to: there is one plan, and the same question asked in flags gives the same bytes. What the subset leaves out (`or`, aliases, expressions, `like`, `null`, joins) is refused with the feature named and what to write instead, and a mistake is refused at the byte where it is, with a corrected command when the correction is certain. [docs/query.md](docs/query.md) has the grammar.
@@ -348,12 +355,13 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 * **Numbers are mostly built.** `:int`, `:dec(S)` and `:float` work in `--where`, `--agg`, `--group` and `--order-by`. Columns of 15- to 17-digit numbers are read by an exact reader that allocates nothing on the paths a real column takes (Clinger, then Eisel-Lemire, then an exact fallback); it matched Python's `float()` on every cell of each differential run, the largest of 101,400,000 cells, and costs 29.6 ns a cell against 1,151 ns before (one Mac core, load average 6.7 to 13.5; [conditions](https://alpibrusl.github.io/cancho-table/benchmarks.html#float-reader)).
 * **A sort uses more cores only for a whole sort written as CSV.** With `--order-by`, `--format csv` and no `--top`, `--limit` or `--from`, `--threads` above 1 sorts in parallel and gives the same bytes; pages, `--top` and JSON output run on one core. A threaded sort peaks at 11.8 to 14.8 times the size of a 39.55 MB file at 16 threads on the Mac, against 4.4 to 6.2 times for the sequential sort. There is no sort that spills to disk.
-* **No joins**, and **one input** at a time: a file named on the command line, or standard input (`-`, or no file), read in one pass on one core, in blocks, at about the speed of a named file on one core. A producer that writes slowly is waited for until the first 512 bytes arrive; a closed descriptor 0 reads as empty; a descriptor that fails is refused with an io.* rule (docs/readers.md 11.1, 11.7). ([docs/readers.md](docs/readers.md), section "R1 as built").
+* **One join, and it is the first slice of it** (J1 of [docs/joins.md](docs/joins.md)): `--join FILE --on PROBE=BUILD` is the inner join of the operand (or standard input) with a second file, on one pair of columns compared as text, byte for byte, giving rows (`--select`, `--where`, `--limit`, `--from`, `--format`). No left, semi or anti join, no key of several columns, no typed key (`:int`), no `--group`, `--order-by` or `--report` over a join (write the join as csv and pipe it into a second call), no jsonl side, no `--join-where`, no `--query` with a join. The `--join` file is held whole in memory, counted in `--max-state-bytes` (resident memory can be about twice that while it grows), and nothing spills to disk. A join is read on one core whatever `--threads` says.
+* **One input** at a time otherwise: a file named on the command line, or standard input (`-`, or no file), read in one pass on one core, in blocks, at about the speed of a named file on one core. A producer that writes slowly is waited for until the first 512 bytes arrive; a closed descriptor 0 reads as empty; a descriptor that fails is refused with an io.* rule (docs/readers.md 11.1, 11.7). ([docs/readers.md](docs/readers.md), section "R1 as built").
 * **JSON lines are read, nothing else is.** `--input-format jsonl` (or `ndjson`) reads one JSON object per line, from a file or from standard input, with the columns declared by `--fields` (paths such as `user.name` or `items.0.sku`; `--discover` reports what the first lines hold). A number is the cell its exact text is, never through a double. A line that is not strict JSON, not an object, a declared path with no value, an object or an array in a cell, and a key twice are tagged refusals ([docs/readers.md](docs/readers.md) section 12). `--format jsonl` writes the answer back as JSON lines (one object per row, keys the output columns, every value a string but the aggregates and the group keys that have a type (`--group NAME:int`, `NAME:dec(S)`, `NAME:float`), which are numbers; [docs/readers.md](docs/readers.md) section 13). No Parquet, no JSON array or pretty-printed document (use `jq -c '.[]'`). CSV and TSV (comma, tab or semicolon) as before.
 * **`--query` is a small subset of SQL**, not SQL: no `or` and no parentheses, no aliases, no expressions or functions, no `like`, no `null`, no joins, no subqueries, and a grouping sorts by one column. Each is refused as `query.unsupported`, with the feature named ([docs/query.md](docs/query.md)).
 * **No guessing.** Every column is text unless you declare `:int`, `:dec(S)` or `:float`; `--report types` suggests a declaration and applies none. No computed or renamed column, no `or` in a filter.
 
-`or` in a filter and joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
+`or` in a filter and the rest of joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
 
 ## How fast
 

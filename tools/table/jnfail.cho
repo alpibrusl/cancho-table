@@ -194,7 +194,7 @@ pub fn build_too_large[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte],
 // `limit.too-many-join-rows`: the row that would be the one past `--max-join-rows`, of the probe row named; `matches` is the exact number of build rows its key has, and
 // `max_matches` the most any probe row up to it had.
 pub fn too_many_rows[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], limit: int, probe_row: int, probe_line: int, matches: int, max_matches: int) -> [heap] fail.Errors {
-    var o = fail.open_in(heap, finish.extra(), "limit.too-many-join-rows", "the join would produce more rows than --max-join-rows", "if detail.matches is large the --join file repeats this key: remove the duplicates, or make the other file the --join file; otherwise raise --max-join-rows, up to the ceiling introspect names, or page with --limit");
+    var o = fail.open_in(heap, finish.extra(), "limit.too-many-join-rows", "the join would produce more rows than --max-join-rows", "if detail.matches is large the --join file repeats this key: remove the duplicates, or make the other file the --join file, otherwise raise --max-join-rows, up to the ceiling introspect names, or page with --limit");
     o = fail.repair_none(heap, o, "which of the two files should be changed is not known");
     o = fail.detail_open(heap, o);
     o = fail.detail_str(heap, o, "input", "probe");
