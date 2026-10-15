@@ -34,6 +34,12 @@ cites, next to its conditions). What is generated:
                                           for net, ffi and clock)
     limits        index.html              the limits `table introspect` lists
     rules         index.html              the rules `table introspect` lists
+    sbsline       README.md, index.html   the sentence about DuckDB's DOUBLE sum in the float paragraphs, from the same JSON
+    sbs           index.html, benchmarks.html   the side-by-side of `table` and DuckDB at 1 to 16
+                                          threads, written from docs/assets/threads-vs-duckdb.json
+                                          (and -linux.json), the output of scripts/threads_vs_duckdb.py:
+                                          every number and every sentence about the values comes
+                                          from that file, so the page cannot drift from the data
 
 Two whole files are also written (and checked) from the list of pages below, so that
 the pages and the sitemap cannot disagree: docs/sitemap.xml and docs/robots.txt. The
@@ -391,14 +397,170 @@ def examples(ctx):
     return "\n\n".join(blocks)
 
 
+# --- the side by side of table and DuckDB at several thread counts ---------------
+
+SBS_SCRIPT = "https://github.com/alpibrusl/cancho-table/blob/main/scripts/threads_vs_duckdb.py"
+SBS_FILES = [("docs/assets/threads-vs-duckdb.json", "threads-vs-duckdb.json"), ("docs/assets/threads-vs-duckdb-linux.json", "threads-vs-duckdb-linux.json")]
+
+
+def sbs_load(rel):
+    path = ROOT / rel
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def sbs_join(items):
+    items = list(items)
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def sbs_machine(doc):
+    m = doc["machine"]
+    return "%s, %s" % (m["cpu"], m["os"])
+
+
+def sbs_threads(t):
+    return "%d thread%s" % (t, "" if t == 1 else "s")
+
+
+def sbs_roles(html_text):
+    """Explicit table roles, so that the stacked layout (display: block on the table parts, on a phone) keeps its table semantics for assistive technology."""
+    for old, new in (("<table ", '<table role="table" '), ("<thead>", '<thead role="rowgroup">'), ("<tbody>", '<tbody role="rowgroup">'), ("<tr>", '<tr role="row">'),
+                     ('<th scope="col"', '<th role="columnheader" scope="col"'), ('<th scope="row"', '<th role="rowheader" scope="row"'), ("<td ", '<td role="cell" '), ("<td>", '<td role="cell">')):
+        html_text = html_text.replace(old, new)
+    return html_text
+
+
+def sbs_values(vals, exact):
+    return "".join('<span class="v%s">%s%s</span>' % (" same" if float(v) == float(exact) else "", e(v), " (= exact)" if float(v) == float(exact) else "") for v in vals)
+
+
+def sbs_block(doc, jsonname, heading, level, anchor=False):
+    """One machine's side by side, from the dict that threads_vs_duckdb.py wrote."""
+    f, m, v, n = doc["file"], doc["machine"], doc["versions"], doc["runs"]
+    ex, ths = doc["exact_sum"], doc["threads"]
+    duck = doc["duckdb"]
+    if not duck:
+        raise Drift("%s has no DuckDB values" % jsonname)
+    eq = lambda x: float(x) == float(ex)
+    ds = duck["sum"]
+    allv = [x for t in ths for x in ds[str(t)]]
+    changed = [str(t) for t in ths if len(set(ds[str(t)])) > 1]
+    n_eq = sum(eq(x) for x in allv)
+    tab_ok = all(eq(x) for t in ths for x in doc["table"][str(t)])
+    if not tab_ok:
+        raise Drift("%s: table is not equal to the exact sum at every thread count: the data is not publishable" % jsonname)
+    ks, dc = duck["kahan_sum"], duck["decimal"]
+    kall = [x for t in ths for x in ks[str(t)]]
+    dvals = sorted({x for t in ths for x in dc[str(t)]})
+    dec_stable = len(dvals) == 1
+    dec_ex = doc["exact_sum_for_decimal_contender"]
+    short = v["table_commit"].split(" ")[0][:7]
+    out = []
+    out.append('<h%d%s>%s</h%d>' % (level, ' id="sbs"' if anchor else "", e(heading), level))
+    out.append('<p class="sbs-exact">The exact sum of the %s values in this file, rounded once: <code>%s</code></p>' % (format(f["rows"], ","), e(ex)))
+    cap = "Sum of x over %s rows at %s: the value each tool printed, in each of %d runs" % (format(f["rows"], ","), sbs_join("%d" % t for t in ths) + " threads", n)
+    rows = []
+    for t in ths:
+        tv, dv = doc["table"][str(t)], ds[str(t)]
+        rows.append('<tr><th scope="row">%s</th><td class="num" data-label="table">%s</td><td class="num" data-label="DuckDB sum(x), one run per line">%s</td><td>table: %s<br>DuckDB: %d of %d runs</td></tr>' % (
+                        sbs_threads(t), sbs_values(sorted(set(tv), key=tv.index), ex), sbs_values(dv, ex),
+                        "yes, %d of %d runs" % (sum(eq(x) for x in tv), len(tv)) if all(eq(x) for x in tv) else "no", sum(eq(x) for x in dv), len(dv)))
+    out.append('<div class="fitwrap" tabindex="0" role="region" aria-label="%s: table and DuckDB, thread by thread"><table class="fit sbs"><caption>%s</caption>'
+               '<thead><tr><th scope="col">Threads</th><th scope="col" class="num">table</th><th scope="col" class="num">DuckDB <code>sum(x)</code></th>'
+               '<th scope="col">Equal to the exact sum?</th></tr></thead><tbody>%s</tbody></table></div>' % (
+                   e(heading), e(cap), "".join(rows)))
+    if changed:
+        chg = "at %s threads the value changed between runs" % sbs_join(changed)
+    else:
+        chg = "at no thread count did the value change between runs, but it changed with the thread count (%d different values over %d thread counts)" % (len(set(allv)), len(ths))
+    out.append('<p class="sbs-says">In this run <code>table</code> printed the exact sum at every thread count in all %d runs. DuckDB&rsquo;s <code>sum</code> printed %d different values over the %d runs; '
+               '%d of them equalled the exact sum. DuckDB values are from these runs: %s.</p>' % (n, len(set(allv)), len(allv), n_eq, e(chg)))
+    out.append('<p class="sbs-says">Adding doubles is order-dependent, and a threaded sum adds them in an order that depends on how the work was split, so a plain double sum can give a different answer for a different number of threads. '
+               '<code>table</code> adds every cell without rounding and rounds the total once. DuckDB has other ways to add, shown below.</p>')
+    rows = []
+    for t in ths:
+        k, d = ks[str(t)], dc[str(t)]
+        rows.append('<tr><th scope="row">%s</th><td class="num" data-label="kahan_sum, one run per line">%s</td><td data-label="kahan_sum equal to the exact sum">%d of %d runs</td>'
+                    '<td class="num" data-label="DECIMAL(38,12) sum, one run per line">%s</td><td data-label="DECIMAL value the same in every run">%s</td></tr>' % (
+                        sbs_threads(t), sbs_values(k, ex), sum(eq(x) for x in k), len(k), "".join('<span class="v">%s</span>' % e(x) for x in d), "yes" if len(set(d)) == 1 else "no"))
+    kn = sum(eq(x) for x in kall)
+    more = ('<details class="sbs-more"><summary>DuckDB&rsquo;s <code>kahan_sum</code> and a DECIMAL sum, on the same file</summary>'
+            '<div class="fitwrap" tabindex="0" role="region" aria-label="%s: DuckDB kahan_sum and DECIMAL sum"><table class="fit sbs"><caption>DuckDB <code>kahan_sum(x)</code> with x as DOUBLE (also spelled <code>fsum</code>), and <code>sum(x)</code> with x read as DECIMAL(38,12)</caption>'
+            '<thead><tr><th scope="col">Threads</th><th scope="col" class="num"><code>kahan_sum</code></th><th scope="col"><code>kahan_sum</code> equal to the exact sum?</th>'
+            '<th scope="col" class="num">DECIMAL(38,12) <code>sum</code></th><th scope="col">DECIMAL value the same in every run?</th></tr></thead><tbody>%s</tbody></table></div>'
+            '<p class="sbs-says">In this run <code>kahan_sum</code>, DuckDB&rsquo;s compensated sum, was equal to the exact sum in %d of %d runs, and printed %d different values over the %d runs. '
+            'The DECIMAL sum printed %s over the %d thread counts and %d runs. It adds the file&rsquo;s values after rounding each to %d decimal places, so it answers a slightly different question: '
+            'the exact sum of the rounded values is <code>%s</code>%s.</p></details>' % (
+                e(heading), "".join(rows), kn, len(kall), len(set(kall)), len(kall),
+                ("one value, <code>%s</code>," % e(dvals[0])) if dec_stable else "%d different values" % len(dvals), len(ths), n, 12,
+                e(dec_ex), (" and that is what DuckDB printed" if dec_stable and dvals[0] == dec_ex else "; DuckDB printed what the table shows")))
+    out.append(more)
+    load = m["load_average_before"][0]
+    out.append('<p class="fine sbs-cond"><strong>Conditions.</strong> %s, %s cores%s, load average %s (1 minute) at the start and %s at the end. DuckDB %s; <code>table</code> at <code>%s</code> with <code>--agg sum:x:float</code>; Python %s. '
+               'DuckDB aggregates: <code>sum(x)</code> on a DOUBLE column (plain double addition), <code>kahan_sum(x)</code> on a DOUBLE column, and <code>sum(x)</code> on DECIMAL(38,12), at <code>SET threads=N</code>. '
+               'File: %s rows, %s bytes, seed %d, sha256 <code>%s</code>, written under a temporary directory by the script. %d runs at each thread count; every value is as printed, no timings are reported. '
+               'Re-run it: <code>python3 scripts/threads_vs_duckdb.py</code> (<a href="%s">the script</a>, <a href="assets/%s">every value as JSON</a>).</p>' % (
+                   e(sbs_machine(doc)), m["cores"], (" (%d usable by the script)" % m["cores_usable"]) if m["cores_usable"] != m["cores"] else "", load, m["load_average_after"][0], e(v["duckdb"]), e(short), e(v["python"]),
+                   format(f["rows"], ","), format(f["bytes"], ","), f["seed"], e(f["sha256"]), n, SBS_SCRIPT, jsonname))
+    return sbs_roles("\n".join(out))
+
+
+def sbs_index(_ctx=None):
+    rel, name = SBS_FILES[0]
+    doc = sbs_load(rel)
+    if doc is None:
+        raise Drift("%s is missing: run scripts/threads_vs_duckdb.py --json %s" % (rel, rel))
+    return sbs_block(doc, name, "On %s" % sbs_machine(doc), 3) + '\n<p class="fine">The benchmarks page has this on every machine it was run on, and the questions where DuckDB is ahead: <a href="benchmarks.html#floats">benchmarks, floats</a>.</p>'
+
+
+def sbs_bench(_ctx=None):
+    out = []
+    for rel, name in SBS_FILES:
+        doc = sbs_load(rel)
+        if doc is None:
+            if rel == SBS_FILES[0][0]:
+                raise Drift("%s is missing" % rel)
+            continue
+        out.append(sbs_block(doc, name, "Same file, same question, any number of cores: %s" % sbs_machine(doc), 3, anchor=not out))
+    return "\n".join(out)
+
+
+def sbs_line(md):
+    """The one sentence of the float paragraphs about DuckDB's DOUBLE sum, from both JSON files."""
+    parts, eqs = [], []
+    for rel, name in SBS_FILES:
+        doc = sbs_load(rel)
+        if doc is None:
+            raise Drift("%s is missing" % rel)
+        ths, ds = doc["threads"], doc["duckdb"]["sum"]
+        who = "the Mac" if doc["machine"]["os"].startswith("macOS") else "Linux"
+        changed = [str(t) for t in ths if len(set(ds[str(t)])) > 1]
+        allv = [x for t in ths for x in ds[str(t)]]
+        if len({tuple(sorted(set(ds[str(t)]))) for t in ths}) < 2:
+            raise Drift("%s: DuckDB's sum did not differ with the thread count: the sentence about it no longer holds" % rel)
+        parts.append("on %s %s" % (who, ("at %s threads" % sbs_join(changed)) if changed else "at no thread count"))
+        eqs.append("%d of %d runs on %s" % (sum(float(x) == float(doc["exact_sum"]) for x in allv), len(allv), who))
+    code = (lambda t: "`%s`" % t) if md else (lambda t: "<code>%s</code>" % t)
+    link = ("[side by side](https://github.com/alpibrusl/cancho-table/blob/main/docs/assets/threads-vs-duckdb.json)" if md
+            else '<a href="benchmarks.html#sbs">side by side</a>')
+    text = ("On a file of 2,000,000 doubles (the committed runs of scripts/threads_vs_duckdb.py) DuckDB&rsquo;s DOUBLE %s printed a different value for different thread counts and, for different runs of the same command (%s); "
+            "it equalled the exact sum in %s. Its %s and a DECIMAL sum are in the %s too. An earlier measurement, on a million rows, gave a different answer at 1, 4 and 16 threads, none equal to the exact one (see the benchmarks)."
+            % (code("sum"), "; ".join(parts), " and ".join(eqs), code("kahan_sum"), link))
+    return text.replace("&rsquo;", "'") if md else text
+
+
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
-                      flow=lambda c: md_block(flow_items(c)), qs=lambda c: md_block(qs_items(c))),
+                      flow=lambda c: md_block(flow_items(c)), qs=lambda c: md_block(qs_items(c)),
+                      sbsline=lambda c: sbs_line(True)),
     "docs/index.html": dict({"t-" + t: (lambda c, t=t: html_pre(task_items(c, t))) for t in TASKS},
                             flow=lambda c: term_pre(flow_items(c)), qs=lambda c: html_pre(qs_items(c)),
                             **{"c-" + n: (lambda c, n=n: card(c, n)) for n in CARDS},
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
-                            rules=rules_html, nrules=nrules),
+                            rules=rules_html, nrules=nrules, sbs=sbs_index, sbsline=lambda c: sbs_line(False)),
+    "docs/benchmarks.html": {"sbs": sbs_bench},
     "docs/refusals.md": {"exit-codes": exit_codes, "rules": rules_md, "examples": examples},
 }
 
