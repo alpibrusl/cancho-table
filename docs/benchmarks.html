@@ -169,7 +169,7 @@ ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .3
 <main id="main" class="wrap">
 <div style="padding-top:3rem">
   <h1 style="font-size:clamp(1.8rem,5vw,2.8rem)">Benchmarks</h1>
-  <p class="lead">Supporting evidence for the speed claims on the <a href="index.html#fast">overview</a>. How long <code>table</code>, csvtk, Miller and DuckDB take to answer the same questions, on two machines. Lower is better. All times are seconds unless a unit is given.</p>
+  <p class="lead">Supporting evidence for the speed claims on the <a href="index.html#results">overview</a>. How long <code>table</code>, csvtk, Miller and DuckDB take to answer the same questions, on two machines. Lower is better. All times are seconds unless a unit is given.</p>
 </div>
 
 <section id="how" style="padding-top:2.5rem">
@@ -345,7 +345,7 @@ ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .3
     <li><strong>Threads now help on macOS.</strong> One to 16 threads took 1.234 s to 2.006 s before (slower) and takes 0.112 s to 0.021 s now.</li>
     <li><strong>Per cell,</strong> one core, line scan included, minimum of 3: a 17-digit cell cost 1,151 ns before and 29.6 ns now on the Mac (load 6.7 to 13.5), and 693 ns before and 41.9 ns now on Linux (load 1.2 to 1.8). A two-decimal cell is unchanged (13.5 to 13.8 ns on the Mac).</li>
     <li><strong>Instructions,</strong> the counter the change was gated on (bound 1.01, 3 builds per side, 1 and 4 threads): <code>min</code> and <code>max</code> by status take 0.125 of the old count at 1 thread and 0.100 at 4 on the Mac, and 0.194 and 0.196 on Linux.</li>
-    <li><strong>Exactness was checked, not assumed.</strong> Against Python&rsquo;s <code>float()</code>: 101,400,000 and 100,367,328 cells on the Mac, 30,327,328 and 20,867,328 on Linux, another 20,867,328 on the Mac with the two fast tiers switched off, and the 640 cells of <code>test_float.py</code>: no difference.</li>
+    <li><strong>Exactness was checked, not assumed.</strong> Against Python&rsquo;s <code>float()</code>: 100,367,328 cells (the final code) on the Mac, 30,327,328 and 20,867,328 on Linux, another 20,867,328 on the Mac with the two fast tiers switched off, and the 640 cells of <code>test_float.py</code>: no difference.</li>
     <li><strong>What it costs.</strong> The two-decimal float filter retires 0.3 percent more instructions on Linux (+4.7 million of 1,507 million); on the Mac the count is the same. A cell that is a rounding halfway case within a step reaches the third tier, which allocates one region and takes 1.5 to 10 microseconds; none of 6,000,000 random cells of up to 19 digits did, but a column made only of such cells would again scale badly with threads on macOS. The Mac&rsquo;s absolute times are good to +-10 percent at best.</li>
   </ul>
 
@@ -403,7 +403,7 @@ ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .3
 
 <section id="reproduce">
   <h2>Rerun them</h2>
-  <p class="sub">Build <code>build/table</code> as the <a href="index.html#start">overview</a> shows, then, from the repository root:</p>
+  <p class="sub">Build <code>build/table</code> as the <a href="index.html#try">overview</a> shows, then, from the repository root:</p>
   <pre class="code" tabindex="0"><code>python3 scripts/bench.py                 # the 1,000,000-row file; every answer checked, then timed
 python3 scripts/bench_parallel.py        # the same questions on 1, 2, 4, 8, 16 cores
 python3 scripts/adversarial.py           # the harder cases; --cells B1,B3 --runs 5 --threads 8</code></pre>
