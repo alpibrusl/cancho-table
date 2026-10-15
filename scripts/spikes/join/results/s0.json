@@ -1,0 +1,222 @@
+{
+ "compiler": "cancho 0.0.0 (rev e47d647353c4e35929f312cf07b0225c88b48b7c, host aarch64-apple-darwin)",
+ "machine": "macOS-26.2-arm64-arm-64bit-Mach-O arm64",
+ "cores": 16,
+ "load_before": [
+  7.03271484375,
+  7.05126953125,
+  6.751953125
+ ],
+ "runs": 5,
+ "reps": 7,
+ "negative": {
+  "n1_ref_field.cho": "a type declaration has no region parameters; only a function can take one",
+  "n2_ref_field_no_param.cho": "`f` is not a region in scope; a region comes from a `[&f]` parameter or a `borrow` block",
+  "n3_tuple_payload.cho": "`spawn`'s payload has type `(&r Shared, &!s Job)`, which cannot cross to a real thread yet",
+  "n4_write_through_shared.cho": "this is a shared slice `&`, which promises its elements will not change; `alloc_slice` hands back a unique one",
+  "n5_move_table_out_of_ref.cho": "expected `JTab`, found `&r JTab`",
+  "n6_slice_payload.cho": "`spawn`'s payload has type `&r [byte]`, which cannot cross to a real thread yet",
+  "n7_two_unique_one_table.cho": "the `&!` reference `j` reaches is lent to a thread that has not been joined, so it cannot be used again here; a `&!` is the only way to write its object, and two threads writing through copies of it race. Join the first thread before using it again",
+  "n8_deref_copy_of_res.cho": "expected `JTab`, found `&r JTab`"
+ },
+ "probe": {
+  "100000/1": {
+   "build_ms": 4,
+   "seq_probe_ms": 56,
+   "shared_ms": 56,
+   "shared_all": [
+    57,
+    57,
+    57,
+    57,
+    56
+   ],
+   "shared_rss": 81477632,
+   "copy_total_ms": 72,
+   "copy_all": [
+    72,
+    73,
+    72,
+    72,
+    73
+   ],
+   "copy_rss": 198688768,
+   "clone_one_ms": 0,
+   "matches": 2000000
+  },
+  "100000/2": {
+   "build_ms": 4,
+   "seq_probe_ms": 56,
+   "shared_ms": 29,
+   "shared_all": [
+    29,
+    29,
+    29,
+    29,
+    29
+   ],
+   "shared_rss": 81494016,
+   "copy_total_ms": 45,
+   "copy_all": [
+    45,
+    46,
+    46,
+    47,
+    46
+   ],
+   "copy_rss": 211959808,
+   "clone_one_ms": 0,
+   "matches": 2000000
+  },
+  "100000/4": {
+   "build_ms": 4,
+   "seq_probe_ms": 56,
+   "shared_ms": 14,
+   "shared_all": [
+    14,
+    15,
+    14,
+    15,
+    14
+   ],
+   "shared_rss": 81559552,
+   "copy_total_ms": 32,
+   "copy_all": [
+    33,
+    33,
+    33,
+    33,
+    32
+   ],
+   "copy_rss": 258605056,
+   "clone_one_ms": 0,
+   "matches": 2000000
+  },
+  "100000/8": {
+   "build_ms": 4,
+   "seq_probe_ms": 57,
+   "shared_ms": 9,
+   "shared_all": [
+    12,
+    9,
+    9,
+    12,
+    11
+   ],
+   "shared_rss": 81608704,
+   "copy_total_ms": 25,
+   "copy_all": [
+    25,
+    26,
+    25,
+    26,
+    26
+   ],
+   "copy_rss": 313114624,
+   "clone_one_ms": 0,
+   "matches": 2000000
+  },
+  "1000000/1": {
+   "build_ms": 50,
+   "seq_probe_ms": 82,
+   "shared_ms": 81,
+   "shared_all": [
+    81,
+    83,
+    81,
+    81,
+    81
+   ],
+   "shared_rss": 231981056,
+   "copy_total_ms": 104,
+   "copy_all": [
+    104,
+    105,
+    123,
+    124,
+    124
+   ],
+   "copy_rss": 422084608,
+   "clone_one_ms": 5,
+   "matches": 2000000
+  },
+  "1000000/2": {
+   "build_ms": 53,
+   "seq_probe_ms": 101,
+   "shared_ms": 52,
+   "shared_all": [
+    61,
+    58,
+    59,
+    61,
+    52
+   ],
+   "shared_rss": 232013824,
+   "copy_total_ms": 78,
+   "copy_all": [
+    85,
+    82,
+    78,
+    87,
+    82
+   ],
+   "copy_rss": 531791872,
+   "clone_one_ms": 5,
+   "matches": 2000000
+  },
+  "1000000/4": {
+   "build_ms": 52,
+   "seq_probe_ms": 104,
+   "shared_ms": 28,
+   "shared_all": [
+    29,
+    30,
+    29,
+    29,
+    28
+   ],
+   "shared_rss": 232079360,
+   "copy_total_ms": 54,
+   "copy_all": [
+    61,
+    62,
+    60,
+    58,
+    54
+   ],
+   "copy_rss": 753221632,
+   "clone_one_ms": 5,
+   "matches": 2000000
+  },
+  "1000000/8": {
+   "build_ms": 50,
+   "seq_probe_ms": 84,
+   "shared_ms": 15,
+   "shared_all": [
+    18,
+    17,
+    15,
+    16,
+    16
+   ],
+   "shared_rss": 232095744,
+   "copy_total_ms": 61,
+   "copy_all": [
+    62,
+    62,
+    62,
+    61,
+    66
+   ],
+   "copy_rss": 1174339584,
+   "clone_one_ms": 5,
+   "matches": 2000000
+  }
+ },
+ "spawn_join_us": 12.71,
+ "load_after": [
+  8.5205078125,
+  7.48974609375,
+  6.9375
+ ]
+}

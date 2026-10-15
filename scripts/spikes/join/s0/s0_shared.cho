@@ -1,0 +1,208 @@
+edition 5;
+
+// SPIKE S0, the positive result (docs/joins.md section 15): a table built by the parent is read, at the same time, by 1, 2, 4 or 8 worker threads, through one
+// shared reference `&r Shared` that is the whole payload of each `spawn`. Each worker probes its range of the probe keys and answers one integer (matches in the
+// high bits, the sum of the build row numbers it found in the low 40); the parent adds them up and checks them against its own sequential probe of the whole.
+// The workers are eight functions because a payload is one reference: it carries no worker number, and a worker's range cannot come from anywhere but its code.
+//
+//     s0_shared BUILD_ROWS PROBE_ROWS THREADS REPS     prints: build_ms seq_probe_ms par_probe_ms matches sum_ok   (probe times are the minimum of REPS)
+
+import std.io;
+import jtab;
+import s0common;
+
+fn w0[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, sh.n / sh.threads * 0, sh.n / sh.threads * 1);
+}
+
+fn w1[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, sh.n / sh.threads * 1, sh.n / sh.threads * 2);
+}
+
+fn w2[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, sh.n / sh.threads * 2, sh.n / sh.threads * 3);
+}
+
+fn w3[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, sh.n / sh.threads * 3, sh.n / sh.threads * 4);
+}
+
+fn w4[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, sh.n / sh.threads * 4, sh.n / sh.threads * 5);
+}
+
+fn w5[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, sh.n / sh.threads * 5, sh.n / sh.threads * 6);
+}
+
+fn w6[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, sh.n / sh.threads * 6, sh.n / sh.threads * 7);
+}
+
+// the last worker also takes the remainder of the division
+fn w7[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, sh.n / sh.threads * 7, sh.n);
+}
+
+fn last[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, sh.n / sh.threads * (sh.threads - 1), sh.n);
+}
+
+fn add_up(a: int, b: int) -> [] int {
+    return (a >> 40) + (b >> 40) << 40 | (a & 0xffffffffff) + (b & 0xffffffffff) & 0xffffffffff;
+}
+
+fn run1[&r](sh: &r s0common.Shared) -> [conc] int {
+    let f = last;
+    let t = spawn(sh, f);
+    return join(t);
+}
+
+fn run2[&r](sh: &r s0common.Shared) -> [conc] int {
+    let f0 = w0;
+    let f1 = last;
+    let t0 = spawn(sh, f0);
+    let t1 = spawn(sh, f1);
+    let a = join(t0);
+    let b = join(t1);
+    return add_up(a, b);
+}
+
+fn run4[&r](sh: &r s0common.Shared) -> [conc] int {
+    let f0 = w0;
+    let f1 = w1;
+    let f2 = w2;
+    let f3 = last;
+    let t0 = spawn(sh, f0);
+    let t1 = spawn(sh, f1);
+    let t2 = spawn(sh, f2);
+    let t3 = spawn(sh, f3);
+    let a = join(t0);
+    let b = join(t1);
+    let c = join(t2);
+    let d = join(t3);
+    return add_up(add_up(a, b), add_up(c, d));
+}
+
+fn run8[&r](sh: &r s0common.Shared) -> [conc] int {
+    let f0 = w0;
+    let f1 = w1;
+    let f2 = w2;
+    let f3 = w3;
+    let f4 = w4;
+    let f5 = w5;
+    let f6 = w6;
+    let f7 = w7;
+    let t0 = spawn(sh, f0);
+    let t1 = spawn(sh, f1);
+    let t2 = spawn(sh, f2);
+    let t3 = spawn(sh, f3);
+    let t4 = spawn(sh, f4);
+    let t5 = spawn(sh, f5);
+    let t6 = spawn(sh, f6);
+    let t7 = spawn(sh, f7);
+    let a = join(t0);
+    let b = join(t1);
+    let c = join(t2);
+    let d = join(t3);
+    let e = join(t4);
+    let f = join(t5);
+    let g = join(t6);
+    let h = join(t7);
+    return add_up(add_up(add_up(a, b), add_up(c, d)), add_up(add_up(e, f), add_up(g, h)));
+}
+
+fn parse_nat[&p](text: &p [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + int_of(text[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    var build_rows = 0;
+    var probe_rows = 0;
+    var threads = 1;
+    var reps = 1;
+    borrow args as &g in {
+        build_rows = parse_nat(arg(g, 1));
+        probe_rows = parse_nat(arg(g, 2));
+        threads = parse_nat(arg(g, 3));
+        reps = parse_nat(arg(g, 4));
+    }
+    release(args);
+    var build_ms = 0;
+    var seq_ms = 1000000000;
+    var par_ms = 1000000000;
+    var matches = 0;
+    var ok = 0;
+    borrow mut heap as &!h in {
+        borrow clock as &c in {
+            let t0 = clock_ms(c);
+            let tab = s0common.build(h, build_rows);
+            build_ms = clock_ms(c) - t0;
+            let probe = s0common.probe_keys(h, probe_rows, build_rows);
+            var sh = s0common.Shared { tab: tab, probe: probe, n: probe_rows, threads: threads };
+            var want = 0;
+            var r = 0;
+            while r < reps {
+                let ts = clock_ms(c);
+                borrow sh as &sr in {
+                    want = s0common.probe_range(sr, 0, probe_rows);
+                }
+                let te = clock_ms(c);
+                if te - ts < seq_ms {
+                    seq_ms = te - ts;
+                }
+                var got = 0;
+                let tp = clock_ms(c);
+                borrow sh as &sr in {
+                    if threads == 1 {
+                        got = run1(sr);
+                    } else if threads == 2 {
+                        got = run2(sr);
+                    } else if threads == 4 {
+                        got = run4(sr);
+                    } else {
+                        got = run8(sr);
+                    }
+                }
+                let tq = clock_ms(c);
+                if tq - tp < par_ms {
+                    par_ms = tq - tp;
+                }
+                if got == want {
+                    ok = ok + 1;
+                }
+                r = r + 1;
+            }
+            matches = want >> 40;
+            let s0common.Shared { tab, probe, n, threads } = sh;
+            jtab.drop(h, tab);
+            unbox_slice(h, probe);
+        }
+        borrow mut io as &!i in {
+            io.print_int(i, build_ms);
+            io.space(i);
+            io.print_int(i, seq_ms);
+            io.space(i);
+            io.print_int(i, par_ms);
+            io.space(i);
+            io.print_int(i, matches);
+            io.space(i);
+            io.print_int(i, ok);
+            io.newline(i);
+        }
+    }
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}

@@ -1,0 +1,21 @@
+edition 5;
+
+// NEGATIVE: the same, with the region named but not declared (the spelling `aliasing.md` section 3 says a struct has).
+import s0common;
+
+res struct Job {
+    sh: &f s0common.Shared,
+    out: Box[[int]],
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    release(heap);
+    return 0;
+}

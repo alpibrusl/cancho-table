@@ -1,0 +1,71 @@
+edition 5;
+
+// SPIKE S0: what a spawn and a join cost when each carries one answer of one integer (the only way a worker holding `&r Shared` can hand back anything finer than
+// one answer per thread). The same shared payload, a worker that probes one key, `COUNT` times one after the other. Prints: total_ms COUNT matches
+//
+//     s0_spawn COUNT
+
+import std.io;
+import jtab;
+import s0common;
+
+fn one[&r](sh: &r s0common.Shared) -> [] int {
+    return s0common.probe_range(sh, 0, 1);
+}
+
+fn parse_nat[&p](text: &p [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + int_of(text[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    var count = 0;
+    borrow args as &g in {
+        count = parse_nat(arg(g, 1));
+    }
+    release(args);
+    var total = 0;
+    var matches = 0;
+    borrow mut heap as &!h in {
+        borrow clock as &c in {
+            let tab = s0common.build(h, 1000);
+            let probe = s0common.probe_keys(h, 4, 1000);
+            var sh = s0common.Shared { tab: tab, probe: probe, n: 4, threads: 1 };
+            let t0 = clock_ms(c);
+            var k = 0;
+            borrow sh as &sr in {
+                while k < count {
+                    let f = one;
+                    let t = spawn(sr, f);
+                    matches = matches + (join(t) >> 40);
+                    k = k + 1;
+                }
+            }
+            total = clock_ms(c) - t0;
+            let s0common.Shared { tab, probe, n, threads } = sh;
+            jtab.drop(h, tab);
+            unbox_slice(h, probe);
+        }
+        borrow mut io as &!i in {
+            io.print_int(i, total);
+            io.space(i);
+            io.print_int(i, count);
+            io.space(i);
+            io.print_int(i, matches);
+            io.newline(i);
+        }
+    }
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}

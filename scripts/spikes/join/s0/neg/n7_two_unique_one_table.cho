@@ -1,0 +1,34 @@
+edition 5;
+
+// NEGATIVE: the table in a job reached by `&!`, and two workers on it at once (each reading; `aliasing.md` section 6.1: a `&!` lent to a thread is lent until its join).
+import s0common;
+
+res struct Job {
+    sh: s0common.Shared,
+    out: int,
+}
+
+fn work[&r](j: &!r Job) -> [] int {
+    j.out = j.sh.n;
+    return 0;
+}
+
+fn start[&r](j: &!r Job) -> [conc] int {
+    let f = work;
+    let g = work;
+    let a = spawn(j, f);
+    let b = spawn(j, g);
+    return join(a) + join(b);
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    release(heap);
+    return 0;
+}

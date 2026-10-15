@@ -1,0 +1,22 @@
+edition 5;
+
+// NEGATIVE: copy the table's handles by reading the struct through the shared reference (a shallow copy, which would be two owners of one set of boxes).
+import s0common;
+import jtab;
+
+fn dup[&r](sh: &r s0common.Shared) -> [] jtab.JTab {
+    let t = sh.tab;
+    return t;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    release(heap);
+    return 0;
+}

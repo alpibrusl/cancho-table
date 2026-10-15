@@ -1,0 +1,26 @@
+compiler cancho 0.0.0 (rev e47d647353c4e35929f312cf07b0225c88b48b7c, host aarch64-apple-darwin)
+machine macOS-26.2-arm64-arm-64bit-Mach-O arm64, 16 cores; load average before (7.03271484375, 7.05126953125, 6.751953125)
+
+negative programs (each must fail to compile):
+  n1_ref_field.cho                 a type declaration has no region parameters; only a function can take one
+  n2_ref_field_no_param.cho        `f` is not a region in scope; a region comes from a `[&f]` parameter or a `borrow` block
+  n3_tuple_payload.cho             `spawn`'s payload has type `(&r Shared, &!s Job)`, which cannot cross to a real thread yet
+  n4_write_through_shared.cho      this is a shared slice `&`, which promises its elements will not change; `alloc_slice` hands back a unique one
+  n5_move_table_out_of_ref.cho     expected `JTab`, found `&r JTab`
+  n6_slice_payload.cho             `spawn`'s payload has type `&r [byte]`, which cannot cross to a real thread yet
+  n7_two_unique_one_table.cho      the `&!` reference `j` reaches is lent to a thread that has not been joined, so it cannot be used again here; a `&!` is the only way to write its object, and two threads writing through copies of it race. Join the first thread before using it again
+  n8_deref_copy_of_res.cho         expected `JTab`, found `&r JTab`
+
+probe of 4000000 keys (half in the build, each build key once), the minimum of 7 repetitions inside a process and then of 5 processes; times in ms; RSS in MB (peak, of the process, build included)
+build rows threads | shared: probe ms  speedup    rss | copy: total ms  speedup    rss
+    100000       1 |               56     1.00     81 |             72     1.00    199   (parent's sequential probe 56 ms, build 4 ms, one clone 0 ms)
+    100000       2 |               29     1.93     81 |             45     1.60    212   (parent's sequential probe 56 ms, build 4 ms, one clone 0 ms)
+    100000       4 |               14     4.00     82 |             32     2.25    259   (parent's sequential probe 56 ms, build 4 ms, one clone 0 ms)
+    100000       8 |                9     6.22     82 |             25     2.88    313   (parent's sequential probe 57 ms, build 4 ms, one clone 0 ms)
+   1000000       1 |               81     1.00    232 |            104     1.00    422   (parent's sequential probe 82 ms, build 50 ms, one clone 5 ms)
+   1000000       2 |               52     1.56    232 |             78     1.33    532   (parent's sequential probe 101 ms, build 53 ms, one clone 5 ms)
+   1000000       4 |               28     2.89    232 |             54     1.93    753   (parent's sequential probe 104 ms, build 52 ms, one clone 5 ms)
+   1000000       8 |               15     5.40    232 |             61     1.70   1174   (parent's sequential probe 84 ms, build 50 ms, one clone 5 ms)
+
+one spawn and join of a worker that answers one integer: 12.71 us (100000 in a row, the minimum of 5 runs)
+load average after (8.5205078125, 7.48974609375, 6.9375)
