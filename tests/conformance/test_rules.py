@@ -63,6 +63,10 @@ LOCAL = {
     "output.not-representable": (2, "never", "UTF-8"),
     "join.column-collision": (2, "sometimes", "both files"),
     "limit.too-many-join-rows": (8, "never", "--max-join-rows"),
+    "rename.syntax": (2, "never", "offset"),
+    "rename.unknown-target": (3, "sometimes", "output column"),
+    "rename.ambiguous-target": (8, "never", "more than one output column"),
+    "rename.repeated-target": (2, "never", "twice"),
 }
 # rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
 VARIABLE_HINT = {"query.unsupported"}
@@ -193,6 +197,10 @@ class Rules(unittest.TestCase):
             ("output.not-representable", root + ["--rows", "--format", "jsonl", "badhead.csv"], None),
             ("limit.json-too-many-nodes", root + ["--input-format", "jsonl", "--fields", "a", "--max-json-nodes", "1", "ok.jsonl"], None),
             ("join.column-collision", root + ["--join", "jp.csv", "--on", "k=k", "jp.csv"], None),
+            ("rename.syntax", root + ["--select", "a", "--rename", "a", "ok.csv"], None),
+            ("rename.unknown-target", root + ["--select", "a", "--rename", "A=x", "ok.csv"], None),
+            ("rename.ambiguous-target", root + ["--select", "a,a", "--rename", "a=x", "ok.csv"], None),
+            ("rename.repeated-target", root + ["--select", "a", "--rename", "a=x,#1=y", "ok.csv"], None),
             ("limit.too-many-join-rows", root + ["--join", "jp.csv", "--on", "k=k", "--join-prefix", "r_", "--max-join-rows", "1", "jp.csv"], None),
         ]
         if os.geteuid() != 0 or True:

@@ -80,7 +80,7 @@ MUTANTS = [
     ("the explained plan says csv", "explain.cho", '    if jout.jsonl(tree) {\n        o = buffer.append(heap, o, "jsonl");', '    if false {\n        o = buffer.append(heap, o, "jsonl");'),
     ("JSON lines groups are written as csv", "finish.cho", "} else if as_csv && jl {\n                                borrow row", "} else if as_csv && !jl {\n                                borrow row"),
     ("jsonl is not a streamed format", "table.cho", '    let as_csv = bytes.equal(form, "csv") || jsonl_out;\n    let has_select', '    let as_csv = bytes.equal(form, "csv");\n    let has_select'),
-    ("a name twice is not refused by the run", "table.cho", "            if c.abort == 60 || c.abort == 61 {", "            if c.abort == 61 {"),
+    ("a name twice is not refused by the run", "table.cho", "            if c.abort >= 60 && c.abort <= 64 {", "            if c.abort == 61 {"),
     ("a plan with no columns says csv", "table.cho", '        if jsonl_out {\n            e = flags.problem(heap, e, "args.required-flag", "--format jsonl', '        if false {\n            e = flags.problem(heap, e, "args.required-flag", "--format jsonl'),
     ("the explained plan does not refuse a name twice", "explain.cho", "    if abort_now == 60 || abort_now == 61 {", "    if abort_now == 61 {"),
     ("a selection's keys are not made", "frame.cho", "        } else if !query.reporting(tree) {\n            named = picked;", "        } else if false {\n            named = picked;"),

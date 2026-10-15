@@ -18,6 +18,7 @@ import frame;
 import jfields;
 import query;
 import reader;
+import relfail;
 import spec;
 import toolbox.cli;
 import toolbox.fail;
@@ -997,6 +998,16 @@ pub fn conclude[&h, &g, &p, &s, &j](heap: &!h Heap, args: &g Args, parsed: &p cl
         borrow flabels as &lr in {
             borrow flends as &le in {
                 e = finish.output_refusal(heap, e, lr, le, abort_now, bad);
+            }
+        }
+    }
+    if abort_now >= 62 && abort_now <= 64 {
+        // a rename that does not fit the answer (relfail.cho)
+        borrow tree0 as &tq in {
+            borrow flabels as &lr in {
+                borrow flends as &le in {
+                    e = relfail.refusal(heap, e, tq, args, parsed, lr, le, abort_now, bad, shown);
+                }
             }
         }
     }

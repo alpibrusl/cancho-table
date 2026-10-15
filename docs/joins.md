@@ -209,8 +209,12 @@ concatenation and **needs no change**). With `--join-prefix P`, every build name
   position", `finish.cho:709-716`): `#3` of the joined header. A key named `#N` in `--on` is read against its own side's header.
 * **Why a refusal and not a default prefix.** A default such as `right_` makes `select id` mean the left `id` in one file and an error in another. The collision
   is the thing the reader must see. The cost is one extra flag in the join of two files that share a column name; that is the whole of the minimal rule.
-  **If the rename feature of `docs/or-and-columns.md` is built** (it does not exist today), `--join-prefix` becomes sugar for renaming every build column and
-  `join.column-collision` offers a rename in its repair; nothing else in this design changes.
+  **If the rename feature of `docs/or-and-columns.md` is built** (it is, since slice B1: `--rename TARGET=NEW`, which names the columns of the joined row and
+  changes only the labels of the answer), `--join-prefix` could become sugar for renaming every build column and `join.column-collision` could offer a rename in
+  its repair. Slice B1 took the narrow reading and changed neither: a collision is refused before any label is written, so a rename cannot repair it by itself (the
+  duplicate names have to be told apart first, by position or by a prefix), and a repair that wrote the rename would have to invent the new label, which no repair of
+  this tool does (`docs/or-and-columns.md` section 8.2: "no name is invented"). `--rename` works on the joined row once the collision is resolved
+  (`--join-prefix r_ --rename r_w=who`).
 
 ### 4.2 USING: the shared-name key
 
@@ -581,7 +585,7 @@ the `cut` proxy does (0.056 to 0.017 s).
 | **Q8** | **The probe side is the operand, so `table --join big.csv small.csv` (inner) builds the big file.** The tool never swaps; it refuses past the bound and offers the swap. | Keep; the alternative is an order that depends on file sizes. |
 | **Q9** | **Left join padding is the empty text**, so a typed read of a padded cell refuses and a text condition cannot tell padding from a real empty. | Accept and document (8.1). A match indicator column (`--join-flag NAME`) is the additive remedy if it hurts; not in v1. |
 | **Q10** | **Where the `anti`/`semi` words live in the query grammar** (contextual, needs `as`). | As in 2.3; the gate is that the corpus of queries translates as before. |
-| **Q11** | **The rename feature does not exist** (no `docs/or-and-columns.md`, no open pull request on 2026-10-14). | The prefix rule of 4.1 is enough for v1 and is replaced, not extended, if renaming lands. |
+| **Q11** | **The rename feature does not exist** (no `docs/or-and-columns.md`, no open pull request on 2026-10-14). | The prefix rule of 4.1 is enough for v1 and is replaced, not extended, if renaming lands. *Update: slice B1 of `docs/or-and-columns.md` built `--rename`; the prefix rule of 4.1 was kept as it is (see there).* |
 | **Q12** | **`semi`, `anti` and `inner` in the flag form are one flag with four values; a new join type later (`right`) changes the default's neighbours.** | Additive. |
 | **R1** | The build is read whole before the first byte of output; a page of a huge join waits for the build (stated in `work`). | Accept. |
 | **R2** | The estimated 0.25 to 0.50 s for 1M x 1M is an estimate from proxies; a first slice can be slower than the proxies suggest (the join writes four columns and holds rows). | The slices' gates are about bytes, not speed; speed is reported as measured. |

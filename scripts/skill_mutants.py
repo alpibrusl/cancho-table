@@ -21,10 +21,10 @@ TESTS = ["test_skill", "test_rules", "test_describe"]
 Q = '\\"'
 MUTANTS = [
     # usage: the flags of each form
-    ("the rows line forgets --order-by", "table.cho", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--order-by KEYS] [--top N]", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--top N]"),
+    ("the rows line forgets --order-by", "table.cho", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--rename LIST] [--order-by KEYS] [--top N]", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--rename LIST] [--top N]"),
     ("the rows line forgets --threads", "table.cho", "[--max-sort-rows N] [--max-state-bytes N] [--threads N]", "[--max-sort-rows N] [--max-state-bytes N]"),
     ("the groups line lists --select", "table.cho", "--group NAMES [--agg ITEMS]", "--group NAMES [--select NAMES] [--agg ITEMS]"),
-    ("the rows line lists --sort", "table.cho", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--order-by KEYS] [--top N]", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--order-by KEYS] [--sort KEY] [--top N]"),
+    ("the rows line lists --sort", "table.cho", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--rename LIST] [--order-by KEYS] [--top N]", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--rename LIST] [--order-by KEYS] [--sort KEY] [--top N]"),
     ("the shape line lists --limit", "table.cho", "[--max-line-bytes N] [--format json|text] [FILE|-]", "[--max-line-bytes N] [--limit N] [--format json|text] [FILE|-]"),
     ("the help says a typed group is by text", "spec.cho", "to group by the value of the cell and not its text", "to group by the text of the cell and not its value"),
     ("the help says typed groups are in text order", "spec.cho", "and the groups come in numeric order, negatives first", "and the groups come in the byte order of the text"),

@@ -1,0 +1,257 @@
+edition 5;
+
+module relfail;
+
+// What is wrong with `--rename` (docs/or-and-columns.md section 8.2), as the rules `rename.syntax`, `rename.unknown-target`, `rename.ambiguous-target` and `rename.repeated-target`. The
+// first is found with the flags, before any byte is read (`check`); the others need the labels of the answer, so `frame.prepare` answers the abort (62, 63 or 64) and the item at fault, and
+// `refusal` makes the error from the labels it left as they were (`refusal_run` resolves the plan again for a run that stopped at the header). They are in a module of their own and not in
+// `finish.cho`, which `frame.cho` is imported by.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.vec;
+import finish;
+import flags;
+import frame;
+import query;
+import relabel;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.text;
+
+fn expected(what: int) -> [] &static [byte] {
+    if what == 1 {
+        return "a comma, a backslash, an equals sign or a # after the backslash";
+    }
+    if what == 2 {
+        return "TARGET=NEW";
+    }
+    if what == 3 {
+        return "a target before the =";
+    }
+    return "a new label of at least one byte after the =";
+}
+
+// The checks of the flag itself: it names the columns of an answer, so there must be one (not the shape, not `--report types`), and its text must be a list. `query` is a rename a query's `as`
+// made, which is whole and conflicts with nothing.
+pub fn check[&h, &t](heap: &!h Heap, errs: fail.Errors, list: &t [byte], shape: bool, reporting: bool, from_query: bool) -> [heap] fail.Errors {
+    var e = errs;
+    if from_query {
+        return e;
+    }
+    if reporting {
+        e = flags.problem(heap, e, "args.conflict", "--rename names the columns of an answer, and --report types is a table of its own whose columns are fixed", "drop --rename, or drop --report", "--rename --report");
+    } else if shape {
+        e = flags.problem(heap, e, "args.conflict", "--rename names the columns of an answer, and with no --select, --where, --group or --agg there is no answer but the shape", "add --select, --where or --group to ask for rows or groups", "--rename --select --where --group --agg");
+    }
+    let (items, status, at, what) = relabel.parse(heap, list);
+    vec.drop(heap, items);
+    if status == 1 {
+        var w = fail.open_in(heap, finish.extra(), "rename.syntax", "--rename is not a list of TARGET=NEW items", "--rename is items TARGET=NEW separated by commas, TARGET a label of the answer or #N and NEW at least one byte, with a backslash before a comma, a backslash, an equals sign or a # that is part of a name");
+        w = fail.no_repair(heap, w);
+        w = fail.detail_open(heap, w);
+        w = fail.detail_int(heap, w, "offset", at);
+        w = fail.detail_str(heap, w, "expected", expected(what));
+        w = fail.detail_text(heap, w, "list", list);
+        e = fail.add(heap, e, w);
+    } else if status == 2 {
+        e = flags.problem(heap, e, "args.bad-value", "a list names more columns than the ceiling", "4096 is the most one flag names", "--rename");
+    }
+    return e;
+}
+
+fn same_letters[&a, &b](a: &a [byte], b: &b [byte]) -> [] bool {
+    if len(a) != len(b) {
+        return false;
+    }
+    var i = 0;
+    while i < len(a) {
+        if bytes.to_lower(int_of(a[i])) != bytes.to_lower(int_of(b[i])) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// A label as `--rename` reads a target back: a comma, a backslash and an equals sign escaped, and a leading `#`.
+fn escaped_target[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte]) -> [heap] buffer.Buffer {
+    var o = out;
+    var j = 0;
+    while j < len(data) {
+        let c = int_of(data[j]);
+        if c == ',' || c == '\\' || c == '=' || c == '#' && j == 0 {
+            o = buffer.push(heap, o, byte_of('\\'));
+        }
+        o = buffer.push(heap, o, byte_of(c));
+        j = j + 1;
+    }
+    return o;
+}
+
+// The error of abort 62 (a target that is no output column), 63 (a label that more than one column has) or 64 (a column renamed twice) for item `bad / 4096` (and, for 64, the item that renamed
+// the column first, `bad % 4096`). `labels` and `lends` are the answer's before the rename.
+pub fn refusal[&h, &q, &g, &p, &l, &e, &s](heap: &!h Heap, errs: fail.Errors, tree: &q query.Query, args: &g Args, parsed: &p cli.Parsed, labels: &l buffer.Buffer, lends: &e vec.Vec[int], abort: int, bad: int, shown: &s [byte]) -> [heap, args] fail.Errors {
+    let table = spec.flag_table();
+    let list = query.rename_text(tree);
+    let at = bad / 4096;
+    let (items, status, off, what) = relabel.parse(heap, list);
+    var kind = 0;
+    var tb = 0;
+    var te = 0;
+    borrow items as &ir in {
+        kind = relabel.field(ir, at, 0);
+        tb = relabel.field(ir, at, 2);
+        te = relabel.field(ir, at, 3);
+    }
+    let wanted = relabel.unescaped(heap, list[tb..te]);
+    var rule = "rename.unknown-target";
+    var what_is = "--rename names an output column the answer does not have";
+    var hint = "pick from detail.available, or write the column as #N";
+    if abort == 63 {
+        rule = "rename.ambiguous-target";
+        what_is = "--rename names a label that more than one output column has";
+        hint = "name the column by its position, as #3 for the third column";
+    } else if abort == 64 {
+        rule = "rename.repeated-target";
+        what_is = "--rename renames an output column twice";
+        hint = "rename each column once";
+    }
+    var w = fail.open_in(heap, finish.extra(), rule, what_is, hint);
+    let width = vec.size(lends);
+    // the labels that differ from the target only in case (ASCII), at most 5 distinct ones, each a place in the answer
+    var picks = box_slice(heap, 8, 0);
+    var kept = 0;
+    if abort == 62 && kind == 0 {
+        var c = 0;
+        var from = 0;
+        borrow wanted as &wr in {
+            while c < width && kept < 5 {
+                let to = vec.get(lends, c);
+                let label = buffer.bytes(labels)[from..to];
+                var seen = false;
+                var k = 0;
+                while k < kept {
+                    var cc = 0;
+                    borrow picks as &pr in {
+                        cc = contents(pr)[k];
+                    }
+                    var cb = 0;
+                    if cc > 0 {
+                        cb = vec.get(lends, cc - 1);
+                    }
+                    if bytes.equal(buffer.bytes(labels)[cb..vec.get(lends, cc)], label) {
+                        seen = true;
+                    }
+                    k = k + 1;
+                }
+                if same_letters(label, buffer.bytes(wr)) && !bytes.equal(label, buffer.bytes(wr)) && !seen {
+                    borrow mut picks as &!pw in {
+                        contents(pw)[kept] = c;
+                    }
+                    kept = kept + 1;
+                }
+                from = to;
+                c = c + 1;
+            }
+        }
+    }
+    if abort == 62 && kept > 0 && cli.has(parsed, table, "rename") && cli.value_is_whole(parsed, table, "rename") {
+        // each offered as the invocation with that item's target written as the label
+        let at_arg = cli.value_index(parsed, table, "rename");
+        var o = fail.choose_open(heap, w);
+        var k = 0;
+        while k < kept {
+            var cc = 0;
+            borrow picks as &pr in {
+                cc = contents(pr)[k];
+            }
+            var cb = 0;
+            if cc > 0 {
+                cb = vec.get(lends, cc - 1);
+            }
+            var fixed = buffer.append(heap, buffer.empty(heap, len(list) + 32), list[0..tb]);
+            fixed = escaped_target(heap, fixed, buffer.bytes(labels)[cb..vec.get(lends, cc)]);
+            fixed = buffer.append(heap, fixed, list[te..len(list)]);
+            borrow fixed as &fr in {
+                o = fail.choose_option_replacing(heap, o, args, at_arg, buffer.bytes(fr));
+            }
+            buffer.drop(heap, fixed);
+            k = k + 1;
+        }
+        w = fail.choose_close(heap, o);
+    } else if abort == 62 {
+        w = fail.repair_none(heap, w, "which column was meant is not known; detail.available lists the labels");
+    } else if abort == 63 {
+        w = fail.repair_none(heap, w, "which of the columns was meant is not known: the position says");
+    } else {
+        w = fail.repair_none(heap, w, "which of the two names was meant is not known");
+    }
+    unbox_slice(heap, picks);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_int(heap, w, "item", at + 1);
+    borrow wanted as &wr in {
+        w = fail.detail_text(heap, w, "target", buffer.bytes(wr));
+    }
+    if abort == 64 {
+        w = fail.detail_int(heap, w, "first", bad % 4096 + 1);
+    } else if abort == 63 {
+        w = json.put_key(heap, w, "columns");
+        w = json.begin_array(heap, w);
+        var c = 0;
+        var from = 0;
+        var listed = 0;
+        borrow wanted as &wr in {
+            while c < width {
+                let to = vec.get(lends, c);
+                if bytes.equal(buffer.bytes(labels)[from..to], buffer.bytes(wr)) && listed < 50 {
+                    w = json.put_int(heap, w, c + 1);
+                    listed = listed + 1;
+                }
+                from = to;
+                c = c + 1;
+            }
+        }
+        w = json.end_array(heap, w);
+    } else {
+        w = fail.detail_int(heap, w, "columns", width);
+        w = json.put_key(heap, w, "available");
+        w = json.begin_array(heap, w);
+        var j = 0;
+        var start = 0;
+        while j < width && j < 50 {
+            let to = vec.get(lends, j);
+            w = text.put(heap, w, buffer.bytes(labels)[start..to]);
+            start = to;
+            j = j + 1;
+        }
+        w = json.end_array(heap, w);
+        w = fail.detail_bool(heap, w, "available_truncated", width > 50);
+    }
+    buffer.drop(heap, wanted);
+    vec.drop(heap, items);
+    return fail.add(heap, errs, w);
+}
+
+// The same for a run that read its header and stopped at the abort: the plan is resolved again against the header, which names the columns (once, on the way to a refusal).
+pub fn refusal_run[&h, &q, &g, &p, &n, &d, &s](heap: &!h Heap, errs: fail.Errors, tree: &q query.Query, args: &g Args, parsed: &p cli.Parsed, names: &n buffer.Buffer, hends: &d vec.Vec[int], columns: int, mode: int, delim: int, sort_flag: &static [byte], abort: int, shown: &s [byte]) -> [heap, args] fail.Errors {
+    let made = frame.prepare(heap, tree, names, hends, columns, mode, delim, sort_flag);
+    var e = errs;
+    let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
+    borrow flabels as &lr in {
+        borrow flends as &le in {
+            e = refusal(heap, e, tree, args, parsed, lr, le, abort, fbad, shown);
+        }
+    }
+    unbox_slice(heap, fcols);
+    unbox_slice(heap, fsel);
+    unbox_slice(heap, fcells);
+    buffer.drop(heap, fhead);
+    buffer.drop(heap, flead);
+    buffer.drop(heap, flabels);
+    vec.drop(heap, flends);
+    return e;
+}

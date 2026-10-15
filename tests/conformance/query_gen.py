@@ -241,17 +241,36 @@ def flag_form(plan):
                 key = "count" if v["fn"] == "count" else "%s:%s" % (v["fn"], v["col"][1] if v["col"][0] == "name" else "#%d" % v["col"][1])
             else:
                 key = v[1] if v[0] == "name" else "#%d" % v[1]
+            if plan.get("renames"):
+                # --sort names the label after the rename (docs/or-and-columns.md 8.2): the output the key is, renamed
+                idx = order_output_index(plan, kind, v)
+                if idx in plan["renames"]:
+                    key = plan["renames"][idx]
             a += ["--sort", ("-" if desc else "") + key]
         else:
             ks = []
             for (kind, col, ty), desc in plan["order"]:
                 ks.append(("-" if desc else "") + ordname(col) + tys(ty))
             a += ["--order-by", ",".join(ks)]
+    if plan.get("renames"):
+        a += ["--rename", ",".join("#%d=%s" % (i + 1, rename_new(new)) for i, new in sorted(plan["renames"].items()))]
     if plan["limit"] is not None:
         a += ["--limit", str(plan["limit"])]
     if plan["offset"] is not None:
         a += ["--from", str(plan["offset"])]
     return a
+
+
+def rename_new(new):
+    s = new.replace("\\", "\\\\").replace(",", "\\,")
+    return "\\" + s if s.startswith("#") else s
+
+
+def order_output_index(plan, kind, v):
+    """The place in the answer of the output a grouping is ordered by (group columns, then the aggregates)."""
+    if kind == "agg":
+        return len(plan["group"]) + [i for i, g in enumerate(plan["aggs"]) if g is v][0]
+    return plan["group"].index(v)
 
 
 # ---- the query form: SQL text, with random case and spacing -------------------------------------------------------------------
@@ -281,8 +300,16 @@ def litq(v):
     return v[1] if v[0] == "num" else "'" + v[1].replace("'", "''") + "'"
 
 
+def alias_name(new):
+    if qp.IDENT.fullmatch(new) and new.lower() not in qp.RESERVED and new.lower() not in qp.FUTURE:
+        return new
+    return '"' + new.replace('"', '""') + '"'
+
+
 def query_form(rnd, plan, source):
     sp = lambda: rnd.choice([" ", " ", "  ", "\n", "\t"])
+    renames = plan.get("renames") or {}
+    as_ = lambda i: (" " + kw(rnd, "as") + " " + alias_name(renames[i])) if i in renames else ""
     p = [kw(rnd, "select")]
     if plan["mode"] == "group":
         items = [ident(c) for c in plan["group"]]
@@ -295,11 +322,11 @@ def query_form(rnd, plan, source):
                 items.append("mean(%s, %d)" % (tyq(rnd, g["col"], g["ty"]), g["scale"]))
             else:
                 items.append("%s(%s)" % (g["fn"], tyq(rnd, g["col"], g["ty"])))
-        p.append((", " if rnd.random() < 0.7 else " , ").join(items))
+        p.append((", " if rnd.random() < 0.7 else " , ").join(it + as_(i) for i, it in enumerate(items)))
     elif plan["star"]:
         p.append("*")
     else:
-        p.append(", ".join(ident(c) for c in plan["select"]))
+        p.append(", ".join(ident(c) + as_(i) for i, c in enumerate(plan["select"])))
     if source:
         p += [kw(rnd, "from"), source]
     if plan["conds"]:
@@ -330,6 +357,8 @@ def query_form(rnd, plan, source):
                     k = "%s(%s)" % (v["fn"], tyq(rnd, v["col"], v["ty"]))
             else:
                 k = ident(v)
+            if renames and order_output_index(plan, kind, v) in renames and rnd.random() < 0.6:
+                k = alias_name(renames[order_output_index(plan, kind, v)])      # an alias is a name `order by` takes (and the one that wins)
             p.append(k + (" " + kw(rnd, "desc") if desc else (" " + kw(rnd, "asc") if rnd.random() < 0.3 else "")))
         else:
             p.append(", ".join(tyq(rnd, col, ty) + (" " + kw(rnd, "desc") if desc else (" " + kw(rnd, "asc") if rnd.random() < 0.3 else "")) for (kind, col, ty), desc in plan["order"]))

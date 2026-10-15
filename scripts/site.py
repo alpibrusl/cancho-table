@@ -129,6 +129,8 @@ DEMOS = {
     "query": """table --query "select customer, count(*), sum(bytes) from 'orders.csv' where bytes != '' group by customer order by sum(bytes) desc limit 2" --format csv""",
     "explain": "table --explain --threads 4 --where \"bytes:int > 100\" --group customer --agg count,sum:bytes --sort -sum:bytes --limit 2 orders.csv",
     "query_typo": "table --query \"select customer form 'orders.csv'\"",
+    "rename": """table --where "bytes != ''" --group customer --agg count,sum:bytes --rename customer=name,sum:bytes=total --sort -total --format csv orders.csv""",
+    "rename_query": """table --query "select customer as name, sum(bytes) as total from 'orders.csv' where bytes != '' group by customer order by total desc" --format csv""",
     "join": """table --join customers.csv --on customer=name --join-prefix c_ --select id,customer,bytes,c_tier --format csv orders.csv""",
     "join_collision": "table --join orders.csv --on id=id orders.csv",
     "join_left": """table --join tiers.csv --on customer --join-type left --select id,customer,tier --format csv orders.csv""",
@@ -141,7 +143,7 @@ DEMOS = {
 SUMMARY = {"float_over": ["rule", "hint", "repair", "detail"], "float_bad": ["rule", "hint", "repair", "detail"], "dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"], "query_typo": ["rule", "hint", "repair", "detail"], "query_or": ["rule", "hint", "repair", "detail"], "join_collision": ["rule", "hint", "repair"], "join_typed": ["rule", "hint", "detail"]}
 # task name -> the demos shown for it
 TASKS = {
-    "select": ["select"], "filter": ["where", "where_or"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "floatsum": ["float_sum", "float_over"], "typedkeys": ["group_text", "group_dec", "order_text", "order_dec"], "report": ["report"], "sort": ["sort"], "group": ["group"], "join": ["join", "join_collision", "join_left", "join_anti", "join_typed"], "query": ["query", "query_typo", "query_or"], "explain": ["explain"], "page": ["page1", "page2"],
+    "select": ["select"], "filter": ["where", "where_or"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "floatsum": ["float_sum", "float_over"], "typedkeys": ["group_text", "group_dec", "order_text", "order_dec"], "report": ["report"], "sort": ["sort"], "group": ["group"], "rename": ["rename", "rename_query"], "join": ["join", "join_collision", "join_left", "join_anti", "join_typed"], "query": ["query", "query_typo", "query_or"], "explain": ["explain"], "page": ["page1", "page2"],
     "csv": ["csv"], "cores": ["cores"], "refuse": ["notint"],
 }
 QS = ["shape", "select", "group"]

@@ -16,6 +16,7 @@ import std.vec;
 import jout;
 import plan;
 import query;
+import relabel;
 import toolbox.text;
 import writer;
 
@@ -86,6 +87,37 @@ fn put_label[&h, &d](heap: &!h Heap, head: buffer.Buffer, lead: buffer.Buffer, m
     return (h2, l2);
 }
 
+// The rename of the plan (`--rename`, or a query's `as`) applied to the labels of the answer and where each ends. Takes both and answers them: the new labels when it is done, otherwise the same
+// ones, with the abort of the refusal (62 a target that is no output column, 63 a label that more than one column has, 64 a column renamed twice) and `bad`, the item at fault times 4096 plus,
+// for 64, the item that renamed the column first (`relfail.cho` says them). The one place a rename is applied (docs/or-and-columns.md section 8.2).
+fn renamed[&h, &q](heap: &!h Heap, tree: &q query.Query, labels: buffer.Buffer, lends: vec.Vec[int]) -> [heap] (buffer.Buffer, vec.Vec[int], int, int) {
+    var fresh = buffer.empty(heap, 1);
+    var places = vec.empty(heap, 1, 0);
+    var why = 0;
+    var at = 0;
+    var first = 0;
+    borrow labels as &lr in {
+        borrow lends as &er in {
+            let (w2, a2, f2, l2, e2) = relabel.apply(heap, query.rename_text(tree), lr, er);
+            why = w2;
+            at = a2;
+            first = f2;
+            buffer.drop(heap, fresh);
+            vec.drop(heap, places);
+            fresh = l2;
+            places = e2;
+        }
+    }
+    if why == 0 {
+        buffer.drop(heap, labels);
+        vec.drop(heap, lends);
+        return (fresh, places, 0, 0);
+    }
+    buffer.drop(heap, fresh);
+    vec.drop(heap, places);
+    return (labels, lends, 61 + why, at * 4096 + first);
+}
+
 // Resolve the plan against the header. `mode` is 1 for rows (a selection, a
 // filter or both), 2 for a grouping. The `--sort` value is the plan's (`query.sort_label`), or empty.
 pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n buffer.Buffer, ends: &e vec.Vec[int], columns: int, mode: int, delim: int, sort_flag: &static [byte]) -> [heap] Frame {
@@ -152,12 +184,48 @@ pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n b
         }
         head = buffer.push(heap, head, byte_of('['));
         var m = 0;
-        borrow sel as &sr in {
-            while m < picked {
-                let (h2, l2) = put_label(heap, head, lead, m, header_name(names, ends, contents(sr)[m]), delim);
-                head = h2;
-                lead = l2;
-                m = m + 1;
+        if len(query.rename_text(tree)) > 0 {
+            // a rename: the labels of the selection first, then the list applied to them, and the header is written from the result
+            borrow sel as &sr in {
+                while m < picked {
+                    labels = buffer.append(heap, labels, header_name(names, ends, contents(sr)[m]));
+                    var size = 0;
+                    borrow labels as &lr in {
+                        size = buffer.size(lr);
+                    }
+                    lends = vec.push(heap, lends, size);
+                    m = m + 1;
+                }
+            }
+            let (l3, e3, a3, b3) = renamed(heap, tree, labels, lends);
+            labels = l3;
+            lends = e3;
+            if a3 != 0 {
+                abort = a3;
+                bad = b3;
+            }
+            m = 0;
+            var begin = 0;
+            borrow labels as &lr in {
+                borrow lends as &er in {
+                    while m < picked && abort == 0 {
+                        let to = vec.get(er, m);
+                        let (h2, l2) = put_label(heap, head, lead, m, buffer.bytes(lr)[begin..to], delim);
+                        head = h2;
+                        lead = l2;
+                        begin = to;
+                        m = m + 1;
+                    }
+                }
+            }
+        } else {
+            borrow sel as &sr in {
+                while m < picked {
+                    let (h2, l2) = put_label(heap, head, lead, m, header_name(names, ends, contents(sr)[m]), delim);
+                    head = h2;
+                    lead = l2;
+                    m = m + 1;
+                }
             }
         }
         head = buffer.push(heap, head, byte_of(']'));
@@ -192,12 +260,21 @@ pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n b
             lends = vec.push(heap, lends, size);
             m = m + 1;
         }
+        if len(query.rename_text(tree)) > 0 {
+            let (l3, e3, a3, b3) = renamed(heap, tree, labels, lends);
+            labels = l3;
+            lends = e3;
+            if a3 != 0 {
+                abort = a3;
+                bad = b3;
+            }
+        }
         head = buffer.push(heap, head, byte_of('['));
         m = 0;
         var begin = 0;
         borrow labels as &lr in {
             borrow lends as &er in {
-                while m < ng + na {
+                while m < ng + na && abort == 0 {
                     let to = vec.get(er, m);
                     let (h2, l2) = put_label(heap, head, lead, m, buffer.bytes(lr)[begin..to], delim);
                     head = h2;
@@ -208,7 +285,7 @@ pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n b
             }
         }
         head = buffer.push(heap, head, byte_of(']'));
-        if len(sort) > 0 {
+        if len(sort) > 0 && abort == 0 {
             if int_of(sort[0]) == '-' {
                 desc = 1;
             }
@@ -258,6 +335,9 @@ pub fn prepare[&h, &q, &n, &e](heap: &!h Heap, tree: &q query.Query, names: &n b
             borrow lends as &er in {
                 named = vec.size(er);
             }
+        } else if !query.reporting(tree) && len(query.rename_text(tree)) > 0 {
+            // (a rename wrote the labels of the selection already)
+            named = picked;
         } else if !query.reporting(tree) {
             named = picked;
             borrow sel as &sr in {

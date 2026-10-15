@@ -20,8 +20,9 @@ import not_a2 as N
 import not_a2_cases as K
 import or_a0
 import or_a1 as O
-import query_ref
 import query_ref_a1
+import query_ref_a2 as query_ref          # the grammar of A2, frozen: slice B1 (`as`) came after this file, and test_rename_b1_compat.py holds the cases it moved
+import rename_b1
 import test_or_a1_compat as C1
 from harness import Scratch, binary, run, run_argv
 
@@ -63,6 +64,8 @@ class Compat(unittest.TestCase):
     def judge(self, cid, kind, argv, row, old):
         """Class of the case: "same" (the golden's bytes), or ("repair", ...) / ("reading", ...) for a change that is listed. `row` and `old` are (status, rule, sha, sha without the repair)."""
         expr = C1.expression_of(argv)
+        if C1.expr_b1(argv):
+            return None                    # slice B1 reads it differently from slice A2: held by test_rename_b1_compat.py
         r1, r2 = readings(expr)
         if row[:3] == old[:3]:
             # (a refusal in the formats that carry no detail -- csv, JSON lines -- is one line of text that does not say where or what was expected: the same bytes for two readings)
@@ -130,7 +133,7 @@ class Compat(unittest.TestCase):
         became = []
         for cid, (kind, argv) in self.cases.items():
             g, row = golden[cid], self.now[cid]
-            if g[0] != 0 and row[1] == 0:
+            if g[0] != 0 and row[1] == 0 and not C1.expr_b1(argv):
                 expr = C1.expression_of(argv)
                 became.append(expr[1] if expr else None)
         self.assertGreater(len(became), 100)
