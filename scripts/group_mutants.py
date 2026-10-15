@@ -41,11 +41,12 @@ MUTANTS = [
     ("the explain lists four group columns", "explain.cho", "    o = buffer.append(heap, o, \"],\\\"group\\\":[\");\n    k = 0;\n    while k < ng {", "    o = buffer.append(heap, o, \"],\\\"group\\\":[\");\n    k = 0;\n    while k < ng && k < 4 {"),
     ("the key of a cut group is written to its fourth column", "finish.cho", "            while j < query.count_of(tree, 2) {\n                if j > 0 {\n                    held", "            while j < query.count_of(tree, 2) && j < 4 {\n                if j > 0 {\n                    held"),
     ("the csv row of a group stops at four columns", "finish.cho", "                                    while j < ng {", "                                    while j < ng && j < 4 {"),
-    ("the threads partition the groups by one field less than five", "par.cho", "    let fields = query.count_of(tree, 2);\n    let bound_groups", "    let fields = query.count_of(tree, 2) - query.count_of(tree, 2) / 5;\n    let bound_groups"),
 ]
 
 # Equivalent in practice: a mutant here survives, and is not in MUTANTS (the reason is beside it).
 EQUIVALENT = [
+    # `par.cho`'s `let fields = query.count_of(tree, 2)` set to fewer fields: the groups are partitioned by a prefix of the key, which keeps the order of the whole key (a < b gives
+    # prefix(a) <= prefix(b)), so the blobs are still in key order and the answer is the same; only the balance of the blobs changes.
     # `wrapping_mul(look, 31) + n` (the add checked, the multiply wrapped) traps only when the wrapped product is within n of 2^63, about n in 2^64 a cell: it survives every test that can
     # be run and is no defect to find with one; the add is wrapped too, so that it is not a trap with a chance at all.
     ("the look adds in checked arithmetic and multiplies wrapped", "agg.cho", FAST_LEN, "            look = wrapping_mul(look, 31) + n;"),

@@ -615,6 +615,19 @@ class Bounds(Base):
         self.assertEqual(got.status, 8)
         self.assertEqual(refusal(got)[1], [])
 
+    def test_a_float_sum_past_the_largest_double_names_its_group(self):
+        """`agg.float-overflow` says which group: its key fields joined by commas, the smallest key of those that overflow, whatever the number of columns and of threads."""
+        for n in (1, 2, 4, 5, 6, 9):
+            header = ["k%d" % i for i in range(n)] + ["v"]
+            hi = [str(i + 2) for i in range(n)]
+            lo = ["1"] + hi[1:]
+            rows = [hi + ["1e308"], hi + ["1e308"], lo + ["1e308"], lo + ["1e308"], ["0"] * n + ["1"]]
+            for extra in ([], ["--threads", 3, "--chunk-bytes", 30, "--parallel-min-bytes", 0]):
+                got = self.go(csv_bytes(header, rows), ["--group", ",".join(header[:n]), "--agg", "sum:v:float"] + extra, label="overflow %d" % n)
+                self.assertEqual((got.status, refusal(got)), (8, ("agg.float-overflow", [])), got.stdout[:300])
+                d = got.error()["detail"]
+                self.assertEqual((d["group"], d["group_truncated"], d["column"], d["context"]), (",".join(lo), False, "v", "sum"), (n, extra))
+
     def test_unknown_and_ragged(self):
         t = Table(random.Random(2), 6, nrows=10)
         got = self.go(t.data(), ["--group", "k0,k1,k2,k3,k4,nope"])
