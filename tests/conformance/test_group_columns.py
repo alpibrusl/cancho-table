@@ -221,6 +221,37 @@ class First(Base):
             self.assertEqual(validate(got), [])
 
 
+class Cache(Base):
+    """The cache of `agg.add_fast` picks a place from the length, first byte and last byte of each cell, and believes a hit only when the whole key is the row's: cells that
+    agree on those three and differ inside, in one column at a time and in any column, must stay different groups."""
+
+    def test_cells_that_differ_only_inside(self):
+        for n in (1, 2, 3, 4, 5, 6, 8, 9):
+            for col in range(n):
+                rng = random.Random(100 * n + col)
+                header = ["k%d" % i for i in range(n)] + ["v"]
+                rows = []
+                for _ in range(200):
+                    cells = ["c" * 3] * n
+                    cells[col] = "a%dz" % rng.randint(1, 4)
+                    rows.append(cells + [str(rng.randint(1, 9))])
+                keys = [(h, G.TEXT) for h in header[:n]]
+                cols, want = G.answer(header, rows, keys, ["count", "sum:v"])
+                self.assertEqual(len(want), 4)
+                got = self.go(csv_bytes(header, rows), ["--group", G.group_flag(keys), "--agg", "count,sum:v"], label="inside %d/%d" % (n, col))
+                self.expect_rows(got, cols, want, "inside %d/%d" % (n, col))
+
+    def test_cells_that_differ_only_inside_in_every_column_at_once(self):
+        for n in (4, 5, 6, 9):
+            rng = random.Random(n)
+            header = ["k%d" % i for i in range(n)] + ["v"]
+            rows = [["a%dz" % rng.randint(1, 3) for _ in range(n)] + [str(rng.randint(1, 9))] for _ in range(2000)]
+            keys = [(h, G.TEXT) for h in header[:n]]
+            cols, want = G.answer(header, rows, keys, ["count", "sum:v"])
+            got = self.go(csv_bytes(header, rows), ["--group", G.group_flag(keys), "--agg", "count,sum:v"], label="all inside %d" % n)
+            self.expect_rows(got, cols, want, "all inside %d" % n)
+
+
 class Spellings(Base):
     def test_names_positions_order_and_repeats(self):
         """Columns named by header name, by #N, mixed; in a shuffled order; a column more than once; from a table of 70 columns, 1 to 64 of them."""

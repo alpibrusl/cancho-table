@@ -28,7 +28,6 @@ MUTANTS = [
     ("the look at a cell's first and last byte is checked arithmetic", "agg.cho", FAST_CELL,
      "                look = (look * 31 + int_of(record[first])) * 31 + int_of(record[first + n - 1]);"),
     ("the look multiplies in checked arithmetic and adds wrapped", "agg.cho", FAST_LEN, "            look = wrapping_add(look * 31, n);"),
-    ("the look adds in checked arithmetic and multiplies wrapped", "agg.cho", FAST_LEN, "            look = wrapping_mul(look, 31) + n;"),
     # a limit of four group columns, put back where the group list is walked
     ("the cache believes a hit on the first four columns only", "agg.cho", "            while j < ng && entry >= 0 {", "            while j < ng && j < 4 && entry >= 0 {"),
     ("the cache believes a hit on the lengths only", "agg.cho", "                if length_at(key, p) != n || !bytes.equal(key[p + 4..p + 4 + n], record[first..first + n]) {", "                if length_at(key, p) != n {"),
@@ -45,8 +44,12 @@ MUTANTS = [
     ("the threads partition the groups by one field less than five", "par.cho", "    let fields = query.count_of(tree, 2);\n    let bound_groups", "    let fields = query.count_of(tree, 2) - query.count_of(tree, 2) / 5;\n    let bound_groups"),
 ]
 
-# Equivalent: a mutant here would survive, and is not in MUTANTS: none yet.
-EQUIVALENT = []
+# Equivalent in practice: a mutant here survives, and is not in MUTANTS (the reason is beside it).
+EQUIVALENT = [
+    # `wrapping_mul(look, 31) + n` (the add checked, the multiply wrapped) traps only when the wrapped product is within n of 2^63, about n in 2^64 a cell: it survives every test that can
+    # be run and is no defect to find with one; the add is wrapped too, so that it is not a trap with a chance at all.
+    ("the look adds in checked arithmetic and multiplies wrapped", "agg.cho", FAST_LEN, "            look = wrapping_mul(look, 31) + n;"),
+]
 
 if __name__ == "__main__":
     sys.exit(mutlib.main(MUTANTS, TESTS))
