@@ -122,6 +122,16 @@ pub fn s_bad_tok() -> [] int {
     return 26;
 }
 
+// where the records of the where clause end (they begin at `s_conds`)
+pub fn s_conds_end() -> [] int {
+    return 27;
+}
+
+// the offset, plus one, of the first connective that mixes `and` with `or` at one level of the where clause (0 when none does)
+pub fn s_mix() -> [] int {
+    return 28;
+}
+
 pub fn tokens_at() -> [] int {
     return 64;
 }

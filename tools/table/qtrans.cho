@@ -107,6 +107,11 @@ pub fn i_length() -> [] int {
     return 19;
 }
 
+// 1 when the statement is whole but for the mixing of `and` and `or` (status 5): then the where section holds the clause as written, and the repair can read it again
+pub fn i_tolerant() -> [] int {
+    return 20;
+}
+
 // how many literals are mapped (when asked), and where the header ends: the map follows, six integers a literal: where it begins in the --where text, where it is in the query
 // (start, end), the column's place in the query (start, end), and the type the condition reads it as
 pub fn i_maps() -> [] int {
@@ -411,65 +416,74 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
     borrow text as &wr in {
         where_at = buffer.size(wr);
     }
-    var c = 0;
     var at = m[qarena.s_conds()];
     var maps = 0;
-    while c < n_conds {
+    while at < m[qarena.s_conds_end()] {
         let col = m[at];
-        let t = m[at + 1];
-        let op = m[at + 2];
-        let nv = m[at + 3];
-        if c > 0 {
-            text = buffer.append(heap, text, " and ");
-        }
-        text = put_where_column(heap, text, q, m, col);
-        text = put_type(heap, text, t);
-        text = buffer.push(heap, text, byte_of(32));
-        if op == 7 {
-            text = buffer.append(heap, text, "in (");
-        } else if op == 6 {
-            text = buffer.append(heap, text, "contains ");
-        } else if op == 0 {
-            text = buffer.append(heap, text, "= ");
-        } else if op == 1 {
-            text = buffer.append(heap, text, "!= ");
-        } else if op == 2 {
-            text = buffer.append(heap, text, "< ");
-        } else if op == 3 {
-            text = buffer.append(heap, text, "<= ");
-        } else if op == 4 {
-            text = buffer.append(heap, text, "> ");
+        if col < 0 {
+            // the structure: ( ) and or, as the query wrote them
+            if col == 0 - 1 {
+                text = buffer.push(heap, text, byte_of('('));
+            } else if col == 0 - 2 {
+                text = buffer.push(heap, text, byte_of(')'));
+            } else if col == 0 - 3 {
+                text = buffer.append(heap, text, " and ");
+            } else {
+                text = buffer.append(heap, text, " or ");
+            }
+            at = at + 8;
         } else {
-            text = buffer.append(heap, text, ">= ");
-        }
-        var v = 0;
-        while v < nv {
-            if v > 0 {
-                text = buffer.append(heap, text, ", ");
+            let t = m[at + 1];
+            let op = m[at + 2];
+            let nv = m[at + 3];
+            text = put_where_column(heap, text, q, m, col);
+            text = put_type(heap, text, t);
+            text = buffer.push(heap, text, byte_of(32));
+            if op == 7 {
+                text = buffer.append(heap, text, "in (");
+            } else if op == 6 {
+                text = buffer.append(heap, text, "contains ");
+            } else if op == 0 {
+                text = buffer.append(heap, text, "= ");
+            } else if op == 1 {
+                text = buffer.append(heap, text, "!= ");
+            } else if op == 2 {
+                text = buffer.append(heap, text, "< ");
+            } else if op == 3 {
+                text = buffer.append(heap, text, "<= ");
+            } else if op == 4 {
+                text = buffer.append(heap, text, "> ");
+            } else {
+                text = buffer.append(heap, text, ">= ");
             }
-            let tok = m[at + 8 + v];
-            if want_map {
-                // where the literal begins in the --where text, and in the query, and the column and the type it is read as
-                var here = 0;
-                borrow text as &hr in {
-                    here = buffer.size(hr);
+            var v = 0;
+            while v < nv {
+                if v > 0 {
+                    text = buffer.append(heap, text, ", ");
                 }
-                info = vec.push(heap, info, here - where_at);
-                info = vec.push(heap, info, qarena.tok_start(m, tok));
-                info = vec.push(heap, info, qarena.tok_end(m, tok));
-                info = vec.push(heap, info, qarena.tok_start(m, col));
-                info = vec.push(heap, info, qarena.tok_end(m, col));
-                info = vec.push(heap, info, t);
-                maps = maps + 1;
+                let tok = m[at + 8 + v];
+                if want_map {
+                    // where the literal begins in the --where text, and in the query, and the column and the type it is read as
+                    var here = 0;
+                    borrow text as &hr in {
+                        here = buffer.size(hr);
+                    }
+                    info = vec.push(heap, info, here - where_at);
+                    info = vec.push(heap, info, qarena.tok_start(m, tok));
+                    info = vec.push(heap, info, qarena.tok_end(m, tok));
+                    info = vec.push(heap, info, qarena.tok_start(m, col));
+                    info = vec.push(heap, info, qarena.tok_end(m, col));
+                    info = vec.push(heap, info, t);
+                    maps = maps + 1;
+                }
+                text = buffer.append(heap, text, q[qarena.tok_start(m, tok)..qarena.tok_end(m, tok)]);
+                v = v + 1;
             }
-            text = buffer.append(heap, text, q[qarena.tok_start(m, tok)..qarena.tok_end(m, tok)]);
-            v = v + 1;
+            if op == 7 {
+                text = buffer.push(heap, text, byte_of(')'));
+            }
+            at = at + 8 + nv;
         }
-        if op == 7 {
-            text = buffer.push(heap, text, byte_of(')'));
-        }
-        at = at + 8 + nv;
-        c = c + 1;
     }
     if n_conds > 0 {
         info = put_info(info, i_where(), 1);
@@ -678,6 +692,7 @@ pub fn translate[&h, &q](heap: &!h Heap, q: &q [byte], want_map: bool) -> [heap]
     var items_end = 0;
     var group_at = 0;
     var group_end = 0;
+    var tolerant = 0;
     borrow mut arena as &!w in {
         let m = contents(w);
         m[qarena.s_rec_base()] = qarena.rec_base_for(len(q));
@@ -694,6 +709,15 @@ pub fn translate[&h, &q](heap: &!h Heap, q: &q [byte], want_map: bool) -> [heap]
         status = m[qarena.s_kind()];
         code = m[qarena.s_code()];
         at = m[qarena.s_offset()];
+        if m[qarena.s_mix()] > 0 {
+            // `and` mixed with `or` comes before whatever the rest of the statement says
+            if bad == 0 && code == 0 {
+                tolerant = 1;
+            }
+            status = 5;
+            code = 82;
+            at = m[qarena.s_mix()] - 1;
+        }
         items_at = m[qarena.s_items_at()];
         items_end = m[qarena.s_items_end()];
         group_at = m[qarena.s_group_at()];
@@ -703,6 +727,7 @@ pub fn translate[&h, &q](heap: &!h Heap, q: &q [byte], want_map: bool) -> [heap]
     info = put_info(info, i_status(), status);
     info = put_info(info, i_code(), code);
     info = put_info(info, i_offset(), at);
+    info = put_info(info, i_tolerant(), tolerant);
     info = put_info(info, i_items_at(), items_at);
     info = put_info(info, i_items_end(), items_end);
     info = put_info(info, i_group_at(), group_at);

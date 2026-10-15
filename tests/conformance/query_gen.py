@@ -79,6 +79,34 @@ def lit(rnd, kind, ty):
     return ("str", rnd.choice(["a", "b", "x y", "o'k", 'q"t', "c,d", "10", "9", "200", "", "é", "#1", "and", "a\\b"]))
 
 
+def make_shape(rnd, idxs, kind=None):
+    """How the conditions `idxs` (in the order they are written) combine: an index, or ("and" | "or", [parts]) with parts of the other connective (mostly), 2 to 3 of them."""
+    if len(idxs) == 1:
+        return idxs[0]
+    kind = kind or rnd.choice(["and", "or"])
+    k = rnd.randint(2, min(3, len(idxs)))
+    cuts = sorted(rnd.sample(range(1, len(idxs)), k - 1))
+    parts = []
+    for a, b in zip([0] + cuts, cuts + [len(idxs)]):
+        parts.append(make_shape(rnd, idxs[a:b], ("or" if kind == "and" else "and") if rnd.random() < 0.85 else kind))
+    return (kind, parts)
+
+
+def render_shape(shape, texts, connective):
+    """The where text of a shape: `texts[i]` for condition i, `connective(kind)` between the parts of a level, parentheses round a level inside a level of the other connective
+    and round some of its own kind."""
+    if isinstance(shape, int):
+        return texts[shape]
+    kind, parts = shape
+    out = []
+    for part in parts:
+        t = render_shape(part, texts, connective)
+        if not isinstance(part, int) and (part[0] != kind or len(t) % 2 == 0):
+            t = "(" + t + ")"
+        out.append(t)
+    return connective(kind).join(out)
+
+
 def make_plan(rnd, names, kinds, rows=()):
     n = len(names)
     awk = [j for j in range(n) if names[j] in AWKWARD]
@@ -88,7 +116,7 @@ def make_plan(rnd, names, kinds, rows=()):
         return rnd.choice(awk) if awk and rnd.random() < 0.5 else rnd.randrange(n)
 
     plan = {"conds": [], "group": [], "aggs": [], "order": [], "limit": None, "offset": None, "star": False, "select": []}
-    for _ in range(rnd.choice([0, 0, 1, 1, 2, 3])):
+    for _ in range(rnd.choice([0, 0, 1, 1, 2, 3, 3, 4, 6])):
         i = pick()
         ty = None
         if kinds[i] == "int" and rnd.random() < 0.6:
@@ -102,6 +130,7 @@ def make_plan(rnd, names, kinds, rows=()):
         mk = lambda: lit_from(rnd, rows, i, t0) or lit(rnd, kinds[i], t0)
         vals = [mk() for _ in range(rnd.randint(2, 3))] if op == "in" else [mk()]
         plan["conds"].append({"col": col_ref(rnd, names, i), "ty": ty, "op": op, "vals": vals})
+    plan["shape"] = make_shape(rnd, list(range(len(plan["conds"])))) if len(plan["conds"]) >= 2 and rnd.random() < 0.75 else None
     if rnd.random() < 0.45:
         plan["mode"] = "group"
         for i in dict.fromkeys(pick() for _ in range(rnd.choice([0, 1, 1, 2]))):
@@ -204,7 +233,7 @@ def flag_form(plan):
             vs = [v[1] if v[0] == "num" else "'" + v[1].replace("'", "''") + "'" for v in c["vals"]]
             op = "!=" if c["op"] == "<>" else c["op"]
             parts.append("%s in (%s)" % (w, ", ".join(vs)) if op == "in" else "%s %s %s" % (w, op, vs[0]))
-        a += ["--where", " and ".join(parts)]
+        a += ["--where", " and ".join(parts) if plan.get("shape") is None else render_shape(plan["shape"], parts, lambda k: " %s " % k)]
     if plan["order"]:
         if plan["mode"] == "group":
             (kind, v), desc = plan["order"][0]
@@ -283,7 +312,7 @@ def query_form(rnd, plan, source):
                 parts.append("%s %s %s" % (w, kw(rnd, "contains"), litq(c["vals"][0])))
             else:
                 parts.append("%s %s %s" % (w, c["op"], litq(c["vals"][0])))
-        p += [kw(rnd, "where"), (" " + kw(rnd, "and") + " ").join(parts)]
+        p += [kw(rnd, "where"), (" " + kw(rnd, "and") + " ").join(parts) if plan.get("shape") is None else render_shape(plan["shape"], parts, lambda k: " " + kw(rnd, k) + " ")]
     if plan["mode"] == "group" and plan["group"]:
         p += [kw(rnd, "group"), kw(rnd, "by"), ", ".join(ident(c) for c in plan["group"])]
     if plan["order"]:

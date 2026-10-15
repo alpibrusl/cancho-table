@@ -14,13 +14,13 @@
 | decision | choice | why, in one line |
 |---|---|---|
 | what `--query` is | **a translator from a small SQL subset to the flags the tool already has**; the existing parsers then fill the one `Query`, so there is no second plan to keep equal | the equivalence the design asked for holds by construction for meaning, and the gate checks the writing (quoting and escaping) |
-| the subset | `select` (columns, `*`, `count(*)`, `sum`, `min`, `max`, `mean`, `count(distinct c)`) `from` (`'file'` or `stdin`) `where` (`and` of comparisons, `contains`, `in`) `group by` `order by` `limit n offset m`. **No `or` (but `where a = 1 or a = 2` is refused with the repair `where a in (1, 2)`, for `=` and `in` on one column written the same way: [`or-and-columns.md`](or-and-columns.md), slice A0), no parentheses, no aliases, no expressions, no joins, no `like`, no null** | exactly what the engine has; every other SQL word is a tagged refusal that says what to write instead |
+| the subset | `select` (columns, `*`, `count(*)`, `sum`, `min`, `max`, `mean`, `count(distinct c)`) `from` (`'file'` or `stdin`) `where` (`and` and `or` of comparisons, `contains`, `in`, with parentheses: a level is all `and` or all `or`, a mix is `query.mixed-and-or`; [`or-and-columns.md`](or-and-columns.md), slice A1) `group by` `order by` `limit n offset m`. **No `not` yet, no aliases, no expressions, no joins, no `like`, no null** | exactly what the engine has; every other SQL word is a tagged refusal that says what to write instead |
 | types | **`cast(x as int)` or `x::int`**, `dec(S)`, `float`: the engine's three types, named | one meaning, two spellings agents already type |
 | names | bare ASCII identifiers; **`"double quoted"`** for anything else (spaces, commas, dots, keywords, non-ASCII); **`#3`** a position; values are **`'single quoted'`** or numbers | SQL's own convention; a column called `select` is `"select"` |
 | aliases | **no** (`as` is refused). The engine has no renamed column; a feature with no flag form has no place in the gate | |
 | `limit n offset m` | `--limit n --from m`: **a page**, as the flags are, with `truncated` and `next` | one meaning of limit |
 | `select *` alone | needs one new flag, **`--rows`** (rows, all columns, no condition): today `table FILE` is the shape, and there is no way to ask for every row without a condition | a small gap the front end found |
-| errors | `query.syntax` (offset, what was expected), `query.unsupported` (the feature, what to write), `query.group-mismatch`, `query.too-long`; all exit 2 | as `where.syntax` does |
+| errors | `query.syntax` (offset, what was expected), `query.unsupported` (the feature, what to write), `query.group-mismatch`, `query.too-long`, `query.mixed-and-or` (slice A1: `and` beside `or` at one level, the two readings offered); all exit 2 | as `where.syntax` does |
 | the gate | **a random plan rendered twice (flags, SQL), both run on the same table: same stdout, same stderr, same exit, refusals included**; prototype run: 0 differences in 1,556 runs; 26 of 26 mutants killed | section 8 |
 | `table explain` | **`--explain`, a flag** (not a subcommand): the resolved plan, columns with positions and types, bounds, the work class, the refusals that are certain without reading data and the ones that are possible; it reads the first chunk of the file for the header and nothing else, and nothing from standard input | section 9, built as section 15 says. Decided (section 13, 1): the flag |
 | surface | `introspect` and `skill` stay generated from the flag table and the rule table; the grammar's lexical tables (keywords, functions, types) are static tables the lexer and `introspect` both read; the examples in the skill are tested by parsing them | section 10 |
@@ -49,7 +49,9 @@ aggregate = "count" "(" "*" ")"
           | ( "sum" | "min" | "max" ) "(" typed ")"
           | "mean" "(" typed [ "," nat ] ")" ;
 source    = string | "stdin" ;
-conds     = cond { "and" cond } ;
+conds     = level ;
+level     = unit { ( "and" | "or" ) unit } ;                 (* all "and" or all "or": a mix is query.mixed-and-or *)
+unit      = cond | "(" level ")" ;                            (* at most 8 levels of parentheses *)
 cond      = typed cmp value | column "contains" value | typed "in" "(" value { "," value } ")" ;
 cmp       = "=" | "!=" | "<>" | "<" | "<=" | ">" | ">=" ;
 keys      = key { "," key } ;
@@ -76,7 +78,6 @@ A query that names such a column writes it `"like"`; reserving them *now* is wha
 
 | feature | what the hint says |
 |---|---|
-| `or`, parentheses | only `and`; several values of one column are `col in ('a', 'b')` |
 | `like`, `ilike` | `col contains 'text'` finds a substring; there are no patterns |
 | `between`, `not`, `is null`, `null`, booleans | write two conditions; there is no null (an empty cell is the empty text: `= ''`) |
 | `as` (alias) | a column keeps its header name, an aggregate its name (`sum:bytes`); there is no renaming |
@@ -179,7 +180,8 @@ All are `INVALID_ARGS`, exit 2 (nothing was read), one JSON line with `{code, ru
 | rule | `detail` | repair |
 |---|---|---|
 | `query.syntax` | `offset` (0-based byte in the query), `expected` (in words), `query` (the text, to 4,096 bytes), and for a literal that does not fit its column: `column`, `type`, `value` | `choose` when a nearest valid text exists: a keyword typo (`selct`, `form`, `wher`) within two edits of the keyword expected there; `integer` -> `int`, `decimal(2)` -> `dec(2)`, `double` -> `float`; a double-quoted value (`where a = "x"`) -> `'x'`; `==` -> `=`. The options are the flag-form argv of the corrected query. Else `none` |
-| `query.unsupported` | `offset`, `feature` (the table in section 2), `query` | `choose` where one is mechanical (`like '%x%'` -> `contains 'x'`; `or` on one column -> `in (...)`), else `none` with the hint |
+| `query.unsupported` | `offset`, `feature` (the table in section 2), `query` | `choose` where one is mechanical (`like '%x%'` -> `contains 'x'`), else `none` with the hint |
+| `query.mixed-and-or` | `offset` (the connective that changes the level), `query` | `choose`: the query's flags with the `--where` read both ways, by precedence and left to right (one when they are the same text); `none` when the rest of the query does not translate |
 | `query.group-mismatch` | `offset`, `expected`, `select` (the list as parsed), `group_by` | `choose`: the query with the select list rewritten to the group columns then the aggregates |
 | `query.too-long` | `bytes`, `limit` | `none` |
 | `args.conflict` (existing) | `flags` | `--query` with any of `--select --where --group --agg --sort --order-by --top --rows`, and `--limit/--from` when the query has `limit/offset`; `from 'x'` with a `FILE` operand |
@@ -314,7 +316,7 @@ The grammar's productions are the one thing that cannot be generated from the co
     select COLUMNS | * | count(*) | sum(c) | min(c) | max(c) | mean(c [, N]) | count(distinct c)
     [from 'FILE' | stdin] [where COND and COND ...] [group by COLUMNS] [order by KEY [desc], ...] [limit N [offset N]]
 
-- COND is `c = 'x'`, `c != 5`, `c <> 5`, `c < 5` (also <= > >=), `c contains 'x'`, `c in ('a', 'b')`. Only `and`: no or, no parentheses.
+- COND is `c = 'x'`, `c != 5`, `c <> 5`, `c < 5` (also <= > >=), `c contains 'x'`, `c in ('a', 'b')`, joined by `and` or by `or`, with parentheses to group them: a level is all `and` or all `or` (`query.mixed-and-or`).
 - Values are 'single quoted' text or bare numbers. Text compares bytewise: `bytes > 100` is text order; write `cast(bytes as int) > 100`
   or `bytes::int > 100` for numbers. Types: int, dec(N), float.
 - Names are bare (letters, digits, underscore) or "double quoted" (spaces, commas, dots, keywords); #3 is the third column.

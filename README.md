@@ -114,6 +114,9 @@ id,customer
 1,"Doe, Jane"
 3,"Doe, Jane"
 4,Acme
+$ table --where "(status = 404 or status = 500) and bytes != '' and bytes:int > 100" --select id,status,bytes --format csv orders.csv
+id,status,bytes
+4,500,128
 ```
 <!-- /gen:t-filter -->
 
@@ -270,8 +273,8 @@ Acme,1,128
 $ table --query "select customer form 'orders.csv'"
 {"rule": "query.syntax", "hint": "detail.expected says what was expected at detail.offset, and the grammar is in the help of --query", "repair": {"kind": "choose", "options": [{"argv": ["table", "--select", "customer", "orders.csv"]}]}, "detail": {"offset": 16, "expected": "the end of the query (one statement)", "query": "select customer form 'orders.csv'"}}
 # exit status 2; the rule, hint, repair, detail of the JSON line it prints
-$ table --query "select id from 'orders.csv' where status = 404 or status = 500"
-{"rule": "query.unsupported", "hint": "only and; a set of values of one column is col in ('a', 'b')", "repair": {"kind": "choose", "options": [{"argv": ["table", "--select", "id", "--where", "status in (404, 500)", "orders.csv"]}]}, "detail": {"offset": 47, "feature": "or", "query": "select id from 'orders.csv' where status = 404 or status = 500"}}
+$ table --query "select id from 'orders.csv' where status = 404 or status = 500 and bytes != ''"
+{"rule": "query.mixed-and-or", "hint": "put parentheses round what goes first: (a = 1 or b = 2) and c = 3 is one question and a = 1 or (b = 2 and c = 3) another, and the tool does not choose between them; the repair offers both", "repair": {"kind": "choose", "options": [{"argv": ["table", "--select", "id", "--where", "status = 404 or (status = 500 and bytes != '')", "orders.csv"]}, {"argv": ["table", "--select", "id", "--where", "(status = 404 or status = 500) and bytes != ''", "orders.csv"]}]}, "detail": {"offset": 63, "query": "select id from 'orders.csv' where status = 404 or status = 500 and bytes != ''"}}
 # exit status 2; the rule, hint, repair, detail of the JSON line it prints
 ```
 <!-- /gen:t-query -->
@@ -350,10 +353,10 @@ $ table --where "bytes:int > 100" --select id orders.csv
 * **A sort uses more cores only for a whole sort written as CSV.** With `--order-by`, `--format csv` and no `--top`, `--limit` or `--from`, `--threads` above 1 sorts in parallel and gives the same bytes; pages, `--top` and JSON output run on one core. A threaded sort peaks at 11.8 to 14.8 times the size of a 39.55 MB file at 16 threads on the Mac, against 4.4 to 6.2 times for the sequential sort. There is no sort that spills to disk.
 * **No joins**, and **one input** at a time: a file named on the command line, or standard input (`-`, or no file), read in one pass on one core, in blocks, at about the speed of a named file on one core. A producer that writes slowly is waited for until the first 512 bytes arrive; a closed descriptor 0 reads as empty; a descriptor that fails is refused with an io.* rule (docs/readers.md 11.1, 11.7). ([docs/readers.md](docs/readers.md), section "R1 as built").
 * **JSON lines are read, nothing else is.** `--input-format jsonl` (or `ndjson`) reads one JSON object per line, from a file or from standard input, with the columns declared by `--fields` (paths such as `user.name` or `items.0.sku`; `--discover` reports what the first lines hold). A number is the cell its exact text is, never through a double. A line that is not strict JSON, not an object, a declared path with no value, an object or an array in a cell, and a key twice are tagged refusals ([docs/readers.md](docs/readers.md) section 12). `--format jsonl` writes the answer back as JSON lines (one object per row, keys the output columns, every value a string but the aggregates and the group keys that have a type (`--group NAME:int`, `NAME:dec(S)`, `NAME:float`), which are numbers; [docs/readers.md](docs/readers.md) section 13). No Parquet, no JSON array or pretty-printed document (use `jq -c '.[]'`). CSV and TSV (comma, tab or semicolon) as before.
-* **`--query` is a small subset of SQL**, not SQL: no `or` (a same-column `where a = 1 or a = 2` is refused with the `in` it stands for as the repair) and no parentheses, no aliases, no expressions or functions, no `like`, no `null`, no joins, no subqueries, and a grouping sorts by one column. Each is refused as `query.unsupported`, with the feature named ([docs/query.md](docs/query.md)).
-* **No guessing.** Every column is text unless you declare `:int`, `:dec(S)` or `:float`; `--report types` suggests a declaration and applies none. No computed or renamed column, no `or` in a filter (`a = 1 or a = 2` on one column is refused with `a in (1, 2)` as its repair; any other `or` is refused).
+* **`--query` is a small subset of SQL**, not SQL: `or` and parentheses are there (a level is all `and` or all `or`: `a = 1 or b = 2 and c = 3` is refused as `query.mixed-and-or`, with both readings as the repair), but no `not` yet, no aliases, no expressions or functions, no `like`, no `null`, no joins, no subqueries, and a grouping sorts by one column. Each is refused as `query.unsupported`, with the feature named ([docs/query.md](docs/query.md)).
+* **No guessing.** Every column is text unless you declare `:int`, `:dec(S)` or `:float`; `--report types` suggests a declaration and applies none. No computed or renamed column, and no `not` in a filter yet; `or` and parentheses are there (a mix of `and` and `or` at one level is refused with both readings, never guessed; a typed cell is read only when its condition is reached, so `c = '' or c:int > 5` keeps the empty cells and `c:int > 5 or c = ''` refuses the first one).
 
-`or` in a filter and joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
+`not`, renamed columns and joins are on the [backlog](docs/backlog.md), in rough order. Nothing there is promised.
 
 ## How fast
 

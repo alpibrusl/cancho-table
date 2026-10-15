@@ -91,6 +91,9 @@ pub fn expected(code: int) -> [] &static [byte] {
     if code == 28 {
         return "a query of at most 4096 bytes";
     }
+    if code == 29 {
+        return "fewer nested parentheses: the ceiling is 8";
+    }
     if code == 40 {
         return "the group columns then the aggregates, not *";
     }
@@ -147,12 +150,6 @@ pub fn feature(code: int) -> [] &static [byte] {
     if code == 70 {
         return "boolean";
     }
-    if code == 71 {
-        return "or";
-    }
-    if code == 72 {
-        return "parentheses";
-    }
     if code == 73 {
         return "like";
     }
@@ -208,12 +205,6 @@ pub fn hint(code: int) -> [] &static [byte] {
     }
     if code == 69 || code == 70 {
         return "there is no null (an empty cell is the empty text: = '') and no boolean type";
-    }
-    if code == 71 {
-        return "only and; a set of values of one column is col in ('a', 'b')";
-    }
-    if code == 72 {
-        return "conditions joined by and, nothing grouped";
     }
     if code == 73 {
         return "contains 'text' finds a substring; there are no patterns";

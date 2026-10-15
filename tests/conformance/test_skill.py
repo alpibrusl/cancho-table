@@ -396,16 +396,20 @@ class Claims(unittest.TestCase):
         self.s.write("nums.csv", "v,w\n10,a\n9,b\n,c\n")
         rows = lambda *a: [r[0] for r in self.r("--where", *a, file="nums.csv").data()["rows"]]
         help_ = {f["name"]: f["help"] for f in introspect()["flags"]}["--where"]
-        for sentence in ("so 10 is less than 9", "no or, no parentheses", "keep such rows out first: bytes != '' and bytes:int > 5"):
+        for sentence in ("so 10 is less than 9", "conditions joined by and or by or, with parentheses to group them", "a level of the expression is all and or all or", "keep such rows out first: bytes != '' and bytes:int > 5", "or with or bytes = '' or bytes:int > 5"):
             self.assertIn(sentence, help_)
         # text compares bytewise: 10 is less than 9, and an empty cell is the empty text
         self.assertEqual(rows("v < 9"), ["10", ""])
         # an empty cell under :int refuses, unless a condition before it is false
         self.assertEqual(self.r("--where", "v:int > 5", file="nums.csv").first_rule(), "value.not-integer")
         self.assertEqual(rows("v != '' and v:int > 5"), ["10", "9"])
-        # no `or`, no parentheses around conditions
-        self.assertEqual(self.r("--where", "v = 1 or v = 2", file="nums.csv").first_rule(), "where.syntax")
-        self.assertEqual(self.r("--where", "(v = 1)", file="nums.csv").first_rule(), "where.syntax")
+        # `or` and parentheses (docs/or-and-columns.md): the guard of an `or` is the test that is true for such a cell
+        self.assertEqual(rows("v = 10 or v = 9"), ["10", "9"])
+        self.assertEqual(rows("(v = 10)"), ["10"])
+        self.assertEqual(rows("v = '' or v:int > 9"), ["10", ""])
+        self.assertEqual(self.r("--where", "v:int > 9 or v = ''", file="nums.csv").first_rule(), "value.not-integer")
+        self.assertEqual(self.r("--where", "v = 1 or v = 2 and v = 3", file="nums.csv").first_rule(), "where.mixed-and-or")
+        self.assertEqual(self.r("--where", "(v = 1", file="nums.csv").first_rule(), "where.syntax")
         # the grammar is in the help, which is what the hint says
         self.assertIn("help of --where", self.r("--where", "v =", file="nums.csv").error()["hint"])
 

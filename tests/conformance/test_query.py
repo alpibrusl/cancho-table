@@ -127,6 +127,15 @@ class Equivalence(unittest.TestCase):
 
 # ---- Q1-OFFSETS ------------------------------------------------------------------------------------------------------------------
 
+def query_ref_readable(query):
+    """Whether the rest of the query is whole apart from the mix, so that the refusal offers the two readings (the reference translates it with the mix let through)."""
+    try:
+        query_ref.translate_ignoring_mix(query)
+    except query_ref.QueryError:
+        return False
+    return True
+
+
 class Refusals(Base):
     def check(self, row):
         query, kind, offset, what = row[:4]
@@ -136,13 +145,16 @@ class Refusals(Base):
             d = doc(r)
             self.assertEqual(validate(r), [], r)
             e = d["error"]
-            self.assertEqual(e["rule"], "query." + kind, r)
+            self.assertEqual(e["rule"], "query.mixed-and-or" if kind == "mixed" else "query." + kind, r)
             detail = e["detail"]
             self.assertEqual(detail["offset"], offset, r)
             self.assertEqual(detail["query"], query)
             if kind == "unsupported":
                 self.assertEqual(detail["feature"], what)
                 self.assertTrue(e["hint"])
+            elif kind == "mixed":
+                self.assertNotIn("expected", detail)
+                self.assertEqual(e["repair"]["kind"], "none" if not query_ref_readable(query) else "choose", e)
             else:
                 self.assertEqual(detail["expected"], what)
             if kind == "group-mismatch":
@@ -163,9 +175,9 @@ class Refusals(Base):
 
     def test_every_rule_and_kind_is_pinned(self):
         kinds = {row[1] for row in query_cases.REFUSALS}
-        self.assertEqual(kinds, {"syntax", "unsupported", "group-mismatch"})
+        self.assertEqual(kinds, {"syntax", "unsupported", "group-mismatch", "mixed"})
         features = {row[3] for row in query_cases.REFUSALS if row[1] == "unsupported"}
-        for feature in ("subquery", "join", "alias", "count-column", "cast-in-select", "cast-in-group", "column-comparison", "null", "boolean", "or", "like", "between", "is-null",
+        for feature in ("subquery", "join", "alias", "count-column", "cast-in-select", "cast-in-group", "column-comparison", "null", "boolean", "like", "between", "is-null",
                         "not", "having", "union", "expression", "empty-name", "order-by-two-keys", "order-by-position", "order-by-dash-name"):
             self.assertIn(feature, features)
 
@@ -638,7 +650,7 @@ class Repairs(Base):
         self.assertEqual(self.options(r), [["--group", "a", "--agg", "count,sum:b", "--sort", "sum:b", "f.csv"]])
 
     def test_no_repair_says_why(self):
-        for query in ("select a from", "select a from 'f.csv' where b = 'x' or c = 'y'", "select a,", "select a from 'f.csv' limit -1", "select a, count(*) from 'f.csv'"):
+        for query in ("select a from", "select a, count(*) from 'f.csv' where b = 'x' or c = 'y' and d = 1", "select a,", "select a from 'f.csv' limit -1", "select a, count(*) from 'f.csv'"):
             with self.subTest(query=query):
                 e = doc(self.q(query))["error"]
                 self.assertEqual(e["repair"]["kind"], "none", e)
@@ -747,6 +759,8 @@ class Fuzz(Base):
                     counts["refused-by-query"] += 1
                     self.assertEqual(status, 2, (b, e["rule"]))
                     kind = e["rule"][6:]
+                    if kind == "mixed-and-or":
+                        kind = "mixed"
                     if kind == "too-long":
                         self.assertGreater(len(b), 4096)
                         continue

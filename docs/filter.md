@@ -25,7 +25,10 @@ rows (a `--where` alone returns every column). `--group` and/or `--agg`: groups
 ## The `--where` grammar
 
 ```
-EXPR   := COND { "and" COND }
+EXPR   := ALL | ANY | UNIT
+ALL    := UNIT "and" UNIT { "and" UNIT }
+ANY    := UNIT "or" UNIT { "or" UNIT }
+UNIT   := COND | "(" EXPR ")"
 COND   := COLUMN OP VALUE | COLUMN "contains" VALUE | COLUMN "in" "(" VALUE { "," VALUE } ")"
 OP     := "=" | "!=" | "<" | "<=" | ">" | ">="
 COLUMN := WORD [":int" | ":dec(" N ")" | ":float"]     a header name, or #N the Nth column (1-based); N is a scale, 0 to 18
@@ -35,15 +38,49 @@ WORD   := bare | 'quoted'
 
 A bare word runs to whitespace or one of `' ( ) , = ! < >`; a backslash makes the next
 byte part of it, whatever it is. A quoted word is between single quotes with `''` for a
-quote. `and`, `in` and `contains` are lower case and are keywords only where the
-grammar expects them (a column may be called `and`: `and = x` is a condition). No
-`or`, no grouping parentheses, no expressions, no functions, as the design says.
+quote. `and`, `or`, `in` and `contains` are lower case and are keywords only where the
+grammar expects them: after a complete unit `and` and `or` are the connectives, at the start
+of a unit they are a column (a column may be called `and` or `or`: `or = x` is a condition,
+`a = 1 or or = 2` has both), and a quoted `'or'` is never a keyword. No expressions, no
+functions, no `not` yet (slice A2 of [`or-and-columns.md`](or-and-columns.md)).
 
-**`or` is refused, and one shape of it is repaired** (slice A0 of [`or-and-columns.md`](or-and-columns.md)). `a = 1 or a = 2` is `where.syntax` at the `or`, as it always was,
-and when the whole expression is `COND or COND { or COND }` of `=` and `in` on one column written the same way (the same bytes, the type suffix included: `a:int` and `a:int`,
-not `a:int` and `a`, not `a` and `#1`), the refusal's repair is a `choose` with the same command and `--where "a in (1, 2)"`, the values as written, in order, duplicates kept.
-It is the same rows: a bad cell of a typed column is refused either way, at the first leaf the cell is read by. Nothing is offered for `!=`, `<`, `contains`, two columns, two
-types, an `and` or a parenthesis beside the `or`, a literal the type does not take, or more than 1,024 values: those are the refusal and `repair: none`, as before.
+**`or` and parentheses** (slice A1 of [`or-and-columns.md`](or-and-columns.md)). A level of an
+expression is all `and` or all `or`: `a = 1 and b = 2 or c = 3` is **not read either way**, it is
+`where.mixed-and-or` (exit 2), with `detail.offset` at the connective that changes the level, and a
+`choose` repair that offers the two readings as whole commands: by precedence, `and` before `or`, as SQL
+does (`a = 1 or b = 2 and c = 3` is `a = 1 or (b = 2 and c = 3)`), and left to right
+(`(a = 1 or b = 2) and c = 3`; for `a or b and c or d` they are `a or (b and c) or d` and `((a or b) and c) or d`). When the two
+readings are the same text (`a = 1 and b = 2 or c = 3`) one is offered. A refusal can be
+turned into an answer later without breaking a call; an answer cannot be taken back. A reading is offered
+only if this grammar takes it whole (it can pass the 8 levels of parentheses). Today's expressions,
+`COND { "and" COND }`, are `ALL`, so **every call that was valid is valid and means the same**.
+At most **8 levels of parentheses** (a ninth is `where.syntax`, `detail.expected` "fewer nested
+parentheses: the ceiling is 8"), 64 conditions wherever they are, and 1,024 values in one `in`.
+A missing `)` is `where.syntax` ("and, or, or the ) that closes the group"), `()` and an `or` with
+nothing after it are "a column", a `)` with no group to close is "and, or the end of the expression".
+
+**Evaluation.** The conditions are tried **in the order they are written**; a condition is tried
+only when the run reaches it, and **a typed cell is read as its type only when its condition is tried**.
+A level stops at the first unit that decides it: the first false unit of an `and`, the first true unit of an
+`or`. The plan is a conjunction when it has no `or` (and then it is the loop it always was), and
+otherwise a branch program (`--explain` shows it: `if_true` and `if_false` on each condition, the index of
+the condition run next, or `accept` or `reject`). The consequences, as the tests have them
+(`c` has empty cells, `a` is `x` on row 1):
+
+| expression | a row where | result |
+|---|---|---|
+| `c != '' and c:int > 5` | `c` is empty | dropped: the guard stops the evaluation (as always) |
+| `c = '' or c:int > 5` | `c` is empty | **kept**: the second condition is not tried. The guard of an `or` is the positive test |
+| `c:int > 5 or c = ''` | `c` is empty | **refused**, `value.not-integer`: the typed condition is tried first |
+| `a = 'x' or c:int > 5` | `a` is `x`, `c` is `abc` | kept: `c` is never read |
+| `a = 'y' or c:int > 5` | `a` is `x`, `c` is `abc` | refused at `c`, naming the row and the column |
+| `(a = 'x' or b = 'x') and c:int > 5` | `a` is `x` | `b` is never read; `c` is |
+
+A cell that no path reaches is not an error, as the cell to the right of a false `and` never was; the
+rule is a function of the row and the expression alone, so the same row is refused or kept in the same way
+at every `--threads`, and a range read again by the parent gives the same answer. `a:int in (1, 2)` reads
+the cell once where `a:int = 1 or a:int = 2` reads it up to twice, and answers the same rows with the same
+refusals: `--explain` notes a run of single-value conditions on one column that could be one `in`.
 
 **Names and positions.** The same rules as `--select`, in the notation of this
 grammar: a bare word `#3` is the third column, a header that really is `#3` is `'#3'`
@@ -96,8 +133,9 @@ works). In an `:int` condition an empty cell **is not an integer: it is refused*
 skipped and not false. This is deliberate: a query that quietly ignored the rows with
 no value would give an answer about fewer rows than the file has. The way to say "only
 the rows that have one" is to say it: **conditions are evaluated left to right and stop
-at the first that is false**, so `bytes != '' and bytes:int > 5` never reads an empty
-cell as an integer. (The same column may be tested as text and as an integer in one
+at the first that decides the level they are in** (the first that is false in an `and`, the first that is true in an
+`or`), so `bytes != '' and bytes:int > 5` never reads an empty cell as an integer, and
+`bytes = '' or bytes:int > 5` keeps the rows that have none. (The same column may be tested as text and as an integer in one
 expression.)
 
 **Errors in the expression** are `where.syntax` (exit 2) with `detail.offset` (a byte
@@ -105,8 +143,8 @@ offset into the expression), `detail.expected` (what would have been right there
 words) and `detail.expression`: an empty expression, a missing operator or value, a
 `!` without `=`, `==`, `<>`, a missing `and`, `in` without `(` or with `()`, an unclosed
 quote, a trailing backslash, an `:int` literal that is not an integer or does not fit,
-`contains` on an `:int` column, more than 64 conditions or 1024 values. The tests pin
-the offset of each.
+`contains` on an `:int` column, more than 64 conditions, 1024 values or 8 levels of parentheses. The tests pin
+the offset of each. `and` mixed with `or` at one level is `where.mixed-and-or`, above.
 
 ## Groups
 

@@ -525,6 +525,34 @@
                               "$ref": "#/$defs/text_or_bytes"
                             },
                             "minItems": 1
+                          },
+                          "if_true": {
+                            "oneOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              {
+                                "enum": [
+                                  "accept",
+                                  "reject"
+                                ]
+                              }
+                            ]
+                          },
+                          "if_false": {
+                            "oneOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              {
+                                "enum": [
+                                  "accept",
+                                  "reject"
+                                ]
+                              }
+                            ]
                           }
                         },
                         "required": [

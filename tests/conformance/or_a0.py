@@ -27,6 +27,7 @@ import query_cases  # noqa: E402
 import query_ref  # noqa: E402
 
 GOLDEN = HERE / "or_a0_golden.json"
+MAIN_GOLDEN = HERE / "or_a1_main_golden.json"       # the answers of main (62d60ad, slice A0 merged) to every case below, refusals and answers: slice A1's compatibility gate
 
 # The file every case is run against: the columns the cases name, and the keywords as columns (a column called `or` is an ordinary column at the start of a condition).
 HEADER = ["a", "b", "c", "i", "d", "f", "t", "or", "not", "and", "in", "contains", "a b"]
@@ -641,7 +642,22 @@ def write_golden(run, directory):
         print("  %-24s %d" % (k, rules[k]))
 
 
+def write_main_golden(run, directory):
+    """Every case of `golden_cases()` as main answers it: {case id: [status, rule or null, sha of the whole answer]}. Only ever run with the binary of main the slice starts from."""
+    rows = run_cases(golden_cases(), directory, run)
+    out = {row[0]: [row[1], row[2], row[3]] for row in rows}
+    MAIN_GOLDEN.write_text(json.dumps({"binary": "main 62d60ad", "count": len(out), "cases": out}, sort_keys=True, separators=(",", ":")) + "\n")
+    print("%d answers written to %s (%d refusals)" % (len(out), MAIN_GOLDEN, sum(1 for v in out.values() if v[0] != 0)))
+
+
 if __name__ == "__main__":
+    if "--write-main-golden" in sys.argv:
+        import harness
+        sc = harness.Scratch()
+        sc.write("t.csv", DATA)
+        write_main_golden(harness.run, sc.dir)
+        sc.cleanup()
+        sys.exit(0)
     if "--write-golden" not in sys.argv:
         print(__doc__)
         sys.exit(2)

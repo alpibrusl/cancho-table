@@ -12,6 +12,7 @@ module explain;
 import std.buffer;
 import std.bytes;
 import std.vec;
+import explainor;
 import finish;
 import frame;
 import jfields;
@@ -565,7 +566,11 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
             o = text.append_json(heap, o, query.lit_bytes(tree, first + l));
             l = l + 1;
         }
-        o = buffer.append(heap, o, "]}");
+        o = buffer.append(heap, o, "]");
+        if query.flowed(tree) {
+            o = explainor.put_exits(heap, o, tree, k);
+        }
+        o = buffer.append(heap, o, "}");
         k = k + 1;
     }
     o = buffer.append(heap, o, "],\"group\":[");
@@ -807,6 +812,11 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k](heap: &!h Heap, args: &g Arg
             first_note = false;
         }
         k = k + 1;
+    }
+    if query.flowed(tree) {
+        let (o2, f2) = explainor.chain_notes(heap, o, tree, first_note);
+        o = o2;
+        first_note = f2;
     }
     if stdin && as_json {
         o = note(heap, o, first_note, "standard input is not read by --explain: its columns are the ones --fields declares");
