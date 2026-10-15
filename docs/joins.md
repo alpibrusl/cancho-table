@@ -165,7 +165,7 @@ defined order, so the chain is deterministic. The cost of the pipe is one parse 
 * **Standard input is the probe only.** It has no size and no ranges (`docs/readers.md:107-120`): it is read in one pass on one core. It is
   allowed exactly where it is useful, streaming through a build that is already held. `--threads` on a stdin probe is "one core, same bytes,
   no refusal", as for every plan (`docs/readers.md:113`). The build side is read before the first byte of standard input is consumed,
-  so a build refusal leaves the pipe unread (the producer sees a closed pipe, as it does for any flag refusal).
+  so a build refusal leaves the pipe unread (the producer sees a closed pipe, as it does for any flag refusal). **Corrected by section 16.2:** the first line of the pipe, its header, is read before the build's rows (the collision of names is refused before any row of either file is read); the rows of the pipe are not.
 * **Both inputs read the same file twice** if they are the same path; nothing is claimed about a file that changes between the two opens
   (`docs/query.md:564` makes the same statement for `--explain`).
 * **MCP.** The server passes `--join=VALUE` as one argument and the tool confines the path under the server's `--root`, one component at a time,
@@ -350,7 +350,7 @@ The same formula applied to the baseline files of section 12 (**computed**, from
   at the refusal (the rest of the build is unread). A `left`, `semi` or `anti` join has no swap: its meaning depends on which side is which.
 * `--explain` (section 8.4) says, before any read, what is exact about the build file: its size, and an **upper bound** on the accounted bytes that follows from the size and the header (every
   non-blank record has at least `columns - 1` delimiters and one terminator, so there are at most `(size - header) / columns + 1` rows; every record and key is at most the file;
-  the bound is therefore `(size - header) + 76 * rows_at_most` and is loose for narrow files). It says "cannot pass the bound" when the upper bound is within it, and "may pass it" when not; it never
+  the bound is therefore `(size - header) + 76 * rows_at_most` and is loose for narrow files). **Corrected by section 16.2:** that bound is too small, because the key bytes of the distinct keys are counted besides the record bytes that contain them (a one-column file with unique keys holds 2 x its bytes + 76 per row); J1 says `2 * (size - header) + 76 * rows_at_most` with `rows_at_most = (size - header) / max(columns, 2) + 1`. It says "cannot pass the bound" when the upper bound is within it, and "may pass it" when not; it never
   says "will", because a lower bound cannot be had from the size (blank lines). It does not read rows (`docs/query.md` gate E2).
 
 ### 6.4 The probe

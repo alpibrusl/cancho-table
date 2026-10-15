@@ -262,6 +262,20 @@ Zed,1,64
 `--join FILE --on PROBE=BUILD` joins the file you name (or standard input) with a second one. The operand is the **probe** side and is streamed; the `--join` file is the **build** side and is held whole in memory, counted in `--max-state-bytes`. A key is compared as text, byte for byte (`007` is not `7`, and an empty cell matches an empty cell: there is no null). The answer is each probe row, in the probe's order, once for every build row with its key, in the build's order, followed by that row's cells. Two files that share a column name are refused as `join.column-collision`, and the refusal offers the invocation with a `--join-prefix`. This is the first slice: inner join, rows out ([docs/joins.md](docs/joins.md)).
 
 <!-- gen:t-join -->
+```console
+$ table --join customers.csv --on customer=name --join-prefix c_ --select id,customer,bytes,c_tier --format csv orders.csv
+id,customer,bytes,c_tier
+1,"Doe, Jane",512,gold
+2,Acme,,silver
+2,Acme,,reseller
+3,"Doe, Jane",2048,gold
+4,Acme,128,silver
+4,Acme,128,reseller
+5,Zed,64,bronze
+$ table --join orders.csv --on id=id orders.csv
+{"rule": "join.column-collision", "hint": "give the --join file's columns a prefix with --join-prefix, or select and name them by position", "repair": {"kind": "choose", "options": [{"argv": ["table", "--join", "orders.csv", "--on", "id=id", "orders.csv", "--join-prefix", "orders_"]}]}}
+# exit status 2; the rule, hint, repair of the JSON line it prints
+```
 <!-- /gen:t-join -->
 
 ### Ask in a small SQL

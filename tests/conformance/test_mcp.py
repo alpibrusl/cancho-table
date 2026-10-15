@@ -428,11 +428,14 @@ class Schema(unittest.TestCase):
                 self.assertNotIn("type", p)
             elif kind == "text":
                 self.assertEqual((p["type"], p["minLength"]), ("string", 1))
+            elif kind in ("path", "any"):
+                self.assertEqual(p["type"], "string")
+                self.assertNotIn("minLength", p)
             elif kind == "bool":
                 self.assertEqual(p["type"], "boolean")
             else:
                 self.fail("a flag kind this test does not know: %s" % f["kind"])
-        self.assertEqual(kinds_seen, {"nat", "text", "choice", "bool"})
+        self.assertEqual(kinds_seen, {"nat", "text", "choice", "bool", "path", "any"})
         # The operand: one FILE, optional as the tool's is, for standard input, which the server offers as `stdin` (docs/mcp.md section 12, held by test_mcp_stdin.py):
         # a call gives exactly one of the two, which the server checks, so neither is `required` in the schema.
         [operand] = d["operands"]

@@ -944,58 +944,80 @@ class Authority(unittest.TestCase):
 class Fuzz(unittest.TestCase):
     """F: no trap on any plan, every refusal is a rule of the catalogue, every repair that is offered is accepted."""
 
+    GOOD = [["--select", "p0"], ["--select", "b1,p0"], ["--where", "p0 != 'a'"], ["--where", "b0 = k1"], ["--limit", "3"], ["--limit", "2", "--from", "2"], ["--format", "csv"], ["--format", "jsonl"],
+            ["--max-rows", "3"], ["--max-rows", "50"], ["--max-state-bytes", "300"], ["--max-state-bytes", "100"], ["--max-state-bytes", "4000"], ["--max-join-rows", "7"], ["--max-join-rows", "40"],
+            ["--max-line-bytes", "30"], ["--max-line-bytes", "80"], ["--threads", "4"], ["--rows"], ["--join-prefix", "x_"], ["--join-prefix", "p"], ["--join-prefix", "b"], ["--explain"],
+            ["--where", "p0:int > 0"], ["--max-bytes", "60"]]
+    JUNK = [["--delimiter", "tab"], ["--group", "p0"], ["--order-by", "b0"], ["--top", "2"], ["--query", "select * from 'p.csv'"], ["--join-type", "left"], ["--report", "types"],
+            ["--input-format", "jsonl"], ["--max-join-rows", "0"], ["--select", "nope"], ["--where", "p0 ="], ["--from", "1"]]
+
+    def check(self, argv, r, rules, counts):
+        self.assertNotIn(r.status, TRAPS, argv)
+        self.assertGreaterEqual(r.status, 0, argv)
+        if r.status == 0:
+            counts["accepted"] += 1
+            return
+        counts["refused"] += 1
+        try:
+            doc = r.doc()
+            errors = doc.get("errors") or []
+        except (AssertionError, ValueError):
+            # csv and jsonl answer on standard error: `table: RULE: message`, after the rows that were written
+            tags = re.findall(rb"^table: ([a-z]+\.[a-z0-9-]+): ", r.stderr, re.M)
+            self.assertTrue(tags, (argv, r.stdout[:300], r.stderr[:300]))
+            for t in tags:
+                self.assertIn(t.decode(), rules, argv)
+            return
+        self.assertTrue(errors, (argv, r.stdout[:300]))
+        for e in errors:
+            self.assertIn(e["rule"], rules, argv)
+            repair = e.get("repair")
+            if not repair:
+                continue
+            options = repair["options"] if repair["kind"] == "choose" else [repair] if repair["kind"] == "retry" else []
+            for opt in options:
+                counts["repairs"] += 1
+                again = subprocess.run(opt["argv"], capture_output=True, input=b"", timeout=60)
+                self.assertNotIn(again.returncode, TRAPS, opt["argv"])
+                self.assertNotIn(b'"rule":"args.', again.stdout, ("a repair is refused by the flags", argv, opt["argv"]))
+                self.assertNotIn(b"table: args.", again.stderr, ("a repair is refused by the flags", argv, opt["argv"]))
+                if e["rule"] == "join.column-collision":
+                    self.assertNotIn(b'"rule":"join.column-collision"', again.stdout, opt["argv"])
+                    self.assertNotIn(b"table: join.column-collision", again.stderr, opt["argv"])
+
     def test_random_plans_over_random_files(self):
         rng = random.Random(77)
         rules = {r["rule"] if isinstance(r, dict) else r for r in introspect()["rules"]}
+        counts = {"accepted": 0, "refused": 0, "repairs": 0}
         s = Scratch()
-        flags = [["--select", "p0"], ["--select", "b1,p0"], ["--where", "p0 != 'a'"], ["--where", "b0 = k1"], ["--limit", "3"], ["--from", "2"], ["--format", "csv"], ["--format", "jsonl"],
-                 ["--max-rows", "3"], ["--max-state-bytes", "300"], ["--max-state-bytes", "100"], ["--max-join-rows", "7"], ["--max-line-bytes", "30"], ["--threads", "4"], ["--rows"],
-                 ["--join-prefix", "x_"], ["--join-prefix", "p"], ["--explain"], ["--delimiter", "tab"], ["--group", "p0"], ["--order-by", "b0"], ["--top", "2"], ["--query", "select * from 'p.csv'"]]
         try:
-            for i in range(250):
+            for i in range(400):
                 _, ph, pr, bh, br, pk, bk, opts = J.random_case(rng)
+                # the files often share a column name, so that the collision and its repair are reached
+                if rng.random() < 0.4:
+                    bh = [ph[min(j, len(ph) - 1)] if j == bk else bh[j] for j in range(len(bh))]
                 J.write_case(str(s.dir), ph, pr, bh, br, opts)
                 if rng.random() < 0.15:
-                    # damage a file: a ragged row, a bad quote, a cut in the middle
+                    # damage a file: a cut in the middle, a ragged row, a bad quote
                     which = rng.choice(["p.csv", "b.csv"])
                     data = (s.dir / which).read_bytes()
                     cut = rng.randrange(len(data) + 1)
                     data = rng.choice([data[:cut], data + b'x,"y"z\n', data + b"1,2,3,4,5,6,7\n", data[:cut] + b'"' + data[cut:]])
                     (s.dir / which).write_bytes(data)
-                on = rng.choice(["%s=%s" % (ph[pk].decode(), bh[bk].decode()), "p0=b0", "#1=#1", "p0=nope", "k", "%s=%s:int" % (ph[pk].decode(), bh[bk].decode())])
-                argv = ["--root", str(s.dir), "--join", rng.choice(["b.csv", "b.csv", "p.csv", "nope.csv", "-"]), "--on", on] + sum(rng.sample(flags, rng.randint(0, 3)), [])
+                good = rng.random() < 0.75
+                on = "%s=%s" % (ph[pk].decode(), bh[bk].decode()) if good else rng.choice(["p0=b0", "#1=#1", "p0=nope", "k", "%s=%s:int" % (ph[pk].decode(), bh[bk].decode()), "a,b", "=", "\\"])
+                join = "b.csv" if good else rng.choice(["b.csv", "p.csv", "nope.csv", "-", "../b.csv", ""])
+                pool = self.GOOD if good else self.GOOD + self.JUNK
+                extra = sum(rng.sample(pool, rng.randint(0, 3)), [])
+                argv = ["--root", str(s.dir), "--join", join, "--on", on] + extra
                 probe = rng.choice([["p.csv"], ["p.csv"], []])
                 r = run(*argv, *probe, stdin=b"p0\na\n" if not probe else None)
-                self.assertNotIn(r.status, TRAPS, argv)
-                self.assertGreaterEqual(r.status, 0, argv)
-                if r.status != 0:
-                    if b"--format" in b" ".join(a.encode() if isinstance(a, str) else a for a in argv) and (b"csv" in r.stderr or b"jsonl" in r.stderr or r.stderr):
-                        tags = re.findall(rb"^table: ([a-z]+\.[a-z0-9.-]+): ", r.stderr, re.M)
-                        self.assertTrue(tags, (argv, r.stderr[:300]))
-                        for t in tags:
-                            self.assertIn(t.decode(), rules, argv)
-                        continue
-                    try:
-                        doc = r.doc()
-                    except (AssertionError, ValueError):
-                        tags = re.findall(rb"^table: ([a-z]+\.[a-z0-9.-]+): ", r.stderr, re.M)
-                        self.assertTrue(tags, (argv, r.stdout[:300], r.stderr[:300]))
-                        continue
-                    for e in doc.get("errors") or []:
-                        self.assertIn(e["rule"], rules, argv)
-                        repair = e.get("repair")
-                        if repair and repair["kind"] == "choose":
-                            for opt in repair["options"]:
-                                self.assertEqual(opt["argv"][0], binary())
-                                again = subprocess.run(opt["argv"], capture_output=True, input=b"", timeout=60)
-                                self.assertNotIn(again.returncode, TRAPS, opt["argv"])
-                                if e["rule"] == "join.column-collision":
-                                    self.assertNotIn(b"join.column-collision", again.stdout + again.stderr, opt["argv"])
-                        if repair and repair["kind"] == "retry":
-                            again = subprocess.run(repair["argv"], capture_output=True, input=b"", timeout=60)
-                            self.assertNotIn(again.returncode, TRAPS, repair["argv"])
+                self.check(argv + probe, r, rules, counts)
         finally:
             s.cleanup()
+        self.assertGreater(counts["accepted"], 100, counts)
+        self.assertGreater(counts["refused"], 100, counts)
+        self.assertGreater(counts["repairs"], 5, counts)
 
 
 if __name__ == "__main__":
