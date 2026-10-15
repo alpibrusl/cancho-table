@@ -655,6 +655,17 @@ class Guard(Fixture):
                 self.assertEqual(self.after(argv, "--where"), written + " != ''")
                 self.assertEqual(subprocess.run(argv, capture_output=True, input=b"").returncode, 0, written)
 
+    def test_no_guard_is_offered_when_it_would_not_be_an_expression(self):
+        # eight levels of parentheses are the most there are: the guard puts what was there one level down
+        deep = "(" * 8 + "pg = 'x'" + ")" * 8
+        r = self.go(["--where", deep], probe="pk,pg\n1,x\n,x\n", build="bk,bg\n1,a\n", on="pk=bk:int", fmt="json")
+        self.assertEqual(r.first_rule(), "value.not-integer")
+        rep = r.error()["repair"]
+        self.assertTrue(rep is None or rep["kind"] == "none", rep)
+        ok = "(" * 7 + "pg = 'x'" + ")" * 7
+        r = self.go(["--where", ok], probe="pk,pg\n1,x\n,x\n", build="bk,bg\n1,a\n", on="pk=bk:int", fmt="json")
+        self.assertEqual(self.after(self.repair_argv(r), "--where"), "pk != '' and (" + ok + ")")
+
     def test_the_guard_names_the_key_column_wherever_it_is(self):
         r = self.go([], probe="pg,pk\nx,1\ny,\n", build="bg,bk\na,1\n", on="pk=bk:int", fmt="json")
         argv = self.repair_argv(r)
