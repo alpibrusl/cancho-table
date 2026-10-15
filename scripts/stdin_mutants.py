@@ -29,8 +29,8 @@ MUTANTS = [
     ("the file path reads standard input", "inputs.cho", "    var stdin = cli.operand_count(parsed) == 0;", "    var stdin = true;"),
     # how it is read
     ("standard input is read and then the empty file's filler is called", "table.cho#stream", "r = bulk.fill_stdin(r, io);", "r = lines.fill_file(bulk.fill_stdin(r, io), file);"),
-    ("standard input is told it is a file", "table.cho", 'opened, true, inp.jsonl, "-", "", "-", io, fs, delim', 'opened, false, inp.jsonl, "-", "", "-", io, fs, delim'),
-    ("the file is told it is standard input", "table.cho", "opened, false, inp.jsonl, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim", "opened, true, inp.jsonl, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim"),
+    ("standard input is told it is a file", "table.cho", 'opened, true, inp.jsonl, inp.has_join, "-", buffer.bytes(rr), "-", io, fs, delim', 'opened, false, inp.jsonl, inp.has_join, "-", buffer.bytes(rr), "-", io, fs, delim'),
+    ("the file is told it is standard input", "table.cho", "opened, false, inp.jsonl, inp.has_join, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim", "opened, true, inp.jsonl, inp.has_join, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim"),
     ("the loop for standard input is not chosen", "table.cho", "    if stdin {\n        return read_stream(", "    if false {\n        return read_stream("),
     ("the empty file that stands in is not opened for standard input", "table.cho", 'match open_read(fs, "/dev/null") {', 'match open_read(fs, "/dev/zero") {'),
     ("an open failure of the stand-in is ignored", "table.cho", 'Opened::Failed(reason) => {\n                    e = fail.io_error(heap, e, reason, false, "-");\n                }', "Opened::Failed(reason) => {\n                }"),
@@ -44,8 +44,8 @@ MUTANTS = [
     # (Not here: "the refill keeps the view of the last chunk", `viewing: viewing, ...` for `viewing: false, ...`. It survives and is equivalent: the refill is only called
     # after `lines.next` answered `need`, and `lines.next` starts every answer with the view off, so the fields it would keep are already false and 0.)
     # how it is named
-    ("a refusal names standard input as stdin", "table.cho", 'opened, true, inp.jsonl, "-", "", "-", io, fs, delim', 'opened, true, inp.jsonl, "stdin", "", "-", io, fs, delim'),
-    ("a refusal names no path", "table.cho", 'opened, true, inp.jsonl, "-", "", "-", io, fs, delim', 'opened, true, inp.jsonl, "", "", "-", io, fs, delim'),
+    ("a refusal names standard input as stdin", "table.cho", 'opened, true, inp.jsonl, inp.has_join, "-", buffer.bytes(rr), "-", io, fs, delim', 'opened, true, inp.jsonl, inp.has_join, "stdin", buffer.bytes(rr), "-", io, fs, delim'),
+    ("a refusal names no path", "table.cho", 'opened, true, inp.jsonl, inp.has_join, "-", buffer.bytes(rr), "-", io, fs, delim', 'opened, true, inp.jsonl, inp.has_join, "", buffer.bytes(rr), "-", io, fs, delim'),
     # how it is bounded
     ("a line with no end is read to its end", "table.cho#stream", "if length > finish.line_ceiling() {", "if length > 1000000000000 {"),
     ("a line with no end is cut at the cap, not the ceiling", "table.cho#stream", "if length > finish.line_ceiling() {", "if length > 1000 {"),

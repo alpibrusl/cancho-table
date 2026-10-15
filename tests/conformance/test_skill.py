@@ -53,6 +53,7 @@ SAMPLE = {
     "--max-groups": "100", "--max-distinct": "100", "--max-state-bytes": "100000", "--threads": "1",
     "--report": "types", "--chunk-bytes": "100000", "--parallel-min-bytes": "100000", "--format": "json",
     "--query": "select host, count(*) group by host",
+    "--join": "sales.csv", "--on": "host=host", "--join-type": "inner", "--join-prefix": "r_", "--max-join-rows": "1000000",
 }
 REFUSALS = {"args.conflict", "args.required-flag"}
 # What each form's line in the usage lists: the flags the code takes for the form and does something with
@@ -66,8 +67,9 @@ FORM_FLAGS = {
     "report": (COMMON | PAGED | {"--report", "--select", "--where"}) - {"--top"},
     "all": COMMON | (PAGED - {"--top", "--max-state-bytes"}) | {"--rows"},
     "query": COMMON | PAGED | {"--query", "--max-sort-rows", "--max-groups", "--max-distinct"},
+    "join": COMMON | {"--join", "--on", "--join-type", "--join-prefix", "--max-join-rows", "--select", "--where", "--limit", "--from", "--max-bytes", "--max-state-bytes", "--threads"},
 }
-FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"], "all": ["--rows"], "query": ["--query", "select host, count(*) group by host"]}
+FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"], "all": ["--rows"], "query": ["--query", "select host, count(*) group by host"], "join": ["--join", "sales.csv", "--on", "host=host", "--join-prefix", "r_"]}
 
 
 def usage_lines():
@@ -75,7 +77,7 @@ def usage_lines():
     text = introspect()["usage"]
     forms = {}
     for line in text.splitlines():
-        m = re.match(r"(shape|rows|groups|report|all|query): ", line)
+        m = re.match(r"(shape|rows|groups|report|all|query|join): ", line)
         if m:
             forms[m.group(1)] = set(re.findall(r"--[a-z][a-z-]*", line))
     return forms, set(re.findall(r"--[a-z][a-z-]*", text))
@@ -108,7 +110,7 @@ class Usage(unittest.TestCase):
     def test_usage_names_every_flag_and_only_flags(self):
         forms, named = usage_lines()
         table = {f["name"] for f in introspect()["flags"]}
-        self.assertEqual(set(forms), {"shape", "rows", "groups", "report", "all", "query"})
+        self.assertEqual(set(forms), {"shape", "rows", "groups", "report", "all", "query", "join"})
         self.assertEqual(named, table, "usage and the flag table disagree: missing %s, extra %s" % (sorted(table - named), sorted(named - table)))
 
     def test_each_line_lists_what_its_form_takes(self):
@@ -249,7 +251,7 @@ class Examples(unittest.TestCase):
 
     def test_between_three_and_six_examples(self):
         _, pairs = self.examples()
-        self.assertTrue(3 <= len(pairs) <= 6, len(pairs))
+        self.assertTrue(3 <= len(pairs) <= 7, len(pairs))
         self.assertTrue(any("--query" in command for command, _ in pairs), "no example of a query")
 
     def test_every_example_prints_what_the_skill_says(self):

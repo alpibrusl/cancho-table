@@ -118,7 +118,7 @@ MUTANTS = [
     ("write: select * alone is not --rows", "qtrans.cho", "if star && n_conds == 0 && n_orders == 0 && !grouped {", "if star && n_orders == 0 && !grouped {"),
     ("write: select * with an order is --rows", "qtrans.cho", "if star && n_conds == 0 && n_orders == 0 && !grouped {", "if star && n_conds == 0 && !grouped {"),
     # ---- the plan: --rows, the source, the conflicts
-    ("plan: --rows is not rows", "table.cho", "|| has_report || inp.has_rows {\n        mode = 1;", "|| has_report {\n        mode = 1;"),
+    ("plan: --rows is not rows", "table.cho", "|| has_report || inp.has_rows || inp.has_join {\n        mode = 1;", "|| has_report || inp.has_join {\n        mode = 1;"),
     ("plan: --rows takes a --where", "table.cho", "if inp.has_rows && (has_select || has_where || grouped || has_order || has_report) {", "if inp.has_rows && (has_select || grouped || has_order || has_report) {"),
     ("plan: --rows takes a --select", "table.cho", "if inp.has_rows && (has_select || has_where || grouped || has_order || has_report) {", "if inp.has_rows && (has_where || grouped || has_order || has_report) {"),
     ("plan: --rows takes a --group", "table.cho", "if inp.has_rows && (has_select || has_where || grouped || has_order || has_report) {", "if inp.has_rows && (has_select || has_where || has_order || has_report) {"),

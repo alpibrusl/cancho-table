@@ -92,6 +92,9 @@ SPELL = "level\n1.5\n1.50\n01.5\n+1.5\n2.25\n"
 # A file with three dirty cells late in a column each
 DIRTY = "item,price,bytes,cents\na,1.50,10,100\nb,12.25,20,200\nc,3.00,30,300\nd,n/a,1e3,\n"
 
+# A second file, for the join: the customers of orders.csv, one of them twice
+CUSTOMERS = """name,tier\n"Doe, Jane",gold\nAcme,silver\nZed,bronze\nAcme,reseller\n"""
+
 # What is shown is what is typed; the argv run is shlex.split of it.
 DEMOS = {
     "shape": "table orders.csv",
@@ -123,13 +126,15 @@ DEMOS = {
     "query": """table --query "select customer, count(*), sum(bytes) from 'orders.csv' where bytes != '' group by customer order by sum(bytes) desc limit 2" --format csv""",
     "explain": "table --explain --threads 4 --where \"bytes:int > 100\" --group customer --agg count,sum:bytes --sort -sum:bytes --limit 2 orders.csv",
     "query_typo": "table --query \"select customer form 'orders.csv'\"",
+    "join": """table --join customers.csv --on customer=name --join-prefix c_ --select id,customer,bytes,c_tier --format csv orders.csv""",
+    "join_collision": "table --join orders.csv --on id=id orders.csv",
     "query_or": "table --query \"select id from 'orders.csv' where status = 404 or status = 500\"",
 }
 # demos shown as the members of the JSON line that matter, since the line is long
-SUMMARY = {"float_over": ["rule", "hint", "repair", "detail"], "float_bad": ["rule", "hint", "repair", "detail"], "dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"], "query_typo": ["rule", "hint", "repair", "detail"], "query_or": ["rule", "hint", "repair", "detail"]}
+SUMMARY = {"float_over": ["rule", "hint", "repair", "detail"], "float_bad": ["rule", "hint", "repair", "detail"], "dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"], "query_typo": ["rule", "hint", "repair", "detail"], "query_or": ["rule", "hint", "repair", "detail"], "join_collision": ["rule", "hint", "repair"]}
 # task name -> the demos shown for it
 TASKS = {
-    "select": ["select"], "filter": ["where"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "floatsum": ["float_sum", "float_over"], "typedkeys": ["group_text", "group_dec", "order_text", "order_dec"], "report": ["report"], "sort": ["sort"], "group": ["group"], "query": ["query", "query_typo", "query_or"], "explain": ["explain"], "page": ["page1", "page2"],
+    "select": ["select"], "filter": ["where"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "floatsum": ["float_sum", "float_over"], "typedkeys": ["group_text", "group_dec", "order_text", "order_dec"], "report": ["report"], "sort": ["sort"], "group": ["group"], "join": ["join", "join_collision"], "query": ["query", "query_typo", "query_or"], "explain": ["explain"], "page": ["page1", "page2"],
     "csv": ["csv"], "cores": ["cores"], "refuse": ["notint"],
 }
 QS = ["shape", "select", "group"]
@@ -387,6 +392,7 @@ def main():
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "orders.csv").write_text(FIXTURE)
         (Path(tmp) / "prices.csv").write_text(PRICES)
+        (Path(tmp) / "customers.csv").write_text(CUSTOMERS)
         (Path(tmp) / "readings.csv").write_text(READINGS)
         (Path(tmp) / "drift.csv").write_text(DRIFT)
         (Path(tmp) / "spell.csv").write_text(SPELL)

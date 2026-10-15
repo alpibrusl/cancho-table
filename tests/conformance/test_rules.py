@@ -29,7 +29,7 @@ LOCAL = {
     "limit.too-many-groups": (8, "never", "--max-groups"),
     "limit.too-many-distinct": (8, "never", "--max-distinct"),
     "limit.state-too-large": (8, "never", "--max-state-bytes"),
-    "column.unknown": (3, "never", "--where, --group or --agg"),
+    "column.unknown": (3, "never", "--where, --group, --agg or --on"),
     "column.ambiguous": (8, "never", "more than one column"),
     "where.syntax": (2, "sometimes", "offset"),
     "agg.bad-spec": (2, "never", "count, sum:COL"),
@@ -59,6 +59,8 @@ LOCAL = {
     "limit.json-too-many-nodes": (8, "never", "--max-json-nodes"),
     "output.duplicate-column": (2, "never", "same name"),
     "output.not-representable": (2, "never", "UTF-8"),
+    "join.column-collision": (2, "sometimes", "both files"),
+    "limit.too-many-join-rows": (8, "never", "--max-join-rows"),
 }
 # rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
 VARIABLE_HINT = {"query.unsupported"}
@@ -113,6 +115,7 @@ class Rules(unittest.TestCase):
         s.write("open.csv", 'a,b\n1,"x\n')
         s.write("wide.csv", "a,b\n" + "1," + "x" * 5000 + "\n")
         s.write("header.csv", '"a\n' + "b\n" * 600 + '",c\n1,2\n')
+        s.write("jp.csv", "k,v\na,1\na,2\n")
         s.write("ok.jsonl", '{"a":1}\n')
         s.write("badhead.csv", b"\xff\n1\n")
         s.write("bad.jsonl", '{"a":1,}\n')
@@ -185,6 +188,8 @@ class Rules(unittest.TestCase):
             ("output.duplicate-column", root + ["--select", "a,a", "--format", "jsonl", "ok.csv"], None),
             ("output.not-representable", root + ["--rows", "--format", "jsonl", "badhead.csv"], None),
             ("limit.json-too-many-nodes", root + ["--input-format", "jsonl", "--fields", "a", "--max-json-nodes", "1", "ok.jsonl"], None),
+            ("join.column-collision", root + ["--join", "jp.csv", "--on", "k=k", "jp.csv"], None),
+            ("limit.too-many-join-rows", root + ["--join", "jp.csv", "--on", "k=k", "--join-prefix", "r_", "--max-join-rows", "1", "jp.csv"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")

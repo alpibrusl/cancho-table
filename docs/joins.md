@@ -12,6 +12,8 @@
 > this document the sentence says "Corrected by section 15" in place.** Still no tool code: the spikes are throwaway programs under
 > `scripts/spikes/join/`.
 >
+> **Update 2026-10-15 (the pull request that adds section 16): slice J1 is built** (`--join`, `--on`, `--join-type inner`, `--join-prefix`, `--max-join-rows`, rows out, one core), and section 16 says what it is, where it differs from this document, its gates and its numbers.
+>
 > References to code are to `origin/main` at `072ce15` (`file:line`). The branch that adds columns renaming
 > (`docs/or-and-columns.md` in the request) **does not exist**: there is no such file and `gh pr list` shows no open pull
 > request on 2026-10-14, so section 4 defines the minimal prefixing rule itself and says what a rename feature would replace.
@@ -165,7 +167,7 @@ defined order, so the chain is deterministic. The cost of the pipe is one parse 
 * **Standard input is the probe only.** It has no size and no ranges (`docs/readers.md:107-120`): it is read in one pass on one core. It is
   allowed exactly where it is useful, streaming through a build that is already held. `--threads` on a stdin probe is "one core, same bytes,
   no refusal", as for every plan (`docs/readers.md:113`). The build side is read before the first byte of standard input is consumed,
-  so a build refusal leaves the pipe unread (the producer sees a closed pipe, as it does for any flag refusal).
+  so a build refusal leaves the pipe unread (the producer sees a closed pipe, as it does for any flag refusal). **Corrected by section 16.2:** the first line of the pipe, its header, is read before the build's rows (the collision of names is refused before any row of either file is read); the rows of the pipe are not.
 * **Both inputs read the same file twice** if they are the same path; nothing is claimed about a file that changes between the two opens
   (`docs/query.md:564` makes the same statement for `--explain`).
 * **MCP.** The server passes `--join=VALUE` as one argument and the tool confines the path under the server's `--root`, one component at a time,
@@ -350,7 +352,7 @@ The same formula applied to the baseline files of section 12 (**computed**, from
   at the refusal (the rest of the build is unread). A `left`, `semi` or `anti` join has no swap: its meaning depends on which side is which.
 * `--explain` (section 8.4) says, before any read, what is exact about the build file: its size, and an **upper bound** on the accounted bytes that follows from the size and the header (every
   non-blank record has at least `columns - 1` delimiters and one terminator, so there are at most `(size - header) / columns + 1` rows; every record and key is at most the file;
-  the bound is therefore `(size - header) + 76 * rows_at_most` and is loose for narrow files). It says "cannot pass the bound" when the upper bound is within it, and "may pass it" when not; it never
+  the bound is therefore `(size - header) + 76 * rows_at_most` and is loose for narrow files). **Changed by section 16.2:** the derivation above leaves out that the key bytes of the distinct keys are counted besides the record bytes that contain them, so `(size - header) + 76 * rows_at_most` is not proved to be an upper bound (no file of the tests violates it, because `rows_at_most` is loose, which is not a proof); J1 states the provable `2 * (size - header) + 76 * rows_at_most` with `rows_at_most = (size - header) / max(columns, 2) + 1`. It says "cannot pass the bound" when the upper bound is within it, and "may pass it" when not; it never
   says "will", because a lower bound cannot be had from the size (blank lines). It does not read rows (`docs/query.md` gate E2).
 
 ### 6.4 The probe
@@ -748,3 +750,66 @@ a real J1 build and probe say that the threaded probe is worth option (a)'s memo
 * **Measured:** everything marked as such above, on one loaded Mac, one compiler revision, minimum of 5 processes (S1) and of 7 repetitions in each of 5 processes (S0), one thread unless it says threads. The raw output of the committed runs is `scripts/spikes/join/results/`.
 * **Computed:** the 111 to 152 MB at the default bound (the measured ratios applied to 67,108,864), the 153 to 171 million for 1,000,000 rows, the 51 seconds, the per-thread memory differences.
 * **Not measured, or NOT RUN:** every Linux x86-64 measurement (gram was down); any real join, any build through the tool's reader (quotes, ragged rows, `--join-where`), typed keys; a growth policy other than doubling; a partitioned join; the option (a) cap of 1 MiB; thread counts above 8; a quiet machine; the worst ratio of resident to accounted over shapes other than the eight files.
+
+## 16. J1 as built (2026-10-15)
+
+> Everything below is **measured** unless it says *computed* or *reading*. Conditions for all timings: one Mac (Apple M4 Max, 16 cores, 64 GB, macOS 26.2, arm64), **loaded by other sessions' work** (load average 8.5 to 9.4 on 16 cores during the runs), compiler `cancho` e47d647, DuckDB 1.5.6, csvtk 0.38.0. Gram (Linux x86-64) is down: **every Linux counterpart is NOT RUN** (the oracle and the accounting there, the instruction counter under `perf`, the `strace` run showing no thread for a join or a pipe, the soak) and no Linux claim is made.
+
+### 16.1 What was built
+
+`--join FILE --on PROBE=BUILD [--join-type inner] [--join-prefix P] [--max-join-rows N]`, csv or tsv on both sides, one key pair compared as text (the cell's bytes, its quotes undone), the inner join, rows out as csv, json or json lines, with `--select`, `--where`, `--limit`, `--from` and `--max-bytes` on the joined row. The probe is the operand or standard input; the build is the `--join` file, read whole before the first probe row. Output order is the probe's, then the build's. `--threads`, `--chunk-bytes` and `--parallel-min-bytes` are accepted and the join is read on one core (`--explain` says so). The code is in modules of its own (`jtab`, `jnflags`, `jnhead`, `jnfail`, `jnread`, `jnexplain`); `read_file` and `read_stream` are not edited, and their machine code is the same size as `main`'s (18,064 and 17,072 bytes in both binaries, `nm`).
+
+The authority row is unchanged (`scripts/manifest.py --check`: `args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write`; the join only reads files). New rules: `join.column-collision` (exit 2, repair `choose` with `--join-prefix` and the stem of the build file's name when that makes names that do not collide) and `limit.too-many-join-rows` (exit 8); `column.unknown` and `column.ambiguous` also name a key of `--on` (`detail.flag "--on"`, `detail.input`); `limit.state-too-large` has `detail.holder "join-build"`.
+
+### 16.2 Where J1 differs from sections 1 to 15 (every narrow reading)
+
+1. **Scope.** J1 is the row of section 11: one text key pair, `inner`. `--join-type` exists with the one value (`left`, `semi`, `anti` are `args.bad-value` by the flag's `choice:inner`). `--on NAME` (USING), a type suffix (`k=id:int`), a second pair and the escapes' other uses are `args.bad-value` with the reason (J2). `--group`, `--agg`, `--order-by`, `--sort`, `--top` and `--report` with `--join` are `args.conflict` with the hint to pipe the join as csv (J3); `--input-format jsonl` with `--join` is `args.conflict` (J5); `--query` with `--join` is `args.conflict` and a `join` inside a query stays `query.unsupported` (J3b).
+2. **Beyond J1's row, because the task asked:** `--explain` (section 3's row J3 has it; here `data.explain.join` and the join's `work`), standard input as the probe (J4), the MCP `join` property and the `stdin` + `join` call (J4), introspect, skill, schema, README and pages.
+3. **`--where` is evaluated whole, on the joined row, after the join** (no split into probe, build and after, no `--join-where`): with text keys this is the same answer as the pushed form (section 8.1), and the split is J3.
+4. **The header of a pipe is read before the build's rows** (section 3.1 said the build is read before the first byte of the pipe): a name both files have must be refused "before any read but the two headers", and the probe's header is its first line. The rows of the pipe are not read before the build is whole (tested with an endless producer of rows).
+5. **`detail.input`** (`probe` or `build`) is on the rules a join raises or extends (`column.unknown`, `column.ambiguous`, `limit.state-too-large`, `limit.too-many-join-rows`); the rules of one file that a join reuses (`parse.csv-*`, `limit.line-too-long`, `limit.record-too-large`, `limit.too-many-rows` for the build, `value.*` of `--where`) name the file in `detail.path` (the build's path or the probe's, `-` for a pipe) and have no `detail.input`: `finish.explain` is shared with the loops that must not change, and a branch there changed register allocation in them before (section 1, R3).
+6. **The refusal of a `--where` read names the probe row and line** as section 6.4 says, but the column is named in the joined header and there is no `detail.padded` (no left join yet).
+7. **`--join` is resolved as a query's `from 'path'` is** (`qpath.resolve`, the rules of an operand, the same `path.*` and `io.*` rules), so the `retry` repair that an operand's `path.dotdot` offers is not offered for `--join` (there is no argument position in the text); the refusal is the same rule with no repair.
+8. **The upper bound of `--explain` (6.3) is `2 * (size - header) + 76 * rows_at_most`, `rows_at_most = (size - header) / max(columns, 2) + 1`** (computed). The bound written in 6.3 leaves out that the keys are counted besides the records that hold them; it is not proved to be an upper bound (no tested file violates it, since `rows_at_most` is loose). `explain` says "may pass" or "cannot pass", never "will".
+9. **There is no `refusals.static`** in the explain document (it has `refusals.possible` only, as before); the join's rules are listed there.
+10. **The resident-to-accounted ratio is larger than the spike's** (16.3), so the help and the hint say "up to about three times", not "about twice" as section 15.4 proposed.
+
+### 16.3 Gate A, as corrected by section 15, and the resident set of the real build
+
+`tests/conformance/test_join.py` `Accounting`: the program's count of the accounted bytes (read from the refusal one byte below the bound, `detail.held`, which is the count before the row that did not fit) **equals the formula of 6.2 computed in Python from the file by another program** on: 2^20 and 2^20 + 1 rows of unique keys (98,566,144 accounted for the first), the spike's `wide_pow2` shape (100,000 records totalling exactly 2^26 + 36 bytes, so the record buffer doubles at the end of the file), 100,000 rows over 10,000 keys (chains of ten), quoted keys with doubled quotes, empty keys, CRLF and a BOM, every field quoted, no final newline, and a key in the second column. The bound is exact on each: accepted at the formula and refused at one byte below, naming the row, its line, the bytes read and the size of the file; and on a 5,000-row file at 1, 2, 6 and 16 threads and for a standard input probe. The eight files of the spike (`scripts/spikes/join/gen.py`, seed 7) gave **the same accounted bytes as the spike's own counter on all eight** (15,076,063 for `int_100k` and so on), through the tool's reader.
+
+`scripts/join_rss.py` (min of 5, `/usr/bin/time -l`, the call is `table --join FILE` with a probe of one row at `--max-state-bytes` equal to the formula; the floor, the same call with a build of one row, is 2,031,616 bytes):
+
+| file | rows | accounted | peak resident | / accounted | net of floor |
+|---|---:|---:|---:|---:|---:|
+| `int_100k` | 100,000 | 15,076,063 | 22,265,856 | 1.48 | 1.34 |
+| `int_1m` | 1,000,000 | 152,765,177 | 280,838,144 | 1.84 | 1.83 |
+| `text_100k` | 100,000 | 16,874,484 | 25,624,576 | 1.52 | 1.40 |
+| `text_1m` | 1,000,000 | 170,766,714 | 291,913,728 | 1.71 | 1.70 |
+| `text_pow2` | 1,048,576 | 179,166,180 | 296,894,464 | 1.66 | 1.65 |
+| `text_pow2p1` | 1,048,577 | 179,170,606 | 361,267,200 | 2.02 | 2.00 |
+| `wide_pow2` | 100,000 | 76,197,790 | 210,960,384 | **2.77** | 2.74 |
+| `dup_100k` | 100,000 | 9,157,215 | 19,415,040 | 2.12 | 1.90 |
+
+So **1.48 to 2.77 times** on these eight shapes, worse than the spike's 1.65 to 2.26 at the one shape that has a 64 MiB record buffer doubling at the end of the file (the old copy, 64 MiB, and the new one, 128 MiB, are both resident). The worst ratio over all shapes was not searched for. `--max-state-bytes` stays an exact guard on what the join holds, and **not a bound on memory**: the help, the refusal's hint, `--explain` and the skill say resident memory can be up to about three times the number while the build grows. A build just under the default 64 MiB would therefore be about 100 to 190 MB resident (*computed* from the ratios). The default is kept (Q4).
+
+### 16.4 The other gates
+
+* **O, the oracle** (`Oracle`, `Order`, `Keys`): 24 generated shapes (duplicates, no matches, all matches, big fan-out of 300 x 300, empty tables, look-alike keys `007`/`7`/`-0`/`0`/`1.5`/`1.50`, empty keys, quoted keys with commas, quotes and newlines, CRLF and BOM on either side, non-UTF-8 keys, one-column files, `#N`, same-named key columns with a prefix) and 60 random tables, each compared as rows and in order against a Python reference, **SQLite** (TEXT columns, binary collation) and **DuckDB 1.5.6** (`all_varchar=true`, an explicit `nullstr`, the column list given, no inference; skipped for the tables with non-UTF-8 bytes, which it refuses), as csv bytes, as json, from a file, from standard input, and at `--threads 4` with tiny chunks; the reference, SQLite and DuckDB agreed on every case before the tool was judged. The keys of J1 are text, so `007` and `7`, and `-0` and `0`, differ, and `--on k=id:int` is a refusal.
+* **EQ**: the 166 plans of `scripts/corpus.py` on `main`'s binary (recomputed first; md5 of the list `fccb01b66dd7518d74611219a6c5aa29`) and on this branch's: the same 166 lines, byte for byte, at 1 thread and with tiny ranges.
+* **IB** (`scripts/gate_regress.py --counter`, bound 1.01, 21 cells x {1, 4} threads, three builds a side; the compiler is deterministic, so the three builds of a side are the same bytes): **every cell 1.000** (the largest difference is 0.7 M instructions in 1.5 to 5.5 G). The `read_file` and `read_stream` functions are the same size as `main`'s.
+* **ST**, **TH**: the probe from a pipe, byte for byte the file's, with `--threads` in {1, 4}, a pipe dripped a byte at a time and cut inside a quoted field, an endless producer of rows (the build is refused first), the refusals naming `-`; `--threads` 2 to 64 give the same bytes; `strace -e clone` is Linux only and **NOT RUN**.
+* **F, fuzz**: 400 plans over random files (valid and junk flags, damaged files, files that share column names): no trap, every refusal tagged with a rule of the catalogue, every repair offered accepted by the flags (the collision's repair never collides again), 100+ accepted and 100+ refused runs.
+* **EXPL**, **MCP**: `--explain` refuses what the run refuses before a row, with the same errors; the 14 path forms for `join`, `join: "--root=/"` is a file name, `join: "-"` is `args.bad-value`, `stdin` + `join` works and the text never reaches the build; the corpus of `test_mcp.py` has 16 join calls compared with the CLI byte for byte.
+* **M, mutants** (`scripts/join_mutants.py`, 63 mutants of the key read, the chain, the joined row, the counted bytes, the bound, the order of the files, the headers, the flags, the pipe, the root, the threads note and the rules; `--check` in CI, `test_mutants_apply`): the first run on the Mac killed 57 of 65; the eight survivors were two equivalent mutants (the byte between the two records of the joined record is never read; the `2 *` of the explain's bound cannot be told from the doc's form by any file), removed and said so in the script, and six gaps of the tests, closed (an empty key's 60 bytes in the accounting, the most matches so far, `#N` one past the end, a second pair with no equals sign, the `reads` text of the explain, `may_pass_bound`); a second run killed those six. Gram: **NOT RUN**.
+
+### 16.5 Throughput (`scripts/join_bench.py`, min of 7 interleaved rounds, median in brackets, output to /dev/null, every contender's whole output checked against a Python join first)
+
+| case | `table` | DuckDB, 1 thread | DuckDB, default | csvtk |
+|---|---:|---:|---:|---:|
+| integer keys, 1M x 100k | **0.159 s** (0.176) | 0.247 | 0.133 | 0.391 |
+| text keys, 1M x 100k | **0.172 s** (0.185) | 0.286 | 0.125 | 0.404 |
+| integer keys, 1M x 1M | 0.473 s (0.501) | 0.353 | 0.200 | 0.951 |
+| text keys, 1M x 1M | 0.527 s (0.542) | 0.398 | 0.173 | 0.967 |
+
+Peak resident (once per tool, MB): `table` 17, 21, 146, 189; DuckDB 73, 70, 112, 163 (1 thread); csvtk 344, 370, 623, 668. `table` selected `id,k,v,b_name` at `--max-state-bytes 1073741824` (the 1M builds are refused by the default, 6.2). **Against the targets of section 12:** not slower than DuckDB at one thread: **met on the two 100k cases, missed on the two 1M x 1M cases** (0.47 and 0.53 against 0.35 and 0.40 s); resident memory under csvtk's: met on all four; the faster-than-DuckDB-at-8-threads target belongs to J6. The 1M x 1M cases are the build's: the estimate of section 12 (0.25 to 0.50 s) held for the upper end, and section 15.1's 70 ms for the spike's build was a lower bound, as it said. Not measured: a quiet machine, Linux, build sides above 1,048,577 rows, other widths.

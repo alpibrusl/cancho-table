@@ -1,0 +1,302 @@
+edition 5;
+
+module jnhead;
+
+// The two headers of a join (docs/joins.md sections 4 and 6.1): each read with the reader the run uses and left ready to go on with the rows, the columns of `--on` found in them, a name that
+// both have refused, and the header of the joined row made: the probe's names, then the build's with `--join-prefix` before each. The run (`jnread`) and `--explain` (`jnexplain`) both
+// take this step, so that a plan the run would refuse before it read a row is refused by `--explain` with the same error.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import bulk;
+import explain;
+import finish;
+import jnfail;
+import jnflags;
+import query;
+import reader;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.lines;
+
+// The header of an open input, read as `explain.read_head` reads it, from the reader `r0` that goes on to the rows afterwards (standard input has one pass and one reader, so the header
+// and the rows must come from the same one). `stdin` fills the reader from standard input and not from `file`. `abort` is the run's code for what went wrong with the header.
+pub fn head_of[&h, &f, &i](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, cap: int, delim: int) -> [heap, file_read, io_read] (lines.Lines, explain.Head) {
+    var names = buffer.empty(heap, 1);
+    var ends = vec.empty(heap, 1, 0);
+    var rec = buffer.empty(heap, 256);
+    var r = r0;
+    var got = false;
+    var quoted = false;
+    var seps = 0;
+    var opened = 0;
+    var abort = 0;
+    var abort_line = 0;
+    var long_length = 0;
+    var going = true;
+    while going {
+        let (stepped, status) = lines.next(heap, r);
+        r = stepped;
+        if status == lines.need() {
+            if stdin {
+                var length = 0;
+                borrow r as &rr in {
+                    length = lines.length(rr);
+                }
+                if length > finish.line_ceiling() {
+                    r = lines.fill_file(r, file);
+                } else {
+                    r = bulk.fill_stdin(r, io);
+                }
+            } else {
+                r = lines.fill_file(r, file);
+            }
+        } else if status == lines.done() {
+            going = false;
+        } else if status == lines.long() {
+            abort = 4;
+            borrow r as &rr in {
+                abort_line = lines.number(rr);
+                long_length = lines.length(rr);
+            }
+            going = false;
+        } else {
+            borrow r as &rr in {
+                let number = lines.number(rr);
+                var line = lines.text(rr);
+                if number == 1 && len(line) >= 3 && int_of(line[0]) == 239 && int_of(line[1]) == 187 && int_of(line[2]) == 191 {
+                    line = line[3..len(line)];
+                }
+                let whole = line;
+                if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                    line = line[0..len(line) - 1];
+                }
+                if !quoted && len(line) == 0 {
+                    // A blank line before the header is not a record.
+                } else {
+                    if !quoted {
+                        opened = number;
+                        borrow mut rec as &!rw in {
+                            buffer.clear(rw);
+                        }
+                        seps = 0;
+                    }
+                    let (inside, n, bad) = reader.scan(line, delim, quoted, seps);
+                    seps = n;
+                    rec = buffer.append(heap, rec, whole);
+                    var held = 0;
+                    borrow rec as &rw in {
+                        held = buffer.size(rw);
+                    }
+                    if bad {
+                        abort = 1;
+                        abort_line = number;
+                        going = false;
+                    } else if inside {
+                        quoted = true;
+                        rec = buffer.push(heap, rec, byte_of(10));
+                        if held + 1 > cap {
+                            abort = 3;
+                            abort_line = opened;
+                            going = false;
+                        }
+                    } else {
+                        quoted = false;
+                        buffer.drop(heap, names);
+                        vec.drop(heap, ends);
+                        borrow rec as &rw in {
+                            let (nm, en) = reader.split_header(heap, buffer.bytes(rw), delim);
+                            names = nm;
+                            ends = en;
+                        }
+                        got = true;
+                        going = false;
+                    }
+                }
+            }
+        }
+    }
+    if quoted && abort == 0 {
+        abort = 2;
+        abort_line = opened;
+    }
+    var consumed = 0;
+    var bytes_read = 0;
+    var errno = 0;
+    borrow r as &rr in {
+        consumed = lines.consumed(rr);
+        bytes_read = lines.bytes_read(rr);
+        errno = lines.failed(rr);
+    }
+    buffer.drop(heap, rec);
+    return (r, explain.Head { names: names, ends: ends, got: got, abort: abort, abort_line: abort_line, long_length: long_length, errno: errno, consumed: consumed, bytes_read: bytes_read });
+}
+
+pub fn no_head[&h](heap: &!h Heap) -> [heap] explain.Head {
+    return explain.Head { names: buffer.empty(heap, 1), ends: vec.empty(heap, 1, 0), got: false, abort: 0, abort_line: 0, long_length: 0, errno: 0, consumed: 0, bytes_read: 0 };
+}
+
+pub fn drop_head[&h](heap: &!h Heap, hd: explain.Head) -> [heap] int {
+    let explain.Head { names, ends, got, abort, abort_line, long_length, errno, consumed, bytes_read } = hd;
+    buffer.drop(heap, names);
+    vec.drop(heap, ends);
+    return abort;
+}
+
+// The refusal a header ends in, if it does: the errors of `finish.explain` for that file (a line too long, a bad quote, a header too large, a read that failed). Whether there was one.
+pub fn head_refusal[&h, &g, &p, &q, &n, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, hd: &n explain.Head, shown: &s [byte], budget: int, errs: fail.Errors) -> [heap, args] (fail.Errors, bool) {
+    if hd.abort == 0 && hd.errno == 0 {
+        return (errs, false);
+    }
+    let counted = finish.Counts { columns: vec.size(hd.ends), records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: hd.abort, abort_line: hd.abort_line, long_length: hd.long_length, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+    let labels = buffer.empty(heap, 1);
+    let kept = buffer.empty(heap, 1);
+    let lends = vec.empty(heap, 1, 0);
+    var e = errs;
+    borrow labels as &lr in {
+        borrow lends as &le in {
+            borrow kept as &kr in {
+                e = finish.explain(heap, args, parsed, tree, hd.names, hd.ends, lr, le, kr, counted, shown, 0 - 1, hd.errno, true, budget, e);
+            }
+        }
+    }
+    buffer.drop(heap, labels);
+    buffer.drop(heap, kept);
+    vec.drop(heap, lends);
+    return (e, true);
+}
+
+// The column of `names` that `name` (or `#kind`) is: status 0 and the column, 1 when there is none, 2 when there are several.
+fn find_column[&n, &e, &w](names: &n buffer.Buffer, ends: &e vec.Vec[int], name: &w [byte], kind: int) -> [] (int, int) {
+    if kind >= 1 {
+        if kind <= vec.size(ends) {
+            return (0, kind - 1);
+        }
+        return (1, 0);
+    }
+    var found = 0;
+    var column = 0;
+    var i = 0;
+    var from = 0;
+    while i < vec.size(ends) {
+        let to = vec.get(ends, i);
+        if bytes.equal(buffer.bytes(names)[from..to], name) {
+            found = found + 1;
+            column = i;
+        }
+        from = to;
+        i = i + 1;
+    }
+    if found == 0 {
+        return (1, 0);
+    }
+    if found > 1 {
+        return (2, 0);
+    }
+    return (0, column);
+}
+
+// What the two headers make of the join: the header of the joined row (probe names, then the build's, each with the prefix), the column of the key on each side, and how many columns
+// each side has. `ok` is false when a refusal was added, and also when the probe header is not known (`--explain` of a pipe), in which case `names` is the build's alone.
+pub res struct United {
+    names: buffer.Buffer,
+    ends: vec.Vec[int],
+    pkey: int,
+    bkey: int,
+    np: int,
+    nb: int,
+    ok: bool,
+}
+
+pub fn take_header(u: United) -> [] (buffer.Buffer, vec.Vec[int]) {
+    let United { names, ends, pkey, bkey, np, nb, ok } = u;
+    return (names, ends);
+}
+
+pub fn drop_united[&h](heap: &!h Heap, u: United) -> [heap] int {
+    let United { names, ends, pkey, bkey, np, nb, ok } = u;
+    buffer.drop(heap, names);
+    vec.drop(heap, ends);
+    return np;
+}
+
+pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &c buffer.Buffer, bends: &d vec.Vec[int], probe_known: bool, shown_p: &s [byte], shown_b: &t [byte]) -> [heap, args] (United, fail.Errors) {
+    let table = spec.flag_table();
+    var e = errs;
+    let np = vec.size(pends);
+    let nb = vec.size(bends);
+    let on = jnflags.parse_on(heap, cli.text(args, parsed, table, "on"));
+    let jnflags.On { status, left, lkind, right, rkind } = on;
+    let oleft = left;
+    let oright = right;
+    let olkind = lkind;
+    let orkind = rkind;
+    var bkey = 0;
+    var pkey = 0;
+    var ok = true;
+    // the build header first: its refusals come first
+    var bs = 0;
+    var bc = 0;
+    borrow oright as &rr in {
+        let (s2, c2) = find_column(bnames, bends, buffer.bytes(rr), orkind);
+        bs = s2;
+        bc = c2;
+        if s2 != 0 {
+            e = jnfail.key_column(heap, e, s2, "build", shown_b, buffer.bytes(rr), bnames, bends);
+        }
+    }
+    bkey = bc;
+    if bs != 0 {
+        ok = false;
+    }
+    if probe_known {
+        var ps = 0;
+        var pc = 0;
+        borrow oleft as &lr in {
+            let (s2, c2) = find_column(pnames, pends, buffer.bytes(lr), olkind);
+            ps = s2;
+            pc = c2;
+            if s2 != 0 {
+                e = jnfail.key_column(heap, e, s2, "probe", shown_p, buffer.bytes(lr), pnames, pends);
+            }
+        }
+        pkey = pc;
+        if ps != 0 {
+            ok = false;
+        }
+    }
+    buffer.drop(heap, oleft);
+    buffer.drop(heap, oright);
+    let prefix = cli.text(args, parsed, table, "join-prefix");
+    var names = buffer.empty(heap, buffer.size(pnames) + buffer.size(bnames) + nb * len(prefix) + 1);
+    var ends = vec.empty(heap, np + nb + 1, 0);
+    if ok && probe_known && jnfail.collisions(pnames, pends, bnames, bends, prefix) > 0 {
+        e = jnfail.collision(heap, e, args, parsed, pnames, pends, bnames, bends, prefix, shown_b, table);
+        ok = false;
+    }
+    if probe_known {
+        names = buffer.append(heap, names, buffer.bytes(pnames));
+        var i = 0;
+        while i < np {
+            ends = vec.push(heap, ends, vec.get(pends, i));
+            i = i + 1;
+        }
+    }
+    var from = 0;
+    var j = 0;
+    while j < nb {
+        let to = vec.get(bends, j);
+        names = buffer.append(heap, names, prefix);
+        names = buffer.append(heap, names, buffer.bytes(bnames)[from..to]);
+        var total = 0;
+        borrow names as &nr in {
+            total = buffer.size(nr);
+        }
+        ends = vec.push(heap, ends, total);
+        from = to;
+        j = j + 1;
+    }
+    return (United { names: names, ends: ends, pkey: pkey, bkey: bkey, np: np, nb: nb, ok: ok && probe_known }, e);
+}
