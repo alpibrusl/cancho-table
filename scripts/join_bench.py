@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""J1 (docs/joins.md section 12 and 16): the join of `table` against DuckDB and csvtk on the four cases of the baseline.
+"""J1 and J2 (docs/joins.md sections 12, 16 and 17): the join of `table` against DuckDB and csvtk on the four cases of the baseline.
 
-    python3 scripts/join_bench.py [--dir DIR] [--runs 5] [--bin build/table] [--json out.json] [--cases int-100k,text-100k,int-1m,text-1m]
+    python3 scripts/join_bench.py [--dir DIR] [--runs 5] [--bin build/table] [--json out.json] [--cases int-100k,text-100k,int-1m,text-1m] [--type inner|left|anti] [--miss 0.2]
+
+`--type left` and `--type anti` (J2) need probe keys that are not in the build: `--miss` is the share of the probe rows whose key is in no build row (default 0 for inner, which writes the
+files J1 measured, byte for byte; 0.2 for left and anti). A left join then has 1,000,000 output rows, the unmatched ones with an empty `name`; an anti join has the unmatched probe rows
+(`id,k,v`). DuckDB's SQL is `LEFT JOIN` and `NOT EXISTS`; csvtk has the left join (`join -f k --left-join`) and no anti join.
 
 The files are the baseline's (section 12; `gen` below writes them from seed 7): the probe `id,k,v` of 1,000,000 rows with `k` uniform over the build's keys, the build `k,name` with unique
 keys in random order, integer keys or text keys of about 14 bytes (`u%08x-%d`), 100,000 or 1,000,000 build rows. Every probe row matches exactly one build row, so the answer is 1,000,000
@@ -30,16 +34,23 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 CASES = {"int-100k": ("int", 100_000), "text-100k": ("text", 100_000), "int-1m": ("int", 1_000_000), "text-1m": ("text", 1_000_000)}
 
 
-def gen(d, kind, n, probes=1_000_000):
-    """The probe and the build file of a case (seed 7); also the keys of the build in file order."""
+def gen(d, kind, n, probes=1_000_000, miss=0.0):
+    """The probe and the build file of a case (seed 7); also the keys of the build in file order. With `miss` a share of the probe rows have a key that is in no build row."""
     rnd = random.Random(7)
     if kind == "int":
         keys = [str(v) for v in rnd.sample(range(10 * n), n)]
     else:
         keys = ["u%08x-%d" % (rnd.getrandbits(32), i) for i in range(n)]
     names = ["n%d" % i for i in range(n)]
+    tag = "" if not miss else "-miss%d" % round(miss * 100)
     build = d / ("build-%s-%d.csv" % (kind, n))
-    probe = d / ("probe-%s-%d.csv" % (kind, n))
+    probe = d / ("probe-%s-%d%s.csv" % (kind, n, tag))
+
+    def key_of_row():
+        if miss and rnd.random() < miss:
+            return ("%d" % (10 * n + rnd.randrange(10 * n))) if kind == "int" else "x%08x-%d" % (rnd.getrandbits(32), rnd.randrange(n))
+        return keys[rnd.randrange(n)]
+
     if not build.exists():
         with open(build, "w", newline="\n") as f:
             f.write("k,name\n")
@@ -47,12 +58,12 @@ def gen(d, kind, n, probes=1_000_000):
     if not probe.exists():
         with open(probe, "w", newline="\n") as f:
             f.write("id,k,v\n")
-            f.write("".join("%d,%s,%d\n" % (i, keys[rnd.randrange(n)], rnd.randrange(100000)) for i in range(probes)))
+            f.write("".join("%d,%s,%d\n" % (i, key_of_row(), rnd.randrange(100000)) for i in range(probes)))
     return probe, build, keys, names
 
 
-def truth(probe, build):
-    """The join by Python, in the probe's order: the rows as bytes, and their sorted md5."""
+def truth(probe, build, kind="inner"):
+    """The join by Python, in the probe's order: the rows as bytes, and their sorted md5. `kind`: inner, left (an unmatched row ends in an empty `name`) or anti (the unmatched probe rows)."""
     index = {}
     with open(build, "rb") as f:
         f.readline()
@@ -64,8 +75,14 @@ def truth(probe, build):
         f.readline()
         for line in f:
             i, k, v = line.rstrip(b"\n").split(b",")
+            if kind == "anti":
+                if k not in index:
+                    rows.append(b",".join((i, k, v)))
+                continue
             for name in index.get(k, ()):
                 rows.append(b",".join((i, k, v, name)))
+            if kind == "left" and k not in index:
+                rows.append(b",".join((i, k, v, b"")))
     return rows
 
 
@@ -75,13 +92,21 @@ def digest(rows):
 
 def contenders(a, d, probe, build):
     out = {}
-    out["table"] = [a.bin, "--root", str(d), "--join", build.name, "--on", "k=k", "--join-prefix", "b_", "--select", "id,k,v,b_name", "--format", "csv", "--max-state-bytes", "1073741824", probe.name]
+    kind = a.type
+    if kind == "anti":
+        out["table"] = [a.bin, "--root", str(d), "--join", build.name, "--on", "k=k", "--join-type", "anti", "--select", "id,k,v", "--format", "csv", "--max-state-bytes", "1073741824", probe.name]
+    else:
+        out["table"] = [a.bin, "--root", str(d), "--join", build.name, "--on", "k=k", "--join-type", kind, "--join-prefix", "b_", "--select", "id,k,v,b_name", "--format", "csv", "--max-state-bytes", "1073741824", probe.name]
     if shutil.which("duckdb"):
-        sql = "COPY (SELECT a.id,a.k,a.v,b.name FROM read_csv('%s') a JOIN read_csv('%s') b ON a.k=b.k) TO '%%s' (FORMAT CSV, HEADER)" % (probe, build)
+        if kind == "anti":
+            body = "SELECT a.id,a.k,a.v FROM read_csv('%s') a WHERE NOT EXISTS (SELECT 1 FROM read_csv('%s') b WHERE b.k = a.k)" % (probe, build)
+        else:
+            body = "SELECT a.id,a.k,a.v,b.name FROM read_csv('%s') a %s JOIN read_csv('%s') b ON a.k=b.k" % (probe, "LEFT" if kind == "left" else "", build)
+        sql = "COPY (%s) TO '%%s' (FORMAT CSV, HEADER)" % body
         out["duckdb-1"] = ["duckdb", "-c", "SET threads=1; " + sql]
         out["duckdb"] = ["duckdb", "-c", sql]
-    if shutil.which("csvtk"):
-        out["csvtk"] = ["csvtk", "join", "-f", "k", str(probe), str(build)]
+    if shutil.which("csvtk") and kind != "anti":
+        out["csvtk"] = ["csvtk", "join", "-f", "k"] + (["--left-join"] if kind == "left" else []) + [str(probe), str(build)]
     return out
 
 
@@ -123,7 +148,11 @@ def main():
     ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
     ap.add_argument("--json", default="")
     ap.add_argument("--cases", default=",".join(CASES))
+    ap.add_argument("--type", default="inner", choices=["inner", "left", "anti"])
+    ap.add_argument("--miss", type=float, default=None, help="the share of probe rows whose key is in no build row (default 0 for inner, 0.2 for left and anti)")
     a = ap.parse_args()
+    if a.miss is None:
+        a.miss = 0.0 if a.type == "inner" else 0.2
     d = pathlib.Path(a.dir) if a.dir else pathlib.Path(tempfile.mkdtemp(prefix="join-bench-"))
     d.mkdir(parents=True, exist_ok=True)
     load0 = os.getloadavg()
@@ -135,8 +164,8 @@ def main():
     sink = str(d / "out.csv")
     for name in a.cases.split(","):
         kind, n = CASES[name]
-        probe, build, keys, names = gen(d, kind, n)
-        want = truth(probe, build)
+        probe, build, keys, names = gen(d, kind, n, miss=a.miss)
+        want = truth(probe, build, a.type)
         wd = digest(want)
         cs = contenders(a, d, probe, build)
         # correctness first: every contender's whole output
@@ -150,6 +179,8 @@ def main():
             if lines and lines[-1] == b"":
                 lines.pop()
             rows = [l.replace(b'"', b"") for l in lines[1:]]
+            if a.type == "left" and tool == "csvtk":
+                rows = [l if l.count(b",") >= 3 else l + b"," for l in rows]
             if digest(rows) != wd:
                 sys.exit("%s %s: the output is not the Python join (%s against %s)" % (name, tool, digest(rows), wd))
             if tool == "table" and rows != want:
@@ -164,7 +195,7 @@ def main():
             for t in order:
                 times[t].append(wall(cs[t], sink if cs[t][0] != "duckdb" else os.devnull))
         rss = {t: rss_of(cs[t], sink if cs[t][0] != "duckdb" else os.devnull) for t in cs}
-        print("\n%s: %d probe rows x %d build rows, %d output rows, probe %.1f MB, build %.1f MB" % (name, 1_000_000, n, len(want), probe.stat().st_size / 1e6, build.stat().st_size / 1e6))
+        print("\n%s (%s, miss %.2f): %d probe rows x %d build rows, %d output rows, probe %.1f MB, build %.1f MB" % (name, a.type, a.miss, 1_000_000, n, len(want), probe.stat().st_size / 1e6, build.stat().st_size / 1e6))
         for t in cs:
             print("  %-9s %7.3f s (median %.3f)   peak resident %5.0f MB" % (t, min(times[t]), statistics.median(times[t]), rss[t] / 1e6))
         result["cases"][name] = {"rows": len(want), "times": times, "rss": rss, "probe_bytes": probe.stat().st_size, "build_bytes": build.stat().st_size}

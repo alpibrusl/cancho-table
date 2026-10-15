@@ -26,7 +26,9 @@ import toolbox.text;
 // has at least `columns` bytes (and at least two), so there are at most (size - header) / that + 1 rows; the records hold at most size - header bytes and the distinct keys, which are
 // inside them, no more; each row costs 16 and each distinct key 60. So accounted <= 2 * (size - header) + 76 * rows. Loose for a narrow file, and an upper bound only: no lower
 // bound can be had from the size (blank lines), so it is never said that a file will pass the bound.
-fn at_most(size: int, header: int, columns: int) -> [] int {
+// J2: a key that is a typed pair is 8 bytes whatever its cell, and several pairs carry 4 bytes of length each, so a key can be longer than the cells it comes from, by at most 12 bytes for each
+// pair (`extra`: 0 for one pair of text, else 12 for each); a semi or anti join holds no rows (`keys_only`): the keys, at 44 each, so accounted <= (size - header) + (44 + extra) * rows.
+fn at_most(size: int, header: int, columns: int, extra: int, keys_only: bool) -> [] int {
     if size < 0 {
         return 0 - 1;
     }
@@ -38,7 +40,11 @@ fn at_most(size: int, header: int, columns: int) -> [] int {
     if least < 2 {
         least = 2;
     }
-    return 2 * body + 76 * (body / least + 1);
+    let rows = body / least + 1;
+    if keys_only {
+        return body + (44 + extra) * rows;
+    }
+    return 2 * body + (76 + extra) * rows;
 }
 
 fn spelled[&h, &d](heap: &!h Heap, o: buffer.Buffer, name: &d [byte], kind: int) -> [heap] buffer.Buffer {
@@ -56,15 +62,52 @@ fn spelled[&h, &d](heap: &!h Heap, o: buffer.Buffer, name: &d [byte], kind: int)
     return text.append_json(heap, o, name);
 }
 
-// The text of the `join` member.
-fn join_doc[&h, &g, &p, &s, &t](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nb: int, pkey: int, bkey: int, bsize: int, bheader: int, known: bool) -> [heap, args] buffer.Buffer {
+// The type of a pair as the document spells it.
+fn type_name[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buffer {
+    if t == 0 {
+        return buffer.append(heap, o, "\"text\"");
+    }
+    if t == 1 {
+        return buffer.append(heap, o, "\"int\"");
+    }
+    if t == 21 {
+        return buffer.append(heap, o, "\"float\"");
+    }
+    var out = buffer.append(heap, o, "\"dec(");
+    out = buffer.push_nat(heap, out, t - 2);
+    return buffer.append(heap, out, ")\"");
+}
+
+// The text of the `join` member. `jtype`: 0 inner, 1 left, 2 semi, 3 anti.
+fn join_doc[&h, &g, &p, &s, &t, &k](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let on = jnflags.parse_on(heap, cli.text(args, parsed, table, "on"));
-    let jnflags.On { status, left, lkind, right, rkind } = on;
     let budget = cli.nat(args, parsed, table, "max-state-bytes");
-    let most = at_most(bsize, bheader, nb);
+    var typed = false;
+    var j = 0;
+    while j < pairs {
+        if keys[3 * j + 2] != 0 {
+            typed = true;
+        }
+        j = j + 1;
+    }
+    var extra = 0;
+    if pairs > 1 || typed {
+        extra = 12 * pairs;
+    }
+    let most = at_most(bsize, bheader, nb, extra, jtype >= 2);
     var o = buffer.empty(heap, 1024);
-    o = buffer.append(heap, o, "{\"type\":\"inner\",\"probe\":");
+    o = buffer.append(heap, o, "{\"type\":");
+    if jtype == 1 {
+        o = buffer.append(heap, o, "\"left\"");
+    } else if jtype == 2 {
+        o = buffer.append(heap, o, "\"semi\"");
+    } else if jtype == 3 {
+        o = buffer.append(heap, o, "\"anti\"");
+    } else {
+        o = buffer.append(heap, o, "\"inner\"");
+    }
+    o = buffer.append(heap, o, ",\"probe\":");
     if stdin {
         o = text.append_json(heap, o, "-");
     } else {
@@ -72,31 +115,55 @@ fn join_doc[&h, &g, &p, &s, &t](heap: &!h Heap, args: &g Args, parsed: &p cli.Pa
     }
     o = buffer.append(heap, o, ",\"build\":");
     o = text.append_json(heap, o, shown_b);
-    o = buffer.append(heap, o, ",\"role_choice\":\"the --join file is the build side: it is held whole in memory, and the operand or standard input is the probe side, streamed\",\"keys\":[{\"probe\":");
-    borrow left as &lr in {
-        o = spelled(heap, o, buffer.bytes(lr), lkind);
+    o = buffer.append(heap, o, ",\"role_choice\":\"the --join file is the build side: it is held whole in memory, and the operand or standard input is the probe side, streamed\",\"keys\":[");
+    borrow on as &onr in {
+        j = 0;
+        while j < pairs {
+            if j > 0 {
+                o = buffer.push(heap, o, byte_of(','));
+            }
+            o = buffer.append(heap, o, "{\"probe\":");
+            o = spelled(heap, o, jnflags.name_at(onr, 2 * j), vec.get(onr.kinds, 2 * j));
+            o = buffer.append(heap, o, ",\"build\":");
+            o = spelled(heap, o, jnflags.name_at(onr, 2 * j + 1), vec.get(onr.kinds, 2 * j + 1));
+            o = buffer.append(heap, o, ",\"type\":");
+            o = type_name(heap, o, keys[3 * j + 2]);
+            o = buffer.append(heap, o, ",\"probe_position\":");
+            if known {
+                o = buffer.push_nat(heap, o, keys[3 * j] + 1);
+            } else {
+                o = buffer.append(heap, o, "null");
+            }
+            o = buffer.append(heap, o, ",\"build_position\":");
+            o = buffer.push_nat(heap, o, keys[3 * j + 1] + 1);
+            o = buffer.push(heap, o, byte_of('}'));
+            j = j + 1;
+        }
     }
-    o = buffer.append(heap, o, ",\"build\":");
-    borrow right as &rr in {
-        o = spelled(heap, o, buffer.bytes(rr), rkind);
-    }
-    o = buffer.append(heap, o, ",\"type\":\"text\",\"probe_position\":");
+    o = buffer.append(heap, o, "],\"output_columns\":");
     if known {
-        o = buffer.push_nat(heap, o, pkey + 1);
-    } else {
-        o = buffer.append(heap, o, "null");
-    }
-    o = buffer.append(heap, o, ",\"build_position\":");
-    o = buffer.push_nat(heap, o, bkey + 1);
-    o = buffer.append(heap, o, "}],\"output_columns\":");
-    if known {
-        o = buffer.push_nat(heap, o, np + nb);
+        o = buffer.push_nat(heap, o, np + nk);
     } else {
         o = buffer.append(heap, o, "null");
     }
     o = buffer.append(heap, o, ",\"prefix\":");
     o = text.append_json(heap, o, cli.text(args, parsed, table, "join-prefix"));
-    o = buffer.append(heap, o, ",\"using\":[],\"build_state\":{\"file_bytes\":");
+    o = buffer.append(heap, o, ",\"using\":[");
+    var listed = 0;
+    borrow on as &onr in {
+        j = 0;
+        while j < pairs {
+            if vec.get(onr.using, j) == 1 && jtype <= 1 {
+                if listed > 0 {
+                    o = buffer.push(heap, o, byte_of(','));
+                }
+                o = spelled(heap, o, jnflags.name_at(onr, 2 * j), 0 - 1);
+                listed = listed + 1;
+            }
+            j = j + 1;
+        }
+    }
+    o = buffer.append(heap, o, "],\"build_state\":{\"file_bytes\":");
     if bsize < 0 {
         o = buffer.append(heap, o, "null");
     } else {
@@ -118,13 +185,17 @@ fn join_doc[&h, &g, &p, &s, &t](heap: &!h Heap, args: &g Args, parsed: &p cli.Pa
     } else {
         o = buffer.append(heap, o, "false");
     }
-    o = buffer.append(heap, o, ",\"counted\":\"record bytes + 16 for each row held, key bytes + 60 for each distinct key: not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\",\"swap\":{\"offered\":false,\"reason\":\"the swap repair arrives with a later slice\"}},\"max_join_rows\":");
+    if jtype >= 2 {
+        o = buffer.append(heap, o, ",\"counted\":\"key bytes + 44 for each distinct key (a semi or anti join holds the keys only; a key is 8 bytes for a typed pair and 4 bytes of length more for each pair of several): not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\"");
+    } else {
+        o = buffer.append(heap, o, ",\"counted\":\"record bytes + 16 for each row held, key bytes + 60 for each distinct key (a key is 8 bytes for a typed pair and 4 bytes of length more for each pair of several): not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\"");
+    }
+    o = buffer.append(heap, o, ",\"swap\":{\"offered\":false,\"reason\":\"the swap repair arrives with a later slice\"}},\"max_join_rows\":");
     o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "max-join-rows"));
     o = buffer.append(heap, o, ",\"order\":\"probe order, then build order\",\"work\":{\"class\":\"join: build then stream\",\"first_output_after\":\"the whole build\",\"threads\":{\"requested\":");
     o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "threads"));
     o = buffer.append(heap, o, ",\"effective\":1,\"reason\":\"the join is read on one core\"}}}");
-    buffer.drop(heap, left);
-    buffer.drop(heap, right);
+    jnflags.drop_on(heap, on);
     return o;
 }
 
@@ -211,30 +282,45 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
         jnhead.drop_head(heap, hp);
         return (tree0, e, payload);
     }
-    var pkey = 0;
-    var bkey = 0;
+    var keys = box_slice(heap, 3, 0);
+    var kmap = box_slice(heap, 1, 0);
+    var pairs = 0;
     var np = 0;
     var nb = 0;
+    var nk = 0;
     var jnames = buffer.empty(heap, 1);
     var jends = vec.empty(heap, 1, 0);
     var ok = false;
+    var jtype = 0;
+    let word = cli.text(args, parsed, table, "join-type");
+    if bytes.equal(word, "left") {
+        jtype = 1;
+    } else if bytes.equal(word, "semi") {
+        jtype = 2;
+    } else if bytes.equal(word, "anti") {
+        jtype = 3;
+    }
     borrow shown_b_copy as &sb in {
         borrow hp as &hpr in {
             borrow hb as &hbr in {
-                let (u, e2) = jnhead.unite(heap, args, parsed, e, hpr.names, hpr.ends, hbr.names, hbr.ends, !stdin, shown, buffer.bytes(sb));
+                let (u, e2) = jnhead.unite(heap, args, parsed, e, hpr.names, hpr.ends, hbr.names, hbr.ends, !stdin, shown, buffer.bytes(sb), jtype);
                 e = e2;
                 borrow u as &ur in {
-                    pkey = ur.pkey;
-                    bkey = ur.bkey;
+                    pairs = ur.pairs;
                     np = ur.np;
                     nb = ur.nb;
+                    nk = ur.nk;
                     ok = ur.ok;
                 }
-                let (names, ends) = jnhead.take_header(u);
+                let (names, ends, k3, m3) = jnhead.take_header(u);
                 buffer.drop(heap, jnames);
                 vec.drop(heap, jends);
+                unbox_slice(heap, keys);
+                unbox_slice(heap, kmap);
                 jnames = names;
                 jends = ends;
+                keys = k3;
+                kmap = m3;
             }
         }
     }
@@ -243,6 +329,8 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
         failed = fail.count(er0) > 0;
     }
     if failed {
+        unbox_slice(heap, keys);
+        unbox_slice(heap, kmap);
         buffer.drop(heap, shown_b_copy);
         buffer.drop(heap, jnames);
         vec.drop(heap, jends);
@@ -265,8 +353,12 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
     var doc = buffer.empty(heap, 1);
     borrow shown_b_copy as &sb in {
         buffer.drop(heap, doc);
-        doc = join_doc(heap, args, parsed, stdin, shown, buffer.bytes(sb), np, nb, pkey, bkey, bsize, bheader, !stdin);
+        borrow keys as &ky in {
+            doc = join_doc(heap, args, parsed, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, !stdin, jtype, nb);
+        }
     }
+    unbox_slice(heap, keys);
+    unbox_slice(heap, kmap);
     buffer.drop(heap, shown_b_copy);
     jnhead.drop_head(heap, hb);
     jnhead.drop_head(heap, hp);

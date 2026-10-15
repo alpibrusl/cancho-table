@@ -12,7 +12,12 @@ module jnread;
 //     probe phase    every record of the probe: ragged? -> key -> the build rows of that key in build file order -> one joined record each -> `engine.process_rows`
 //
 // The joined record is the probe record, the delimiter and the build record, and its cells are the probe's followed by the build's moved by the probe record's length and one, so the
-// engine (`--where`, `--select`, the writers) cannot tell it from a row of a file. A probe row with no build row is not in the answer (inner).
+// engine (`--where`, `--select`, the writers) cannot tell it from a row of a file. A probe row with no build row is not in the answer (inner), or is in it once with every build cell empty
+// (left: the padded record is the probe record and a delimiter for each build cell shown). A semi join gives the probe record, once, for a row that has a match, an anti join for a row that has none:
+// the engine is handed the probe record and its own cells, and the build holds the keys alone. A column of a shared-name key (USING) is left out of the cells, not out of the record.
+//
+// A key is one pair of text, read in place (J1's loop, which is not changed), or built by `jnkey` (typed pairs, several pairs): a cell that is not of its type ends the read as abort 72, with the
+// facts in the tally (err_fn the status of the read, err_cond the pair, err_col the column in its own file, err_row, err_line, err_digits) and the cell in `kept`.
 //
 // The tally of the probe (`engine.k_*`) counts JOINED rows in `k_records` (what `--from` skips and `next.from` says), and the probe's own rows in `st[0]`.
 
@@ -26,6 +31,7 @@ import finish;
 import frame;
 import jnfail;
 import jnhead;
+import jnkey;
 import jtab;
 import qpath;
 import query;
@@ -50,8 +56,24 @@ fn s_max_matches() -> [] int {
     return 2;
 }
 
+fn s_jtype() -> [] int {
+    return 5;
+}
+
+fn s_nk() -> [] int {
+    return 6;
+}
+
+fn s_pairs() -> [] int {
+    return 7;
+}
+
+fn s_simple() -> [] int {
+    return 8;
+}
+
 fn s_size() -> [] int {
-    return 4;
+    return 9;
 }
 
 // What a pass counted, as `read_file` hands it to `finish.explain`.
@@ -63,8 +85,8 @@ fn nothing() -> [] finish.Counts {
     return finish.Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
 }
 
-// Hold build row `record` (whose cells are `cells`) under its key, the cell of column `key`; false when it does not fit within `limit` accounted bytes.
-fn hold_row[&h, &d, &c](heap: &!h Heap, t: jtab.JTab, scratch: buffer.Buffer, record: &d [byte], cells: &c [int], key: int, limit: int) -> [heap] (jtab.JTab, buffer.Buffer, bool) {
+// J1's hold of a build row, kept as it was for the build that J1 has (one pair of text, rows held): `hold_row` below is for the others, and the build of J1 is not made to pay for them. Hold build row `record` (whose cells are `cells`) under its key, the cell of column `key`; false when it does not fit within `limit` accounted bytes.
+fn hold_text[&h, &d, &c](heap: &!h Heap, t: jtab.JTab, scratch: buffer.Buffer, record: &d [byte], cells: &c [int], key: int, limit: int) -> [heap] (jtab.JTab, buffer.Buffer, bool) {
     let first = cells[3 * key];
     let last = cells[3 * key + 1];
     if cells[3 * key + 2] == 0 {
@@ -86,13 +108,92 @@ fn hold_row[&h, &d, &c](heap: &!h Heap, t: jtab.JTab, scratch: buffer.Buffer, re
     return (t3, s, ok2);
 }
 
+// Hold `key` for build row `record` (the record itself for a join that shows build columns, the key alone for a semi or anti join).
+fn put[&h, &k, &r](heap: &!h Heap, t: jtab.JTab, key: &k [byte], record: &r [byte], limit: int, keys_only: bool) -> [heap] (jtab.JTab, bool) {
+    if keys_only {
+        return jtab.add_key(heap, t, key, limit);
+    }
+    return jtab.add(heap, t, key, record, limit);
+}
+
+// Hold build row `record` (whose cells are `cells`) under its key: 0 when it is held, 1 when it does not fit within `limit` accounted bytes, and 16 + 16 * (the pair) + (the status of the read)
+// when a typed key cell is not of its type. A key that is one pair of text is read in place (`simple`: `keys[1]` is its column), any other by `jnkey`.
+fn hold_row[&h, &d, &c, &k](heap: &!h Heap, t: jtab.JTab, scratch: buffer.Buffer, kbuf: buffer.Buffer, record: &d [byte], cells: &c [int], keys: &k [int], pairs: int, simple: bool, keys_only: bool, limit: int) -> [heap] (jtab.JTab, buffer.Buffer, buffer.Buffer, int) {
+    if simple {
+        let key = keys[1];
+        let first = cells[3 * key];
+        let last = cells[3 * key + 1];
+        if cells[3 * key + 2] == 0 {
+            let (t2, ok) = put(heap, t, record[first..last], record, limit, keys_only);
+            if ok {
+                return (t2, scratch, kbuf, 0);
+            }
+            return (t2, scratch, kbuf, 1);
+        }
+        var s = scratch;
+        borrow mut s as &!sw in {
+            buffer.clear(sw);
+        }
+        s = query.unquote(heap, s, record[first..last]);
+        var t3 = t;
+        var ok2 = true;
+        borrow s as &sr in {
+            let (t4, ok3) = put(heap, t3, buffer.bytes(sr), record, limit, keys_only);
+            t3 = t4;
+            ok2 = ok3;
+        }
+        if ok2 {
+            return (t3, s, kbuf, 0);
+        }
+        return (t3, s, kbuf, 1);
+    }
+    let (kb, sc, status, which) = jnkey.make(heap, kbuf, scratch, record, cells, keys, pairs, 1);
+    if status != 0 {
+        return (t, sc, kb, 16 + 16 * which + status);
+    }
+    var t5 = t;
+    var ok4 = true;
+    borrow kb as &kr in {
+        let (t6, ok5) = put(heap, t5, buffer.bytes(kr), record, limit, keys_only);
+        t5 = t6;
+        ok4 = ok5;
+    }
+    if ok4 {
+        return (t5, sc, kb, 0);
+    }
+    return (t5, sc, kb, 1);
+}
+
+// A typed key cell of the build that is not of its type, noted in the tally (abort 72): the answer of `hold_row` is `answer`, the record `record` and its cells `cells`.
+fn note_typed[&h, &d, &c, &k, &a](heap: &!h Heap, kept: buffer.Buffer, record: &d [byte], cells: &c [int], keys: &k [int], answer: int, side: int, row: int, line: int, a: &!a [int]) -> [heap] buffer.Buffer {
+    let status = (answer - 16) % 16;
+    let which = (answer - 16) / 16;
+    let column = keys[3 * which + side];
+    a[engine.k_abort()] = 72;
+    a[engine.k_abort_line()] = line;
+    a[engine.k_err_fn()] = status;
+    a[engine.k_err_cond()] = which;
+    a[engine.k_err_col()] = column;
+    a[engine.k_err_row()] = row;
+    a[engine.k_err_line()] = line;
+    if status == 7 {
+        a[engine.k_err_digits()] = jnkey.digits_after_point(record, cells[3 * column], cells[3 * column + 1]);
+    }
+    return engine.keep_value(heap, kept, record, cells[3 * column], cells[3 * column + 1]);
+}
+
 // The build phase: every data record of the build file, held. Answers the reader, the table, what was counted (abort 70: the first row that did not fit; 4, 7, 1 and 2 as a file's) and the
 // bytes of the file consumed when it stopped. A ragged row is counted and not held; `most` rows read and another there is `capped`.
-fn build_pass[&h, &f](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab.JTab, nb: int, key: int, delim: int, cap: int, most: int, limit: int) -> [heap, file_read] (lines.Lines, jtab.JTab, finish.Counts, int) {
+fn build_pass[&h, &f, &k](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab.JTab, nb: int, keys: &k [int], pairs: int, simple: bool, keys_only: bool, delim: int, cap: int, most: int, limit: int) -> [heap, file_read] (lines.Lines, jtab.JTab, finish.Counts, int, buffer.Buffer) {
     var r = r0;
     var jt = jt0;
     var rec = buffer.empty(heap, 256);
     var kscr = buffer.empty(heap, 64);
+    var kbuf = buffer.empty(heap, 64);
+    var kept = buffer.empty(heap, 64);
+    // J1's build (one pair of text, the rows held) has a hold of its own, `hold_text`
+    let bfast = simple && !keys_only;
+    let bkey = keys[1];
     var tally = box_slice(heap, engine.k_size(), 0);
     var cellbox = box_slice(heap, 3 * (nb + 1), 0);
     var quoted = false;
@@ -155,13 +256,29 @@ fn build_pass[&h, &f](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab
                                 rec = buffer.append(heap, rec, whole);
                                 rec = buffer.push(heap, rec, byte_of(10));
                             } else if engine.count_row(a, n, number, 0) {
-                                let (t2, k2, ok) = hold_row(heap, jt, kscr, line, cells, key, limit);
-                                jt = t2;
-                                kscr = k2;
-                                if !ok {
+                                var answer = 0;
+                                if bfast {
+                                    let (t2, k2, ok) = hold_text(heap, jt, kscr, line, cells, bkey, limit);
+                                    jt = t2;
+                                    kscr = k2;
+                                    if !ok {
+                                        answer = 1;
+                                    }
+                                } else {
+                                    let (t2, k2, b2, answer2) = hold_row(heap, jt, kscr, kbuf, line, cells, keys, pairs, simple, keys_only, limit);
+                                    jt = t2;
+                                    kscr = k2;
+                                    kbuf = b2;
+                                    answer = answer2;
+                                }
+                                if answer == 1 {
                                     a[engine.k_abort()] = 70;
                                     a[engine.k_abort_line()] = number;
                                     consumed = lines.consumed(rr);
+                                    going = false;
+                                } else if answer >= 16 {
+                                    let row = a[engine.k_records()];
+                                    kept = note_typed(heap, kept, line, cells, keys, answer, 1, row, number, a);
                                     going = false;
                                 }
                             }
@@ -198,13 +315,29 @@ fn build_pass[&h, &f](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab
                                         a[engine.k_abort_line()] = opened;
                                         going = false;
                                     } else if engine.count_row(a, m, opened, 0) {
-                                        let (t2, k2, ok) = hold_row(heap, jt, kscr, record, cells, key, limit);
-                                        jt = t2;
-                                        kscr = k2;
-                                        if !ok {
+                                        var answer = 0;
+                                        if bfast {
+                                            let (t2, k2, ok) = hold_text(heap, jt, kscr, record, cells, bkey, limit);
+                                            jt = t2;
+                                            kscr = k2;
+                                            if !ok {
+                                                answer = 1;
+                                            }
+                                        } else {
+                                            let (t2, k2, b2, answer2) = hold_row(heap, jt, kscr, kbuf, record, cells, keys, pairs, simple, keys_only, limit);
+                                            jt = t2;
+                                            kscr = k2;
+                                            kbuf = b2;
+                                            answer = answer2;
+                                        }
+                                        if answer == 1 {
                                             a[engine.k_abort()] = 70;
                                             a[engine.k_abort_line()] = opened;
                                             consumed = lines.consumed(rr);
+                                            going = false;
+                                        } else if answer >= 16 {
+                                            let row = a[engine.k_records()];
+                                            kept = note_typed(heap, kept, record, cells, keys, answer, 1, row, opened, a);
                                             going = false;
                                         }
                                     }
@@ -225,12 +358,42 @@ fn build_pass[&h, &f](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab
     unbox_slice(heap, cellbox);
     buffer.drop(heap, rec);
     buffer.drop(heap, kscr);
-    return (r, jt, c, consumed);
+    buffer.drop(heap, kbuf);
+    return (r, jt, c, consumed, kept);
 }
 
-// One probe record whose cells are in `cells` (its first `np`): look its key up and give the engine one joined record for each build row of the key. The state is in `a` (the engine's
+// One joined row (or a semi or anti join's probe row) to the engine: counted against `--max-join-rows` (past it the abort is 71, with the facts of the refusal in the tally: `matches` is how many
+// build rows the probe row's key has), counted for `--from`, and given to `engine.process_rows`. `padded` says that the build cells of `record` are the padding of a left join, so that a
+// refused read of one of them (a column from `np` on) says so (`err_fn` 77: the context is still `where`, and `finish.explain` adds `padded`).
+fn emit_one[&h, &i, &q, &c, &s, &w, &d, &a, &z](heap: &!h Heap, io: &!i Io, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &w [int], record: &d [byte], number: int, st: &!z [int], a: &!a [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, max_join: int, matches: int, padded: bool, np: int) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    if st[s_produced()] >= max_join {
+        a[engine.k_abort()] = 71;
+        a[engine.k_stop()] = 1;
+        a[engine.k_err_row()] = st[s_probe()];
+        a[engine.k_err_line()] = number;
+        a[engine.k_err_digits()] = matches;
+        a[engine.k_err_cond()] = st[s_max_matches()];
+        return (rows, scratch, escr, kept);
+    }
+    st[s_produced()] = st[s_produced()] + 1;
+    a[engine.k_records()] = st[s_produced()];
+    if st[s_produced()] <= from {
+        return (rows, scratch, escr, kept);
+    }
+    let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows, scratch, escr, kept, tree, cols, record, cells, sel, picked, delim, as_csv, budget, number, limit, a);
+    if a[engine.k_abort()] != 0 {
+        a[engine.k_err_row()] = st[s_probe()];
+        if padded && a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] >= np {
+            a[engine.k_err_fn()] = 77;
+        }
+    }
+    return (r2, s2, e2, k2);
+}
+
+// J1's probe, kept as it was (the inner join of one pair of text, no column left out): the path of J1 is not made to carry the cases J2 adds to it (`probe_one` below), because every instruction
+// added to it was paid by every probe row (docs/joins.md section 17: 59 instructions a row, 2.5 percent, when it did). One probe record whose cells are in `cells` (its first `np`): look its key up and give the engine one joined record for each build row of the key. The state is in `a` (the engine's
 // tally), `st` (this module's), and the buffers it answers.
-fn probe_one[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z](heap: &!h Heap, io: &!i Io, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], prec: &d [byte], number: int, st: &!z [int], a: &!a [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, kscr: buffer.Buffer, np: int, nb: int, pkey: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, max_join: int) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+fn probe_inner[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z](heap: &!h Heap, io: &!i Io, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], prec: &d [byte], number: int, st: &!z [int], a: &!a [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, kscr: buffer.Buffer, np: int, nb: int, pkey: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, max_join: int) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
     var rows2 = rows;
     var scratch2 = scratch;
     var escr2 = escr;
@@ -315,8 +478,146 @@ fn probe_one[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z](heap: &!h Heap, io: &!i
     return (rows2, scratch2, escr2, kept2, jrec2, kscr2);
 }
 
+// One probe record whose cells are in `cells` (its first `np`): look its key up, and give the engine what the join type says: one joined record for each build row of the key (inner, left), the
+// padded record when there is none (left), the probe record once when there is a build row (semi) or none (anti). The state is in `a` (the engine's tally), `st` (this module's), and the buffers it answers.
+fn probe_one[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z, &k, &m](heap: &!h Heap, io: &!i Io, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], prec: &d [byte], number: int, st: &!z [int], a: &!a [int], keys: &k [int], kmap: &m [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, kscr: buffer.Buffer, kbuf: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, max_join: int) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var rows2 = rows;
+    var scratch2 = scratch;
+    var escr2 = escr;
+    var kept2 = kept;
+    var jrec2 = jrec;
+    var kscr2 = kscr;
+    var kbuf2 = kbuf;
+    let jtype = st[s_jtype()];
+    let nk = st[s_nk()];
+    var chain = 0 - 1;
+    var present = false;
+    if st[s_simple()] == 1 {
+        let pkey = keys[0];
+        let first = cells[3 * pkey];
+        let last = cells[3 * pkey + 1];
+        if cells[3 * pkey + 2] == 0 {
+            if jtype <= 1 {
+                chain = jtab.first(jt, prec[first..last]);
+            } else {
+                present = jtab.has(jt, prec[first..last]);
+            }
+        } else {
+            borrow mut kscr2 as &!kw in {
+                buffer.clear(kw);
+            }
+            kscr2 = query.unquote(heap, kscr2, prec[first..last]);
+            borrow kscr2 as &kr in {
+                if jtype <= 1 {
+                    chain = jtab.first(jt, buffer.bytes(kr));
+                } else {
+                    present = jtab.has(jt, buffer.bytes(kr));
+                }
+            }
+        }
+    } else {
+        let (kb, sc, status, which) = jnkey.make(heap, kbuf2, kscr2, prec, cells, keys, st[s_pairs()], 0);
+        kbuf2 = kb;
+        kscr2 = sc;
+        if status != 0 {
+            let row = st[s_probe()];
+            kept2 = note_typed(heap, kept2, prec, cells, keys, 16 + 16 * which + status, 0, row, number, a);
+            a[engine.k_stop()] = 1;
+            return (rows2, scratch2, escr2, kept2, jrec2, kscr2, kbuf2);
+        }
+        borrow kbuf2 as &kr in {
+            if jtype <= 1 {
+                chain = jtab.first(jt, buffer.bytes(kr));
+            } else {
+                present = jtab.has(jt, buffer.bytes(kr));
+            }
+        }
+    }
+    if jtype >= 2 {
+        // semi: the probe record once if there is a build row; anti: once if there is none
+        if jtype == 2 && present || jtype == 3 && !present {
+            let (r2, s2, e2, k2) = emit_one(heap, io, tree, cols, sel, cells, prec, number, st, a, rows2, scratch2, escr2, kept2, delim, as_csv, from, limit, budget, picked, max_join, 3 - jtype, false, np);
+            rows2 = r2;
+            scratch2 = s2;
+            escr2 = e2;
+            kept2 = k2;
+        }
+        return (rows2, scratch2, escr2, kept2, jrec2, kscr2, kbuf2);
+    }
+    if chain < 0 {
+        if jtype == 0 {
+            return (rows2, scratch2, escr2, kept2, jrec2, kscr2, kbuf2);
+        }
+        // left: the probe row once, every build cell empty (the padded record is the probe record and a delimiter for each build cell shown)
+        borrow mut jrec2 as &!jw in {
+            buffer.clear(jw);
+        }
+        jrec2 = buffer.append(heap, jrec2, prec);
+        var k = 0;
+        while k < nk {
+            jrec2 = buffer.push(heap, jrec2, byte_of(delim));
+            cells[3 * (np + k)] = len(prec) + 1 + k;
+            cells[3 * (np + k) + 1] = len(prec) + 1 + k;
+            cells[3 * (np + k) + 2] = 0;
+            k = k + 1;
+        }
+        borrow jrec2 as &jr in {
+            let (r2, s2, e2, k2) = emit_one(heap, io, tree, cols, sel, cells, buffer.bytes(jr), number, st, a, rows2, scratch2, escr2, kept2, delim, as_csv, from, limit, budget, picked, max_join, 0, true, np);
+            rows2 = r2;
+            scratch2 = s2;
+            escr2 = e2;
+            kept2 = k2;
+        }
+        return (rows2, scratch2, escr2, kept2, jrec2, kscr2, kbuf2);
+    }
+    var matches = 0;
+    var x = chain;
+    while x >= 0 {
+        matches = 1 + matches;
+        x = jtab.next_row(jt, x);
+    }
+    if st[s_max_matches()] < matches {
+        st[s_max_matches()] = matches;
+    }
+    borrow mut jrec2 as &!jw in {
+        buffer.clear(jw);
+    }
+    jrec2 = buffer.append(heap, jrec2, prec);
+    jrec2 = buffer.push(heap, jrec2, byte_of(delim));
+    let keep = len(prec) + 1;
+    x = chain;
+    while x >= 0 {
+        let brec = jtab.record(jt, x);
+        borrow mut jrec2 as &!jw in {
+            jw.used = len(prec) + 1;
+        }
+        jrec2 = buffer.append(heap, jrec2, brec);
+        let (m, open, bad) = reader.fields(brec, delim, bcells, nb);
+        // the cells of the columns the answer shows (a shared-name key leaves its build column out of the cells, and it stays in the record)
+        var k = 0;
+        while k < nk {
+            cells[3 * (np + k)] = bcells[3 * kmap[k]] + keep;
+            cells[3 * (np + k) + 1] = bcells[3 * kmap[k] + 1] + keep;
+            cells[3 * (np + k) + 2] = bcells[3 * kmap[k] + 2];
+            k = k + 1;
+        }
+        borrow jrec2 as &jr in {
+            let (r2, s2, e2, k2) = emit_one(heap, io, tree, cols, sel, cells, buffer.bytes(jr), number, st, a, rows2, scratch2, escr2, kept2, delim, as_csv, from, limit, budget, picked, max_join, matches, false, np);
+            rows2 = r2;
+            scratch2 = s2;
+            escr2 = e2;
+            kept2 = k2;
+        }
+        if a[engine.k_stop()] == 1 {
+            return (rows2, scratch2, escr2, kept2, jrec2, kscr2, kbuf2);
+        }
+        x = jtab.next_row(jt, x);
+    }
+    return (rows2, scratch2, escr2, kept2, jrec2, kscr2, kbuf2);
+}
+
 // The probe phase. Answers the reader, what was counted, and the buffers: the csv or json rows pending, the scratch of the writers, the escape scratch and the first bytes of a refused cell.
-fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], rows0: buffer.Buffer, scratch0: buffer.Buffer, np: int, nb: int, pkey: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, cap: int, most: int, max_join: int) -> [heap, file_read, io_read, io_write] (lines.Lines, finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], keys: &k [int], kmap: &m [int], pairs: int, simple: bool, jtype: int, nk: int, rows0: buffer.Buffer, scratch0: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, cap: int, most: int, max_join: int) -> [heap, file_read, io_read, io_write] (lines.Lines, finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
     var r = r0;
     var rows = rows0;
     var scratch = scratch0;
@@ -324,9 +625,13 @@ fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x](heap: &!h Heap, r0: lines.Line
     var kept = buffer.empty(heap, 64);
     var jrec = buffer.empty(heap, 256);
     var kscr = buffer.empty(heap, 64);
+    var kbuf = buffer.empty(heap, 64);
     var rec = buffer.empty(heap, 256);
     var tally = box_slice(heap, engine.k_size(), 0);
     var state = box_slice(heap, s_size(), 0);
+    // J1's path (an inner join of one pair of text, no column left out) has a probe of its own, `probe_inner`
+    let fast = jtype == 0 && simple && nk == nb;
+    let pkey = keys[0];
     var quoted = false;
     var seps = 0;
     var opened = 0;
@@ -334,9 +639,15 @@ fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x](heap: &!h Heap, r0: lines.Line
     var c = nothing();
     borrow mut tally as &!tw in {
         let a = contents(tw);
-        a[engine.k_columns()] = np + nb;
+        a[engine.k_columns()] = np + nk;
         borrow mut state as &!sw in {
             let st = contents(sw);
+            st[s_jtype()] = jtype;
+            st[s_nk()] = nk;
+            st[s_pairs()] = pairs;
+            if simple {
+                st[s_simple()] = 1;
+            }
             while going {
                 var status = 9;
                 borrow mut r as &!rw in {
@@ -406,14 +717,23 @@ fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x](heap: &!h Heap, r0: lines.Line
                                         a[engine.k_first_found()] = n;
                                     }
                                     a[engine.k_ragged()] = a[engine.k_ragged()] + 1;
-                                } else {
-                                    let (r2, s2, e2, k2, j2, q2) = probe_one(heap, io, jt, tree, cols, sel, cells, bcells, line, number, st, a, rows, scratch, escr, kept, jrec, kscr, np, nb, pkey, delim, as_csv, from, limit, budget, picked, max_join);
+                                } else if fast {
+                                    let (r2, s2, e2, k2, j2, q2) = probe_inner(heap, io, jt, tree, cols, sel, cells, bcells, line, number, st, a, rows, scratch, escr, kept, jrec, kscr, np, nb, pkey, delim, as_csv, from, limit, budget, picked, max_join);
                                     rows = r2;
                                     scratch = s2;
                                     escr = e2;
                                     kept = k2;
                                     jrec = j2;
                                     kscr = q2;
+                                } else {
+                                    let (r2, s2, e2, k2, j2, q2, b2) = probe_one(heap, io, jt, tree, cols, sel, cells, bcells, line, number, st, a, keys, kmap, rows, scratch, escr, kept, jrec, kscr, kbuf, np, nb, delim, as_csv, from, limit, budget, picked, max_join);
+                                    rows = r2;
+                                    scratch = s2;
+                                    escr = e2;
+                                    kept = k2;
+                                    jrec = j2;
+                                    kscr = q2;
+                                    kbuf = b2;
                                 }
                             }
                         } else {
@@ -457,14 +777,23 @@ fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x](heap: &!h Heap, r0: lines.Line
                                                 a[engine.k_first_found()] = m;
                                             }
                                             a[engine.k_ragged()] = a[engine.k_ragged()] + 1;
-                                        } else {
-                                            let (r2, s2, e2, k2, j2, q2) = probe_one(heap, io, jt, tree, cols, sel, cells, bcells, record, opened, st, a, rows, scratch, escr, kept, jrec, kscr, np, nb, pkey, delim, as_csv, from, limit, budget, picked, max_join);
+                                        } else if fast {
+                                            let (r2, s2, e2, k2, j2, q2) = probe_inner(heap, io, jt, tree, cols, sel, cells, bcells, record, opened, st, a, rows, scratch, escr, kept, jrec, kscr, np, nb, pkey, delim, as_csv, from, limit, budget, picked, max_join);
                                             rows = r2;
                                             scratch = s2;
                                             escr = e2;
                                             kept = k2;
                                             jrec = j2;
                                             kscr = q2;
+                                        } else {
+                                            let (r2, s2, e2, k2, j2, q2, b2) = probe_one(heap, io, jt, tree, cols, sel, cells, bcells, record, opened, st, a, keys, kmap, rows, scratch, escr, kept, jrec, kscr, kbuf, np, nb, delim, as_csv, from, limit, budget, picked, max_join);
+                                            rows = r2;
+                                            scratch = s2;
+                                            escr = e2;
+                                            kept = k2;
+                                            jrec = j2;
+                                            kscr = q2;
+                                            kbuf = b2;
                                         }
                                     }
                                 }
@@ -485,7 +814,7 @@ fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x](heap: &!h Heap, r0: lines.Line
                 a[engine.k_groups()] = st[s_produced()];
             }
         }
-        var width = np + nb;
+        var width = np + nk;
         if a[engine.k_ragged()] > 0 {
             width = np;
         }
@@ -495,9 +824,36 @@ fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x](heap: &!h Heap, r0: lines.Line
     unbox_slice(heap, state);
     buffer.drop(heap, jrec);
     buffer.drop(heap, kscr);
+    buffer.drop(heap, kbuf);
     buffer.drop(heap, rec);
     buffer.drop(heap, escr);
     return (r, c, rows, scratch, kept);
+}
+
+// 0 inner, 1 left, 2 semi, 3 anti: `--join-type`.
+fn jtype_of[&g, &p](args: &g Args, parsed: &p cli.Parsed) -> [args] int {
+    let table = spec.flag_table();
+    let word = cli.text(args, parsed, table, "join-type");
+    if bytes.equal(word, "left") {
+        return 1;
+    }
+    if bytes.equal(word, "semi") {
+        return 2;
+    }
+    if bytes.equal(word, "anti") {
+        return 3;
+    }
+    return 0;
+}
+
+// The refusal of a typed key cell (abort 72) of the file whose header is `names`: the facts are in the tally `c` and the cell in `value`.
+fn typed_refusal[&h, &k, &v, &s, &n, &d](heap: &!h Heap, e: fail.Errors, keys: &k [int], c: finish.Counts, value: &v buffer.Buffer, shown: &s [byte], input: &static [byte], names: &n buffer.Buffer, ends: &d vec.Vec[int]) -> [heap] fail.Errors {
+    var from = 0;
+    if c.err_col > 0 {
+        from = vec.get(ends, c.err_col - 1);
+    }
+    let name = buffer.bytes(names)[from..vec.get(ends, c.err_col)];
+    return jnfail.typed_key(heap, e, c.err_fn, input, shown, name, c.err_row, c.err_line, buffer.bytes(value), c.err_cond + 1, keys[3 * c.err_cond + 2] - 2, c.err_digits);
 }
 
 // Everything once both files are open: `bfile` is the build, `pfile` the probe (or the empty file that stands in for standard input). Answers as `read_file` does.
@@ -536,31 +892,42 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
     }
     var jnames = buffer.empty(heap, 1);
     var jends = vec.empty(heap, 1, 0);
-    var pkey = 0;
-    var bkey = 0;
+    var keys = box_slice(heap, 3, 0);
+    var kmap = box_slice(heap, 1, 0);
+    var pairs = 0;
     var np = 0;
     var nb = 0;
+    var nk = 0;
+    let jtype = jtype_of(args, parsed);
     if !refused {
         borrow hp as &hpr in {
             borrow hb as &hbr in {
-                let (u, e2) = jnhead.unite(heap, args, parsed, e, hpr.names, hpr.ends, hbr.names, hbr.ends, true, shown, shown_b);
+                let (u, e2) = jnhead.unite(heap, args, parsed, e, hpr.names, hpr.ends, hbr.names, hbr.ends, true, shown, shown_b, jtype);
                 e = e2;
                 borrow u as &ur in {
-                    pkey = ur.pkey;
-                    bkey = ur.bkey;
+                    pairs = ur.pairs;
                     np = ur.np;
                     nb = ur.nb;
+                    nk = ur.nk;
                     refused = !ur.ok;
                 }
-                let (names, ends) = jnhead.take_header(u);
+                let (names, ends, k3, m3) = jnhead.take_header(u);
                 buffer.drop(heap, jnames);
                 vec.drop(heap, jends);
+                unbox_slice(heap, keys);
+                unbox_slice(heap, kmap);
                 jnames = names;
                 jends = ends;
+                keys = k3;
+                kmap = m3;
             }
         }
     }
-    let ncols = np + nb;
+    var simple = false;
+    borrow keys as &kr0 in {
+        simple = pairs == 1 && contents(kr0)[2] == 0;
+    }
+    let ncols = np + nk;
     // the plan against the joined header, as `read_file` resolves it against a file's
     var cols = box_slice(heap, 1, 0);
     var sel = box_slice(heap, 1, 0);
@@ -606,11 +973,21 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
             go = false;
         }
     }
+    var bcounts = nothing();
+    var consumed = 0;
     if go {
         // the build phase
-        let (rb2, jt2, bc, consumed) = build_pass(heap, rb, bfile, jt, nb, bkey, delim, cap, most, max_state);
-        rb = rb2;
-        jt = jt2;
+        var bkept = buffer.empty(heap, 1);
+        borrow keys as &kr1 in {
+            let (rb2, jt2, bc, consumed2, bk2) = build_pass(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, cap, most, max_state);
+            rb = rb2;
+            jt = jt2;
+            buffer.drop(heap, bkept);
+            bkept = bk2;
+            bcounts = bc;
+            consumed = consumed2;
+        }
+        let bc = bcounts;
         var berrno = 0;
         borrow rb as &rbr in {
             berrno = lines.failed(rbr);
@@ -633,6 +1010,15 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
             }
             e = jnfail.build_too_large(heap, e, shown_b, max_state, held, rows_held, bc.records, bc.abort_line, consumed, size);
             go = false;
+        } else if bc.abort == 72 {
+            borrow keys as &kr2 in {
+                borrow hb as &hbr in {
+                    borrow bkept as &bkr in {
+                        e = typed_refusal(heap, e, contents(kr2), bc, bkr, shown_b, "build", hbr.names, hbr.ends);
+                    }
+                }
+            }
+            go = false;
         } else if bc.abort != 0 || bc.ragged > 0 || bc.capped || berrno != 0 {
             borrow jnames as &nr in {
                 borrow jends as &er in {
@@ -647,6 +1033,7 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
             }
             go = false;
         }
+        buffer.drop(heap, bkept);
     }
     var probed = false;
     if go {
@@ -659,15 +1046,19 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
         borrow jt as &tr in {
             borrow cols as &kr in {
                 borrow sel as &sr in {
-                    borrow mut cellbox as &!cw in {
-                        borrow mut bcellbox as &!bw in {
-                            let (rp2, pc, rows2, scratch2, kept2) = probe_pass(heap, rp, pfile, io, stdin, tr, tree, contents(kr), contents(sr), contents(cw), contents(bw), out_rows, spare, np, nb, pkey, delim, as_csv, from, limit, budget, picked, cap, most, max_join);
-                            rp = rp2;
-                            c = pc;
-                            out_rows = rows2;
-                            spare = scratch2;
-                            buffer.drop(heap, kept);
-                            kept = kept2;
+                    borrow keys as &ky in {
+                        borrow kmap as &km in {
+                            borrow mut cellbox as &!cw in {
+                                borrow mut bcellbox as &!bw in {
+                                    let (rp2, pc, rows2, scratch2, kept2) = probe_pass(heap, rp, pfile, io, stdin, tr, tree, contents(kr), contents(sr), contents(cw), contents(bw), contents(ky), contents(km), pairs, simple, jtype, nk, out_rows, spare, np, nb, delim, as_csv, from, limit, budget, picked, cap, most, max_join);
+                                    rp = rp2;
+                                    c = pc;
+                                    out_rows = rows2;
+                                    spare = scratch2;
+                                    buffer.drop(heap, kept);
+                                    kept = kept2;
+                                }
+                            }
                         }
                     }
                 }
@@ -697,6 +1088,14 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
     if clean && !refused {
         if c.abort == 71 {
             e = jnfail.too_many_rows(heap, e, shown, max_join, c.err_row, c.err_line, c.err_digits, c.err_cond);
+        } else if c.abort == 72 {
+            borrow keys as &kr3 in {
+                borrow hp as &hpr in {
+                    borrow kept as &vr in {
+                        e = typed_refusal(heap, e, contents(kr3), c, vr, shown, "probe", hpr.names, hpr.ends);
+                    }
+                }
+            }
         } else {
             borrow jnames as &nr in {
                 borrow jends as &er in {
@@ -714,6 +1113,8 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
     unbox_slice(heap, cols);
     unbox_slice(heap, sel);
     unbox_slice(heap, cellbox);
+    unbox_slice(heap, keys);
+    unbox_slice(heap, kmap);
     buffer.drop(heap, lead);
     buffer.drop(heap, labels);
     vec.drop(heap, lends);

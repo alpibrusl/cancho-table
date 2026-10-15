@@ -778,16 +778,16 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             o = rule(heap, o, "sort.unknown-key");
         }
     }
-    if has_int {
+    if has_int || joining && bytes.find(jn, "\"type\":\"int\"") >= 0 {
         o = rule(heap, o, "value.not-integer");
         o = rule(heap, o, "value.integer-overflow");
     }
-    if has_dec {
+    if has_dec || joining && bytes.find(jn, "\"type\":\"dec(") >= 0 {
         o = rule(heap, o, "value.not-decimal");
         o = rule(heap, o, "value.decimal-scale");
         o = rule(heap, o, "value.decimal-too-wide");
     }
-    if has_float {
+    if has_float || joining && bytes.find(jn, "\"type\":\"float\"") >= 0 {
         o = rule(heap, o, "value.not-float");
         o = rule(heap, o, "value.not-finite");
         o = rule(heap, o, "value.float-range");
@@ -867,14 +867,21 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
         first_note = false;
     }
     if joining {
-        if !first_note {
-            o = buffer.push(heap, o, byte_of(','));
+        if bytes.find(jn, "\"type\":\"text\"") >= 0 {
+            o = note(heap, o, first_note, "an empty key matches an empty key (there is no null): a probe row and a build row whose key cells are both empty are a pair");
+            first_note = false;
         }
-        o = text.append_json(heap, o, "an empty key matches an empty key (there is no null): a probe row and a build row whose key cells are both empty are a pair");
-        first_note = false;
+        if bytes.find(jn, "\"type\":\"int\"") >= 0 || bytes.find(jn, "\"type\":\"dec(") >= 0 || bytes.find(jn, "\"type\":\"float\"") >= 0 {
+            o = note(heap, o, first_note, "a typed key reads both cells as its type and compares the values (007 is 7, -0 is 0): a cell that is not of the type, an empty one included, is refused, in the build file first and then in the probe");
+            first_note = false;
+        }
+        if bytes.find(jn, "\"type\":\"left\"") >= 0 {
+            o = note(heap, o, first_note, "a probe row with no match has every cell of the build row empty (padding, there is no null): a number read from one of those cells is refused with detail.padded, and a condition on a build column removes the padded rows");
+            first_note = false;
+        }
         if requested > 1 {
-            o = buffer.push(heap, o, byte_of(','));
-            o = text.append_json(heap, o, "--threads has no effect on a join: it is read on one core, with the same bytes");
+            o = note(heap, o, first_note, "--threads has no effect on a join: it is read on one core, with the same bytes");
+            first_note = false;
         }
         o = buffer.append(heap, o, "],\"join\":");
         o = buffer.append(heap, o, jn);

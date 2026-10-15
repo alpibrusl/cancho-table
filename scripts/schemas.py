@@ -166,11 +166,11 @@ def explain_document():
         "notes": {"type": "array", "items": TB},
         # a join (docs/joins.md section 8.4): the sides, the key, the columns, what the build can hold, the bound and the work
         "join": obj({
-            "type": {"enum": ["inner"]},
+            "type": {"enum": ["inner", "left", "semi", "anti"]},
             "probe": TB,
             "build": TB,
             "role_choice": {"type": "string"},
-            "keys": {"type": "array", "items": obj({"probe": TB, "build": TB, "type": {"enum": ["text"]},
+            "keys": {"type": "array", "items": obj({"probe": TB, "build": TB, "type": {"type": "string", "pattern": "^(text|int|float|dec\\([0-9]{1,2}\\))$"},
                                                     "probe_position": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},
                                                     "build_position": {"type": "integer", "minimum": 1}})},
             "output_columns": NULLABLE_NAT,
