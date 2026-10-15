@@ -8,7 +8,8 @@ read first, or how a flag or a header is judged; the tool is rebuilt from it and
 
 `--check` only verifies that every site still matches (no build; CI runs it). See mutlib.py.
 
-Not here, because J1 has no such code (the slice that adds it adds its mutants, docs/joins.md section 11): the padding width of a left join (J2), a semi join that duplicates and an anti
+Not here: the `2 *` of the explain's upper bound (it is provable and, with `rows_at_most` as loose as it is, no file can tell the two forms apart); the byte between the probe record and the build record of the joined record (it is never read: the cells are offsets, so a mutant of it is equivalent).
+Not here either, because J1 has no such code (the slice that adds it adds its mutants, docs/joins.md section 11): the padding width of a left join (J2), a semi join that duplicates and an anti
 join that is inverted (J2), the typed sign of `-0` and the typed read of a key (J2), USING dropping the wrong column (J2), the pushdown of a build condition for `left` and of a typed
 condition (J3), `--join-where` applied to the probe (J3), the swap repair offered for `left` (J7), the shared budget with the groups not subtracted (J3).
 """
@@ -36,7 +37,6 @@ MUTANTS = [
     # the joined row
     ("the build cells are shifted one byte short", "jnread.cho", "cells[3 * (np + k)] = bcells[3 * k] + keep;", "cells[3 * (np + k)] = bcells[3 * k] + keep - 1;"),
     ("the build record is not cut back between matches", "jnread.cho", "            jw.used = keep;", "            jw.used = jw.used;"),
-    ("the delimiter between the records is the probe's last byte", "jnread.cho", "    jrec2 = buffer.push(heap, jrec2, byte_of(delim));\n    let keep = len(prec) + 1;", "    jrec2 = buffer.push(heap, jrec2, byte_of(44));\n    let keep = len(prec) + 1;"),
     ("a probe row with no match is joined to the first build row", "jnread.cho", "    if chain < 0 {\n        return (rows2, scratch2, escr2, kept2, jrec2, kscr2);\n    }\n    var matches = 0;", "    if chain < 0 {\n        chain = 0;\n    }\n    var matches = 0;"),
     # --from, the page and the rows counted
     ("--from skips one joined row too few", "jnread.cho", "        if st[s_produced()] > from {", "        if st[s_produced()] >= from {"),
@@ -93,7 +93,6 @@ MUTANTS = [
     ("a join is read by several threads as a file is", "explain.cho", '        if joining {\n            why = "the join is read on one core";\n        } else if stdin {', '        if stdin {'),
     ("a join is explained as a file", "table.cho", "        if joining {\n            let (t4, e4, d4) = jnexplain.settle(", "        if false {\n            let (t4, e4, d4) = jnexplain.settle("),
     ("explain forgets that a join reads the whole build first", "explain.cho", '        reads = "the whole build file, then the probe until the page is full";\n        if unbounded {', '        reads = "until the page is full";\n        if unbounded {'),
-    ("the explain bound counts the key bytes once", "jnexplain.cho", "    return 2 * body + 76 * (body / least + 1);", "    return body + 76 * (body / least + 1);"),
     ("the explain says the file will pass", "jnexplain.cho", "    if most > budget {\n        o = buffer.append(heap, o, \"true\");", "    if most > budget + 1000000000 {\n        o = buffer.append(heap, o, \"true\");"),
     # the rules
     ("the collision has the wrong exit code", "finish.cho", "join.column-collision|2|sometimes|", "join.column-collision|8|sometimes|"),

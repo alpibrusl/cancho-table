@@ -354,6 +354,12 @@ class Columns(unittest.TestCase):
         self.assertEqual((r.first_rule(), d["input"], d["path"], d["available"]), ("column.unknown", "build", "b.csv", ["id", "city", "x"]))
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "#9=#1", "p.csv")
         self.assertEqual(r.first_rule(), "column.unknown")
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "#4=#1", "p.csv")             # p.csv has 3 columns: #4 is the first one past the end
+        self.assertEqual((r.first_rule(), r.error()["detail"]["input"]), ("column.unknown", "probe"))
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "#1=#4", "p.csv")
+        self.assertEqual((r.first_rule(), r.error()["detail"]["input"]), ("column.unknown", "build"))
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "#0=#1", "p.csv")
+        self.assertEqual(r.first_rule(), "column.unknown")
         # both are wrong: the build file's is first
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "a=b", "p.csv")
         self.assertEqual([e["detail"]["input"] for e in r.doc()["errors"]], ["build", "probe"])
@@ -401,7 +407,7 @@ class Flags(unittest.TestCase):
         self.assertEqual(r.stdout.decode().splitlines(), ["k,v,id,w", "a,1,a,2"])
 
     def test_the_forms_of_on_this_version_does_not_take(self):
-        cases = {"k": "no pair", "k=": "empty name", "=id": "empty name", "k=id,v=w": "two pairs", "k=id=w": "two equals signs", "k=id:int": "a type", "k\\x=id": "bad escape", "k=id\\": "trailing backslash"}
+        cases = {"k=id,w": "a second pair with no equals sign", "k": "no pair", "k=": "empty name", "=id": "empty name", "k=id,v=w": "two pairs", "k=id=w": "two equals signs", "k=id:int": "a type", "k\\x=id": "bad escape", "k=id\\": "trailing backslash"}
         for on, why in cases.items():
             with self.subTest(on):
                 r = run("--root", self.s.dir, "--join", "b.csv", "--on", on, "p.csv")
@@ -561,6 +567,13 @@ class MaxJoinRows(unittest.TestCase):
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--max-join-rows", "10", "--limit", "5", "p.csv")
         self.assertEqual((r.status, r.data()["row_count"], r.data()["truncated"]), (0, 5, True))
 
+    def test_the_most_matches_so_far_is_a_maximum(self):
+        # a probe row with 40 matches, then one with 1, which is the one that passes the bound: the most is still 40
+        self.s.write("p3.csv", "k,v\nh,0\nz,1\n")
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--max-join-rows", "40", "p3.csv")
+        d = r.error()["detail"]
+        self.assertEqual((r.first_rule(), d["probe_row"], d["matches"], d["max_matches_so_far"]), ("limit.too-many-join-rows", 2, 1, 40))
+
     def test_the_default_is_ten_million(self):
         d = introspect()
         lim = {l["name"]: (l["default"], l["ceiling"]) for l in d["limits"]}
@@ -670,7 +683,7 @@ class Accounting(unittest.TestCase):
 
     def test_quoted_keys_and_crlf_and_a_bom(self):
         self.probe()
-        rows = [[b'q"%d' % i, b"a,b"] for i in range(2000)] + [[b"a,b", b"x"]] * 5 + [[b"k%d" % (i % 7), b"y"] for i in range(2000)]
+        rows = [[b'q"%d' % i, b"a,b"] for i in range(2000)] + [[b"a,b", b"x"]] * 5 + [[b"k%d" % (i % 7), b"y"] for i in range(2000)] + [[b"", b"e"], [b"", b"f"]]
         self.build_file("q.csv", [b"k", b"v"], rows, crlf=True, bom=True)
         self.check_exact("q.csv")
         self.build_file("q2.csv", [b"k", b"v"], rows, quote_all=True)
@@ -846,13 +859,21 @@ class Explain(unittest.TestCase):
         self.assertEqual(j["work"], {"class": "join: build then stream", "first_output_after": "the whole build", "threads": {"requested": 3, "effective": 1, "reason": "the join is read on one core"}})
         self.assertEqual(x["output"]["columns"], ["k", "v", "r_id", "r_w"])
         self.assertEqual(x["work"]["class"], "join: build then stream")
+        self.assertEqual(x["work"]["reads"], "the whole build file, then the probe until the page is full")
         for rule in ("limit.state-too-large", "limit.too-many-join-rows", "limit.too-many-rows", "join.column-collision", "column.unknown", "parse.csv-ragged-row"):
             self.assertIn(rule, x["refusals"]["possible"])
         self.assertTrue(any("an empty key matches an empty key" in n for n in x["notes"]))
         self.assertEqual(x["plan"]["form"], "rows")
 
+    def test_may_pass_the_bound_is_said_only_when_the_upper_bound_is_over_it(self):
+        size = os.path.getsize(self.s.dir / "b.csv")
+        at_most = self.ex("--join", "b.csv", "--on", "k=id", "--join-prefix", "r_").data()["explain"]["join"]["build_state"]["accounted_at_most"]
+        for budget, want in ((at_most, False), (at_most - 1, True), (1, True)):
+            bs = self.ex("--join", "b.csv", "--on", "k=id", "--join-prefix", "r_", "--max-state-bytes", budget).data()["explain"]["join"]["build_state"]
+            self.assertEqual((bs["budget"], bs["may_pass_bound"]), (budget, want))
+
     def test_the_upper_bound_holds_for_files_of_every_shape(self):
-        # the bound from the size and the header alone is never below what the formula says, also for one-column files with the smallest records (docs/joins.md 6.3's formula was)
+        # the bound from the size and the header alone is never below what the formula says, also for one-column files with the smallest records (the bound is `2 * (size - header) + 76 * rows`, which is provable: the records and the keys inside them are both counted)
         rng = random.Random(11)
         for ncols in (1, 2, 5):
             for rows in (0, 1, 7, 300):
