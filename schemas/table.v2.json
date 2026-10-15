@@ -860,7 +860,8 @@
                         "all rows",
                         "until the page is full",
                         "the whole build file, then the probe until the page is full",
-                        "the whole build file, then all the probe rows"
+                        "the whole build file, then all the probe rows",
+                        "the whole build file, then every probe row (a grouping or a sort needs every row)"
                       ]
                     },
                     "rows_held": {

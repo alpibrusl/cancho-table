@@ -179,6 +179,7 @@ class Fixture(unittest.TestCase):
     def explain(self, extra, **kw):
         r = self.go(["--explain", *extra], fmt=None, **kw)
         self.assertEqual(r.status, 0, r.stdout[:400])
+        self.assertEqual(validate(r), [], extra)
         return r.data()["explain"]
 
 

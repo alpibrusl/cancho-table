@@ -155,7 +155,7 @@ def explain_document():
         }),
         "work": obj({
             "class": {"enum": ["shape", "type report", "grouped single pass", "sorted rows", "stream rows", "join: build then stream"]},
-            "reads": {"enum": ["all rows", "until the page is full", "the whole build file, then the probe until the page is full", "the whole build file, then all the probe rows"]},
+            "reads": {"enum": ["all rows", "until the page is full", "the whole build file, then the probe until the page is full", "the whole build file, then all the probe rows", "the whole build file, then every probe row (a grouping or a sort needs every row)"]},
             "rows_held": NULLABLE_NAT,
             "bounds": obj({
                 "max_rows": NAT, "max_line_bytes": NAT, "max_bytes": NAT, "max_groups": NAT, "max_distinct": NAT, "max_sort_rows": NAT, "max_state_bytes": NAT, "max_join_rows": NAT,
