@@ -1,0 +1,81 @@
+{
+  "suite": "groupby",
+  "about": "The db-benchmark groupby questions (docs/named-benchmarks.md section 4.3) as commands. {FILE} is the data file's path. 'flags' and 'query' are the argv after the binary: the two forms must give the same bytes and the reference's rows (scripts/bench_named_ref.py --gate). Classes: E expressible; B expressible only up to a bound; X not expressible (a probe argv, the nearest spelling, must be refused with the stated rule, so a feature that lands fails the gate and the entry must be re-classified); D a defect (the command must still fail with a trap status; when it is fixed the gate fails and the entry must be re-classified). No time is recorded here: the later driver (NB2) reads this file.",
+  "label": "H2O-groupby layout, own generator, seed 108: not the h2oai R generator, so published numbers are not comparable",
+  "file": "G1_{rows}_{k}_0_0.csv",
+  "sql_source": "duckdblabs/db-benchmark duckdb/groupby-duckdb.py, read 2026-10-15",
+  "questions": [
+    {
+      "id": "q1", "name": "sum v1 by id1", "class": "E",
+      "sql": "SELECT id1, sum(v1) AS v1 FROM x GROUP BY id1",
+      "columns": ["id1", "sum:v1"],
+      "flags": ["--group", "id1", "--agg", "sum:v1", "--format", "csv", "{FILE}"],
+      "query": ["--format", "csv", "--query", "select id1, sum(v1) from '{FILE}' group by id1"]
+    },
+    {
+      "id": "q2", "name": "sum v1 by id1:id2", "class": "E",
+      "sql": "SELECT id1, id2, sum(v1) AS v1 FROM x GROUP BY id1, id2",
+      "columns": ["id1", "id2", "sum:v1"],
+      "flags": ["--group", "id1,id2", "--agg", "sum:v1", "--format", "csv", "{FILE}"],
+      "query": ["--format", "csv", "--query", "select id1, id2, sum(v1) from '{FILE}' group by id1, id2"]
+    },
+    {
+      "id": "q3", "name": "sum v1 mean v3 by id3", "class": "E",
+      "sql": "SELECT id3, sum(v1) AS v1, avg(v3) AS v3 FROM x GROUP BY id3",
+      "columns": ["id3", "sum:v1", "mean:v3"],
+      "note": "N/K groups: 1e5 at 1e7 rows is the default --max-groups; 1e6 at 1e8 rows is the ceiling. The mean is exact at scale 6, rounded half to even (a choice of the design, docs/named-benchmarks.md 4.3).",
+      "flags": ["--group", "id3", "--agg", "sum:v1,mean:v3:dec(6)@6", "--max-groups", "1000000", "--format", "csv", "{FILE}"],
+      "query": ["--max-groups", "1000000", "--format", "csv", "--query", "select id3, sum(v1), mean(v3::dec(6), 6) from '{FILE}' group by id3"]
+    },
+    {
+      "id": "q4", "name": "mean v1:v3 by id4", "class": "E",
+      "sql": "SELECT id4, avg(v1) AS v1, avg(v2) AS v2, avg(v3) AS v3 FROM x GROUP BY id4",
+      "columns": ["id4", "mean:v1", "mean:v2", "mean:v3"],
+      "flags": ["--group", "id4", "--agg", "mean:v1@6,mean:v2@6,mean:v3:dec(6)@6", "--format", "csv", "{FILE}"],
+      "query": ["--format", "csv", "--query", "select id4, mean(v1, 6), mean(v2, 6), mean(v3::dec(6), 6) from '{FILE}' group by id4"]
+    },
+    {
+      "id": "q5", "name": "sum v1:v3 by id6", "class": "E",
+      "sql": "SELECT id6, sum(v1) AS v1, sum(v2) AS v2, sum(v3) AS v3 FROM x GROUP BY id6",
+      "columns": ["id6", "sum:v1", "sum:v2", "sum:v3"],
+      "note": "N/K groups, as q3.",
+      "flags": ["--group", "id6", "--agg", "sum:v1,sum:v2,sum:v3:dec(6)", "--max-groups", "1000000", "--format", "csv", "{FILE}"],
+      "query": ["--max-groups", "1000000", "--format", "csv", "--query", "select id6, sum(v1), sum(v2), sum(v3::dec(6)) from '{FILE}' group by id6"]
+    },
+    {
+      "id": "q6", "name": "median v3 sd v3 by id4 id5", "class": "X",
+      "sql": "SELECT id4, id5, quantile_cont(v3, 0.5) AS median_v3, stddev(v3) AS sd_v3 FROM x GROUP BY id4, id5",
+      "blocker": "no median and no standard deviation among count, sum, min, max, mean, distinct",
+      "link": "docs/named-benchmarks.md section 4.3 and 14 (no backlog item)",
+      "probe": {"argv": ["--group", "id4,id5", "--agg", "median:v3,sd:v3", "{FILE}"], "rule": "agg.bad-spec"}
+    },
+    {
+      "id": "q7", "name": "max v1 - min v2 by id3", "class": "X",
+      "sql": "SELECT id3, max(v1) - min(v2) AS range_v1_v2 FROM x GROUP BY id3",
+      "blocker": "the difference of two aggregates is a computed column; max:v1 and min:v2 alone are expressible (the operands)",
+      "link": "docs/or-and-columns.md section 8 (no, not now)",
+      "probe": {"argv": ["--query", "select id3, max(v1) - min(v2) from '{FILE}' group by id3"], "rule": "query.unsupported"}
+    },
+    {
+      "id": "q8", "name": "largest two v3 by id6", "class": "X",
+      "sql": "SELECT id6, unnest(max(v3, 2)) AS largest2_v3 FROM x WHERE v3 IS NOT NULL GROUP BY id6",
+      "blocker": "no per-group top-k (--top takes the first groups, not the first values of each group)",
+      "link": "docs/named-benchmarks.md section 4.3 and 14 (no backlog item)",
+      "probe": {"argv": ["--group", "id6", "--agg", "top2:v3", "{FILE}"], "rule": "agg.bad-spec"}
+    },
+    {
+      "id": "q9", "name": "regression v1 v2 by id2 id4", "class": "X",
+      "sql": "SELECT id2, id4, pow(corr(v1, v2), 2) AS r2 FROM x GROUP BY id2, id4",
+      "blocker": "no correlation",
+      "link": "docs/named-benchmarks.md section 4.3 and 14 (no backlog item)",
+      "probe": {"argv": ["--group", "id2,id4", "--agg", "corr:v1:v2", "{FILE}"], "rule": "agg.bad-spec"}
+    },
+    {
+      "id": "q10", "name": "sum v3 count by id1:id6", "class": "D",
+      "sql": "SELECT id1, id2, id3, id4, id5, id6, sum(v3) AS v3, count(*) AS count FROM x GROUP BY id1, id2, id3, id4, id5, id6",
+      "blocker": "THE DESIGN SAID 'refused above 1e6 rows' (limit.too-many-groups at the 1,000,000 ceiling). MEASURED BY NB1: a grouping by five or more columns traps (exit status 132, no output, no tagged refusal) at ANY size, even on a one-row file, so the question cannot be run at all; the group ceiling is never reached. It is a defect of the tool, not a rule.",
+      "link": "docs/named-benchmarks.md section 4.3 (corrected in NB1)",
+      "defect": {"argvs": [["--group", "id1,id2,id3,id4,id5,id6", "--agg", "sum:v3:dec(6),count", "--max-groups", "1000000", "--format", "csv", "{FILE}"], ["--group", "id1,id2,id3,id4,id5", "--agg", "count", "--format", "csv", "{FILE}"]], "statuses": [132, -4]}
+    }
+  ]
+}
