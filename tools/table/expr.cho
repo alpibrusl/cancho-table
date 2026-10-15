@@ -467,6 +467,124 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
     return (plan, what, at);
 }
 
+// The repair of an `or` (docs/or-and-columns.md section 7, slice A0): `COND or COND { or COND }`, every COND `COLUMN = VALUE` or `COLUMN in (V { , V })`, the column written
+// the same each time (the same bytes, so the same name or position and the same type suffix), is the one question `COLUMN in (V1, V2, ...)`, the values as written and in order,
+// duplicates kept. Answers that expression and true; else an empty buffer and false: the operators differ (`!=` makes `a != 1 or a != 2` always true, an `in` would be wrong),
+// a leaf is `contains`, the columns or the types differ, another connective or a parenthesis is there, a literal does not fit its type, or the list passes 1,024 values (the ceiling is `parse`'s: the result is parsed again, and
+// must be one condition, before it is offered). No engine is touched: this reads the text with the readers `parse` uses.
+pub fn or_in[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] (buffer.Buffer, bool) {
+    var plan = query.empty(heap);
+    var list = buffer.empty(heap, len(src) + 16);
+    var col_a = 0;
+    var col_b = 0;
+    var leaves = 0;
+    var values = 0;
+    var ok = true;
+    var more = true;
+    var i = skip_space(src, 0);
+    while ok && more {
+        let begins = i;
+        let (p1, after_column, index, typed, w1, a1) = parse_column(heap, plan, src, i);
+        plan = p1;
+        if w1 != 0 {
+            ok = false;
+        } else if leaves == 0 {
+            col_a = begins;
+            col_b = after_column;
+        } else if after_column - begins != col_b - col_a || !bytes.equal(src[begins..after_column], src[col_a..col_b]) {
+            ok = false;
+        }
+        if ok {
+            i = skip_space(src, after_column);
+            let (kind, op, after_op, w2, a2) = parse_operator(heap, src, i, typed);
+            if w2 != 0 || kind == 1 || kind == 0 && op != 0 {
+                ok = false;
+            } else {
+                i = skip_space(src, after_op);
+                var listing = kind == 2;
+                if kind == 2 {
+                    if i < len(src) && int_of(src[i]) == '(' {
+                        i = i + 1;
+                    } else {
+                        ok = false;
+                    }
+                }
+                var one = true;
+                while ok && (listing || one) {
+                    one = false;
+                    i = skip_space(src, i);
+                    let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, typed);
+                    plan = p3;
+                    if w3 != 0 {
+                        ok = false;
+                    } else {
+                        if values > 0 {
+                            list = buffer.append(heap, list, ", ");
+                        }
+                        list = buffer.append(heap, list, src[i..after_value]);
+                        values = values + 1;
+                        i = after_value;
+                        if listing {
+                            i = skip_space(src, i);
+                            if i < len(src) && int_of(src[i]) == ',' {
+                                i = i + 1;
+                            } else if i < len(src) && int_of(src[i]) == ')' {
+                                i = i + 1;
+                                listing = false;
+                            } else {
+                                ok = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if ok {
+            leaves = leaves + 1;
+            i = skip_space(src, i);
+            if i >= len(src) {
+                more = false;
+            } else {
+                let (word, after_or, quoted, status, e1, e2) = read_word(heap, buffer.empty(heap, 4), src, i);
+                var is_or = false;
+                borrow word as &wr in {
+                    is_or = status == 0 && quoted == 0 && bytes.equal(buffer.bytes(wr), "or");
+                }
+                buffer.drop(heap, word);
+                if is_or {
+                    i = skip_space(src, after_or);
+                } else {
+                    ok = false;
+                }
+            }
+        }
+    }
+    query.drop(heap, plan);
+    var out = buffer.empty(heap, len(src) + 16);
+    if ok && leaves >= 2 {
+        out = buffer.append(heap, out, src[col_a..col_b]);
+        out = buffer.append(heap, out, " in (");
+        borrow list as &lr in {
+            out = buffer.append(heap, out, buffer.bytes(lr));
+        }
+        out = buffer.push(heap, out, byte_of(41));
+        // the repair is only offered whole: the corrected expression must be one the grammar takes (a column, `in`, a list: one condition, within the ceiling of 1,024 values)
+        var what = 1;
+        borrow out as &orr in {
+            let (p4, w4, a4) = parse(heap, query.empty(heap), buffer.bytes(orr));
+            query.drop(heap, p4);
+            what = w4;
+        }
+        if what == 0 {
+            buffer.drop(heap, list);
+            return (out, true);
+        }
+    }
+    buffer.drop(heap, list);
+    buffer.drop(heap, out);
+    return (buffer.empty(heap, 1), false);
+}
+
 // The same for a :dec(scale) column: the cell is read as the exact scaled integer, and compared with the literals' (read at the
 // same scale when the expression was parsed).
 fn holds_dec[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many: int, scale: int, cell: &c [byte]) -> [] int {

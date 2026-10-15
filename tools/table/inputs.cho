@@ -53,6 +53,9 @@ pub struct Inputs {
     rows_n: int,
     select_whole: bool,
     select_at: int,
+    // where `--where`'s value is in the arguments and whether it is an argument of its own (`--where EXPR`, not `--where=EXPR`): what the repair of an `or` needs (-1 when not given)
+    where_whole: bool,
+    where_at: int,
     root_at: int,
     operands: int,
     source_at: int,
@@ -65,6 +68,12 @@ pub fn from_flags[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [
         source_at = cli.operand_index(parsed, 0);
     }
     let has_select = cli.has(parsed, table, "select");
+    var where_at = -1;
+    var where_whole = false;
+    if cli.has(parsed, table, "where") {
+        where_at = cli.value_index(parsed, table, "where");
+        where_whole = cli.value_is_whole(parsed, table, "where");
+    }
     var select_at = -1;
     if has_select && cli.value_is_whole(parsed, table, "select") {
         select_at = cli.value_index(parsed, table, "select");
@@ -113,7 +122,7 @@ pub fn from_flags[&g, &p](args: &g Args, parsed: &p cli.Parsed, table: &static [
     if has_sort {
         sort_text = cli.text(args, parsed, table, "sort");
     }
-    return Inputs { has_select: has_select, has_where: cli.has(parsed, table, "where"), has_group: cli.has(parsed, table, "group"), has_agg: cli.has(parsed, table, "agg"), has_order: cli.has(parsed, table, "order-by"), has_report: cli.has(parsed, table, "report"), has_sort: has_sort, has_top: cli.has(parsed, table, "top"), has_limit: cli.has(parsed, table, "limit"), has_from: cli.has(parsed, table, "from"), has_query: has_query, has_rows: mentioned && cli.has(parsed, table, "rows"), has_explain: explaining && cli.has(parsed, table, "explain"), src_file: false, jsonl: jsonl, jmention: jmention, discover: discover, has_join: has_join, join_mention: join_mention, select_text: cli.text(args, parsed, table, "select"), where_text: cli.text(args, parsed, table, "where"), group_text: cli.text(args, parsed, table, "group"), agg_text: cli.text(args, parsed, table, "agg"), order_text: cli.text(args, parsed, table, "order-by"), report_text: cli.text(args, parsed, table, "report"), sort_text: sort_text, format_text: cli.text(args, parsed, table, "format"), query_text: query_text, root_text: cli.text(args, parsed, table, "root"), top_n: cli.nat(args, parsed, table, "top"), limit_n: cli.nat(args, parsed, table, "limit"), from_n: cli.nat(args, parsed, table, "from"), rows_n: cli.nat(args, parsed, table, "max-rows"), select_whole: select_at >= 0, select_at: select_at, root_at: cli.value_index(parsed, table, "root"), operands: cli.operand_count(parsed), source_at: source_at, stdin: stdin };
+    return Inputs { has_select: has_select, has_where: cli.has(parsed, table, "where"), has_group: cli.has(parsed, table, "group"), has_agg: cli.has(parsed, table, "agg"), has_order: cli.has(parsed, table, "order-by"), has_report: cli.has(parsed, table, "report"), has_sort: has_sort, has_top: cli.has(parsed, table, "top"), has_limit: cli.has(parsed, table, "limit"), has_from: cli.has(parsed, table, "from"), has_query: has_query, has_rows: mentioned && cli.has(parsed, table, "rows"), has_explain: explaining && cli.has(parsed, table, "explain"), src_file: false, jsonl: jsonl, jmention: jmention, discover: discover, has_join: has_join, join_mention: join_mention, select_text: cli.text(args, parsed, table, "select"), where_text: cli.text(args, parsed, table, "where"), group_text: cli.text(args, parsed, table, "group"), agg_text: cli.text(args, parsed, table, "agg"), order_text: cli.text(args, parsed, table, "order-by"), report_text: cli.text(args, parsed, table, "report"), sort_text: sort_text, format_text: cli.text(args, parsed, table, "format"), query_text: query_text, root_text: cli.text(args, parsed, table, "root"), top_n: cli.nat(args, parsed, table, "top"), limit_n: cli.nat(args, parsed, table, "limit"), from_n: cli.nat(args, parsed, table, "from"), rows_n: cli.nat(args, parsed, table, "max-rows"), select_whole: select_at >= 0, select_at: select_at, where_whole: where_whole, where_at: where_at, root_at: cli.value_index(parsed, table, "root"), operands: cli.operand_count(parsed), source_at: source_at, stdin: stdin };
 }
 
 // The plan's values as a query's translation gives them: what the query says replaces what the flags did not (a flag the query has no form for, `--top`, `--limit` or `--from` when the
@@ -137,7 +146,7 @@ pub fn for_query[&t](inp: Inputs, t: &t qtrans.Translated) -> [] Inputs {
     } else if qtrans.info_at(t, qtrans.i_source()) == 1 {
         stdin = false;
     }
-    return Inputs { has_select: qtrans.info_at(t, qtrans.i_select()) == 1, has_where: qtrans.info_at(t, qtrans.i_where()) == 1, has_group: qtrans.info_at(t, qtrans.i_group()) == 1, has_agg: qtrans.info_at(t, qtrans.i_agg()) == 1, has_order: qtrans.info_at(t, qtrans.i_order()) == 1, has_report: false, has_sort: qtrans.info_at(t, qtrans.i_sort()) == 1, has_top: inp.has_top, has_limit: has_limit, has_from: has_from, has_query: inp.has_query, has_rows: qtrans.info_at(t, qtrans.i_rows()) == 1, has_explain: inp.has_explain, src_file: qtrans.info_at(t, qtrans.i_source()) == 1, jsonl: inp.jsonl, jmention: inp.jmention, discover: inp.discover, has_join: inp.has_join, join_mention: inp.join_mention, select_text: inp.select_text, where_text: inp.where_text, group_text: inp.group_text, agg_text: inp.agg_text, order_text: inp.order_text, report_text: inp.report_text, sort_text: inp.sort_text, format_text: inp.format_text, query_text: inp.query_text, root_text: inp.root_text, top_n: inp.top_n, limit_n: limit_n, from_n: from_n, rows_n: inp.rows_n, select_whole: false, select_at: 0 - 1, root_at: inp.root_at, operands: inp.operands, source_at: inp.source_at, stdin: stdin };
+    return Inputs { has_select: qtrans.info_at(t, qtrans.i_select()) == 1, has_where: qtrans.info_at(t, qtrans.i_where()) == 1, has_group: qtrans.info_at(t, qtrans.i_group()) == 1, has_agg: qtrans.info_at(t, qtrans.i_agg()) == 1, has_order: qtrans.info_at(t, qtrans.i_order()) == 1, has_report: false, has_sort: qtrans.info_at(t, qtrans.i_sort()) == 1, has_top: inp.has_top, has_limit: has_limit, has_from: has_from, has_query: inp.has_query, has_rows: qtrans.info_at(t, qtrans.i_rows()) == 1, has_explain: inp.has_explain, src_file: qtrans.info_at(t, qtrans.i_source()) == 1, jsonl: inp.jsonl, jmention: inp.jmention, discover: inp.discover, has_join: inp.has_join, join_mention: inp.join_mention, select_text: inp.select_text, where_text: inp.where_text, group_text: inp.group_text, agg_text: inp.agg_text, order_text: inp.order_text, report_text: inp.report_text, sort_text: inp.sort_text, format_text: inp.format_text, query_text: inp.query_text, root_text: inp.root_text, top_n: inp.top_n, limit_n: limit_n, from_n: from_n, rows_n: inp.rows_n, select_whole: false, select_at: 0 - 1, where_whole: false, where_at: 0 - 1, root_at: inp.root_at, operands: inp.operands, source_at: inp.source_at, stdin: stdin };
 }
 
 // Where the value of `--query` is in the arguments and whether it is an argument of its own (`--query TEXT`, not `--query=TEXT`): what a repair that offers the invocation back needs,
