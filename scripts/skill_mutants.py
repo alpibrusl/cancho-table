@@ -22,7 +22,7 @@ Q = '\\"'
 MUTANTS = [
     # usage: the flags of each form
     ("the rows line forgets --order-by", "table.cho", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--rename LIST] [--order-by KEYS] [--top N]", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--rename LIST] [--top N]"),
-    ("the rows line forgets --threads", "table.cho", "[--max-sort-rows N] [--max-state-bytes N] [--threads N]", "[--max-sort-rows N] [--max-state-bytes N]"),
+    ("the rows line forgets --threads", "table.cho", "[--max-sort-rows N] [--max-state-bytes N] [--threads N] [--chunk-bytes N]", "[--max-sort-rows N] [--max-state-bytes N] [--chunk-bytes N]"),
     ("the groups line lists --select", "table.cho", "--group NAMES [--agg ITEMS]", "--group NAMES [--select NAMES] [--agg ITEMS]"),
     ("the rows line lists --sort", "table.cho", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--rename LIST] [--order-by KEYS] [--top N]", "[--max-line-bytes N] [--select NAMES] [--where EXPR] [--rename LIST] [--order-by KEYS] [--sort KEY] [--top N]"),
     ("the shape line lists --limit", "table.cho", "[--max-line-bytes N] [--format json|text] [FILE|-]", "[--max-line-bytes N] [--limit N] [--format json|text] [FILE|-]"),

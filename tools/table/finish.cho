@@ -381,8 +381,20 @@ pub fn over_limit[&h, &s](heap: &!h Heap, e: fail.Errors, rule: &static [byte], 
     return fail.add(heap, e, w);
 }
 
+// The hint of a cell that `--join-where` reads as a number and that is not one.
+fn join_where_hint() -> [] &static [byte] {
+    return "keep out the rows with such a cell with a condition before it in --join-where (a condition that decides the row stops the ones after it: bytes != '' and bytes:int > 5), or do not ask for a number of this column";
+}
+
 // What a refusal says it was reading for: the function of the aggregate, or the condition (`err_fn` -1), or the sort key (-2).
 pub fn context_of(function: int) -> [] &static [byte] {
+    if function >= 90 {
+        // a join's padded cell (jn3pass.emit_g adds 100): the context is the same
+        return context_of(function - 100);
+    }
+    if function == -4 {
+        return "join-where";
+    }
     if function == -2 {
         return "order-by";
     }
@@ -738,6 +750,9 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
             what = "a cell is an integer that does not fit 64 bits";
         }
         let context = context_of(c.err_fn);
+        if c.err_fn == -4 {
+            hint = join_where_hint();
+        }
         var w = fail.open_in(heap, extra(), rule, what, hint);
         w = fail.repair_none(heap, w, "what the cell was meant to be is not known");
         w = fail.detail_open(heap, w);
@@ -748,7 +763,7 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
         w = fail.detail_int(heap, w, "line", c.err_line);
         w = fail.detail_text(heap, w, "value", buffer.bytes(kept));
         w = fail.detail_bool(heap, w, "value_truncated", buffer.size(kept) >= 64);
-        if c.err_fn == 77 {
+        if c.err_fn >= 90 {
             w = fail.detail_bool(heap, w, "padded", true);
         }
         e = fail.add(heap, e, w);
@@ -784,6 +799,9 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
             what = "a cell of a :float column is longer than 1,100 bytes";
             hint = "a number of this length is not a double; compare the column as text";
         }
+        if c.err_fn == -4 {
+            hint = join_where_hint();
+        }
         var w = fail.open_in(heap, extra(), rule, what, hint);
         w = fail.repair_none(heap, w, "what the cell was meant to be is not known");
         w = fail.detail_open(heap, w);
@@ -799,7 +817,7 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
         } else if status == 12 {
             w = fail.detail_str(heap, w, "direction", "underflow");
         }
-        if c.err_fn == 77 {
+        if c.err_fn >= 90 {
             w = fail.detail_bool(heap, w, "padded", true);
         }
         e = fail.add(heap, e, w);
@@ -810,9 +828,9 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
         var scale = 0;
         if in_agg {
             code = c.abort - 4;
-            if c.err_fn == -3 {
+            if c.err_fn == -3 || c.err_fn == 97 {
                 scale = query.gkind_at(tree, c.err_cond) - 2;
-            } else if c.err_fn == -2 {
+            } else if c.err_fn == -2 || c.err_fn == 98 {
                 scale = query.order_flags(tree, c.err_cond) / 2 - 2;
             } else {
                 scale = query.agg_at(tree, c.err_cond, 2) - 2;
@@ -833,10 +851,13 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
             hint = "declare a smaller scale, or compare the column as text";
         }
         let digits = c.err_digits;
+        if c.err_fn == -4 {
+            hint = join_where_hint();
+        }
         var w = fail.open_in(heap, extra(), rule, what, hint);
         let given = cli.text(args, parsed, table, "where");
         let where_at = cli.value_index(parsed, table, "where");
-        if code == 23 && where_at >= 0 && !in_agg {
+        if code == 23 && where_at >= 0 && !in_agg && c.err_fn != -4 {
             // the whole invocation with this condition's :dec(S) written :dec(digits)
             let fixed = rewrite_scale(heap, given, query.cond_at(tree, c.err_cond, 6), digits);
             var o = fail.choose_open(heap, w);
@@ -864,7 +885,7 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
         if code == 23 {
             w = fail.detail_int(heap, w, "digits", digits);
         }
-        if c.err_fn == 77 {
+        if c.err_fn >= 90 {
             w = fail.detail_bool(heap, w, "padded", true);
         }
         e = fail.add(heap, e, w);

@@ -12,6 +12,7 @@ import std.bytes;
 import std.json;
 import std.vec;
 import finish;
+import jnguard;
 import toolbox.cli;
 import toolbox.fail;
 import toolbox.text;
@@ -31,21 +32,28 @@ fn put_names[&h, &n, &d](heap: &!h Heap, w: json.Writer, key: &static [byte], na
     return json.end_array(heap, o);
 }
 
-// A name `--on` gave that the header of `input` does not have (status 1) or has more than once (status 2): `column.unknown` and `column.ambiguous`, as `--where` and
+// A name that `flag` (`--on` or `--join-where`) gave that the header of `input` does not have (status 1) or has more than once (status 2): `column.unknown` and `column.ambiguous`, as `--where` and
 // `--select` refuse a name, with the header listed.
-pub fn key_column[&h, &n, &d, &s, &w](heap: &!h Heap, e: fail.Errors, status: int, input: &static [byte], shown: &s [byte], wanted: &w [byte], names: &n buffer.Buffer, ends: &d vec.Vec[int]) -> [heap] fail.Errors {
+pub fn name_column[&h, &n, &d, &s, &w](heap: &!h Heap, e: fail.Errors, status: int, flag: &static [byte], input: &static [byte], shown: &s [byte], wanted: &w [byte], names: &n buffer.Buffer, ends: &d vec.Vec[int]) -> [heap] fail.Errors {
     var rule = "column.unknown";
     var what = "--on names a column that the header does not have";
     var hint = "pick from detail.available: the left name is a column of FILE and the right one a column of the --join file";
+    if bytes.equal(flag, "--join-where") {
+        what = "--join-where names a column that the header of the --join file does not have";
+        hint = "pick from detail.available: a condition of --join-where names the columns of the --join file by their own names";
+    }
     if status == 2 {
         rule = "column.ambiguous";
         what = "--on names a column that the header has more than once";
+        if bytes.equal(flag, "--join-where") {
+            what = "--join-where names a column that the header of the --join file has more than once";
+        }
         hint = "name it by position, as #3 for the third column";
     }
     var o = fail.open_in(heap, finish.extra(), rule, what, hint);
     o = fail.repair_none(heap, o, "which column was meant is not known; detail.available lists the header");
     o = fail.detail_open(heap, o);
-    o = fail.detail_str(heap, o, "flag", "--on");
+    o = fail.detail_str(heap, o, "flag", flag);
     o = fail.detail_str(heap, o, "input", input);
     o = fail.detail_text(heap, o, "path", shown);
     o = fail.detail_text(heap, o, "name", wanted);
@@ -53,6 +61,11 @@ pub fn key_column[&h, &n, &d, &s, &w](heap: &!h Heap, e: fail.Errors, status: in
     o = put_names(heap, o, "available", names, ends, 50);
     o = fail.detail_bool(heap, o, "available_truncated", vec.size(ends) > 50);
     return fail.add(heap, e, o);
+}
+
+// A name `--on` gave that the header of `input` does not have (status 1) or has more than once (status 2).
+pub fn key_column[&h, &n, &d, &s, &w](heap: &!h Heap, e: fail.Errors, status: int, input: &static [byte], shown: &s [byte], wanted: &w [byte], names: &n buffer.Buffer, ends: &d vec.Vec[int]) -> [heap] fail.Errors {
+    return name_column(heap, e, status, "--on", input, shown, wanted, names, ends);
 }
 
 // Whether build column `j`, written with `prefix` before it, is the name of a column of the probe header.
@@ -191,6 +204,28 @@ pub fn build_too_large[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte],
     return fail.add(heap, e, o);
 }
 
+// `limit.state-too-large` for the groups or the rows held to sort, which share `--max-state-bytes` with the build (docs/joins.md section 6.3): `build_bytes` is what the build holds, `held` what the groups (their keys)
+// or the sorted rows held before the one that did not fit, and the bound those were given is `limit` minus `build_bytes`.
+pub fn shared_too_large[&h, &s](heap: &!h Heap, e: fail.Errors, groups: bool, shown: &s [byte], limit: int, build_bytes: int, held: int) -> [heap] fail.Errors {
+    var what = "the rows kept to sort hold more than --max-state-bytes bytes, counting the bytes the --join file holds";
+    var hint = "ask for the first rows only with --top N or a smaller --limit, keep fewer or narrower rows with --where, make the --join file smaller with --join-where, or raise --max-state-bytes, up to the ceiling introspect names";
+    var holder = "sort";
+    if groups {
+        what = "the group keys and distinct values kept hold more than --max-state-bytes bytes, counting the bytes the --join file holds";
+        hint = "raise --max-state-bytes, up to the ceiling introspect names, group by shorter values, or make the --join file smaller with --join-where";
+        holder = "groups";
+    }
+    var o = fail.open_in(heap, finish.extra(), "limit.state-too-large", what, hint);
+    o = fail.repair_none(heap, o, "how large the whole is was not measured past the limit");
+    o = fail.detail_open(heap, o);
+    o = fail.detail_str(heap, o, "holder", holder);
+    o = fail.detail_text(heap, o, "path", shown);
+    o = fail.detail_int(heap, o, "limit", limit);
+    o = fail.detail_int(heap, o, "build_bytes", build_bytes);
+    o = fail.detail_int(heap, o, "held", held);
+    return fail.add(heap, e, o);
+}
+
 // `limit.too-many-join-rows`: the row that would be the one past `--max-join-rows`, of the probe row named; `matches` is the exact number of build rows its key has, and
 // `max_matches` the most any probe row up to it had.
 pub fn too_many_rows[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], limit: int, probe_row: int, probe_line: int, matches: int, max_matches: int) -> [heap] fail.Errors {
@@ -210,7 +245,7 @@ pub fn too_many_rows[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], l
 // A key cell that is not of the type its pair was given (docs/joins.md section 5.2): the rule of the rest of the tool, with `context` "join", which file it was in (`input`), the pair of `--on`
 // (counted from 1), the column by the name its own header gives it, the row and line of its own file and the cell. `status` is the answer of `query.parse_typed`: 4 not an integer, 5 past 64 bits,
 // 6 not a decimal, 7 more fractional digits than the scale, 8 too wide, 9 not a float, 10 inf or nan, 11 past the range, 12 rounds to zero, 13 too long. An empty cell is not of any type.
-pub fn typed_key[&h, &s, &n, &v](heap: &!h Heap, e: fail.Errors, status: int, input: &static [byte], shown: &s [byte], column: &n [byte], row: int, line: int, value: &v [byte], pair: int, scale: int, digits: int) -> [heap] fail.Errors {
+pub fn typed_key[&h, &g, &p, &s, &n, &v, &a, &b](heap: &!h Heap, e: fail.Errors, status: int, input: &static [byte], shown: &s [byte], column: &n [byte], row: int, line: int, value: &v [byte], pair: int, scale: int, digits: int, args: &g Args, parsed: &p cli.Parsed, gnames: &a buffer.Buffer, gends: &b vec.Vec[int], gcol: int) -> [heap, args] fail.Errors {
     var rule = "value.not-integer";
     var what = "a key cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)";
     if status == 5 {
@@ -238,8 +273,25 @@ pub fn typed_key[&h, &s, &n, &v](heap: &!h Heap, e: fail.Errors, status: int, in
         rule = "limit.number-too-long";
         what = "a key cell is longer than 1,100 bytes, the longest cell that can be a double";
     }
-    var o = fail.open_in(heap, finish.extra(), rule, what, "a typed key is read from every row and refused at the first cell that is not of its type; write the pair without its type to compare the cells as text, or correct the file (this version has no filter that runs before the key is read)");
-    o = fail.repair_none(heap, o, "what the cell was meant to be is not known");
+    var o = fail.open_in(heap, finish.extra(), rule, what, "a typed key is read from every row and refused at the first cell that is not of its type; keep such rows out with a condition that runs before the key is read (for the --join file, --join-where; for FILE, a leading text condition of --where, which is applied before the key), write the pair without its type to compare the cells as text, or correct the file");
+    // an empty cell has a guard: the invocation with `KEY != ''` in the filter that runs before the key is read
+    var guarded = false;
+    if len(value) == 0 {
+        var flag = "--where";
+        if bytes.equal(input, "build") {
+            flag = "--join-where";
+        }
+        let key = jnguard.name_for(heap, gnames, gends, gcol);
+        borrow key as &kr in {
+            let (o2, ok) = jnguard.guarded(heap, o, args, parsed, flag, buffer.bytes(kr));
+            o = o2;
+            guarded = ok;
+        }
+        buffer.drop(heap, key);
+    }
+    if !guarded {
+        o = fail.repair_none(heap, o, "what the cell was meant to be is not known");
+    }
     o = fail.detail_open(heap, o);
     o = fail.detail_text(heap, o, "path", shown);
     o = fail.detail_str(heap, o, "context", "join");

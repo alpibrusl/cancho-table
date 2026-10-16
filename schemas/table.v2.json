@@ -860,7 +860,8 @@
                         "all rows",
                         "until the page is full",
                         "the whole build file, then the probe until the page is full",
-                        "the whole build file, then all the probe rows"
+                        "the whole build file, then all the probe rows",
+                        "the whole build file, then every probe row (a grouping or a sort needs every row)"
                       ]
                     },
                     "rows_held": {
@@ -1096,6 +1097,19 @@
                         "counted": {
                           "type": "string"
                         },
+                        "shared_with": {
+                          "oneOf": [
+                            {
+                              "type": "null"
+                            },
+                            {
+                              "enum": [
+                                "groups",
+                                "sorted rows"
+                              ]
+                            }
+                          ]
+                        },
                         "swap": {
                           "type": "object",
                           "properties": {
@@ -1120,9 +1134,52 @@
                         "budget",
                         "may_pass_bound",
                         "counted",
+                        "shared_with",
                         "swap"
                       ],
                       "additionalProperties": false
+                    },
+                    "where": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "probe_before_join": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/text_or_bytes"
+                              }
+                            },
+                            "build_before_build": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/text_or_bytes"
+                              }
+                            },
+                            "after_join": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/text_or_bytes"
+                              }
+                            }
+                          },
+                          "required": [
+                            "probe_before_join",
+                            "build_before_build",
+                            "after_join"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "join_where": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/$defs/text_or_bytes"
+                      }
                     },
                     "max_join_rows": {
                       "type": "integer",
@@ -1181,6 +1238,8 @@
                     "prefix",
                     "using",
                     "build_state",
+                    "where",
+                    "join_where",
                     "max_join_rows",
                     "order",
                     "work"

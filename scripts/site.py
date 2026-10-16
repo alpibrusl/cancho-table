@@ -147,6 +147,8 @@ DEMOS = {
     "join_left": """table --join tiers.csv --on customer --join-type left --select id,customer,tier --format csv orders.csv""",
     "join_anti": """table --join tiers.csv --on customer --join-type anti --format csv orders.csv""",
     "join_typed": """table --join tiers.csv --on customer --join-type left --where "tier:int > 1" orders.csv""",
+    "join_where": """table --join tiers.csv --on customer --join-type left --join-where "tier != 'silver'" --select id,customer,tier --format csv orders.csv""",
+    "join_group": """table --join customers.csv --on customer=name --join-prefix c_ --where "bytes != ''" --group c_tier --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv""",
     "jsonl": """table --input-format jsonl --fields user.name,bytes --where "bytes:int > 100" --format jsonl events.jsonl""",
     "stdin": """table --where "status = 200" --select id,bytes --format csv -""",
     "where_or": """table --where "(status = 404 or status = 500) and bytes != '' and bytes:int > 100" --select id,status,bytes --format csv orders.csv""",
@@ -158,7 +160,7 @@ STDIN = {"stdin": "orders.csv"}
 SUMMARY = {"float_over": ["rule", "hint", "repair", "detail"], "float_bad": ["rule", "hint", "repair", "detail"], "dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"], "query_typo": ["rule", "hint", "repair", "detail"], "query_or": ["rule", "hint", "repair", "detail"], "join_collision": ["rule", "hint", "repair"], "join_typed": ["rule", "hint", "detail"]}
 # task name -> the demos shown for it
 TASKS = {
-    "select": ["select"], "filter": ["where", "where_or"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "floatsum": ["float_sum", "float_over"], "typedkeys": ["group_text", "group_dec", "order_text", "order_dec"], "report": ["report"], "sort": ["sort"], "group": ["group"], "rename": ["rename", "rename_query"], "join": ["join", "join_collision", "join_left", "join_anti", "join_typed"], "query": ["query", "query_typo", "query_or"], "explain": ["explain"], "page": ["page1", "page2"],
+    "select": ["select"], "filter": ["where", "where_or"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "floatsum": ["float_sum", "float_over"], "typedkeys": ["group_text", "group_dec", "order_text", "order_dec"], "report": ["report"], "sort": ["sort"], "group": ["group"], "rename": ["rename", "rename_query"], "join": ["join", "join_collision", "join_left", "join_anti", "join_typed", "join_where", "join_group"], "query": ["query", "query_typo", "query_or"], "explain": ["explain"], "page": ["page1", "page2"],
     "csv": ["csv"], "cores": ["cores"], "refuse": ["notint"],
 }
 QS = ["shape", "select", "group"]

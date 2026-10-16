@@ -602,7 +602,20 @@ id,customer,status,bytes
 3,"Doe, Jane",200,2048
 <span class="c">$</span> table --join tiers.csv --on customer --join-type left --where "tier:int &gt; 1" orders.csv
 {"rule": "value.not-integer", "hint": "keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N))", "detail": {"path": "orders.csv", "context": "where", "column": "tier", "row": 1, "line": 2, "value": "", "value_truncated": false, "padded": true}}
-<span class="r"># exit status 8; the rule, hint, detail of the JSON line it prints</span></pre>
+<span class="r"># exit status 8; the rule, hint, detail of the JSON line it prints</span>
+<span class="c">$</span> table --join tiers.csv --on customer --join-type left --join-where "tier != 'silver'" --select id,customer,tier --format csv orders.csv
+id,customer,tier
+1,"Doe, Jane",
+2,Acme,
+3,"Doe, Jane",
+4,Acme,
+5,Zed,bronze
+<span class="c">$</span> table --join customers.csv --on customer=name --join-prefix c_ --where "bytes != ''" --group c_tier --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv
+c_tier,count,sum:bytes
+gold,2,2560
+reseller,1,128
+silver,1,128
+bronze,1,64</pre>
 <!-- /gen:t-join -->
   </div>
   <div>
@@ -683,7 +696,7 @@ status,count
 <pre class="code" tabindex="0">$ table introspect          # one JSON document; excerpts, long lines cut
 
 tool        table 0.3.0   (compiler e47d6473)
-flags       39, for example
+flags       40, for example
   --root     path  resolve FILE relative to this directory and refuse paths outs…
   --select   text  the columns to return, a list: header names separated by comm…
   --where    text  only the rows that satisfy this: conditions joined by and or …

@@ -337,6 +337,54 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
     return (plan, what, at);
 }
 
+// The units of the top level of `src` for the split of a join's `--where` (docs/joins.md section 18), four integers for each in order: what it is (0 a bare condition, 5 a negated one, 1
+// anything else: a group in parentheses, a `not (`, or the whole of an `or` level), the number of its first condition, and where it starts and ends in `src`. A level that is all `and` is its
+// units; anything else (a single condition or group, an `or`) is one unit, whole. Nothing for an expression that is not whole.
+pub fn top_units[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] vec.Vec[int] {
+    var out = vec.empty(heap, 16, 0);
+    let (p, t2, after, leaves, node, w, a, flowed) = level(heap, query.empty(heap), vec.empty(heap, 64, 0), src, 0, 0, 0, false, false);
+    query.drop(heap, p);
+    if w != 0 || expr.skip_space(src, after) < len(src) {
+        vec.drop(heap, t2);
+        return out;
+    }
+    borrow t2 as &tr in {
+        let kind = vec.get(tr, node);
+        if kind == 1 {
+            let at = vec.get(tr, node + 1);
+            let count = vec.get(tr, node + 2);
+            var j = 0;
+            while j < count {
+                let kid = vec.get(tr, at + 2 * j + 1);
+                let k = vec.get(tr, kid);
+                var what = 1;
+                if k == 0 || k == 5 {
+                    what = k;
+                }
+                out = push4(heap, out, what, first_leaf(tr, kid), vec.get(tr, kid + 2), trimmed(src, vec.get(tr, kid + 2), vec.get(tr, kid + 3)));
+                j = j + 1;
+            }
+        } else if kind == 0 || kind == 5 {
+            out = push4(heap, out, kind, vec.get(tr, node + 1), vec.get(tr, node + 2), trimmed(src, vec.get(tr, node + 2), vec.get(tr, node + 3)));
+        } else if kind == 3 || kind == 6 {
+            out = push4(heap, out, 1, first_leaf(tr, node), vec.get(tr, node + 2), trimmed(src, vec.get(tr, node + 2), vec.get(tr, node + 3)));
+        } else {
+            out = push4(heap, out, 1, 0, vec.get(tr, node + 3), trimmed(src, vec.get(tr, node + 3), len(src)));
+        }
+    }
+    vec.drop(heap, t2);
+    return out;
+}
+
+// `end`, moved back over spaces so that the unit's text has none at its end.
+fn trimmed[&s](src: &s [byte], start: int, end: int) -> [] int {
+    var e = end;
+    while e > start && (int_of(src[e - 1]) == 32 || int_of(src[e - 1]) == 9) {
+        e = e - 1;
+    }
+    return e;
+}
+
 // ---- the two readings of a mix ------------------------------------------------------------------------------------------------
 
 // The unit `j` of the level at `at` (the node), and the connective before it.
@@ -441,7 +489,7 @@ fn render[&h, &s, &n](heap: &!h Heap, out: buffer.Buffer, src: &s [byte], tr: &n
 }
 
 // Whether `text` is an expression of the grammar, whole.
-fn whole[&h, &s](heap: &!h Heap, text: &s [byte]) -> [heap] bool {
+pub fn whole[&h, &s](heap: &!h Heap, text: &s [byte]) -> [heap] bool {
     let (p, w, a) = parse(heap, query.empty(heap), text);
     query.drop(heap, p);
     return w == 0;

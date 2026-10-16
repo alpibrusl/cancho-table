@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
-"""J1 and J2 (docs/joins.md sections 12, 16 and 17): the join of `table` against DuckDB and csvtk on the four cases of the baseline.
+"""J1 to J3 (docs/joins.md sections 12, 16, 17 and 18): the join of `table` against DuckDB and csvtk on the four cases of the baseline.
 
-    python3 scripts/join_bench.py [--dir DIR] [--runs 5] [--bin build/table] [--json out.json] [--cases int-100k,text-100k,int-1m,text-1m] [--type inner|left|anti] [--miss 0.2]
+    python3 scripts/join_bench.py [--dir DIR] [--runs 5] [--bin build/table] [--json out.json] [--cases int-100k,text-100k,int-1m,text-1m] [--type inner|left|anti|group] [--miss 0.2]
+
+`--type group` (J3) is a group-by over the inner join of the baseline files: `table --join build --on k=k --join-prefix b_ --group b_name --agg count,sum:v` against DuckDB's
+`SELECT b.name, count(*), sum(a.v) FROM probe a JOIN build b ON a.k=b.k GROUP BY b.name` (one group for each build key that some probe row has: about 100,000 groups for the 100k builds
+and about 632,000 for the 1M builds). The answer is compared as a set of rows for every contender, and in the order of the names' bytes for `table`, whose order is defined; csvtk has no
+group-by over a join and is not run.
 
 `--type left` and `--type anti` (J2) need probe keys that are not in the build: `--miss` is the share of the probe rows whose key is in no build row (default 0 for inner, which writes the
 files J1 measured, byte for byte; 0.2 for left and anti). A left join then has 1,000,000 output rows, the unmatched ones with an empty `name`; an anti join has the unmatched probe rows
@@ -86,6 +91,29 @@ def truth(probe, build, kind="inner"):
     return rows
 
 
+def truth_group(probe, build):
+    """The groups of the inner join by build `name`: `name,count,sum(v)` as bytes, in the order of the names' bytes (what `table` writes)."""
+    names = {}
+    with open(build, "rb") as f:
+        f.readline()
+        for line in f:
+            k, name = line.rstrip(b"\n").split(b",")
+            names.setdefault(k, []).append(name)
+    acc = {}
+    with open(probe, "rb") as f:
+        f.readline()
+        for line in f:
+            i, k, v = line.rstrip(b"\n").split(b",")
+            for name in names.get(k, ()):
+                c = acc.get(name)
+                if c is None:
+                    acc[name] = [1, int(v)]
+                else:
+                    c[0] += 1
+                    c[1] += int(v)
+    return [b"%s,%d,%d" % (name, c[0], c[1]) for name, c in sorted(acc.items())]
+
+
 def digest(rows):
     return hashlib.md5(b"\n".join(sorted(rows))).hexdigest(), len(rows)
 
@@ -93,6 +121,14 @@ def digest(rows):
 def contenders(a, d, probe, build):
     out = {}
     kind = a.type
+    if kind == "group":
+        out["table"] = [a.bin, "--root", str(d), "--join", build.name, "--on", "k=k", "--join-prefix", "b_", "--group", "b_name", "--agg", "count,sum:v", "--format", "csv", "--max-groups", "1000000", "--max-state-bytes", "1073741824", probe.name]
+        if shutil.which("duckdb"):
+            body = "SELECT b.name, count(*), sum(a.v) FROM read_csv('%s') a JOIN read_csv('%s') b ON a.k=b.k GROUP BY b.name" % (probe, build)
+            sql = "COPY (%s) TO '%%s' (FORMAT CSV, HEADER)" % body
+            out["duckdb-1"] = ["duckdb", "-c", "SET threads=1; " + sql]
+            out["duckdb"] = ["duckdb", "-c", sql]
+        return out
     if kind == "anti":
         out["table"] = [a.bin, "--root", str(d), "--join", build.name, "--on", "k=k", "--join-type", "anti", "--select", "id,k,v", "--format", "csv", "--max-state-bytes", "1073741824", probe.name]
     else:
@@ -148,11 +184,11 @@ def main():
     ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
     ap.add_argument("--json", default="")
     ap.add_argument("--cases", default=",".join(CASES))
-    ap.add_argument("--type", default="inner", choices=["inner", "left", "anti"])
+    ap.add_argument("--type", default="inner", choices=["inner", "left", "anti", "group"])
     ap.add_argument("--miss", type=float, default=None, help="the share of probe rows whose key is in no build row (default 0 for inner, 0.2 for left and anti)")
     a = ap.parse_args()
     if a.miss is None:
-        a.miss = 0.0 if a.type == "inner" else 0.2
+        a.miss = 0.0 if a.type in ("inner", "group") else 0.2
     d = pathlib.Path(a.dir) if a.dir else pathlib.Path(tempfile.mkdtemp(prefix="join-bench-"))
     d.mkdir(parents=True, exist_ok=True)
     load0 = os.getloadavg()
@@ -165,7 +201,7 @@ def main():
     for name in a.cases.split(","):
         kind, n = CASES[name]
         probe, build, keys, names = gen(d, kind, n, miss=a.miss)
-        want = truth(probe, build, a.type)
+        want = truth_group(probe, build) if a.type == "group" else truth(probe, build, a.type)
         wd = digest(want)
         cs = contenders(a, d, probe, build)
         # correctness first: every contender's whole output
@@ -181,6 +217,9 @@ def main():
             rows = [l.replace(b'"', b"") for l in lines[1:]]
             if a.type == "left" and tool == "csvtk":
                 rows = [l if l.count(b",") >= 3 else l + b"," for l in rows]
+            if tool == "table" and a.type == "group":
+                # the groups are listed in the order of the bytes of the name
+                pass
             if digest(rows) != wd:
                 sys.exit("%s %s: the output is not the Python join (%s against %s)" % (name, tool, digest(rows), wd))
             if tool == "table" and rows != want:
