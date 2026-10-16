@@ -112,8 +112,12 @@ def specs(rng, case, jt, n=6):
             keys = ["%s%s" % (c, rng.choice(["", " desc"])) for c in cols]
             tail = " order by " + ", ".join(keys)
             page = ""
+            total = True
             if rng.random() < 0.4:
                 page = " limit %d" % rng.randint(1, 9) + (" offset %d" % rng.randint(0, 4) if rng.random() < 0.5 else "")
+            elif rng.random() < 0.3:
+                tail = ""          # no order: SQL defines the multiset of rows and nothing else, so it is the multiset that is compared
+                total = False
             sel = ", ".join(cols)
             query = "select %s from 'p.csv' as a %s 'b.csv' as b on %s%s%s%s" % (sel, join_kw, on_q, "" if not where else " where " + where, tail, page)
             if jt in ("inner", "left"):
@@ -121,7 +125,7 @@ def specs(rng, case, jt, n=6):
             else:
                 ex = "%sexists (select 1 from 'b.csv' as b where %s)" % ("not " if jt == "anti" else "", on_s)
                 sql = "select %s from 'p.csv' as a where %s%s%s%s" % (sel, ex, "" if not where else " and (" + where + ")", tail, page)
-            out.append({"query": query, "sql": sql, "total": True, "tag": "rows %s" % jt})
+            out.append({"query": query, "sql": sql, "total": total, "tag": "rows %s" % jt})
         else:
             gcols = [G.ref_of("a", c) for c in rng.sample(P["g"] + P["t"] + P["k"], 1)]
             if right_cols and jt == "inner" and rng.random() < 0.5:
@@ -135,7 +139,8 @@ def specs(rng, case, jt, n=6):
             if rng.random() < 0.3:
                 aggs.append("count(distinct %s)" % G.ref_of("a", rng.choice(P["t"] + P["g"])))
             sel = ", ".join(gcols + aggs)
-            tail = " group by %s order by %s" % (", ".join(gcols), ", ".join(gcols))
+            gtotal = rng.random() >= 0.3
+            tail = " group by %s%s" % (", ".join(gcols), (" order by " + ", ".join(gcols)) if gtotal else "")
             if jt in ("inner", "left"):
                 query = "select %s from 'p.csv' as a %s 'b.csv' as b on %s%s%s" % (sel, join_kw, on_q, "" if not where else " where " + where, tail)
                 sql = "select %s from 'p.csv' as a %s 'b.csv' as b on %s%s%s" % (sel, "left join" if jt == "left" else "join", on_s, "" if not where else " where " + where, tail)
@@ -143,5 +148,5 @@ def specs(rng, case, jt, n=6):
                 query = "select %s from 'p.csv' as a %s 'b.csv' as b on %s%s%s" % (sel, join_kw, on_q, "" if not where else " where " + where, tail)
                 ex = "%sexists (select 1 from 'b.csv' as b where %s)" % ("not " if jt == "anti" else "", on_s)
                 sql = "select %s from 'p.csv' as a where %s%s%s" % (sel, ex, "" if not where else " and (" + where + ")", tail)
-            out.append({"query": query, "sql": sql, "total": True, "tag": "group %s" % jt})
+            out.append({"query": query, "sql": sql, "total": gtotal, "tag": "group %s" % jt})
     return out

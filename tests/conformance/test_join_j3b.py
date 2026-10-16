@@ -20,6 +20,8 @@ import io
 import json
 import os
 import random
+import shutil
+import sys
 import unittest
 
 import join_ref as J
@@ -159,8 +161,13 @@ class Pinned(Base):
 
     def test_a_mix_inside_the_on_is_told_without_the_two_readings(self):
         # the two readings of a where clause are offered; a mix in the on is not a where clause, and nothing is offered for it
-        r = self.q("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and (b.city = 'x' and b.n = 1 or b.n = 2)")
-        self.assertEqual(doc(r)["error"]["repair"]["kind"], "none")
+        for q in ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and (b.city = 'x' and b.n = 1 or b.n = 2)",
+                  "select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and (b.city = 'x' and b.n = 1 or b.n = 2) where a.v = '10' and a.name = 'x'"):
+            r = self.q(q)
+            self.assertEqual(rule_of(r), "query.mixed-and-or", r)
+            repair = doc(r)["error"]["repair"]
+            self.assertEqual(repair["kind"], "none", q)
+            self.assertTrue(repair["reason"].startswith("which of the two readings was meant is not known"), repair)
         r = self.q("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id where a.v = 1 and a.id = 2 or a.name = 'x'")
         self.assertEqual(doc(r)["error"]["repair"]["kind"], "choose")
 
@@ -443,6 +450,29 @@ class Oracle(unittest.TestCase):
         self.assertGreater(seen["specs"], 100, seen)
         self.assertGreater(seen["rows"], 300, seen)
         self.assertLess(seen["empty"], seen["specs"] * 0.6, seen)
+
+
+class Strace(unittest.TestCase):
+    """On Linux, a join query, from a file and from a pipe, starts no thread, opens no socket and opens no file for writing (the control: a threaded --select of the same file does)."""
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("strace"), "strace is Linux only")
+    def test_no_thread_no_socket_no_write(self):
+        import procs as subprocess
+        s = Scratch()
+        self.addCleanup(s.cleanup)
+        fixtures(s)
+        threaded = ["--threads", "4", "--chunk-bytes", "7", "--parallel-min-bytes", "0", "--format", "csv"]
+        for query, stdin in (("select a.name, count(*) from 'p.csv' as a left join 'b.csv' as b on a.id = b.id group by a.name", None),
+                             ("select a.name from stdin as a anti join 'b.csv' as b on a.id = b.id", C.FIXTURES["p.csv"].encode())):
+            p = subprocess.run(["strace", "-f", "-e", "trace=clone,clone3,socket,openat", binary(), "--root", str(s.dir), "--query", query, *threaded], capture_output=True, input=stdin or b"")
+            err = p.stderr.decode("latin-1")
+            self.assertEqual(p.returncode, 0, err[-300:])
+            self.assertIn("b.csv", err, "the control: strace saw the build file opened")
+            self.assertNotIn("CLONE_THREAD", err)
+            self.assertNotIn("socket(", err)
+            self.assertNotRegex(err, r"O_WRONLY|O_RDWR|O_CREAT")
+        ctl = subprocess.run(["strace", "-f", "-e", "trace=clone,clone3", binary(), "--root", str(s.dir), "--select", "id", *threaded, "p.csv"], capture_output=True, input=b"")
+        self.assertIn("CLONE_THREAD", ctl.stderr.decode("latin-1"))
 
 
 # ---- the compatibility --------------------------------------------------------------------------------------------------------------------

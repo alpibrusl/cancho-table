@@ -260,8 +260,27 @@ MUTANTS = [
     ("repair: a mix inside the on is offered a repair", "qtrans.cho", "            if bad == 0 && code == 0 && m[qarena.s_mix_on()] == 0 {", "            if bad == 0 && code == 0 {"),
 ]
 
-# (mutants the tests cannot tell from the original, each with the reason it changes nothing a call can see; the run lists what it found)
-EQUIVALENT = []
+# The mutants the tests cannot tell from the original, each with the reason it changes nothing a call can see (their sites must still be there: __main__ checks them). They stay in
+# ALL so that the list of mutants is the one the run printed.
+EQUIVALENT_REASONS = {
+    "head: right is inner": "the kind of a right, full or cross join (4, 5, 6) is read nowhere: the join is refused in `join_head` before any column is, and `s_jtype` is read only for 2 and 3",
+    "column: a name is qualified outside a join": "in a statement that is not a join a dot is refused before any name is read (`statement`), so no name has a dot before it",
+    "refusal: the pending are not settled": "`settle_pending` writes the noted refusal into the arena whatever it answers, and `translate` reads the status from the arena after `emit`: the same refusal is told",
+    "look-ahead: the error's offset is not restored": "`qarena.fail` records the offset together with the code, only when there is no code, so a stale offset under a restored empty code is overwritten by the next refusal and unread without one",
+    "key: an unknown table is a side": "a column whose table is unknown (or that is bare, or a position) is always noted first, at an offset before the second column's: the earliest of the noted and the raised refusal is the noted one",
+    "key: the swap needs both": "a statement that reaches the translation has both columns of every equality known (an unknown table is noted and refused), and then the second column is the first table's exactly when the first is the second table's",
+    "key: the swap looks at the first column only": "as above: for known tables `ls == 2` is `rs == 1`",
+    "key: the pair limit is told after the pair": "the cursor is where `start` was taken when the limit is checked (the look-ahead restores it)",
+    "on: any mix is marked": "the first `or` mixed with an `and` cannot be before the on (the select list has no condition), so `before` is 0 whenever a mix is found there",
+    "on: the count of the conditions is not reset first": "the count is 0 when the on begins (only a where clause counts, and it comes after)",
+    "order: a bare name is an as name outside a join": "outside a join a bare name is a column, and an `as` name of the select list that `order by` names is resolved by the translation the same way (`alias_hits`)",
+    "write: a name of --where with a dot is bare": "the mutant lets a column of the first table be written `alias.name`; but its joined name is its own name, so the branch before (a plain word, bare) took every name that `dotted_bare` could, and the three words it refuses are the three that branch refuses",
+    "write: the name of a pair is the joined one": "the first column of a pair is the first table's, whose joined name is its own",
+}
+ALL = MUTANTS
+EQUIVALENT = [m for m in ALL if m[0] in EQUIVALENT_REASONS]
+MUTANTS = [m for m in ALL if m[0] not in EQUIVALENT_REASONS]
+assert len(EQUIVALENT) == len(EQUIVALENT_REASONS), [n for n in EQUIVALENT_REASONS if n not in {m[0] for m in ALL}]
 
 if __name__ == "__main__":
     # the equivalent mutants are not run, but their sites must still be there (a stale entry is a lie about what was proved)
