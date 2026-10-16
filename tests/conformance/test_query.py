@@ -446,6 +446,11 @@ class Documents(Base):
     """What the documents say a query does, run: the table of section 4 of docs/query.md (the query and its flags give the same bytes), and every `--query` in the examples of the
     README, the pages, the refusals page and the help and usage of the tool is accepted by the front end or refused with a rule of the front end."""
 
+    def setUp(self):
+        super().setUp()
+        # the second table of the join examples of the README and the pages (scripts/site.py TIERS)
+        self.s.write("tiers.csv", "customer,tier\nAcme,silver\nZed,bronze\n")
+
     def test_the_table_of_worked_examples_of_the_design(self):
         text = (ROOT / "docs" / "query.md").read_text()
         rows = re.findall(r"^\| *(\d+) *\| `(.+?)` \| `(.+?)`(?: *\(.*\))? *\|$", text.split("## 4. Worked examples", 1)[1].split("What the flag forms print", 1)[0], re.M)
