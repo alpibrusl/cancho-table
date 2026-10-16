@@ -1,0 +1,66 @@
+// The probe of the algorithm gate of docs/datetime.md (G-ALGORITHM): `dtparse.days_from_civil` and `dtparse.put` driven over every day of 0001-01-01 to 9999-12-31. One line a day, in
+// calendar order: the day number `days_from_civil` answers for it, a space, and the text `put` writes for that number as a date. tests/conformance/test_datetime.py compares the 3,652,059
+// lines with Python's calendar.
+import std.buffer;
+import std.io as console;
+import dtparse;
+
+fn run[&i, &h](io: &!i Io, heap: &!h Heap) -> [io_write, heap] int {
+    var out = buffer.empty(heap, 1048576 + 64);
+    var y = 1;
+    while y <= 9999 {
+        var m = 1;
+        while m <= 12 {
+            let last = dtparse.days_in_month(y, m);
+            var d = 1;
+            while d <= last {
+                let z = dtparse.days_from_civil(y, m, d);
+                if z < 0 {
+                    out = buffer.push(heap, out, byte_of('-'));
+                    out = buffer.push_nat(heap, out, 0 - z);
+                } else {
+                    out = buffer.push_nat(heap, out, z);
+                }
+                out = buffer.push(heap, out, byte_of(' '));
+                out = dtparse.put(heap, out, z, 22);
+                out = buffer.push(heap, out, byte_of(10));
+                var held = 0;
+                borrow out as &b in {
+                    held = buffer.size(b);
+                }
+                if held >= 1048576 {
+                    borrow out as &b in {
+                        buffer.write(io, b);
+                    }
+                    borrow mut out as &!w in {
+                        buffer.clear(w);
+                    }
+                }
+                d = d + 1;
+            }
+            m = m + 1;
+        }
+        y = y + 1;
+    }
+    borrow out as &b in {
+        buffer.write(io, b);
+    }
+    buffer.drop(heap, out);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    var status = 0;
+    borrow mut io as &!i in {
+        borrow mut heap as &!h in {
+            status = run(i, h);
+        }
+    }
+    release(io);
+    release(heap);
+    release(args);
+    return status;
+}

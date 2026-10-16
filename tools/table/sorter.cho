@@ -34,6 +34,7 @@ import std.bytes;
 import std.vec;
 import agg;
 import cellnum;
+import dtparse;
 import query;
 
 // The value of a key cell of type `kind` (1 `:int`, 2 + S `:dec(S)`, 21 `:float`): an `int` that orders as the value does (a float's is its
@@ -42,6 +43,10 @@ import query;
 fn key_value[&d](data: &d [byte], kind: int) -> [] (int, int) {
     if kind == 1 {
         return cellnum.parse_int(data);
+    }
+    if kind >= 22 {
+        // :date, :timestamp, :datetime (dtparse.cho): a status of 14 and more
+        return dtparse.parse(data, kind);
     }
     return query.parse_typed(data, kind);
 }

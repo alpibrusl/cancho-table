@@ -92,7 +92,7 @@ def main():
     if not data.exists():
         generate(data, a.rows)
     rows = sum(1 for _ in open(data, "rb")) - 1
-    big = ["--max-groups", "1000000", "--max-state-bytes", "1073741824"]
+    big = ["--max-groups", "1000000", "--max-state-bytes", "1073741824", "--max-distinct", "10000000"]
     load0 = os.getloadavg()[0]
     print("file %s, %d rows, %d runs, minimum; load average %.1f at the start" % (data, rows, a.runs, load0))
     print("%-48s %10s %10s %9s %9s %12s" % ("question (text, then typed)", "text s", "typed s", "ns/row +", "instr/row", "instr/row +"))

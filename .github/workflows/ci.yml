@@ -102,11 +102,16 @@ jobs:
       - name: The mutants still apply
         working-directory: table
         run: |
-          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin query explain jsonl jsonl_out or join group rename query_join; do python3 scripts/${m}_mutants.py --check; done
+          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin query explain jsonl jsonl_out or join group rename query_join datetime; do python3 scripts/${m}_mutants.py --check; done
 
       - name: Conformance gates (differential against Python's csv, rules, limits, memory, authority)
         working-directory: table
         run: python3 -W ignore -m unittest discover -s tests/conformance -v
+
+      # The date benchmark script (docs/datetime.md G-NEW-SPEED) only has to keep working here: the numbers are the maintainer's machines'.
+      - name: The date benchmark script runs
+        working-directory: table
+        run: python3 scripts/bench_datetime.py --rows 20000 --runs 1 --no-count --file build/dt/data.csv
 
       # The README's example and the project pages' terminals, authority row, rules
       # and counts are written from the built binary; this fails if they differ.

@@ -190,7 +190,140 @@ pub fn parse[&d](data: &d [byte], kind: int) -> [] (int, int) {
     return parse_time(data, kind);
 }
 
+// The reading of a cell that is well formed, without naming the refusal of one that is not: (value, true), or (0, false) for any other cell, which `parse_date` or `parse_time` then reads
+// again step by step to say why (the order of the checks is theirs). It accepts exactly the cells they accept and is shorter: every digit is tested by one sign test (`x | 9 - x` is
+// negative when x is not 0 to 9) and the tests are added up, and the delimiters by one exclusive or each.
+fn fast_date[&d](data: &d [byte]) -> [] (int, bool) {
+    if len(data) != 10 {
+        return (0, false);
+    }
+    let s = data[0..10];
+    let x0 = int_of(s[0]) - '0';
+    let x1 = int_of(s[1]) - '0';
+    let x2 = int_of(s[2]) - '0';
+    let x3 = int_of(s[3]) - '0';
+    let x5 = int_of(s[5]) - '0';
+    let x6 = int_of(s[6]) - '0';
+    let x8 = int_of(s[8]) - '0';
+    let x9 = int_of(s[9]) - '0';
+    let bad = x0 | 9 - x0 | (x1 | 9 - x1) | (x2 | 9 - x2) | (x3 | 9 - x3) | (x5 | 9 - x5) | (x6 | 9 - x6) | (x8 | 9 - x8) | (x9 | 9 - x9);
+    if bad < 0 || int_of(s[4]) ^ 45 | int_of(s[7]) ^ 45 != 0 {
+        return (0, false);
+    }
+    let year = ((x0 * 10 + x1) * 10 + x2) * 10 + x3;
+    let month = x5 * 10 + x6;
+    let day = x8 * 10 + x9;
+    if year == 0 || month < 1 || month > 12 || day < 1 || day > days_in_month(year, month) {
+        return (0, false);
+    }
+    return (days_from_civil(year, month, day), true);
+}
+
+fn fast_time[&d](data: &d [byte], kind: int) -> [] (int, bool) {
+    let n = len(data);
+    if n < 19 {
+        return (0, false);
+    }
+    let s = data[0..19];
+    let x0 = int_of(s[0]) - '0';
+    let x1 = int_of(s[1]) - '0';
+    let x2 = int_of(s[2]) - '0';
+    let x3 = int_of(s[3]) - '0';
+    let x5 = int_of(s[5]) - '0';
+    let x6 = int_of(s[6]) - '0';
+    let x8 = int_of(s[8]) - '0';
+    let x9 = int_of(s[9]) - '0';
+    let x11 = int_of(s[11]) - '0';
+    let x12 = int_of(s[12]) - '0';
+    let x14 = int_of(s[14]) - '0';
+    let x15 = int_of(s[15]) - '0';
+    let x17 = int_of(s[17]) - '0';
+    let x18 = int_of(s[18]) - '0';
+    let bad = x0 | 9 - x0 | (x1 | 9 - x1) | (x2 | 9 - x2) | (x3 | 9 - x3) | (x5 | 9 - x5) | (x6 | 9 - x6) | (x8 | 9 - x8) | (x9 | 9 - x9) | (x11 | 9 - x11) | (x12 | 9 - x12) | (x14 | 9 - x14) | (x15 | 9 - x15) | (x17 | 9 - x17) | (x18 | 9 - x18);
+    let marks = int_of(s[4]) ^ 45 | int_of(s[7]) ^ 45 | int_of(s[13]) ^ 58 | int_of(s[16]) ^ 58;
+    let sep = int_of(s[10]);
+    if bad < 0 || marks != 0 || sep != 'T' && sep != 't' && sep != ' ' {
+        return (0, false);
+    }
+    let year = ((x0 * 10 + x1) * 10 + x2) * 10 + x3;
+    let month = x5 * 10 + x6;
+    let day = x8 * 10 + x9;
+    let hh = x11 * 10 + x12;
+    let mi = x14 * 10 + x15;
+    let ss = x17 * 10 + x18;
+    if year == 0 || month < 1 || month > 12 || day < 1 || day > days_in_month(year, month) || hh > 23 || mi > 59 || ss > 59 {
+        return (0, false);
+    }
+    var micro = 0;
+    var offset_us = 0;
+    var tail = 0;
+    var negative_zero = false;
+    if n > 19 {
+        var k = 19;
+        if int_of(data[19]) == '.' {
+            var j = 20;
+            var going = true;
+            while going && j < n && j < 27 {
+                let d = int_of(data[j]) - '0';
+                if d >= 0 && d <= 9 {
+                    micro = micro * 10 + d;
+                    j = j + 1;
+                } else {
+                    going = false;
+                }
+            }
+            if j == 20 || j > 26 {
+                return (0, false);
+            }
+            var f = j - 20;
+            while f < 6 {
+                micro = micro * 10;
+                f = f + 1;
+            }
+            k = j;
+        }
+        if k < n {
+            if n - k == 1 && (int_of(data[k]) == 'Z' || int_of(data[k]) == 'z') {
+                tail = 1;
+            } else if is_num_offset(data[k..n]) {
+                let oh = two(data, k + 1);
+                let om = two(data, k + 4);
+                if oh > 23 || om > 59 {
+                    return (0, false);
+                }
+                offset_us = (oh * 3600 + om * 60) * 1000000;
+                if int_of(data[k]) == '-' {
+                    negative_zero = offset_us == 0;
+                    offset_us = 0 - offset_us;
+                }
+                tail = 2;
+            } else {
+                return (0, false);
+            }
+        }
+    }
+    if kind == 23 {
+        if tail == 0 || negative_zero {
+            return (0, false);
+        }
+    } else if tail != 0 {
+        return (0, false);
+    }
+    var value = (days_from_civil(year, month, day) * 86400 + hh * 3600 + mi * 60 + ss) * 1000000 + micro;
+    if kind == 23 {
+        value = value - offset_us;
+        if value < 0 - 62135596800000000 || value > 253402300799999999 {
+            return (0, false);
+        }
+    }
+    return (value, true);
+}
+
 fn parse_date[&d](data: &d [byte]) -> [] (int, int) {
+    let (fv, ok) = fast_date(data);
+    if ok {
+        return (fv, 0);
+    }
     let n = len(data);
     let bad = date_shape(data);
     if bad >= 0 {
@@ -256,6 +389,10 @@ fn time_status[&d](data: &d [byte]) -> [] int {
 }
 
 fn parse_time[&d](data: &d [byte], kind: int) -> [] (int, int) {
+    let (fv, ok) = fast_time(data, kind);
+    if ok {
+        return (fv, 0);
+    }
     let n = len(data);
     let bad = date_shape(data);
     if bad >= 0 {

@@ -21,6 +21,7 @@ import random
 import re
 import shutil
 import sqlite3
+import tempfile
 import unittest
 
 import procs as subprocess
@@ -292,6 +293,61 @@ class Grammar(unittest.TestCase):
         self.assertEqual((err["rule"], err["detail"]["row"]), ("value.not-timestamp", 3))
 
 
+class Algorithm(unittest.TestCase):
+    """G-ALGORITHM: the tool's own `days_from_civil` and its inverse (the date printer) over every day of 0001..9999, 3,652,059 of them, against Python's calendar. The
+    sources of dtparse.cho are built into a probe (tests/conformance/dtparse_probe); a control with the era boundary one day short must fail."""
+
+    def build(self, mutate=None):
+        exe = os.environ.get("CANCHO") or shutil.which("cancho")
+        if not exe:
+            self.skipTest("no compiler: set CANCHO, or put the cancho named in cancho.toml on PATH")
+        root = pathlib.Path(__file__).resolve().parents[2]
+        pin = re.search(r'^cancho\s*=\s*"([0-9a-f]+)"', (root / "cancho.toml").read_text(), re.M).group(1)
+        scratch = pathlib.Path(tempfile.mkdtemp(prefix="dtprobe-"))
+        self.addCleanup(shutil.rmtree, scratch, True)
+        (scratch / "src").mkdir()
+        text = (root / "tools" / "table" / "dtparse.cho").read_text()
+        if mutate:
+            old, new = mutate
+            self.assertEqual(text.count(old), 1)
+            text = text.replace(old, new)
+        (scratch / "src" / "dtparse.cho").write_text(text)
+        shutil.copy(pathlib.Path(__file__).parent / "dtparse_probe" / "main.cho", scratch / "src" / "main.cho")
+        (scratch / "cancho.toml").write_text('[package]\nname = "dtparseprobe"\ncancho = "%s"\n\n[[bin]]\nname = "probe"\nsources = ["src"]\nstd = true\nout = "build/probe"\n' % pin)
+        b = subprocess.run([exe, "build"], cwd=scratch, capture_output=True, text=True, timeout=900)
+        self.assertEqual(b.returncode, 0, b.stdout + b.stderr)
+        return scratch / "build" / "probe"
+
+    def compare(self, probe):
+        import datetime as dt
+        p = subprocess.run([str(probe)], capture_output=True, timeout=900)
+        self.assertEqual(p.returncode, 0)
+        lines = p.stdout.decode().split("\n")
+        self.assertEqual(lines.pop(), "")
+        day = dt.date(1, 1, 1)
+        epoch = dt.date(1970, 1, 1)
+        bad = 0
+        first = None
+        for line in lines:
+            want = "%d %04d-%02d-%02d" % ((day - epoch).days, day.year, day.month, day.day)
+            if line != want:
+                bad += 1
+                first = first or (line, want)
+            if day.year == 9999 and day.month == 12 and day.day == 31:
+                break
+            day += dt.timedelta(days=1)
+        return len(lines), bad, first
+
+    def test_every_day_of_0001_to_9999(self):
+        n, bad, first = self.compare(self.build())
+        self.assertEqual((n, bad, first), (3652059, 0, None))
+
+    def test_the_control_fails(self):
+        n, bad, first = self.compare(self.build(("    return era * 146097 + doe - 719468;", "    return era * 146096 + doe - 719468;")))
+        self.assertEqual(n, 3652059)
+        self.assertGreater(bad, 0)
+
+
 class Guards(unittest.TestCase):
     """The guard idiom of docs/filter.md: a condition that decides the row stops the ones after it, so a typed read is reached only by the rows it should read."""
 
@@ -442,6 +498,39 @@ class Surface(unittest.TestCase):
             self.assertEqual(argv[argv.index("--order-by") + 1], "-ts:datetime,id")
             # the flag in its --flag=VALUE form
             self.assertEqual(run(*root, "--group=ts:timestamp", "r.csv").error()["repair"]["options"][0]["argv"][-2:], ["--group=ts:datetime", "r.csv"])
+        finally:
+            s.cleanup()
+
+    def test_groups_sort_by_the_value_of_a_date_key_and_of_a_minimum(self):
+        s = Scratch()
+        try:
+            s.write("s.csv", "g,ts,d\na,2026-01-02T01:00:00+02:00,2026-01-02\na,2026-03-01T00:00:00Z,0001-01-01\nb,0001-01-01T00:00:00Z,2026-02-01\nb,1969-12-31T23:59:59Z,1969-12-31\nc,2026-02-01T00:00:00Z,9999-12-31\n")
+
+            def ask(*flags):
+                return run("--root", s.dir, *flags, "--format", "csv", "s.csv").stdout.decode().splitlines()
+            self.assertEqual(ask("--group", "g", "--agg", "min:ts:timestamp,max:ts:timestamp", "--sort", "-max:ts"),
+                             ["g,min:ts,max:ts", "a,2026-01-01T23:00:00Z,2026-03-01T00:00:00Z", "c,2026-02-01T00:00:00Z,2026-02-01T00:00:00Z", "b,0001-01-01T00:00:00Z,1969-12-31T23:59:59Z"])
+            self.assertEqual(ask("--group", "g", "--agg", "min:ts:timestamp", "--sort", "min:ts"), ["g,min:ts", "b,0001-01-01T00:00:00Z", "a,2026-01-01T23:00:00Z", "c,2026-02-01T00:00:00Z"])
+            self.assertEqual(ask("--group", "d:date", "--sort", "-d", "--top", "2"), ["d,count", "9999-12-31,1", "2026-02-01,1"])
+            self.assertEqual(ask("--group", "d:date"), ["d,count", "0001-01-01,1", "1969-12-31,1", "2026-01-02,1", "2026-02-01,1", "9999-12-31,1"])
+            self.assertEqual(ask("--group", "g", "--agg", "max:d:date", "--sort", "max:d"), ["g,max:d", "a,2026-01-02", "b,2026-02-01", "c,9999-12-31"])
+        finally:
+            s.cleanup()
+
+    def test_json_lines_in(self):
+        """A JSON string is the cell, read by the same grammar; a JSON number is its token, which has no `-` (docs/datetime.md section 9)."""
+        s = Scratch()
+        try:
+            s.write("e.jsonl", '{"id":1,"ts":"2026-01-02T01:00:00+02:00"}\n{"id":2,"ts":"2026-01-01T23:00:00Z"}\n{"id":3,"ts":"2026-01-03T00:00:00Z"}\n')
+            args = ["--root", s.dir, "--input-format", "jsonl", "--fields", "id,ts"]
+            r = run(*args, "--group", "ts:timestamp", "--agg", "min:id:int", "--format", "jsonl", "e.jsonl")
+            self.assertEqual([json.loads(l) for l in r.stdout.decode().splitlines()], [{"ts": "2026-01-01T23:00:00Z", "min:id": 1}, {"ts": "2026-01-03T00:00:00Z", "min:id": 3}])
+            r = run(*args, "--order-by", "-ts:timestamp", "--select", "id", "--format", "csv", "e.jsonl")
+            self.assertEqual(r.stdout.decode().split(), ["id", "3", "1", "2"])
+            s.write("n.jsonl", '{"id":1,"ts":1767308400}\n')
+            r = run(*args, "--group", "ts:timestamp", "n.jsonl")
+            d = r.error()["detail"]
+            self.assertEqual((r.first_rule(), d["value"], d["reason"], d["offset"], d["context"]), ("value.not-timestamp", "1767308400", "shape", 4, "group"))
         finally:
             s.cleanup()
 

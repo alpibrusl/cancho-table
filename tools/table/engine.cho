@@ -567,11 +567,12 @@ pub fn group_refused[&h, &q, &c, &d, &e, &a](heap: &!h Heap, kept: buffer.Buffer
 }
 
 // Whether `add_fast` can ever take a row of this plan: not when an aggregate is `distinct`, which keeps a set of
-// pairs and is added the old way (so the rows of such a plan do not go through the fast call at all).
+// pairs and is added the old way, nor when one reads a date type (22 and up: its cell is read by `agg.read_typed`, and `add_fast` is the hot loop's, whose text a new case in `query.parse_typed`
+// would change: docs/datetime.md section 11), so the rows of such a plan do not go through the fast call at all.
 pub fn fast_ok[&q](tree: &q query.Query) -> [] bool {
     var k = 0;
     while k < query.agg_count(tree) {
-        if query.agg_at(tree, k, 0) == 4 {
+        if query.agg_at(tree, k, 0) == 4 || query.agg_at(tree, k, 2) >= 22 {
             return false;
         }
         k = k + 1;

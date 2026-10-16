@@ -202,6 +202,15 @@ fn put_cell[&h, &d](heap: &!h Heap, out: buffer.Buffer, scratch: buffer.Buffer, 
     return (o, scr);
 }
 
+// `query.parse_typed`, or `dtparse.parse` for a date type (22 :date, 23 :timestamp, 24 :datetime: a status of 14 and more, dtparse.cho). `parse_typed` itself is not touched: it is read by the
+// aggregates of the hot loop (`add_fast`), which a plan with a date type never takes (`engine.fast_ok`).
+fn read_typed[&d](data: &d [byte], kind: int) -> [] (int, int) {
+    if kind >= 22 {
+        return dtparse.parse(data, kind);
+    }
+    return query.parse_typed(data, kind);
+}
+
 // A field as a number of the type `kind` (1 :int, 2 + S :dec(S)): (value, status, scratch), status 0 ok, 4 not an integer, 5 past 64 bits,
 // 6 not a decimal, 7 more fractional digits than the scale, 8 too wide (`query.parse_typed`).
 fn typed_cell[&h, &d](heap: &!h Heap, scratch: buffer.Buffer, record: &d [byte], first: int, last: int, quoted: int, kind: int) -> [heap] (int, int, buffer.Buffer) {
@@ -214,13 +223,13 @@ fn typed_cell[&h, &d](heap: &!h Heap, scratch: buffer.Buffer, record: &d [byte],
         var v = 0;
         var bad = 0;
         borrow scr as &sr in {
-            let (x, y) = query.parse_typed(buffer.bytes(sr), kind);
+            let (x, y) = read_typed(buffer.bytes(sr), kind);
             v = x;
             bad = y;
         }
         return (v, bad, scr);
     }
-    let (v, bad) = query.parse_typed(record[first..last], kind);
+    let (v, bad) = read_typed(record[first..last], kind);
     return (v, bad, scr);
 }
 
