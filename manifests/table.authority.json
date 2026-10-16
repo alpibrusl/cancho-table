@@ -88,7 +88,9 @@
     "at",
     "at",
     "at_most",
+    "at_most_j",
     "authority",
+    "bare",
     "bare_as_name",
     "bare_tail",
     "base",
@@ -104,6 +106,7 @@
     "blanks",
     "blob_hi",
     "blob_lo",
+    "build_delim",
     "built",
     "bump",
     "bytes",
@@ -150,6 +153,7 @@
     "dec_suffix",
     "decode",
     "default_of",
+    "delimiter_of",
     "delimiter_of",
     "depth_limit",
     "digit_of",
@@ -228,6 +232,7 @@
     "flow_at",
     "flowed",
     "for_query",
+    "foreign",
     "four",
     "full",
     "function_name",
@@ -344,6 +349,7 @@
     "join_where_hint",
     "json_code_name",
     "jsonl",
+    "jsonl_word",
     "jw_base",
     "jx_text",
     "k_abort",
@@ -727,7 +733,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 310,
+  "folded_operators": 316,
   "folded_calls": 0,
-  "functions": 1202
+  "functions": 1220
 }

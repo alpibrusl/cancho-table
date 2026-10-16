@@ -1,0 +1,211 @@
+edition 5;
+
+module jnfmt;
+
+// The formats of the two files of a join (docs/joins.md sections 3.2 and 21): the probe (FILE or standard input) and the build (the `--join` file) are each csv or JSON lines, and a csv build may have a
+// delimiter of its own.
+//
+//     probe   --input-format csv|jsonl|ndjson, --fields, --delimiter           (as for any one file)
+//     build   --join-input-format, --join-fields, --join-delimiter              each defaults to the probe's: the format of the probe, its --fields when the build is jsonl too, its --delimiter
+//
+// `--absent` and `--max-json-nodes` are one flag for both files. Every lookup of a flag reads the flag table up to the flag, and these are its last, so a run looks up none of them unless an argument could be one
+// (the arguments are read for their first bytes, as `inputs.from_flags` does); a join of two csv files with one delimiter looks up nothing here.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import finish;
+import flags;
+import jfields;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+
+pub struct Fmt {
+    // the probe is JSON lines; its declaration (`--fields`)
+    p_jsonl: bool,
+    p_fields: &static [byte],
+    p_fields_given: bool,
+    // the build is JSON lines; its declaration (`--join-fields`, or `--fields` when that was not given); whether `--join-fields` was given, and `--join-input-format`
+    b_jsonl: bool,
+    b_fields: &static [byte],
+    b_fields_given: bool,
+    b_format_given: bool,
+    // `--join-delimiter` was given, and its delimiter byte (-1 when it names none)
+    b_delim_given: bool,
+    b_delim: int,
+}
+
+// The delimiter byte a `--delimiter` or `--join-delimiter` value names, or -1.
+pub fn delimiter_of[&t](given: &t [byte]) -> [] int {
+    if bytes.equal(given, "tab") || len(given) == 1 && int_of(given[0]) == 9 {
+        return 9;
+    }
+    if len(given) == 1 && (int_of(given[0]) == ',' || int_of(given[0]) == ';') {
+        return int_of(given[0]);
+    }
+    return 0 - 1;
+}
+
+fn jsonl_word[&t](form: &t [byte]) -> [] bool {
+    return bytes.equal(form, "jsonl") || bytes.equal(form, "ndjson");
+}
+
+pub fn of[&g, &p](args: &g Args, parsed: &p cli.Parsed) -> [args] Fmt {
+    let table = spec.flag_table();
+    var m_in = false;
+    var m_bin = false;
+    var m_bf = false;
+    var m_bd = false;
+    var m_f = false;
+    var k = 1;
+    while k < arg_count(args) {
+        let a = arg(args, k);
+        if bytes.starts_with(a, "--input-format") {
+            m_in = true;
+        } else if bytes.starts_with(a, "--join-input-format") {
+            m_bin = true;
+        } else if bytes.starts_with(a, "--join-fields") {
+            m_bf = true;
+        } else if bytes.starts_with(a, "--join-delimiter") {
+            m_bd = true;
+        } else if bytes.starts_with(a, "--fields") {
+            m_f = true;
+        }
+        k = k + 1;
+    }
+    var p_jsonl = false;
+    if m_in {
+        p_jsonl = jsonl_word(cli.text(args, parsed, table, "input-format"));
+    }
+    var p_fields = "";
+    var p_fields_given = false;
+    if m_f && cli.has(parsed, table, "fields") {
+        p_fields_given = true;
+        p_fields = cli.text(args, parsed, table, "fields");
+    }
+    var b_jsonl = p_jsonl;
+    var b_format_given = false;
+    if m_bin && cli.has(parsed, table, "join-input-format") {
+        b_format_given = true;
+        b_jsonl = jsonl_word(cli.text(args, parsed, table, "join-input-format"));
+    }
+    var b_fields = p_fields;
+    var b_fields_given = false;
+    if m_bf && cli.has(parsed, table, "join-fields") {
+        b_fields_given = true;
+        b_fields = cli.text(args, parsed, table, "join-fields");
+    } else if !p_jsonl {
+        b_fields = "";
+    }
+    var b_delim_given = false;
+    var b_delim = 0 - 1;
+    if m_bd && cli.has(parsed, table, "join-delimiter") {
+        b_delim_given = true;
+        b_delim = delimiter_of(cli.text(args, parsed, table, "join-delimiter"));
+    }
+    return Fmt { p_jsonl: p_jsonl, p_fields: p_fields, p_fields_given: p_fields_given, b_jsonl: b_jsonl, b_fields: b_fields, b_fields_given: b_fields_given, b_format_given: b_format_given, b_delim_given: b_delim_given, b_delim: b_delim };
+}
+
+// The delimiter the build file is read with, given the probe's: `--join-delimiter` or the probe's.
+pub fn build_delim(f: Fmt, delim: int) -> [] int {
+    if f.b_delim_given {
+        return f.b_delim;
+    }
+    return delim;
+}
+
+// Whether the build is read otherwise than as the probe's csv file is: it is JSON lines, or it is csv with a delimiter of its own (`--join-delimiter` that is not `--delimiter`). Such a build goes through
+// `jnjson`, which hands the join the csv record of each row in the delimiter of the answer.
+pub fn foreign(f: Fmt, delim: int) -> [] bool {
+    return f.b_jsonl || f.b_delim_given && f.b_delim != delim;
+}
+
+// `input.fields-required` for a join: the side that has no declaration. No repair is offered: the repair of one file (the same call with `--discover`) is refused by a join.
+fn fields_required[&h](heap: &!h Heap, e: fail.Errors, flag: &static [byte], hint: &static [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, finish.extra(), "input.fields-required", "JSON lines have no header: the columns are declared with --fields for FILE and --join-fields for the --join file", hint);
+    w = fail.repair_none(heap, w, "--discover takes no join: run it on the file alone, and declare what it reports");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    return fail.add(heap, e, w);
+}
+
+fn bad_fields[&h, &g](heap: &!h Heap, e: fail.Errors, flag: &static [byte], given: &g [byte], item: int, status: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, finish.extra(), "input.bad-fields", "the declaration of a JSON-lines file is not a list of paths", "paths are keys separated by dots, items are separated by commas, and a backslash escapes only a comma, a backslash, a # or a dot: --fields id,user.name,items.0.sku");
+    w = fail.repair_none(heap, w, "which paths were meant is not known");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flag", flag);
+    w = fail.detail_int(heap, w, "item", item);
+    w = fail.detail_str(heap, w, "reason", jfields.reason_of(status));
+    w = fail.detail_text(heap, w, "fields", given);
+    return fail.add(heap, e, w);
+}
+
+fn declaration[&h, &g](heap: &!h Heap, e: fail.Errors, flag: &static [byte], given: &g [byte]) -> [heap] fail.Errors {
+    let jfields.Fields { fnames, fends, fsbytes, ftable, fstatus, fat } = jfields.parse(heap, given);
+    buffer.drop(heap, fnames);
+    vec.drop(heap, fends);
+    buffer.drop(heap, fsbytes);
+    unbox_slice(heap, ftable);
+    if fstatus != 0 {
+        return bad_fields(heap, e, flag, given, fat, fstatus);
+    }
+    return e;
+}
+
+// What is wrong with the formats of a join, before any byte is read (docs/joins.md section 21): each flag that names nothing, a declaration that is missing or is not a list of paths, and the flags of the
+// JSON-lines family that a join does not take. `jsonl_flags`: some argument could be one of `--input-format`, `--fields`, `--absent`, `--max-json-nodes`, `--discover`... (`Inputs.jmention`).
+pub fn check[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jsonl_flags: bool, errs: fail.Errors) -> [heap, args] fail.Errors {
+    let table = spec.flag_table();
+    var e = errs;
+    let f = of(args, parsed);
+    var has_absent = false;
+    var has_nodes = false;
+    var has_discover = false;
+    if jsonl_flags {
+        has_absent = cli.has(parsed, table, "absent");
+        has_nodes = cli.has(parsed, table, "max-json-nodes");
+        has_discover = cli.has(parsed, table, "discover") || cli.has(parsed, table, "discover-lines") || cli.has(parsed, table, "max-fields");
+    }
+    if has_discover {
+        e = flags.problem(heap, e, "args.conflict", "--discover reports what the first lines of one file hold, so it does not go with a join", "run it on each file alone, and copy the paths it reports into --fields and --join-fields", "--join --discover --discover-lines --max-fields");
+    }
+    if f.b_fields_given && !f.b_jsonl {
+        e = flags.problem(heap, e, "args.conflict", "--join-fields declares the columns of a JSON-lines --join file, and this one is csv", "add --join-input-format jsonl, or drop --join-fields", "--join-fields --join-input-format");
+    }
+    if f.b_delim_given {
+        if f.b_jsonl {
+            e = flags.problem(heap, e, "args.conflict", "--join-delimiter is the separator of a csv --join file, and a JSON-lines file has none", "drop --join-delimiter, or read the --join file as csv with --join-input-format csv", "--join-delimiter --join-input-format");
+        } else if f.b_delim < 0 {
+            e = flags.problem(heap, e, "args.bad-value", "--join-delimiter is a comma, tab or a semicolon", "--join-delimiter tab", "--join-delimiter");
+        }
+    }
+    if f.p_fields_given && !f.p_jsonl {
+        e = flags.problem(heap, e, "args.conflict", "--fields declares the columns of a JSON-lines FILE, and this one is csv (the --join file's are declared with --join-fields)", "add --input-format jsonl, or use --join-fields for the --join file", "--fields --input-format --join-fields");
+    }
+    if (has_absent || has_nodes) && !f.p_jsonl && !f.b_jsonl {
+        e = flags.problem(heap, e, "args.conflict", "--absent and --max-json-nodes are for JSON lines, and neither file of this join is", "add --input-format jsonl or --join-input-format jsonl, or drop them", "--absent --max-json-nodes --input-format --join-input-format");
+    }
+    if has_nodes && (f.p_jsonl || f.b_jsonl) {
+        let n = cli.nat(args, parsed, table, "max-json-nodes");
+        if n < 1 || n > 1048576 {
+            e = flags.problem(heap, e, "args.bad-value", "--max-json-nodes is from 1 to 1048576", "--max-json-nodes 4096", "--max-json-nodes");
+        }
+    }
+    if f.p_jsonl {
+        if !f.p_fields_given {
+            e = fields_required(heap, e, "--fields", "--fields id,status,user.name declares the columns of FILE");
+        } else {
+            e = declaration(heap, e, "--fields", f.p_fields);
+        }
+    }
+    if f.b_jsonl {
+        if f.b_fields_given {
+            e = declaration(heap, e, "--join-fields", f.b_fields);
+        } else if !f.p_jsonl {
+            e = fields_required(heap, e, "--join-fields", "--join-fields id,name declares the columns of the --join file");
+        }
+        // (a --join file read as FILE is, with no --join-fields of its own, has the declaration of FILE, which was checked above)
+    }
+    return e;
+}

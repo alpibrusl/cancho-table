@@ -371,7 +371,7 @@ class JoinCalls(unittest.TestCase):
     def test_the_schema_has_the_flags_of_a_join(self):
         [r], _ = talk(root(), [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
         props = r["result"]["tools"][0]["inputSchema"]["properties"]
-        for p in ("join", "on", "join-type", "join-prefix", "join-where", "max-join-rows"):
+        for p in ("join", "on", "join-type", "join-prefix", "join-where", "max-join-rows", "join-input-format", "join-fields", "join-delimiter"):
             self.assertIn(p, props, p)
         self.assertEqual((props["join"]["type"], props["join-type"]["enum"], props["max-join-rows"]["maximum"]), ("string", ["inner", "left", "semi", "anti"], 1000000000))
 

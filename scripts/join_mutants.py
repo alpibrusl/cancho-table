@@ -62,7 +62,7 @@ MUTANTS = [
     ("a ragged probe row is joined", "jnread.cho", "                                if n != np {\n                                    if a[engine.k_ragged()] == 0 {\n                                        a[engine.k_first_row()] = st[s_probe()];\n                                        a[engine.k_first_line()] = number;", "                                if n != np && n == 0 {\n                                    if a[engine.k_ragged()] == 0 {\n                                        a[engine.k_first_row()] = st[s_probe()];\n                                        a[engine.k_first_line()] = number;"),
     ("the build is read one row past --max-rows", "jnread.cho", "                        } else if !quoted && a[engine.k_records()] >= most {", "                        } else if !quoted && a[engine.k_records()] >= most + 1 {"),
     ("the probe is not bounded by --max-rows", "jnread.cho", "                        } else if !quoted && st[s_probe()] >= most {", "                        } else if !quoted && st[s_probe()] >= most + 1000000000 {"),
-    ("the probe header is read before the build's", "jnrun.cho", "    let (rb1, hb) = jnhead.head_of(heap, rb, bfile, io, false, cap, delim);\n    rb = rb1;", "    let (rb1, hb) = jnhead.head_of(heap, rb, bfile, io, true, cap, delim);\n    rb = rb1;"),
+    ("the probe header is read before the build's", "jnrun.cho", "        let (rb1, hb1) = jnhead.head_of(heap, rb, bfile, io, false, cap, bdelim);\n        rb = rb1;", "        let (rb1, hb1) = jnhead.head_of(heap, rb, bfile, io, true, cap, bdelim);\n        rb = rb1;"),
     # the headers and the keys
     ("a name in both files is not refused", "jnhead.cho", "jnfail.collisions(pnames, pends, bnames, bends, buffer.bytes(pxr), contents(dr)) > 0", "jnfail.collisions(pnames, pends, bnames, bends, buffer.bytes(pxr), contents(dr)) > 100000"),
     ("the prefix is not put before the build's names", "jnhead.cho", "        borrow prefixb as &pxr in {\n            names = buffer.append(heap, names, buffer.bytes(pxr));\n        }\n        names = buffer.append(heap, names, buffer.bytes(bnames)[from..vec.get(bends, col)]);", "        names = buffer.append(heap, names, buffer.bytes(bnames)[from..vec.get(bends, col)]);"),
@@ -169,7 +169,7 @@ MUTANTS = [
     # explain
     ("explain says text for a typed key", "jnexplain.cho", "            o = type_name(heap, o, keys[3 * j + 2]);", "            o = type_name(heap, o, 0);"),
     ("explain names the wrong build column", "jnexplain.cho", "            o = buffer.push_nat(heap, o, keys[3 * j + 1] + 1);", "            o = buffer.push_nat(heap, o, keys[3 * j] + 1);"),
-    ("explain forgets the keys-only bound", "jnexplain.cho", "    if keys_only {\n        return body + (44 + extra) * rows;", "    if false {\n        return body + (44 + extra) * rows;"),
+    ("explain forgets the keys-only bound", "jnexplain.cho", "    if keys_only {\n        return body + (44 + extra) * rows;\n    }\n    return 2 * body + (76 + extra) * rows;\n}\n\n// The same for a build of JSON lines", "    if false {\n        return body + (44 + extra) * rows;\n    }\n    return 2 * body + (76 + extra) * rows;\n}\n\n// The same for a build of JSON lines"),
     ("explain lists the shared names of a semi join", "jnexplain.cho", "            if vec.get(onr.using, j) == 1 && jtype <= 1 {", "            if vec.get(onr.using, j) == 1 {"),
     ("explain counts the dropped columns", "jnexplain.cho", "        o = buffer.push_nat(heap, o, np + nk);", "        o = buffer.push_nat(heap, o, np + nb);"),
     ("explain says the bound is the inner one for a keys-only build", "jnexplain.cho", "    if jtype >= 2 {\n        o = buffer.append(heap, o, \",\\\"counted\\\":\\\"key bytes + 44", "    if jtype >= 20 {\n        o = buffer.append(heap, o, \",\\\"counted\\\":\\\"key bytes + 44"),
@@ -202,7 +202,7 @@ MUTANTS = [
     ("the units: a group alone is a bare condition", "orparse.cho", "        } else if kind == 3 || kind == 6 {\n            out = push4(heap, out, 1,", "        } else if kind == 3 || kind == 6 {\n            out = push4(heap, out, 0,"),
     ("the units: an or level is a bare condition", "orparse.cho", "            out = push4(heap, out, 1, 0, vec.get(tr, node + 3),", "            out = push4(heap, out, 0, 0, vec.get(tr, node + 3),"),
     # J3: the flags
-    ("--join-where without --join is not refused", "jnflags.cho", "cli.has(parsed, table, \"max-join-rows\") || cli.has(parsed, table, \"join-where\") {", "cli.has(parsed, table, \"max-join-rows\") {"),
+    ("--join-where without --join is not refused", "jnflags.cho", "cli.has(parsed, table, \"max-join-rows\") || cli.has(parsed, table, \"join-where\") || cli.has(parsed, table, \"join-input-format\")", "cli.has(parsed, table, \"max-join-rows\") || cli.has(parsed, table, \"join-input-format\")"),
     ("a syntax error of --join-where is not refused", "jnflags.cho", "            } else if what != 0 {\n                var w = fail.open_in(heap, finish.extra(), \"where.syntax\", \"--join-where is not an expression\"", "            } else if what == 99 {\n                var w = fail.open_in(heap, finish.extra(), \"where.syntax\", \"--join-where is not an expression\""),
     ("a mix of and and or in --join-where is not refused", "jnflags.cho", "            if what == orparse.mixed() {\n                var flag_at = 0 - 1;", "            if what == 99 {\n                var flag_at = 0 - 1;"),
     ("the mix repair of --join-where writes --where=", "wrepair.cho", "        var joined = buffer.append(heap, buffer.empty(heap, 64), flag);", "        var joined = buffer.append(heap, buffer.empty(heap, 64), \"--where\");"),
@@ -210,10 +210,10 @@ MUTANTS = [
     # J3: the run, the budget and the refusals
     ("the groups are given the whole flag, not what the build leaves", "jnrun.cho", "        let gstate = max_state - build_held;", "        let gstate = max_state;"),
     ("the sorter is given the whole flag", "jnrun.cho", "groups = sorter.configure(groups, nko, wanted, max_sort_rows, gstate, contents(okr));", "groups = sorter.configure(groups, nko, wanted, max_sort_rows, max_state, contents(okr));"),
-    ("a plan with a leading run but no groups runs the loops of J2", "jnrun.cho", "                                    if push_p || row_grouping {", "                                    if row_grouping {"),
+    ("a plan with a leading run but no groups runs the loops of J2", "jnrun.cho", "                                    if push_p || row_grouping || fmt.p_jsonl {", "                                    if row_grouping || fmt.p_jsonl {"),
     ("no probe-side condition is applied before the join", "jnrun.cho", "            push_p = contents(clr)[nw] > 0;", "            push_p = false;"),
     ("no build-side condition is applied before the build", "jnrun.cho", "            push_b = contents(clr)[nw + 1] > 0;", "            push_b = false;"),
-    ("--join-where is not applied", "jnrun.cho", "            if jw_on || push_b {", "            if push_b {"),
+    ("--join-where is not applied", "jnrun.cho", "            } else if jw_on || push_b {", "            } else if push_b {"),
     ("a refusal of the groups does not say what the build holds", "jnrun.cho", "jnfail.shared_too_large(heap, e, c.abort == 15, shown, max_state, build_held, c.err_digits)", "jnfail.shared_too_large(heap, e, c.abort == 15, shown, max_state, 0, c.err_digits)"),
     ("a refusal of the sorted rows is said to be the groups'", "jnrun.cho", "jnfail.shared_too_large(heap, e, c.abort == 15, shown, max_state, build_held, c.err_digits)", "jnfail.shared_too_large(heap, e, c.abort != 15, shown, max_state, build_held, c.err_digits)"),
     ("a refused cell of --join-where is taken for the plan's", "jnrun.cho", "        } else if bc.abort != 0 && bc.err_fn == 0 - 4 {", "        } else if bc.abort != 0 && bc.err_fn == 0 - 44 {"),
@@ -266,7 +266,7 @@ MUTANTS = [
     ("the explain says nothing of the shared budget", "explain.cho", "        if mode == 2 || ordering {\n            o = note(heap, o, first_note, \"--max-state-bytes is one number", "        if mode == 99 {\n            o = note(heap, o, first_note, \"--max-state-bytes is one number"),
     ("the explain says nothing of the rows before the join", "explain.cho", "        if bytes.find(jn, \"\\\"probe_before_join\\\":[\\\"\") >= 0 ||", "        if bytes.find(jn, \"\\\"probe_before_joim\\\":[\\\"\") >= 0 ||"),
     ("the explain shares the budget with nothing", "jnexplain.cho", "    if mode == 2 {\n        shared = \"groups\";", "    if mode == 99 {\n        shared = \"groups\";"),
-    ("the explain of a stdin probe lists the split", "jnexplain.cho", "    if !stdin {\n        let wtext", "    if stdin {\n        let wtext"),
+    ("the explain of a stdin probe lists the split", "jnexplain.cho", "    if known {\n        let wtext", "    if !known {\n        let wtext"),
     ("the explain lists no --join-where", "jnexplain.cho", "    if jw_on {\n        let jtext", "    if false {\n        let jtext"),
     ("the explain resolves no --join-where", "jnexplain.cho", "                if jw_on {\n                    // `--join-where` against the build file's header, as the run reads it", "                if false {\n                    // `--join-where` against the build file's header, as the run reads it"),
 

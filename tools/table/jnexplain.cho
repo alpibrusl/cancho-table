@@ -11,10 +11,13 @@ import std.buffer;
 import std.bytes;
 import std.vec;
 import explain;
+import finish;
 import frame;
 import jnfail;
 import jnflags;
+import jnfmt;
 import jnhead;
+import jnjson;
 import jnwhere;
 import jxsrc;
 import orparse;
@@ -51,6 +54,49 @@ fn at_most(size: int, header: int, columns: int, extra: int, keys_only: bool) ->
     return 2 * body + (76 + extra) * rows;
 }
 
+// The same for a build of JSON lines (docs/joins.md section 21): there is no header, a record is at least the two bytes `{}` and a line feed (three bytes, the last record having none), so there are at most
+// size / 3 + 1 records; the csv record of a line is at most the line and `columns` more (the record of `{}` with every path absent is `columns - 1` delimiters, and a path present costs at most the
+// bytes of its JSON text and two quotes against the four or more bytes of its `"k":`), so the records hold at most size + columns * rows; and the keys, which are inside them, no more. So
+// accounted <= 2 * (size + columns * rows) + (76 + extra) * rows, and a keys-only build (size + columns * rows) + (44 + extra) * rows. Loose, and an upper bound only.
+fn at_most_j(size: int, columns: int, extra: int, keys_only: bool) -> [] int {
+    if size < 0 {
+        return 0 - 1;
+    }
+    if size == 0 {
+        return 0;
+    }
+    let rows = size / 3 + 1;
+    let body = size + columns * rows;
+    if keys_only {
+        return body + (44 + extra) * rows;
+    }
+    return 2 * body + (76 + extra) * rows;
+}
+
+// The reader of a JSON-lines side as the document says it (`"probe_reader"` or `"build_reader"`): its declared columns, `--absent` and `--max-json-nodes`. A side that is csv with the probe's delimiter has no such
+// member, and the document of a join of two such files is what it was.
+fn jsonl_reader[&h, &n, &e](heap: &!h Heap, o: buffer.Buffer, key: &static [byte], names: &n buffer.Buffer, ends: &e vec.Vec[int], count: int, absent: int, nodes: int) -> [heap] buffer.Buffer {
+    var out = buffer.append(heap, o, key);
+    out = buffer.append(heap, out, "{\"format\":\"jsonl\",\"fields\":[");
+    var k = 0;
+    while k < count {
+        if k > 0 {
+            out = buffer.push(heap, out, byte_of(','));
+        }
+        out = text.append_json(heap, out, finish.name_of(names, ends, k));
+        k = k + 1;
+    }
+    out = buffer.append(heap, out, "],\"absent\":\"");
+    if absent == 1 {
+        out = buffer.append(heap, out, "empty");
+    } else {
+        out = buffer.append(heap, out, "refuse");
+    }
+    out = buffer.append(heap, out, "\",\"max_json_nodes\":");
+    out = buffer.push_nat(heap, out, nodes);
+    return buffer.push(heap, out, byte_of('}'));
+}
+
 fn spelled[&h, &d](heap: &!h Heap, o: buffer.Buffer, name: &d [byte], kind: int) -> [heap] buffer.Buffer {
     if kind >= 1 {
         var s = buffer.empty(heap, 16);
@@ -83,7 +129,7 @@ fn type_name[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buff
 }
 
 // The text of the `join` member. `jtype`: 0 inner, 1 left, 2 semi, 3 anti.
-fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte]) -> [heap, args] buffer.Buffer {
+fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte], reader_json: &y [byte], bjsonl: bool) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let on = jnflags.on_of(heap, args, parsed, jxs);
     let budget = cli.nat(args, parsed, table, "max-state-bytes");
@@ -99,7 +145,10 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x](heap: &!h Heap, args: &g Args, p
     if pairs > 1 || typed {
         extra = 12 * pairs;
     }
-    let most = at_most(bsize, bheader, nb, extra, jtype >= 2);
+    var most = at_most(bsize, bheader, nb, extra, jtype >= 2);
+    if bjsonl {
+        most = at_most_j(bsize, nb, extra, jtype >= 2);
+    }
     var o = buffer.empty(heap, 1024);
     o = buffer.append(heap, o, "{\"type\":");
     if jtype == 1 {
@@ -119,6 +168,7 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x](heap: &!h Heap, args: &g Args, p
     }
     o = buffer.append(heap, o, ",\"build\":");
     o = text.append_json(heap, o, shown_b);
+    o = buffer.append(heap, o, reader_json);
     o = buffer.append(heap, o, ",\"role_choice\":\"the --join file is the build side: it is held whole in memory, and the operand or standard input is the probe side, streamed\",\"keys\":[");
     borrow on as &onr in {
         j = 0;
@@ -235,10 +285,33 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
     var e = errs;
     var payload = payload0;
     let cap = cli.nat(args, parsed, table, "max-line-bytes");
+    // the formats of the two files (docs/joins.md section 21): a JSON-lines side has no header to read, its declaration is the header
+    let fmt = jnfmt.of(args, parsed);
+    let bdelim = jnfmt.build_delim(fmt, delim);
+    var absent = 0;
+    var nodes = 4096;
+    if fmt.p_jsonl || fmt.b_jsonl {
+        if bytes.equal(cli.text(args, parsed, table, "absent"), "empty") {
+            absent = 1;
+        }
+        nodes = cli.nat(args, parsed, table, "max-json-nodes");
+    }
+    // whether the probe's header is known: a file's is read, a pipe's is not, and a JSON-lines probe's is the declaration, from a file or a pipe
+    let known = !stdin || fmt.p_jsonl;
     var hp = jnhead.no_head(heap);
     var psize = 0 - 1;
     var pfile = opened;
-    if !stdin {
+    if fmt.p_jsonl {
+        let (pd, ph0) = jnjson.decl_of(heap, fmt.p_fields, absent, nodes);
+        jnjson.drop_decl(heap, pd);
+        jnhead.drop_head(heap, hp);
+        hp = ph0;
+        if !stdin {
+            borrow mut pfile as &!ph in {
+                psize = size_of(ph);
+            }
+        }
+    } else if !stdin {
         borrow mut pfile as &!ph in {
             jnhead.drop_head(heap, hp);
             hp = explain.read_head(heap, ph, cap, delim, 0);
@@ -274,7 +347,13 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
                     var bf = bopened;
                     borrow mut bf as &!bh in {
                         jnhead.drop_head(heap, hb);
-                        hb = explain.read_head(heap, bh, cap, delim, 0);
+                        if fmt.b_jsonl {
+                            let (bd, bh0) = jnjson.decl_of(heap, fmt.b_fields, absent, nodes);
+                            jnjson.drop_decl(heap, bd);
+                            hb = bh0;
+                        } else {
+                            hb = explain.read_head(heap, bh, cap, bdelim, 0);
+                        }
                         bsize = size_of(bh);
                     }
                     file_close(bf);
@@ -293,7 +372,7 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
                     e = e2;
                     refused = bad;
                 }
-                if !refused && !stdin {
+                if !refused && known {
                     borrow hp as &hpr in {
                         let (e2, bad) = jnhead.head_refusal(heap, args, parsed, tq, hpr, shown, budget, e);
                         e = e2;
@@ -336,7 +415,7 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
     borrow shown_b_copy as &sb in {
         borrow hp as &hpr in {
             borrow hb as &hbr in {
-                let (u, e2) = jnhead.unite(heap, args, parsed, jxs, e, hpr.names, hpr.ends, hbr.names, hbr.ends, !stdin, shown, buffer.bytes(sb), jtype);
+                let (u, e2) = jnhead.unite(heap, args, parsed, jxs, e, hpr.names, hpr.ends, hbr.names, hbr.ends, known, shown, buffer.bytes(sb), jtype);
                 e = e2;
                 borrow u as &ur in {
                     pairs = ur.pairs;
@@ -415,7 +494,7 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
         }
         buffer.drop(heap, jtextb);
     }
-    if !stdin {
+    if known {
         let wtextb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_where(), "where");
         var wu = vec.empty(heap, 1, 0);
         borrow wtextb as &wtr in {
@@ -480,17 +559,41 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
     } else if ordered {
         shared = "sorted rows";
     }
+    // the reader of the build, when it is not the probe's csv reader with the probe's delimiter (a join of two such files has no such member, and its document is what it was)
+    var reader_json = buffer.empty(heap, 1);
+    if fmt.p_jsonl {
+        borrow hp as &hpr in {
+            reader_json = jsonl_reader(heap, reader_json, ",\"probe_reader\":", hpr.names, hpr.ends, np, absent, nodes);
+        }
+    }
+    if fmt.b_jsonl {
+        borrow hb as &hbr in {
+            reader_json = jsonl_reader(heap, reader_json, ",\"build_reader\":", hbr.names, hbr.ends, nb, absent, nodes);
+        }
+    } else if jnfmt.foreign(fmt, delim) {
+        reader_json = buffer.append(heap, reader_json, ",\"build_reader\":{\"format\":\"csv\",\"delimiter\":");
+        if bdelim == 9 {
+            reader_json = buffer.append(heap, reader_json, "\"\\t\"}");
+        } else {
+            reader_json = buffer.append(heap, reader_json, "\"");
+            reader_json = buffer.push(heap, reader_json, byte_of(bdelim));
+            reader_json = buffer.append(heap, reader_json, "\"}");
+        }
+    }
     var doc = buffer.empty(heap, 1);
     borrow shown_b_copy as &sb in {
         buffer.drop(heap, doc);
         borrow keys as &ky in {
             borrow where_json as &wjr in {
                 borrow jw_json as &jjr in {
-                    doc = join_doc(heap, args, parsed, jxs, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, !stdin, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared);
+                    borrow reader_json as &rjr in {
+                        doc = join_doc(heap, args, parsed, jxs, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, known, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared, buffer.bytes(rjr), fmt.b_jsonl);
+                    }
                 }
             }
         }
     }
+    buffer.drop(heap, reader_json);
     buffer.drop(heap, where_json);
     buffer.drop(heap, jw_json);
     unbox_slice(heap, keys);
@@ -499,7 +602,7 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
     jnhead.drop_head(heap, hb);
     jnhead.drop_head(heap, hp);
     var head = jnhead.no_head(heap);
-    if stdin {
+    if !known {
         buffer.drop(heap, jnames);
         vec.drop(heap, jends);
     } else {
@@ -510,7 +613,7 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
     var e_cur = e;
     var p_cur = payload;
     borrow doc as &dr in {
-        let (t3, e3, p3) = explain.conclude(heap, args, parsed, head, psize, stdin, false, shown, delim, mode, as_csv, from, limit, budget, top, t_cur, names_at, e_cur, p_cur, buffer.bytes(dr));
+        let (t3, e3, p3) = explain.conclude(heap, args, parsed, head, psize, stdin, fmt.p_jsonl, shown, delim, mode, as_csv, from, limit, budget, top, t_cur, names_at, e_cur, p_cur, buffer.bytes(dr));
         t_cur = t3;
         e_cur = e3;
         p_cur = p3;
