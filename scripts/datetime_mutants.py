@@ -186,9 +186,9 @@ MUTANTS = [
     ("a date suffix is read after an escaped colon", "expr.cho", "dtparse.suffix_in(buffer.bytes(wr)[0..length], escaped_last);", "dtparse.suffix_in(buffer.bytes(wr)[0..length], 0);"),
     ("a date condition is read as a decimal condition", "expr.cho", "        if typed >= 22 {\n            return holds_date(", "        if typed >= 25 {\n            return holds_date("),
     # ---- the refusals
+    # (Not here, equivalent for a date: `engine.order_row`'s `status >= 5` read as `>= 15`. A status of a date type is 15 or more, 14 + a reason + 64 * the byte; the test is the decimals' and floats'.)
     ("a date refusal of --where has the abort of a float", "engine.cho", "        code = 1000 + verdict;", "        code = 1001 + verdict;"),
     ("a date refusal of an aggregate has another abort", "engine.cho", "        return 1000 + status;", "        return 1064 + status;"),
-    ("a date refusal of a sort key is read as a decimal's", "engine.cho", "    if status >= 5 {\n        // a typed key's cell", "    if status >= 15 {\n        // a typed key's cell"),
     ("the fast path's refusals leave no room for a date's status", "engine.cho", "    return 1099511627776;", "    return 16;"),
     ("the abort of a date is read by the rule of the decimals", "finish.cho", "    } else if c.abort >= 1000 {", "    } else if c.abort >= 100000 {"),
     ("a type is named by its neighbour", "finish.cho", "    if t == 23 {\n        return \":timestamp\";", "    if t == 23 {\n        return \":datetime\";"),

@@ -535,6 +535,14 @@ class Surface(unittest.TestCase):
         finally:
             s.cleanup()
 
+    def test_a_quoted_name_takes_a_suffix_after_its_quote(self):
+        for text, rows in (("'d':date = '2026-01-02'", [["2"]]), ("'ts':timestamp = '2026-01-01T23:00:00Z'", [["1"], ["2"]]), ("'w':datetime = '2026-01-01 23:00:00'", [["1"], ["2"]]),
+                           ("'d':date >= '2026-01-02' and 'ts':timestamp > '2026-01-01T00:00:00Z'", [["2"]])):
+            r = self.go("--where", text, "--select", "id")
+            self.assertEqual((r.status, r.data()["rows"]), (0, rows), text)
+        r = self.go("--where", "'d':datex = '2026-01-02'")
+        self.assertEqual(r.first_rule(), "where.syntax", "a suffix is a suffix only at the end of a word")
+
     def test_output_forms(self):
         r = self.go("--group", "ts:timestamp", "--agg", "count,min:ts:timestamp", "--format", "jsonl")
         self.assertEqual([json.loads(l) for l in r.stdout.decode().splitlines()], [{"ts": "2026-01-01T23:00:00Z", "count": 2, "min:ts": "2026-01-01T23:00:00Z"}])
@@ -544,6 +552,13 @@ class Surface(unittest.TestCase):
                          [{"d": "2026-01-01", "min:w": "2026-01-01T23:00:00", "max:w": "2026-01-01T23:00:00", "count": 1, "distinct:ts": 1},
                           {"d": "2026-01-02", "min:w": "2026-01-01T23:00:00", "max:w": "2026-01-01T23:00:00", "count": 1, "distinct:ts": 1}])
         self.assertIn('"count":1,"distinct:ts":1', r.stdout.decode())
+        # a plan whose only date is a maximum or a minimum (the key is text): the writer of the dates is chosen by the aggregate
+        for agg, label, shape in (("max:ts:timestamp", "max:ts", "[0-9T:Z-]+"), ("min:d:date", "min:d", "[0-9-]+"), ("min:w:datetime", "min:w", "[0-9T:-]+")):
+            r = self.go("--group", "id", "--agg", agg, "--format", "jsonl")
+            lines = r.stdout.decode().splitlines()
+            self.assertEqual(len(lines), 2, agg)
+            for line in lines:
+                self.assertRegex(line, r'^\{"id":"[12]","%s":"%s"\}$' % (label, shape))
         r = self.go("--group", "w:datetime", "--format", "json")
         self.assertEqual(r.data()["rows"], [["2026-01-01T23:00:00", "2"]])
         r = self.go("--agg", "min:d:date,max:d:date", "--format", "json")
