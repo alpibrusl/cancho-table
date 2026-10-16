@@ -135,7 +135,6 @@
     "configure",
     "conn_at",
     "consumed",
-    "contains_what",
     "context_of",
     "count",
     "count",
@@ -245,6 +244,7 @@
     "has",
     "has",
     "has",
+    "has_dates",
     "has_dotdot",
     "hash",
     "hash",
@@ -726,5 +726,5 @@
   ],
   "folded_operators": 309,
   "folded_calls": 0,
-  "functions": 1198
+  "functions": 1199
 }

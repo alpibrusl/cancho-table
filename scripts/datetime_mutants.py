@@ -20,9 +20,9 @@ import mutlib  # noqa: E402
 TESTS = ["test_datetime", "test_rules"]
 
 # the operators of `holds_date`, the one place the three types compare a cell with its literals (expr.cho)
-HOLDS_HEAD = "    let (v, bad) = dtparse.parse(cell, typed);\n    if bad != 0 {\n        return bad;\n    }\n    var l = 0;\n    while l < many {\n        let w = query.lit_at(plan, first + l, 2);\n        var yes = false;\n        if kind == 2 || op == 0 {\n            yes = v == w;\n"
-HOLDS_CHAIN = ("        } else if op == 1 {\n            yes = v != w;\n        } else if op == 2 {\n            yes = v < w;\n        } else if op == 3 {\n            yes = v <= w;\n"
-               "        } else if op == 4 {\n            yes = v > w;\n        } else {\n            yes = v >= w;\n        }\n        if yes {\n            return 1;\n        }\n        l = l + 1;\n    }\n    return 0;\n}\n\n// Whether `cell` satisfies condition")
+HOLDS_HEAD = "    let (x, bad) = dtparse.parse(cell, typed);\n    if bad != 0 {\n        return bad;\n    }\n    var l = 0;\n    while l < many {\n        let w = query.lit_at(plan, first + l, 2);\n        var yes = false;\n        if kind == 2 || op == 0 {\n            yes = x == w;\n"
+HOLDS_CHAIN = ("        } else if op == 1 {\n            yes = x != w;\n        } else if op == 2 {\n            yes = x < w;\n        } else if op == 3 {\n            yes = x <= w;\n"
+               "        } else if op == 4 {\n            yes = x > w;\n        } else {\n            yes = x >= w;\n        }\n        if yes {\n            return 1;\n        }\n        l = l + 1;\n    }\n    return 0;\n}\n\n// Whether `cell` satisfies condition")
 
 
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file.
@@ -136,16 +136,16 @@ MUTANTS = [
     ("a date key is written as a decimal", "agg.cho", "    if kind >= 22 {\n        return dtparse.put(heap, out, v, kind);", "    if kind >= 25 {\n        return dtparse.put(heap, out, v, kind);"),
     ("a date minimum is written as a decimal", "agg.cho", "query.agg_at(tree, k, 2) >= 22 {\n        return dtparse.put", "query.agg_at(tree, k, 2) >= 25 {\n        return dtparse.put"),
     # ---- the literals and the operators (expr.cho)
-    ("a cell that is not a date is false", "expr.cho", "    let (v, bad) = dtparse.parse(cell, typed);\n    if bad != 0 {\n        return bad;\n    }", "    let (v, bad) = dtparse.parse(cell, typed);\n    if bad != 0 {\n        return 0;\n    }"),
-    ("equal instants are two", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD.replace("yes = v == w;", "yes = v == w + 1;") + HOLDS_CHAIN),
-    ("a date's != is =", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = v != w;", "yes = v == w;", 1)),
-    ("a date's < is <=", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = v < w;", "yes = v <= w;", 1)),
-    ("a date's <= is <", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = v <= w;", "yes = v < w;", 1)),
-    ("a date's > is >=", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = v > w;", "yes = v >= w;", 1)),
-    ("a date's >= is >", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = v >= w;", "yes = v > w;", 1)),
+    ("a cell that is not a date is false", "expr.cho", "    let (x, bad) = dtparse.parse(cell, typed);\n    if bad != 0 {\n        return bad;\n    }", "    let (x, bad) = dtparse.parse(cell, typed);\n    if bad != 0 {\n        return 0;\n    }"),
+    ("equal instants are two", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD.replace("yes = x == w;", "yes = x == w + 1;") + HOLDS_CHAIN),
+    ("a date's != is =", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = x != w;", "yes = v == w;", 1)),
+    ("a date's < is <=", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = x < w;", "yes = x <= w;", 1)),
+    ("a date's <= is <", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = x <= w;", "yes = x < w;", 1)),
+    ("a date's > is >=", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = x > w;", "yes = x >= w;", 1)),
+    ("a date's >= is >", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = x >= w;", "yes = x > w;", 1)),
     ("a date's in is false", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD.replace("if kind == 2 || op == 0 {", "if op == 0 {") + HOLDS_CHAIN),
     ("a literal's refusal expects the wrong type", "expr.cho", "                    what = 3 + typed;", "                    what = 2 + typed;"),
-    ("contains on a date is a comparison of numbers", "expr.cho", "    if typed >= 22 {\n        return 28;", "    if typed >= 25 {\n        return 28;"),
+    ("contains on a date has the sentence of the numbers", "expr.cho", "        if what == 6 && typed >= 22 {", "        if what == 6 && typed >= 25 {"),
     ("a date suffix is not read after a quoted name", "expr.cho", "                if dk != 0 && (after + dl == len(src) || is_delimiter(int_of(src[after + dl]))) {", "                if dk != 0 && (after + dl == len(src) && false) {"),
     ("a date suffix is read after an escaped colon", "expr.cho", "dtparse.suffix_in(buffer.bytes(wr)[0..length], escaped_last);", "dtparse.suffix_in(buffer.bytes(wr)[0..length], 0);"),
     ("a date condition is read as a decimal condition", "expr.cho", "        if typed >= 22 {\n            return holds_date(", "        if typed >= 25 {\n            return holds_date("),
@@ -176,9 +176,12 @@ MUTANTS = [
     ("the repair of = is open on the right", "dtrepair.cho", "            out = both(heap, out, column, days, \">=\", \" and \", \"<\");", "            out = both(heap, out, column, days, \">=\", \" and \", \"<=\");"),
     ("the repair of != is an and", "dtrepair.cho", "            out = both(heap, out, column, days, \"<\", \" or \", \">=\");", "            out = both(heap, out, column, days, \"<\", \" and \", \">=\");"),
     # ---- the output and the plan
-    ("a date key is a bare number in JSON lines", "jout.cho", "            if query.gkind_at(tree, m) >= 22 {", "            if query.gkind_at(tree, m) >= 25 {"),
-    ("a distinct count of dates is a string in JSON lines", "jout.cho", "(query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 3)", "(query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 4)"),
-    ("a maximum of dates is a bare number in JSON lines", "jout.cho", "(query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 3)", "(query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 33)"),
+    ("a date key is a bare number in JSON lines", "dtjson.cho", "            if query.gkind_at(tree, m) >= 22 {", "            if query.gkind_at(tree, m) >= 25 {"),
+    ("a distinct count of dates is a string in JSON lines", "dtjson.cho", "        } else if query.agg_at(tree, m - ng, 2) >= 22 && (query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 3) {", "        } else if query.agg_at(tree, m - ng, 2) >= 22 && (query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 4) {"),
+    ("a maximum of dates is a bare number in JSON lines", "dtjson.cho", "        } else if query.agg_at(tree, m - ng, 2) >= 22 && (query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 3) {", "        } else if query.agg_at(tree, m - ng, 2) >= 22 && (query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 33) {"),
+    ("a plan with dates is written by the writer of numbers in JSON lines", "jout.cho", "    if dtjson.has_dates(tree) {", "    if false {"),
+    ("a plan with a date key is not told to have dates", "dtjson.cho", "        if query.gkind_at(tree, m) >= 22 {\n            return true;", "        if query.gkind_at(tree, m) >= 23 {\n            return true;"),
+    ("a plan with a date minimum is not told to have dates", "dtjson.cho", "        if (query.agg_at(tree, m, 0) == 2 || query.agg_at(tree, m, 0) == 3) && query.agg_at(tree, m, 2) >= 22 {", "        if query.agg_at(tree, m, 0) == 2 && query.agg_at(tree, m, 2) >= 22 {"),
     ("explain names every date type the same", "explain.cho", "        b = buffer.append(heap, b, dtparse.type_text(t));", "        b = buffer.append(heap, b, dtparse.type_text(22));"),
     ("explain lists the refusals of a date for a timestamp", "dtfail.cho", "    if dts & 1 != 0 {\n        b = rule(heap, b, \"value.not-date\");", "    if dts & 2 != 0 {\n        b = rule(heap, b, \"value.not-date\");"),
     ("explain lists the offset refusal of a datetime for a timestamp", "dtfail.cho", "    if dts & 4 != 0 {\n        b = rule(heap, b, \"value.timestamp-offset-present\");", "    if dts & 2 != 0 {\n        b = rule(heap, b, \"value.timestamp-offset-present\");"),

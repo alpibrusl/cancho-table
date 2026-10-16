@@ -303,14 +303,6 @@ fn parse_column[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: in
     return (plan, next, index, typed, what, at);
 }
 
-// What `contains` on a typed column expected: 6 for the numbers, 28 for the date types.
-fn contains_what(typed: int) -> [] int {
-    if typed >= 22 {
-        return 28;
-    }
-    return 6;
-}
-
 // The operator at `from`: answers its kind (0 compare, 1 contains, 2 in), its code, where it ends, what / where on an error, and whether it was written `not in` or `not contains` (the
 // condition is then the `in` or the `contains`, and its caller swaps the two exits: docs/or-and-columns.md section 17).
 fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, typed: int) -> [heap] (int, int, int, int, int, bool) {
@@ -359,7 +351,7 @@ fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, typed: int)
         }
         buffer.drop(heap, w2);
         if not_contains && typed != 0 {
-            return (0, 0, at, contains_what(typed), at, false);
+            return (0, 0, at, 6, at, false);
         }
         if not_contains {
             return (1, 0, after2, 0, 0, true);
@@ -370,7 +362,7 @@ fn parse_operator[&h, &s](heap: &!h Heap, src: &s [byte], from: int, typed: int)
         return (0, 0, at, 24, at, false);
     }
     if is_contains && typed != 0 {
-        return (0, 0, from, contains_what(typed), from, false);
+        return (0, 0, from, 6, from, false);
     }
     if is_contains {
         return (1, 0, after, 0, 0, false);
@@ -466,6 +458,10 @@ pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: 
         let (kind, op, after_op, w2, a2, negated) = parse_operator(heap, src, i, typed);
         negative = negated;
         what = w2;
+        if what == 6 && typed >= 22 {
+            // `contains` on a date type: the sentence names the date types, not the numbers
+            what = 28;
+        }
         at = a2;
         i = after_op;
         var first = 0;
@@ -817,7 +813,7 @@ fn holds_dec[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many:
 // The same for a :date, :timestamp or :datetime column (`typed` 22, 23, 24): the cell is read by `dtparse.parse` and compared with the literals' (read the same way when the expression was
 // parsed). A cell that is not one answers its status, 14 or more (dtparse.cho).
 fn holds_date[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many: int, typed: int, cell: &c [byte]) -> [] int {
-    let (v, bad) = dtparse.parse(cell, typed);
+    let (x, bad) = dtparse.parse(cell, typed);
     if bad != 0 {
         return bad;
     }
@@ -826,17 +822,17 @@ fn holds_date[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many
         let w = query.lit_at(plan, first + l, 2);
         var yes = false;
         if kind == 2 || op == 0 {
-            yes = v == w;
+            yes = x == w;
         } else if op == 1 {
-            yes = v != w;
+            yes = x != w;
         } else if op == 2 {
-            yes = v < w;
+            yes = x < w;
         } else if op == 3 {
-            yes = v <= w;
+            yes = x <= w;
         } else if op == 4 {
-            yes = v > w;
+            yes = x > w;
         } else {
-            yes = v >= w;
+            yes = x >= w;
         }
         if yes {
             return 1;
