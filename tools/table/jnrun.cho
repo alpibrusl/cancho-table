@@ -20,7 +20,9 @@ import finish;
 import frame;
 import jn3pass;
 import jnfail;
+import jnfmt;
 import jnhead;
+import jnjson;
 import jnread;
 import jnwhere;
 import jxsrc;
@@ -76,9 +78,35 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
         sort = cli.text(args, parsed, table, "sort");
     }
     var e = errs;
+    // the formats of the two files (docs/joins.md section 21): JSON lines on either side, and a delimiter of its own for a csv build. A join of two csv files with one delimiter looks up nothing here.
+    let fmt = jnfmt.of(args, parsed);
+    let bdelim = jnfmt.build_delim(fmt, delim);
+    let foreign = jnfmt.foreign(fmt, delim);
+    var absent = 0;
+    var nodes = 4096;
+    if fmt.p_jsonl || fmt.b_jsonl {
+        if bytes.equal(cli.text(args, parsed, table, "absent"), "empty") {
+            absent = 1;
+        }
+        nodes = cli.nat(args, parsed, table, "max-json-nodes");
+    }
+    var bdecl = jnjson.no_decl(heap);
+    var pdecl = jnjson.no_decl(heap);
     var rb = lines.start(heap, cap);
-    let (rb1, hb) = jnhead.head_of(heap, rb, bfile, io, false, cap, delim);
-    rb = rb1;
+    var hb = jnhead.no_head(heap);
+    if fmt.b_jsonl {
+        // JSON lines have no header: the declaration is the header, and nothing of the file is read for it
+        let (d1, h1) = jnjson.decl_of(heap, fmt.b_fields, absent, nodes);
+        jnjson.drop_decl(heap, bdecl);
+        bdecl = d1;
+        jnhead.drop_head(heap, hb);
+        hb = h1;
+    } else {
+        let (rb1, hb1) = jnhead.head_of(heap, rb, bfile, io, false, cap, bdelim);
+        rb = rb1;
+        jnhead.drop_head(heap, hb);
+        hb = hb1;
+    }
     var rp = lines.start(heap, cap);
     var hp = jnhead.no_head(heap);
     var refused = false;
@@ -88,10 +116,18 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
         refused = bad;
     }
     if !refused {
-        let (rp1, hp1) = jnhead.head_of(heap, rp, pfile, io, stdin, cap, delim);
-        rp = rp1;
-        jnhead.drop_head(heap, hp);
-        hp = hp1;
+        if fmt.p_jsonl {
+            let (d2, h2) = jnjson.decl_of(heap, fmt.p_fields, absent, nodes);
+            jnjson.drop_decl(heap, pdecl);
+            pdecl = d2;
+            jnhead.drop_head(heap, hp);
+            hp = h2;
+        } else {
+            let (rp1, hp1) = jnhead.head_of(heap, rp, pfile, io, stdin, cap, delim);
+            rp = rp1;
+            jnhead.drop_head(heap, hp);
+            hp = hp1;
+        }
         borrow hp as &hpr in {
             let (e2, bad) = jnhead.head_refusal(heap, args, parsed, tree, hpr, shown, budget, e);
             e = e2;
@@ -248,7 +284,26 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
         // the build phase
         var bkept = buffer.empty(heap, 1);
         borrow keys as &kr1 in {
-            if jw_on || push_b {
+            if foreign {
+                // a JSON-lines build, or a csv build with a delimiter of its own: its rows are handed to the join as csv records in the answer's delimiter (jnjson.cho)
+                borrow cls as &clr in {
+                    borrow bcols as &bcr in {
+                        borrow jwcols as &jcr in {
+                            borrow jwtree as &jq in {
+                                borrow bdecl as &bdr in {
+                                    let (rb2, jt2, bc, consumed2, bk2) = jnjson.build_passj(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, bdelim, fmt.b_jsonl, bdr, cap, most, max_state, jq, contents(jcr), jw_on, tree, contents(clr), contents(bcr), push_b);
+                                    rb = rb2;
+                                    jt = jt2;
+                                    buffer.drop(heap, bkept);
+                                    bkept = bk2;
+                                    bcounts = bc;
+                                    consumed = consumed2;
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if jw_on || push_b {
                 borrow cls as &clr in {
                     borrow bcols as &bcr in {
                         borrow jwcols as &jcr in {
@@ -303,6 +358,14 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
                     borrow bkept as &bkr in {
                         e = typed_refusal(heap, args, parsed, e, contents(kr2), bc, bkr, shown_b, "build", hbr.names, hbr.ends, hbr.names, hbr.ends);
                     }
+                }
+            }
+            go = false;
+        } else if bc.abort >= 50 && bc.abort <= 55 {
+            // a line of a JSON-lines build that the reader refuses: the rule of the reader, the build file named
+            borrow hb as &hbr in {
+                borrow bkept as &bkr in {
+                    e = finish.jsonl_refusal(heap, e, args, parsed, hbr.names, hbr.ends, bkr, bc, shown_b, "build");
                 }
             }
             go = false;
@@ -401,16 +464,28 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
                         borrow kmap as &km in {
                             borrow mut cellbox as &!cw in {
                                 borrow mut bcellbox as &!bw in {
-                                    if push_p || row_grouping {
+                                    if push_p || row_grouping || fmt.p_jsonl {
                                         borrow cls as &clr in {
                                             borrow gv as &gr in {
-                                                let (rp2, pc, rows2, scratch2, kept2) = jn3pass.probe_pass3(heap, rp, pfile, io, stdin, tr, tree, contents(kr), contents(sr), contents(cw), contents(bw), contents(ky), contents(km), pairs, simple, jtype, nk, out_rows, spare, np, nb, delim, as_csv, from, limit, budget, picked, cap, most, max_join, contents(clr), push_p, row_grouping, mode, groups, contents(gr), top);
-                                                rp = rp2;
-                                                c = pc;
-                                                out_rows = rows2;
-                                                spare = scratch2;
-                                                buffer.drop(heap, kept);
-                                                kept = kept2;
+                                                if fmt.p_jsonl {
+                                                    borrow pdecl as &pdr in {
+                                                        let (rp2, pc, rows2, scratch2, kept2) = jnjson.probe_passj(heap, rp, pfile, io, stdin, tr, tree, contents(kr), contents(sr), contents(cw), contents(bw), contents(ky), contents(km), pairs, simple, jtype, nk, out_rows, spare, np, nb, delim, as_csv, from, limit, budget, picked, cap, most, max_join, contents(clr), push_p, row_grouping, mode, groups, contents(gr), top, pdr);
+                                                        rp = rp2;
+                                                        c = pc;
+                                                        out_rows = rows2;
+                                                        spare = scratch2;
+                                                        buffer.drop(heap, kept);
+                                                        kept = kept2;
+                                                    }
+                                                } else {
+                                                    let (rp2, pc, rows2, scratch2, kept2) = jn3pass.probe_pass3(heap, rp, pfile, io, stdin, tr, tree, contents(kr), contents(sr), contents(cw), contents(bw), contents(ky), contents(km), pairs, simple, jtype, nk, out_rows, spare, np, nb, delim, as_csv, from, limit, budget, picked, cap, most, max_join, contents(clr), push_p, row_grouping, mode, groups, contents(gr), top);
+                                                    rp = rp2;
+                                                    c = pc;
+                                                    out_rows = rows2;
+                                                    spare = scratch2;
+                                                    buffer.drop(heap, kept);
+                                                    kept = kept2;
+                                                }
                                             }
                                         }
                                     } else {
@@ -470,6 +545,13 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
         } else if c.abort == 15 || c.abort == 21 {
             // the groups or the sorted rows passed what the build leaves of the flag
             e = jnfail.shared_too_large(heap, e, c.abort == 15, shown, max_state, build_held, c.err_digits);
+        } else if c.abort >= 50 && c.abort <= 55 {
+            // a line of a JSON-lines probe that the reader refuses: the rule of the reader, the probe named
+            borrow hp as &hpr in {
+                borrow kept as &vr in {
+                    e = finish.jsonl_refusal(heap, e, args, parsed, hpr.names, hpr.ends, vr, c, shown, "probe");
+                }
+            }
         } else {
             borrow jnames as &nr in {
                 borrow jends as &er in {
@@ -501,6 +583,8 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
     buffer.drop(heap, kept);
     jnhead.drop_head(heap, hb);
     jnhead.drop_head(heap, hp);
+    jnjson.drop_decl(heap, bdecl);
+    jnjson.drop_decl(heap, pdecl);
     return (c, head, out_rows, jnames, jends, e);
 }
 

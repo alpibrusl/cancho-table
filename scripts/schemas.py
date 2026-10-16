@@ -32,6 +32,11 @@ def obj(props, required=None):
     }
 
 
+def obj_optional(optional, props):
+    """An object whose properties are all required but those named in `optional`."""
+    return obj(props, required=[k for k in props if k not in optional])
+
+
 def common_defs():
     return {
         "text_or_bytes": {
@@ -95,6 +100,9 @@ def document(tool, data):
 
 
 TB = {"$ref": "#/$defs/text_or_bytes"}
+# J5 (docs/joins.md section 21): the reader of a side of a join that is JSON lines (its declared columns, --absent, --max-json-nodes) or a csv build with a delimiter of its own
+READER = {"oneOf": [obj({"format": {"const": "jsonl"}, "fields": {"type": "array", "items": TB}, "absent": {"enum": ["refuse", "empty"]}, "max_json_nodes": NAT}),
+                    obj({"format": {"const": "csv"}, "delimiter": TB})]}
 
 NULLABLE_NAT = {"oneOf": [{"type": "null"}, NAT]}
 RULE = {"type": "string", "pattern": "^[a-z]+\\.[a-z0-9-]+$"}
@@ -165,10 +173,13 @@ def explain_document():
         "refusals": obj({"possible": {"type": "array", "items": RULE}}),
         "notes": {"type": "array", "items": TB},
         # a join (docs/joins.md section 8.4): the sides, the key, the columns, what the build can hold, the bound and the work
-        "join": obj({
+        "join": obj_optional(["probe_reader", "build_reader"], {
             "type": {"enum": ["inner", "left", "semi", "anti"]},
             "probe": TB,
             "build": TB,
+            # J5 (docs/joins.md section 21): the reader of a side that is JSON lines (probe_reader), and of a build that is JSON lines or is csv with a delimiter of its own (build_reader)
+            "probe_reader": READER,
+            "build_reader": READER,
             "role_choice": {"type": "string"},
             "keys": {"type": "array", "items": obj({"probe": TB, "build": TB, "type": {"type": "string", "pattern": "^(text|int|float|dec\\([0-9]{1,2}\\))$"},
                                                     "probe_position": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},

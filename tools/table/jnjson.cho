@@ -1,0 +1,590 @@
+edition 5;
+
+module jnjson;
+
+// The passes of a join over a file that `jnread` and `jn3pass` do not read: a JSON-lines side (a probe, a build or both) and a csv build with a delimiter of its own (docs/joins.md section 21).
+//
+// THE CONTRACT. A side is read by the reader it has (JSON lines: `jrec.extract` on a line, as `jsonl.read` reads one file; csv: the lines of `toolbox.lines` and `reader`, as `jnread` reads one), and every
+// row is then handed to the join as a CSV RECORD in the delimiter of the answer: the cells joined by the delimiter, a cell quoted (its quotes doubled) when it holds a quote, the delimiter, LF or CR, and a record
+// of one empty cell written as two quotes (`jrec.csv_record`, which the sorter already uses for a held row of JSON lines), with its cells found again by `reader.fields`. A csv build with another delimiter is
+// re-delimited the same way (a quoted field keeps its quotes, an unquoted one that holds the delimiter of the answer gets them). So the build holds, and the engine sees, the record a csv file with the cells would
+// have: `jtab`, `jnkey`, `jnwhere`, `jn3pass.probe_g`, `jnread.probe_one` and the rest are given what they were always given, and the accounted bytes of a row are those of that record.
+//
+// These loops are COPIES of `jn3pass.build_pass3` and `jn3pass.probe_pass3` with the reading of a row replaced, and they take every plan (`--join-where`, the leading run of `--where`, groups and sorted rows
+// included): the loops of J1 to J3b are not edited, and a join of two csv files with one delimiter runs them as it ran them.
+//
+//     build_passj   the build file whole -> its row as a csv record -> `--join-where` -> the build-side conditions of the leading run -> the key -> held, or the first row that passes the bound is the refusal
+//     probe_passj   the probe, JSON lines -> its row as a csv record -> the probe-side conditions of the leading run -> the key -> the joined rows -> `--where` -> the rows written, or the groups or the sorter
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import agg;
+import bulk;
+import engine;
+import explain;
+import finish;
+import jfields;
+import jn3pass;
+import jnread;
+import jnwhere;
+import jrec;
+import jtab;
+import query;
+import reader;
+import scan;
+import toolbox.lines;
+
+// A declaration of JSON-lines columns, made once for a read: the paths (`jfields`), how many columns, whether every path is one key (the flat scanner), `--absent` (1 for empty) and `--max-json-nodes`.
+pub res struct Decl {
+    ftable: Box[[int]],
+    fsbytes: buffer.Buffer,
+    nfields: int,
+    flat: bool,
+    absent: int,
+    nodes: int,
+}
+
+// The header of a JSON-lines side is its declaration; nothing of the file is read for it. Answers the declaration and the header (`explain.Head`) the join resolves its plan against.
+pub fn decl_of[&h, &g](heap: &!h Heap, text: &g [byte], absent: int, nodes: int) -> [heap] (Decl, explain.Head) {
+    let jfields.Fields { fnames, fends, fsbytes, ftable, fstatus, fat } = jfields.parse(heap, text);
+    var nfields = 0;
+    borrow fends as &der in {
+        nfields = vec.size(der);
+    }
+    var flat = true;
+    borrow ftable as &flr in {
+        var f = 0;
+        while f < nfields {
+            if contents(flr)[2 * f + 1] != 1 {
+                flat = false;
+            }
+            f = f + 1;
+        }
+    }
+    let head = explain.Head { names: fnames, ends: fends, got: true, abort: 0, abort_line: 0, long_length: 0, errno: 0, consumed: 0, bytes_read: 0 };
+    return (Decl { ftable: ftable, fsbytes: fsbytes, nfields: nfields, flat: flat, absent: absent, nodes: nodes }, head);
+}
+
+// An empty declaration, for a side that is not JSON lines.
+pub fn no_decl[&h](heap: &!h Heap) -> [heap] Decl {
+    return Decl { ftable: box_slice(heap, 1, 0), fsbytes: buffer.empty(heap, 1), nfields: 0, flat: true, absent: 0, nodes: 1 };
+}
+
+pub fn drop_decl[&h](heap: &!h Heap, d: Decl) -> [heap] int {
+    let Decl { ftable, fsbytes, nfields, flat, absent, nodes } = d;
+    unbox_slice(heap, ftable);
+    buffer.drop(heap, fsbytes);
+    return nfields;
+}
+
+// The line a JSON-lines record is, from the text of the reader's line: a BOM is the input's and not the first line's, and a CR before the LF is the line end's.
+fn bare[&l](line: &l [byte], number: int) -> [] &l [byte] {
+    var out = line;
+    if number == 1 && len(out) >= 3 && int_of(out[0]) == 239 && int_of(out[1]) == 187 && int_of(out[2]) == 191 {
+        out = out[3..len(out)];
+    }
+    if len(out) > 0 && int_of(out[len(out) - 1]) == 13 {
+        out = out[0..len(out) - 1];
+    }
+    return out;
+}
+
+// Hold one build record whose cells are `cells`, as `jn3pass.build_pass3` holds one: `--join-where`, the build-side conditions of the leading run, then the key. 0 when it is held or filtered out, 1 when it
+// does not fit within `limit` accounted bytes, 2 when the read must stop (a typed key cell that is not of its type, or a cell `--join-where` refused: the tally says which).
+fn hold3[&h, &d, &c, &k, &w, &j, &q, &l, &m, &a](heap: &!h Heap, jt0: jtab.JTab, kscr0: buffer.Buffer, kbuf0: buffer.Buffer, escr0: buffer.Buffer, kept0: buffer.Buffer, record: &d [byte], cells: &c [int], number: int, a: &!a [int], keys: &k [int], pairs: int, simple: bool, keys_only: bool, bfast: bool, bkey: int, limit: int, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &l [int], bcols: &m [int], push_b: bool) -> [heap] (jtab.JTab, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, int) {
+    var jt = jt0;
+    var kscr = kscr0;
+    var kbuf = kbuf0;
+    var escr = escr0;
+    var kept = kept0;
+    var answer = 0;
+    let (v3, e3, k3) = jn3pass.filter3(heap, jwt, jwcols, jw_on, tree, cls, bcols, push_b, record, cells, number, escr, kept, a);
+    escr = e3;
+    kept = k3;
+    if v3 != 1 {
+        if v3 < 0 {
+            a[engine.k_err_fn()] = 0 - 4;
+            return (jt, kscr, kbuf, escr, kept, 2);
+        }
+        return (jt, kscr, kbuf, escr, kept, 0);
+    }
+    if bfast {
+        let (t2, k2, ok) = jnread.hold_text(heap, jt, kscr, record, cells, bkey, limit);
+        jt = t2;
+        kscr = k2;
+        if !ok {
+            answer = 1;
+        }
+    } else {
+        let (t2, k2, b2, answer2) = jnread.hold_row(heap, jt, kscr, kbuf, record, cells, keys, pairs, simple, keys_only, limit);
+        jt = t2;
+        kscr = k2;
+        kbuf = b2;
+        answer = answer2;
+    }
+    if answer == 1 {
+        return (jt, kscr, kbuf, escr, kept, 1);
+    }
+    if answer >= 16 {
+        let row = a[engine.k_records()];
+        kept = jnread.note_typed(heap, kept, record, cells, keys, answer, 1, row, number, a);
+        return (jt, kscr, kbuf, escr, kept, 2);
+    }
+    return (jt, kscr, kbuf, escr, kept, 0);
+}
+
+// The build phase for a build that is JSON lines (`jsonl`, `dc` its declaration) or csv with the delimiter `bdelim` (the answer's is `delim`): every record of the file whole, as a csv record in `delim`, then held.
+// Answers the reader, the table, what was counted (abort 70: the first row that did not fit; 4, 7, 1 and 2 as a file's; 50 to 55 as a JSON-lines file's), the bytes of the file consumed when it stopped, and the
+// first bytes of a refused value. A ragged csv row is counted and not held; `most` rows read and another there is `capped`.
+pub fn build_passj[&h, &f, &k, &w, &j, &q, &c, &l, &x](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab.JTab, nb: int, keys: &k [int], pairs: int, simple: bool, keys_only: bool, delim: int, bdelim: int, jsonl: bool, dc: &x Decl, cap: int, most: int, limit: int, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &c [int], bcols: &l [int], push_b: bool) -> [heap, file_read] (lines.Lines, jtab.JTab, finish.Counts, int, buffer.Buffer) {
+    var r = r0;
+    var jt = jt0;
+    var rec = buffer.empty(heap, 256);
+    var crec = buffer.empty(heap, 256);
+    var kscr = buffer.empty(heap, 64);
+    var kbuf = buffer.empty(heap, 64);
+    var kept = buffer.empty(heap, 64);
+    var escr = buffer.empty(heap, 16);
+    let bfast = simple && !keys_only;
+    let bkey = keys[1];
+    var tally = box_slice(heap, engine.k_size(), 0);
+    var cellbox = box_slice(heap, 3 * (nb + 1), 0);
+    var tape = box_slice(heap, 3 * dc.nodes + 3, 0);
+    var jst = box_slice(heap, 2, 0);
+    let tb = contents(dc.ftable);
+    let sb = buffer.bytes(dc.fsbytes);
+    var quoted = false;
+    var seps = 0;
+    var opened = 0;
+    var consumed = 0;
+    var going = true;
+    var c = jnread.nothing();
+    borrow mut tally as &!tw in {
+        let a = contents(tw);
+        a[engine.k_columns()] = nb;
+        borrow mut cellbox as &!cw in {
+            let cells = contents(cw);
+            borrow mut tape as &!tpw in {
+                borrow mut jst as &!jsw in {
+                    while going {
+                        var status = 9;
+                        borrow mut r as &!rw in {
+                            status = scan.next_fast(rw);
+                        }
+                        if status == 9 {
+                            let (stepped, answer) = lines.next(heap, r);
+                            r = stepped;
+                            status = answer;
+                        }
+                        if status == lines.need() {
+                            r = lines.fill_file(r, file);
+                        } else if status == lines.done() {
+                            going = false;
+                        } else if status == lines.long() {
+                            a[engine.k_abort()] = 4;
+                            borrow r as &rr in {
+                                a[engine.k_abort_line()] = lines.number(rr);
+                                a[engine.k_long()] = lines.length(rr);
+                            }
+                            going = false;
+                        } else if jsonl {
+                            borrow r as &rr in {
+                                let number = lines.number(rr);
+                                let line = bare(lines.text(rr), number);
+                                if jrec.blank(line) {
+                                    // A blank line is not a record.
+                                } else if a[engine.k_records()] >= most {
+                                    a[engine.k_capped()] = 1;
+                                    going = false;
+                                } else {
+                                    var shape = 0;
+                                    let (code, rec2) = jrec.extract(heap, line, contents(tpw), contents(jsw), tb, sb, dc.nfields, dc.flat, dc.nodes, dc.absent, 0 - 1, cells, rec, a);
+                                    rec = rec2;
+                                    shape = code;
+                                    if shape >= 50 {
+                                        a[engine.k_abort_line()] = number;
+                                        a[engine.k_err_line()] = number;
+                                        kept = jrec.keep_facts(heap, kept, shape, line, tb, sb, dc.nfields, a);
+                                        going = false;
+                                    } else {
+                                        borrow rec as &rcr in {
+                                            var record = buffer.bytes(rcr);
+                                            if shape == 0 {
+                                                record = line;
+                                            }
+                                            crec = jrec.csv_record(heap, crec, record, cells, dc.nfields, delim);
+                                        }
+                                        if engine.count_row(a, nb, number, 0) {
+                                            borrow crec as &crr in {
+                                                let (t2, k2, b2, e2, p2, code2) = hold3(heap, jt, kscr, kbuf, escr, kept, buffer.bytes(crr), cells, number, a, keys, pairs, simple, keys_only, bfast, bkey, limit, jwt, jwcols, jw_on, tree, cls, bcols, push_b);
+                                                jt = t2;
+                                                kscr = k2;
+                                                kbuf = b2;
+                                                escr = e2;
+                                                kept = p2;
+                                                if code2 == 1 {
+                                                    a[engine.k_abort()] = 70;
+                                                    a[engine.k_abort_line()] = number;
+                                                    consumed = lines.consumed(rr);
+                                                    going = false;
+                                                } else if code2 == 2 {
+                                                    going = false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            borrow r as &rr in {
+                                let number = lines.number(rr);
+                                var line = lines.text(rr);
+                                let whole = line;
+                                if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                                    line = line[0..len(line) - 1];
+                                }
+                                if !quoted && len(line) == 0 {
+                                    // A blank line between records is not a record.
+                                } else if !quoted && a[engine.k_records()] >= most {
+                                    a[engine.k_capped()] = 1;
+                                    going = false;
+                                } else if !quoted {
+                                    let (n, open, wrong) = reader.fields(line, bdelim, cells, nb);
+                                    if wrong {
+                                        a[engine.k_abort()] = 1;
+                                        a[engine.k_abort_line()] = number;
+                                        going = false;
+                                    } else if open {
+                                        quoted = true;
+                                        opened = number;
+                                        borrow mut rec as &!rw2 in {
+                                            buffer.clear(rw2);
+                                        }
+                                        rec = buffer.append(heap, rec, whole);
+                                        rec = buffer.push(heap, rec, byte_of(10));
+                                    } else if n != nb {
+                                        // (a ragged record is counted by `count_row` and not held; its cells are not used)
+                                        let counted = engine.count_row(a, n, number, 0);
+                                    } else {
+                                        crec = jrec.csv_record(heap, crec, line, cells, nb, delim);
+                                        if engine.count_row(a, n, number, 0) {
+                                            borrow crec as &crr in {
+                                                let (t2, k2, b2, e2, p2, code2) = hold3(heap, jt, kscr, kbuf, escr, kept, buffer.bytes(crr), cells, number, a, keys, pairs, simple, keys_only, bfast, bkey, limit, jwt, jwcols, jw_on, tree, cls, bcols, push_b);
+                                                jt = t2;
+                                                kscr = k2;
+                                                kbuf = b2;
+                                                escr = e2;
+                                                kept = p2;
+                                                if code2 == 1 {
+                                                    a[engine.k_abort()] = 70;
+                                                    a[engine.k_abort_line()] = number;
+                                                    consumed = lines.consumed(rr);
+                                                    going = false;
+                                                } else if code2 == 2 {
+                                                    going = false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    let (inside, n, bad) = reader.scan(line, bdelim, quoted, seps);
+                                    seps = n;
+                                    rec = buffer.append(heap, rec, whole);
+                                    var held = 0;
+                                    borrow rec as &rw2 in {
+                                        held = buffer.size(rw2);
+                                    }
+                                    if bad {
+                                        a[engine.k_abort()] = 1;
+                                        a[engine.k_abort_line()] = number;
+                                        going = false;
+                                    } else if inside {
+                                        rec = buffer.push(heap, rec, byte_of(10));
+                                        if held + 1 > cap {
+                                            a[engine.k_abort()] = 7;
+                                            a[engine.k_abort_line()] = opened;
+                                            going = false;
+                                        }
+                                    } else {
+                                        quoted = false;
+                                        seps = 0;
+                                        borrow rec as &rw2 in {
+                                            var record = buffer.bytes(rw2);
+                                            if len(record) > 0 && int_of(record[len(record) - 1]) == 13 {
+                                                record = record[0..len(record) - 1];
+                                            }
+                                            let (m, open2, bad2) = reader.fields(record, bdelim, cells, nb);
+                                            if bad2 || open2 {
+                                                a[engine.k_abort()] = 1;
+                                                a[engine.k_abort_line()] = opened;
+                                                going = false;
+                                            } else if m != nb {
+                                                let counted2 = engine.count_row(a, m, opened, 0);
+                                            } else {
+                                                crec = jrec.csv_record(heap, crec, record, cells, nb, delim);
+                                                if engine.count_row(a, m, opened, 0) {
+                                                    borrow crec as &crr in {
+                                                        let (t2, k2, b2, e2, p2, code2) = hold3(heap, jt, kscr, kbuf, escr, kept, buffer.bytes(crr), cells, opened, a, keys, pairs, simple, keys_only, bfast, bkey, limit, jwt, jwcols, jw_on, tree, cls, bcols, push_b);
+                                                        jt = t2;
+                                                        kscr = k2;
+                                                        kbuf = b2;
+                                                        escr = e2;
+                                                        kept = p2;
+                                                        if code2 == 1 {
+                                                            a[engine.k_abort()] = 70;
+                                                            a[engine.k_abort_line()] = opened;
+                                                            consumed = lines.consumed(rr);
+                                                            going = false;
+                                                        } else if code2 == 2 {
+                                                            going = false;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if quoted && a[engine.k_abort()] == 0 {
+            a[engine.k_abort()] = 2;
+            a[engine.k_abort_line()] = opened;
+        }
+        c = jnread.counted(a, nb);
+    }
+    unbox_slice(heap, tally);
+    unbox_slice(heap, cellbox);
+    unbox_slice(heap, tape);
+    unbox_slice(heap, jst);
+    buffer.drop(heap, rec);
+    buffer.drop(heap, crec);
+    buffer.drop(heap, kscr);
+    buffer.drop(heap, kbuf);
+    buffer.drop(heap, escr);
+    return (r, jt, c, consumed, kept);
+}
+
+// The probe phase for a probe that is JSON lines (`dc` its declaration): a copy of `jn3pass.probe_pass3` with the reading of a row replaced. `g` is as there: 0 max groups (or sort rows), 1 max distinct, 2 the bytes
+// left for the groups, 3 filtering, 4 fast_ok, 5 sort field, 6 sort slot, 7 sort descending. The row number of a refusal of the reader is the probe's own (the tally counts joined rows). Answers the reader,
+// what was counted, and the buffers: the csv or json rows pending, the scratch of the writers and the first bytes of a refused cell.
+pub fn probe_passj[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m, &l, &z, &y](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], keys: &k [int], kmap: &m [int], pairs: int, simple: bool, jtype: int, nk: int, rows0: buffer.Buffer, scratch0: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, cap: int, most: int, max_join: int, cls: &l [int], push_p: bool, grouping: bool, mode: int, groups0: agg.Groups, g: &z [int], top: int, dc: &y Decl) -> [heap, file_read, io_read, io_write] (lines.Lines, finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var r = r0;
+    var rows = rows0;
+    var scratch = scratch0;
+    var escr = buffer.empty(heap, 16);
+    var kept = buffer.empty(heap, 64);
+    var jrec2 = buffer.empty(heap, 256);
+    var kscr = buffer.empty(heap, 64);
+    var kbuf = buffer.empty(heap, 64);
+    var rec = buffer.empty(heap, 256);
+    var crec = buffer.empty(heap, 256);
+    var groups = groups0;
+    let filtering = g[3] == 1;
+    let fast_ok = g[4] == 1;
+    var tally = box_slice(heap, engine.k_size(), 0);
+    var state = box_slice(heap, jnread.s_size(), 0);
+    var tape = box_slice(heap, 3 * dc.nodes + 3, 0);
+    var jst = box_slice(heap, 2, 0);
+    let tb = contents(dc.ftable);
+    let sb = buffer.bytes(dc.fsbytes);
+    // J1's path (an inner join of one pair of text, no column left out) has a probe of its own, `probe_inner`
+    let fast = jtype == 0 && simple && nk == nb;
+    let pkey = keys[0];
+    var going = true;
+    var c = jnread.nothing();
+    borrow mut tally as &!tw in {
+        let a = contents(tw);
+        a[engine.k_columns()] = np + nk;
+        a[engine.k_sort_field()] = g[5];
+        a[engine.k_sort_slot()] = g[6];
+        a[engine.k_sort_desc()] = g[7];
+        borrow mut state as &!sw in {
+            let st = contents(sw);
+            st[jnread.s_jtype()] = jtype;
+            st[jnread.s_nk()] = nk;
+            st[jnread.s_pairs()] = pairs;
+            if simple {
+                st[jnread.s_simple()] = 1;
+            }
+            borrow mut tape as &!tpw in {
+                borrow mut jst as &!jsw in {
+                    while going {
+                        var status = 9;
+                        borrow mut r as &!rw in {
+                            status = scan.next_fast(rw);
+                        }
+                        if status == 9 {
+                            let (stepped, answer) = lines.next(heap, r);
+                            r = stepped;
+                            status = answer;
+                        }
+                        if status == lines.need() {
+                            if stdin {
+                                var length = 0;
+                                borrow r as &lr in {
+                                    length = lines.length(lr);
+                                }
+                                if length > finish.line_ceiling() {
+                                    r = lines.fill_file(r, file);
+                                } else {
+                                    r = bulk.fill_stdin(r, io);
+                                }
+                            } else {
+                                r = lines.fill_file(r, file);
+                            }
+                        } else if status == lines.done() {
+                            going = false;
+                        } else if status == lines.long() {
+                            a[engine.k_abort()] = 4;
+                            borrow r as &rr in {
+                                a[engine.k_abort_line()] = lines.number(rr);
+                                a[engine.k_long()] = lines.length(rr);
+                            }
+                            going = false;
+                        } else {
+                            borrow r as &rr in {
+                                let number = lines.number(rr);
+                                let line = bare(lines.text(rr), number);
+                                if jrec.blank(line) {
+                                    // A blank line is not a record.
+                                } else if st[jnread.s_probe()] >= most {
+                                    a[engine.k_capped()] = 1;
+                                    going = false;
+                                } else {
+                                    let (code, rec2) = jrec.extract(heap, line, contents(tpw), contents(jsw), tb, sb, dc.nfields, dc.flat, dc.nodes, dc.absent, 0 - 1, cells, rec, a);
+                                    rec = rec2;
+                                    if code >= 50 {
+                                        // (the tally counts joined rows, so the row of the refusal is the probe's own, and a line is the first of the file only when no probe row came before it)
+                                        a[engine.k_err_row()] = st[jnread.s_probe()] + 1;
+                                        if st[jnread.s_probe()] > 0 && (code == 50 || code == 51) {
+                                            a[engine.k_err_cond()] = 0;
+                                        }
+                                        a[engine.k_abort_line()] = number;
+                                        a[engine.k_err_line()] = number;
+                                        kept = jrec.keep_facts(heap, kept, code, line, tb, sb, dc.nfields, a);
+                                        going = false;
+                                    } else {
+                                        st[jnread.s_probe()] = st[jnread.s_probe()] + 1;
+                                        borrow rec as &rcr in {
+                                            var record = buffer.bytes(rcr);
+                                            if code == 0 {
+                                                record = line;
+                                            }
+                                            crec = jrec.csv_record(heap, crec, record, cells, dc.nfields, delim);
+                                        }
+                                        borrow crec as &crr in {
+                                            let prec = buffer.bytes(crr);
+                                            var keep = true;
+                                            if push_p {
+                                                let fastp = jnwhere.run_fast(tree, cls, 1, cols, prec, cells);
+                                                if fastp == 2 {
+                                                    let (ok, e5) = jnwhere.run_ok(heap, tree, cls, 1, cols, prec, cells, escr);
+                                                    keep = ok;
+                                                    escr = e5;
+                                                } else {
+                                                    keep = fastp == 1;
+                                                }
+                                            }
+                                            if !keep {
+                                                // the leading run of --where rejects the row: its key is not read and it produces no joined row
+                                            } else if grouping {
+                                                let (g2, e2, k2, j2, q2, b2) = jn3pass.probe_g(heap, jt, tree, cols, cells, bcells, prec, number, st, a, keys, kmap, groups, escr, kept, jrec2, kscr, kbuf, np, nb, delim, g[0], g[1], g[2], filtering, fast_ok, max_join);
+                                                groups = g2;
+                                                escr = e2;
+                                                kept = k2;
+                                                jrec2 = j2;
+                                                kscr = q2;
+                                                kbuf = b2;
+                                            } else if fast {
+                                                let (r2, s2, e2, k2, j2, q2) = jnread.probe_inner(heap, io, jt, tree, cols, sel, cells, bcells, prec, number, st, a, rows, scratch, escr, kept, jrec2, kscr, np, nb, pkey, delim, as_csv, from, limit, budget, picked, max_join);
+                                                rows = r2;
+                                                scratch = s2;
+                                                escr = e2;
+                                                kept = k2;
+                                                jrec2 = j2;
+                                                kscr = q2;
+                                            } else {
+                                                let (r2, s2, e2, k2, j2, q2, b2) = jnread.probe_one(heap, io, jt, tree, cols, sel, cells, bcells, prec, number, st, a, keys, kmap, rows, scratch, escr, kept, jrec2, kscr, kbuf, np, nb, delim, as_csv, from, limit, budget, picked, max_join);
+                                                rows = r2;
+                                                scratch = s2;
+                                                escr = e2;
+                                                kept = k2;
+                                                jrec2 = j2;
+                                                kscr = q2;
+                                                kbuf = b2;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if a[engine.k_stop()] == 1 {
+                                going = false;
+                            }
+                        }
+                    }
+                }
+            }
+            if a[engine.k_abort()] == 71 {
+                // the facts of the refusal ride in the tally's error fields: the probe row, its line, its matches and the most any probe row had
+                a[engine.k_groups()] = st[jnread.s_produced()];
+            }
+        }
+        if grouping && a[engine.k_abort()] == 0 {
+            // the end of a grouping or a sort, as `read_file` finishes them
+            var finished = rows;
+            var spare = scratch;
+            if mode == 2 {
+                let (g2, k2) = finish.settle_groups(heap, groups, kept, tree, cols, a);
+                groups = g2;
+                kept = k2;
+                if a[engine.k_abort()] == 0 {
+                    borrow groups as &gr in {
+                        let (r2, s2) = finish.finish_groups(heap, io, finished, spare, gr, tree, sel, as_csv, delim, from, limit, top, budget, a);
+                        finished = r2;
+                        spare = s2;
+                    }
+                }
+            } else {
+                borrow groups as &hr in {
+                    let (r2, s2) = finish.finish_sort(heap, io, finished, spare, hr, sel, cells, picked, as_csv, delim, from, limit, top, budget, a);
+                    finished = r2;
+                    spare = s2;
+                }
+            }
+            rows = finished;
+            scratch = spare;
+        }
+        if a[engine.k_abort()] == 15 {
+            // what the groups held before the key that did not fit
+            borrow groups as &gr in {
+                a[engine.k_err_digits()] = gr.held;
+            }
+        } else if a[engine.k_abort()] == 21 {
+            borrow groups as &gr in {
+                a[engine.k_err_digits()] = jn3pass.sorted_held(gr);
+            }
+        }
+        var width = np + nk;
+        if a[engine.k_ragged()] > 0 {
+            width = np;
+        }
+        c = jnread.counted(a, width);
+    }
+    agg.drop(heap, groups);
+    unbox_slice(heap, tally);
+    unbox_slice(heap, state);
+    unbox_slice(heap, tape);
+    unbox_slice(heap, jst);
+    buffer.drop(heap, jrec2);
+    buffer.drop(heap, kscr);
+    buffer.drop(heap, kbuf);
+    buffer.drop(heap, rec);
+    buffer.drop(heap, crec);
+    buffer.drop(heap, escr);
+    return (r, c, rows, scratch, kept);
+}

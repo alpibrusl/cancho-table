@@ -54,6 +54,7 @@ def main():
     ap.add_argument("--json", default="")
     ap.add_argument("--files", default=",".join(FILES))
     ap.add_argument("--shape", default="text", choices=["text", "int", "composite", "semi", "left", "group"])
+    ap.add_argument("--build-format", default="csv", choices=["csv", "jsonl"], help="J5 (docs/joins.md section 21): hold the same rows read from a JSON-lines file of them (the formula and the program's count are checked to be the csv file's: the record is the same csv record)")
     a = ap.parse_args()
     # the --on, the pairs of the reference, the join type, and the probe's header and row for the shape
     on, pairs, jtype, probe_head, probe_row = {
@@ -87,6 +88,18 @@ def main():
         if a.shape == "composite" and name in ("wide_pow2",):
             continue                                  # that file has the columns k and pad only
         f = R.accounted(str(path), pairs, jtype)
+        jflags = []
+        if a.build_format == "jsonl":
+            # the same rows as JSON lines (every cell a string, as the csv cell is text); the accounted bytes are the csv file's, since the record held is the csv record of the cells
+            import csv as _csv2
+            with open(path, newline="") as fh, open(data / (name + ".jsonl"), "w") as out:
+                rd = _csv2.reader(fh)
+                head = next(rd)
+                for row in rd:
+                    out.write(json.dumps(dict(zip(head, row))) + "\n")
+            path = data / (name + ".jsonl")
+            jflags = ["--join-input-format", "jsonl", "--join-fields", ",".join(head)]
+            f = dict(f, size=path.stat().st_size)
         probe_name = "probe.csv"
         extra = 0
         if a.shape == "group":
@@ -110,7 +123,7 @@ def main():
             costs = [4 + len(k.encode("latin-1")) for k in distinct]
             extra = sum(costs)
             f = dict(f, held=f["held"] + extra)
-            low = subprocess.run([x for x in base if x not in ("--format", "csv")] + ["--join", path.name, "--max-state-bytes", str(f["held"] - 1), probe_name], capture_output=True)
+            low = subprocess.run([x for x in base if x not in ("--format", "csv")] + ["--join", path.name, *jflags, "--max-state-bytes", str(f["held"] - 1), probe_name], capture_output=True)
             d = json.loads(low.stdout)["error"]["detail"]
             first_seen_order_last = costs[-1]
             if d["holder"] != "groups" or d["build_bytes"] != f["held"] - extra or d["held"] != extra - first_seen_order_last:
@@ -118,14 +131,14 @@ def main():
             f = dict(f, before_fail=None, rows_held_before_fail=None)
         # the program's own count: the refusal one byte below names the count before the row that did not fit
         if a.shape != "group":
-            r = subprocess.run([x for x in base if x not in ("--format", "csv")] + ["--join", path.name, "--max-state-bytes", str(f["held"] - 1), "probe.csv"], capture_output=True)
+            r = subprocess.run([x for x in base if x not in ("--format", "csv")] + ["--join", path.name, *jflags, "--max-state-bytes", str(f["held"] - 1), "probe.csv"], capture_output=True)
             d = json.loads(r.stdout)["error"]["detail"]
             if d["held"] != f["before_fail"] or d["rows_held"] != f["rows_held_before_fail"]:
                 sys.exit("%s: the program's count %s is not the formula %s" % (name, d, f))
         rss, ms = [], []
         for _ in range(a.runs):
             t = time.perf_counter()
-            code, m, _out = timed(base + ["--join", path.name, "--max-state-bytes", str(f["held"]), probe_name])
+            code, m, _out = timed(base + ["--join", path.name, *jflags, "--max-state-bytes", str(f["held"]), probe_name])
             ms.append(1000 * (time.perf_counter() - t))
             if code:
                 sys.exit("%s: exit %d at the formula" % (name, code))
