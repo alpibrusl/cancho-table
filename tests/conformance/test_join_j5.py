@@ -598,7 +598,7 @@ class Refusals(unittest.TestCase):
         self.assertEqual(r.stdout, b"k,v,w\na,0,x\na,1,x\n")
 
     def test_a_join_where_that_reads_a_jsonl_cell_as_a_number(self):
-        self.s.write("b.jsonl", '{"k":"a","w":"x","n":5}\n{"k":"b","w":"y","n":"z"}\n')
+        self.s.write("b.jsonl", '{"k":"a","w":"x","n":5}\n{"k":"b","w":"y","n":"z"}\n{"k":"c","w":"y","n":"zz"}\n')
         base = ["--root", self.s.dir, "--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w,n", "--on", "k"]
         r = run(*base, "--join-where", "n:int > 1", "--format", "csv", "p.csv")
         self.assertEqual(r.status, 8)
@@ -606,7 +606,7 @@ class Refusals(unittest.TestCase):
         self.assertEqual((r.first_rule(), r.error()["detail"]["context"]), ("value.not-integer", "join-where"))
         d = r.error()["detail"]
         self.assertEqual((d["path"], d["row"], d["line"], d["value"]), ("b.jsonl", 2, 2, "z"))
-        r = run(*base, "--join-where", "n != 'z' and n:int > 1", "--format", "csv", "p.csv")
+        r = run(*base, "--join-where", "n != 'z' and n != 'zz' and n:int > 1", "--format", "csv", "p.csv")
         self.assertEqual((r.status, r.stdout), (0, b"k,v,w,n\na,1,x,5\n"))
 
     def test_a_byte_order_mark_belongs_to_the_first_line_only(self):
@@ -632,7 +632,7 @@ class Refusals(unittest.TestCase):
         self.assertEqual((r.status, r.stdout), (0, b'k,v,w\na,1,"x\ny;z"\n'))
 
     def test_typed_keys_over_jsonl_cells_and_the_padded_refusal(self):
-        self.s.write("b.jsonl", '{"k":1,"w":"x"}\n{"k":1.5,"w":"y"}\n')
+        self.s.write("b.jsonl", '{"k":1,"w":"x"}\n{"k":1.5,"w":"y"}\n{"k":"q","w":"z"}\n')           # (the first bad cell is the refusal, the later one is not read)
         r = run("--root", self.s.dir, "--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w", "--on", "k:int", "p.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "value.not-integer"))
         d = r.error()["detail"]
