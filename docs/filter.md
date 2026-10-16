@@ -165,6 +165,19 @@ and where; the repair is the same invocation with the type the cell shows, when 
 a `max` are written in the normal form, which is a function of the value (`2026-01-02`, `2026-01-01T23:00:00Z` in UTC, `2026-01-02T12:00:00.250` for a datetime, a fraction of none, three or six digits),
 a JSON string in `--format jsonl`. `sum` and `mean` of them are `agg.bad-spec`.
 
+**A period of a group key (slice T2 of [`datetime.md`](datetime.md)).** A `--group` item that ends in `:date`, `:timestamp` or `:datetime` may end in `@UNIT`: `--group ts:timestamp@day`, `--group d:date@month`,
+`--group w:datetime@hour`. The units are `hour`, `day`, `month` and `year` for a `:timestamp` or a `:datetime`, and `month` and `year` for a `:date`, in lower case. The key of a row is **the first value of
+the period its value falls in, a value of the same type**, written as any other value of the type: `2026-01-01T00:00:00Z` for the day of `2026-01-02T01:00:00+02:00`, `2026-01-01` for the month or the year of
+`2026-01-15` (not `2026-01` or `2026`), `2026-01-02T00:00:00` for the day of a datetime. So a key sorts, groups, and feeds `--where` back (`ts:timestamp >= '2026-01-01T00:00:00Z'`) as a value does. **The period
+of a `:timestamp` is the UTC one of its instant**, whatever offset the cell is written in (`2026-01-02T01:00:00+02:00` is in the day of `2026-01-01`); a `:datetime` and a `:date` are bucketed by what is
+written. Before 1970 the period is the one that contains the value (the day of `1969-12-31T23:59:59.999999Z` is `1969-12-31`). The type of the column is the same with or without the unit (`--where
+ts:timestamp >= ... --group ts:timestamp@day --agg min:ts:timestamp` is one column read as one type), two items on one column are two keys (`ts:timestamp@month,ts:timestamp@day`, or `ts:timestamp@day,ts`), and
+the cell of a bucketed key is refused exactly as the cell of the plain key (`value.not-timestamp` and the rest, `context` `group`). A unit that is not one the type has is `args.bad-value` with `detail.item`,
+`detail.unit` and `detail.reason` (`week-not-built`, `finer-than-type`, `unknown-unit`) before a row is read: `@week` is not built, `@hour` and `@day` of a `:date` are finer than its cells, and `@minute`, `@second`,
+`@DAY` and a second `@` are not units. A unit in `--agg` (`min:ts:timestamp@day`) is `agg.bad-spec`: a period belongs to a key. `--order-by` and `--where` read no unit, and `--query` has no form of it (a typed
+`group by` there is `query.unsupported`, whose hint names `--group ts:timestamp@day`). An `@` after any other name is part of the name: `ts@day`, `n:int@day` and `a@b` are columns called that, and a column whose
+name ends in `:timestamp@day` is written with its colon escaped, `--group 'x\:timestamp@day'`, as one that ends in `:int` is.
+
 **Empty cells.** In a text comparison an empty cell is the empty string (`name = ''`
 works). In an `:int` condition an empty cell **is not an integer: it is refused**, not
 skipped and not false. This is deliberate: a query that quietly ignored the rows with

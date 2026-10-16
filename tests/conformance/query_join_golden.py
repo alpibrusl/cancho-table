@@ -7,7 +7,7 @@ that were valid before the join, and to the refusals of the grammar before it, a
 The cases: every accepted query and every worked example of query_cases.py, with the fixtures it names, as csv and as json; the seeded random plans of query_gen.py (the same generator the
 equivalence gate of docs/query.md uses) as queries over their own tables; a hand list of the words the join makes contextual (`semi`, `anti`, `left`, `join`, `a`, `b`, `as`: as names of
 columns, as aliases, quoted and bare, in every clause); and the refusals of the grammar without a join (those that name the feature `join` or `subquery` changed their hint on purpose and
-are not here). A query that was valid is byte for byte the same; a refusal is the same bytes, hint included.
+are not here, and neither are those that name `cast-in-group`, whose hint slice T2 extended with the flag of a period: test_datetime_t2.py holds it). A query that was valid is byte for byte the same; a refusal is the same bytes, hint included.
 """
 
 import hashlib
@@ -73,7 +73,7 @@ def cases(randoms=None):
         out.append(("random %d" % seed, None, None, tuple(pair)))
     for i, row in enumerate(query_cases.REFUSALS + query_cases.NOT_PINNED + query_cases.B_PINNED):
         query = row[0]
-        if row[1] == "unsupported" and row[3] in ("join", "subquery"):
+        if row[1] == "unsupported" and row[3] in ("join", "subquery", "cast-in-group"):
             continue
         out.append(("refusal %d" % i, ["--query", query], None, "fixed"))
     return out

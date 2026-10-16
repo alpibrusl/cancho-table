@@ -270,7 +270,7 @@ pub fn hint(code: int) -> [] &static [byte] {
         return "a type is part of how a column is read in a condition, a sort or an aggregate; selecting a column returns its text";
     }
     if code == 64 {
-        return "the grammar groups by the text of a column; a grouping by value is the flag --group x:int, x:dec(N) or x:float";
+        return "the grammar groups by the text of a column; a grouping by value is the flag --group x:int, x:dec(N) or x:float; a period of a date, a timestamp or a datetime is --group ts:timestamp@day (or @hour, @month, @year)";
     }
     if code == 66 {
         return "one input; there are no subqueries";

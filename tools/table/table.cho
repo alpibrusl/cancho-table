@@ -1548,8 +1548,9 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7, &s8, &s9](he
     if grouped {
         if has_agg {
             let given = agg_t;
-            let (t2, bad) = agg.parse_aggs(heap, tree, given);
+            let (t2, parsed) = agg.parse_aggs(heap, tree, given);
             tree = t2;
+            let bad = dtfail.agg_bad(given, parsed);
             if bad == -2 {
                 e = flags.problem(heap, e, "args.bad-value", "--agg is items separated by commas, and a backslash escapes only a comma, a backslash or a #", "--agg count,sum:bytes", "--agg");
             } else if bad >= 0 {

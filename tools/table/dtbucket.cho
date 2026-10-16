@@ -1,0 +1,245 @@
+edition 5;
+
+module dtbucket;
+
+// `@UNIT` on a group key (docs/datetime.md sections 7 and 19): `--group ts:timestamp@day`, `--group d:date@month`, `--group w:datetime@hour`. The key of a row is the first value of
+// the bucket its value falls in, a value of the same type, so it prints, sorts, groups and feeds `--where` as any other value of the type does.
+//
+// The unit is part of the group column's entry in the plan (`query.gkinds`): the type code with the unit above it, `kind + 256 * unit`, units 1 hour, 2 day, 3 month, 4 year.
+// `query.gkind_at` answers the type alone, so everything that asks "what type is this key" (the conflict check, `--explain`, the printer, the repairs) is blind to the unit
+// and a column filtered as `ts:timestamp` and grouped as `ts:timestamp@day` is one base type; `query.gunit_at` answers the unit. A plan without a unit has the entries it always had.
+//
+// The bucket of a :timestamp is a function of the INSTANT (the UTC hour, day, month or year of the value, whatever offset its cell was written in), of a :datetime of the wall clock
+// as written, of a :date of the written day. A value is shifted to the year 1 (0001-01-01T00:00:00, a whole number of days before the epoch) so that no operand of the division is
+// negative: the division of a non-negative number is a floor. Every valid value is at or after 0001-01-01T00:00:00 and at or before 9999-12-31T23:59:59.999999, and the first
+// value of its bucket is between the two, so the key is a valid value of the type: nothing clamps and nothing wraps.
+//
+// The unit is read from the flag with `find_at` and `unit_class`; a unit that is not built is `args.bad-value` with `detail.reason` `week-not-built`, `finer-than-type` or
+// `unknown-unit` (`refusal`).
+
+import std.bytes;
+import dtparse;
+import toolbox.fail;
+
+// Whether the byte at `p` is escaped: an odd number of backslashes before it.
+fn escaped_at[&d](data: &d [byte], p: int) -> [] bool {
+    var n = 0;
+    var i = p - 1;
+    while i >= 0 && int_of(data[i]) == '\\' {
+        n = n + 1;
+        i = i - 1;
+    }
+    return n % 2 == 1;
+}
+
+// A group item `NAME:TYPE@UNIT`: where its unit begins (the byte of the `@`), the length of the type suffix before it and the type code, or (-1, 0, 0). The `@` is the first unescaped one
+// that has a date type (`:date`, `:timestamp` or `:datetime`, its colon not escaped, with a name before it) right before it: a name may hold an `@` (`a@b:timestamp@day`), an
+// integer, a decimal or a float is not bucketed (`n:int@day` is a column called that), and `ts@day` is a column called that. What follows the `@` is the unit, to the end of the item.
+pub fn find_at[&d](item: &d [byte]) -> [] (int, int, int) {
+    let n = len(item);
+    var i = 0;
+    while i < n {
+        let c = int_of(item[i]);
+        if c == '\\' {
+            i = i + 2;
+        } else {
+            if c == '@' && i > 0 {
+                let (dl, dk) = dtparse.suffix_in(item[0..i], 0);
+                if dk != 0 && !escaped_at(item, i - dl) {
+                    return (i, dl, dk);
+                }
+            }
+            i = i + 1;
+        }
+    }
+    return (0 - 1, 0, 0);
+}
+
+// The unit a word names: 1 hour, 2 day, 3 month, 4 year, else 0. Lower case, nothing around it.
+pub fn unit_code[&w](word: &w [byte]) -> [] int {
+    if bytes.equal(word, "hour") {
+        return 1;
+    }
+    if bytes.equal(word, "day") {
+        return 2;
+    }
+    if bytes.equal(word, "month") {
+        return 3;
+    }
+    if bytes.equal(word, "year") {
+        return 4;
+    }
+    return 0;
+}
+
+// The class of the refusal of `word` after the type `kind` (22, 23, 24), or 0 when it is a unit the type has: 1 `week` (not built), 2 an hour or a day of a :date (finer than the type),
+// 3 anything else (minute, second, another case, an empty word, a second `@`).
+pub fn unit_class[&w](word: &w [byte], kind: int) -> [] int {
+    if bytes.equal(word, "week") {
+        return 1;
+    }
+    let unit = unit_code(word);
+    if unit == 0 {
+        return 3;
+    }
+    if kind == 22 && unit <= 2 {
+        return 2;
+    }
+    return 0;
+}
+
+// ---- the value ----------------------------------------------------------------------------------------------------------------------
+
+// The first value of the bucket of `v`, a value of the type `kind` (22 :date in days, 23 and 24 in microseconds), for `unit` (a date: 3 month or 4 year).
+pub fn first_of(v: int, kind: int, unit: int) -> [] int {
+    if kind == 22 {
+        let (y, m, d) = dtparse.civil_from_shifted(v + 719468);
+        if unit == 3 {
+            return dtparse.days_from_civil(y, m, 1);
+        }
+        return dtparse.days_from_civil(y, 1, 1);
+    }
+    // microseconds since 0001-01-01T00:00:00, never negative for a value in range
+    let u = v + 62135596800000000;
+    if unit == 1 {
+        return u - u % 3600000000 - 62135596800000000;
+    }
+    let day = u - u % 86400000000;
+    if unit == 2 {
+        return day - 62135596800000000;
+    }
+    let (y, m, d) = dtparse.civil_from_shifted(day / 86400000000 + 306);
+    if unit == 3 {
+        return dtparse.days_from_civil(y, m, 1) * 86400000000;
+    }
+    return dtparse.days_from_civil(y, 1, 1) * 86400000000;
+}
+
+// A group cell read as a bucketed key: `raw` is `kind + 256 * unit` (`agg.read_typed` calls this for a plan that has a unit only). Answers (the first value of the bucket, 0) or (0, the status of
+// `dtparse.parse`): a cell that is not of its type is refused as without the unit.
+pub fn read[&d](data: &d [byte], raw: int) -> [] (int, int) {
+    let kind = raw % 256;
+    let (v, bad) = dtparse.parse(data, kind);
+    if bad != 0 {
+        return (v, bad);
+    }
+    return (first_of(v, kind, raw / 256), 0);
+}
+
+// ---- the refusal --------------------------------------------------------------------------------------------------------------------
+
+pub fn unit_text(unit: int) -> [] &static [byte] {
+    if unit == 1 {
+        return "hour";
+    }
+    if unit == 2 {
+        return "day";
+    }
+    if unit == 3 {
+        return "month";
+    }
+    return "year";
+}
+
+fn reason_of(class: int) -> [] &static [byte] {
+    if class == 1 {
+        return "week-not-built";
+    }
+    if class == 2 {
+        return "finer-than-type";
+    }
+    return "unknown-unit";
+}
+
+fn message_of(class: int) -> [] &static [byte] {
+    if class == 1 {
+        return "the bucket of a group key is not built for week: the units are hour, day, month and year";
+    }
+    if class == 2 {
+        return "the bucket of a group key is finer than the type: a :date has a day and no hour, and a key of a :date is the day itself";
+    }
+    return "the word after @ in a group key is not a unit of a bucket: the units are hour, day, month and year, in lower case";
+}
+
+fn hint_of(class: int) -> [] &static [byte] {
+    if class == 1 {
+        return "@week is not built: group by @day (and add the days up), @month or @year, as in --group ts:timestamp@day; a :timestamp or :datetime takes @hour, @day, @month and @year, a :date takes @month and @year";
+    }
+    if class == 2 {
+        return "a bucket finer than the type: :date has no hour or day, its units are @month and @year, as in --group d:date@month; a :timestamp or :datetime takes @hour, @day, @month and @year";
+    }
+    return "write one of @hour, @day, @month or @year in lower case after a :timestamp, :datetime or :date, as in --group ts:timestamp@day (a :date takes @month and @year); minute and second are not units";
+}
+
+// `args.bad-value` for the item `item` of `--group` whose unit `unit` is refused with `class` (`unit_class`): the flag, the item, the word after the `@` and the reason.
+pub fn refusal[&h, &i, &u](heap: &!h Heap, errs: fail.Errors, flag: &static [byte], item: &i [byte], unit: &u [byte], class: int) -> [heap] fail.Errors {
+    var w = fail.open(heap, "args.bad-value", message_of(class), hint_of(class));
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flags", flag);
+    w = fail.detail_text(heap, w, "item", item);
+    w = fail.detail_text(heap, w, "unit", unit);
+    w = fail.detail_str(heap, w, "reason", reason_of(class));
+    return fail.add(heap, errs, w);
+}
+
+// ---- a bucket in `--agg` ------------------------------------------------------------------------------------------------------------
+
+// Whether `word` is the scale of a mean, `@N` with N of one or two digits (`mean:d:date@0`): not a unit.
+fn is_scale[&w](word: &w [byte]) -> [] bool {
+    let n = len(word);
+    if n < 1 || n > 2 {
+        return false;
+    }
+    var i = 0;
+    while i < n {
+        if !bytes.is_digit(int_of(word[i])) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Whether an item of `--agg` has a bucket after a date type (`min:ts:timestamp@day`): the `@` is found as in `find_at`, with a colon before the type (the one after the function),
+// so a column called `ts:timestamp@day` is not one, and what follows it is not the scale of a mean.
+pub fn agg_bucket[&d](item: &d [byte]) -> [] bool {
+    let (at, dl, dk) = find_at(item);
+    return at >= 0 && index_of_byte(item[0..at - dl], byte_of(':')) > 0 && !is_scale(item[at + 1..len(item)]);
+}
+
+// The first item of an `--agg` list that has a bucket (`agg_bucket`), or -1: a bucket belongs to a group key. An item ends at a comma that is not escaped.
+pub fn agg_item[&g](given: &g [byte]) -> [] int {
+    let n = len(given);
+    var start = 0;
+    var index = 0;
+    var more = true;
+    while more {
+        var j = start;
+        while j < n && int_of(given[j]) != ',' {
+            if int_of(given[j]) == '\\' && j + 1 < n {
+                j = j + 2;
+            } else {
+                j = j + 1;
+            }
+        }
+        if j > n {
+            j = n;
+        }
+        if agg_bucket(given[start..j]) {
+            return index;
+        }
+        if j < n {
+            start = j + 1;
+            index = index + 1;
+        } else {
+            more = false;
+        }
+    }
+    return 0 - 1;
+}
+
+// The hint of `agg.bad-spec` for a bucket in an `--agg` item.
+pub fn agg_hint() -> [] &static [byte] {
+    return "a bucket belongs to a group key, not to an aggregate: --group ts:timestamp@day --agg count,min:ts:timestamp (the units are @hour, @day, @month and @year)";
+}
