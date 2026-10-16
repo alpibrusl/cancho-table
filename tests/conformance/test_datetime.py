@@ -552,6 +552,8 @@ class Surface(unittest.TestCase):
                          [{"d": "2026-01-01", "min:w": "2026-01-01T23:00:00", "max:w": "2026-01-01T23:00:00", "count": 1, "distinct:ts": 1},
                           {"d": "2026-01-02", "min:w": "2026-01-01T23:00:00", "max:w": "2026-01-01T23:00:00", "count": 1, "distinct:ts": 1}])
         self.assertIn('"count":1,"distinct:ts":1', r.stdout.decode())
+        r = self.go("--group", "d:date", "--format", "jsonl")
+        self.assertEqual([json.loads(l) for l in r.stdout.decode().splitlines()], [{"d": "2026-01-01", "count": 1}, {"d": "2026-01-02", "count": 1}])
         # a plan whose only date is a maximum or a minimum (the key is text): the writer of the dates is chosen by the aggregate
         for agg, label, shape in (("max:ts:timestamp", "max:ts", "[0-9T:Z-]+"), ("min:d:date", "min:d", "[0-9-]+"), ("min:w:datetime", "min:w", "[0-9T:-]+")):
             r = self.go("--group", "id", "--agg", agg, "--format", "jsonl")

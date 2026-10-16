@@ -179,17 +179,16 @@ MUTANTS = [
     ("a date's <= is <", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = x <= w;", "yes = x < w;", 1)),
     ("a date's > is >=", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = x > w;", "yes = x >= w;", 1)),
     ("a date's >= is >", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD + HOLDS_CHAIN.replace("yes = x >= w;", "yes = x > w;", 1)),
-    ("a date's in is false", "expr.cho", HOLDS_HEAD + HOLDS_CHAIN, HOLDS_HEAD.replace("if kind == 2 || op == 0 {", "if op == 0 {") + HOLDS_CHAIN),
     ("a literal's refusal expects the wrong type", "expr.cho", "                    what = 3 + typed;", "                    what = 2 + typed;"),
     ("contains on a date has the sentence of the numbers", "expr.cho", "        if what == 6 && typed >= 22 {", "        if what == 6 && typed >= 25 {"),
     ("a date suffix is not read after a quoted name", "expr.cho", "                if dk != 0 && (after + dl == len(src) || is_delimiter(int_of(src[after + dl]))) {", "                if dk != 0 && (after + dl == len(src) && false) {"),
     ("a date suffix is read after an escaped colon", "expr.cho", "dtparse.suffix_in(buffer.bytes(wr)[0..length], escaped_last);", "dtparse.suffix_in(buffer.bytes(wr)[0..length], 0);"),
     ("a date condition is read as a decimal condition", "expr.cho", "        if typed >= 22 {\n            return holds_date(", "        if typed >= 25 {\n            return holds_date("),
     # ---- the refusals
+    # (Not here, equivalent: `holds_date` without `kind == 2` for `in` (an `in` condition's op is 0); `refusal_stride` small (no date status reaches `group_plain`, a date aggregate never takes `add_fast`); `context_ok = true` in dtfail (a refusal of a condition always has a condition of the old type on that column, which `rewritable` refuses).)
     # (Not here, equivalent for a date: `engine.order_row`'s `status >= 5` read as `>= 15`. A status of a date type is 15 or more, 14 + a reason + 64 * the byte; the test is the decimals' and floats'.)
     ("a date refusal of --where has the abort of a float", "engine.cho", "        code = 1000 + verdict;", "        code = 1001 + verdict;"),
     ("a date refusal of an aggregate has another abort", "engine.cho", "        return 1000 + status;", "        return 1064 + status;"),
-    ("the fast path's refusals leave no room for a date's status", "engine.cho", "    return 1099511627776;", "    return 16;"),
     ("the abort of a date is read by the rule of the decimals", "finish.cho", "    } else if c.abort >= 1000 {", "    } else if c.abort >= 100000 {"),
     ("a type is named by its neighbour", "finish.cho", "    if t == 23 {\n        return \":timestamp\";", "    if t == 23 {\n        return \":datetime\";"),
     ("a sum of dates has the usual hint", "dtfail.cho", "    if dk != 0 && (bytes.starts_with(item, \"sum:\") || bytes.starts_with(item, \"mean:\")) {", "    if dk != 0 && bytes.starts_with(item, \"total:\") {"),
@@ -201,7 +200,6 @@ MUTANTS = [
     ("an offset present is repaired as a datetime", "dtfail.cho", "    if reason == 22 {\n        return 23;", "    if reason == 22 {\n        return 24;"),
     ("a date alone is repaired as a timestamp", "dtfail.cho", "    if reason == 16 {\n        return 22;", "    if reason == 16 {\n        return 23;"),
     ("a time in a date is repaired as a datetime always", "dtfail.cho", "        if s1 == 0 {\n            return 23;", "        if s1 == 0 {\n            return 24;"),
-    ("a repair is offered for a condition's cell", "dtfail.cho", "    let context_ok = err_fn == 0 - 3 || err_fn == 0 - 2 || err_fn >= 2 && err_fn <= 4;", "    let context_ok = true;"),
     ("a repair is offered while a condition has literals of the old type", "dtfail.cho", "        if query.cond_at(tree, k, 1) == from && (bytes.equal(query.name_at(tree, query.cond_at(tree, k, 3)), name) || query.position_of(query.name_at(tree, query.cond_at(tree, k, 3))) >= 0) {\n            return false;", "        if false {\n            return false;"),
     ("a repair is offered while a condition called by position has literals of the old type", "dtfail.cho", "|| query.position_of(query.name_at(tree, query.cond_at(tree, k, 3))) >= 0) {", ") {"),
     ("a repair rewrites the type of another column", "dtfail.cho", "        if query.agg_at(tree, k, 0) != 0 && query.agg_at(tree, k, 2) == from && !bytes.equal(query.name_at(tree, query.agg_at(tree, k, 1)), name) {\n            return false;", "        if false {\n            return false;"),
