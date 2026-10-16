@@ -54,7 +54,6 @@ MUTANTS = [
     ("head: the dot's refusal is at the end", "qparse.cho", "                return qarena.fail(m, 1, 25, qarena.tok_start(m, d));", "                return qarena.fail(m, 1, 25, qarena.tok_start(m, m[qarena.s_tokens()] - 1));"),
     ("head: the scan is not made", "qparse.cho", "    scan_head(q, m);\n    if m[qarena.s_join()] == 0 {", "    if m[qarena.s_join()] == 0 {"),
     ("head: a join statement is read as the old one", "qparse.cho", "        if m[qarena.s_join()] == 1 {\n            if join_head(q, m) != 0 {\n                return 1;\n            }\n        } else if", "        if m[qarena.s_join()] == 7 {\n            if join_head(q, m) != 0 {\n                return 1;\n            }\n        } else if"),
-    ("head: the first from is not the one looked for", "qparse.cho", "        if word_at(q, m, i, \"from\") {\n            from = i;\n        }\n        i = i + 1;", "        if word_at(q, m, i, \"from\") {\n            from = i;\n        }\n        i = i + 1;\n        from = from + 0 * i;"),
     # ---- the head: what is wrong with it
     ("head: right join is not refused", "qparse.cho", "        return qarena.fail(m, 2, 110, at);", "        step(m);"),
     ("head: full join is not refused", "qparse.cho", "        return qarena.fail(m, 2, 111, at);", "        step(m);"),

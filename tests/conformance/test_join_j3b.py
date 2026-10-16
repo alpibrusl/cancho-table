@@ -342,6 +342,39 @@ class Equivalence(unittest.TestCase):
         self.assertGreater(seen["ok"], seen["runs"] // 2, seen)
         self.assertGreater(seen["refusals"], 5, seen)
 
+    def test_the_shapes_of_j2_and_random_keys(self):
+        """The shapes of the J2 tests (text and typed keys in every spelling, composite keys, one-column files, empty sides, CRLF and a BOM, quoted keys, bytes that are not UTF-8, eight pairs) and random pairs of
+        tables: `select *` of every join type, as the flags and as the query."""
+        import join_ref2 as R2
+        rng = random.Random(31)
+        cases = R2.shapes() + [R2.random_shape(rng) for _ in range(12)]
+        seen = {"pairs": 0, "ok": 0, "refusals": 0}
+        for name, ph, pr, bh, br, pairs, opts in cases:
+            s = Scratch()
+            try:
+                J.write_case(str(s.dir), ph, pr, bh, br, opts)
+                plain = [(pk, bk, kind, False) for pk, bk, kind, _using in pairs]
+                on_flag = R2.on_arg(plain, ph, bh)
+                eqs = []
+                for pk, bk, kind, _using in plain:
+                    ty = "::" + R2.suffix_of(kind)[1:] if kind else ""
+                    eqs.append("a.%s%s = b.%s%s" % (G.ident(ph[pk].decode("latin-1")), ty, G.ident(bh[bk].decode("latin-1")), ty))
+                for jt in JTYPES:
+                    flags = ["--root", str(s.dir), "--join", "b.csv", "--on", on_flag, "--join-type", jt] + (["--join-prefix", "b."] if jt in ("inner", "left") else [])
+                    text = "select * from 'p.csv' as a %s join 'b.csv' as b on %s" % (jt, " and ".join(eqs))
+                    for fmt in ("csv", "json"):
+                        a = run(*flags, "--format", fmt, "p.csv")
+                        b = run("--root", str(s.dir), "--query", text, "--format", fmt)
+                        seen["pairs"] += 1
+                        seen["ok" if a.status == 0 else "refusals"] += 1
+                        self.assertEqual(comparable(a), comparable(b), "%s [%s] %s\n  query: %s\n  flags: %r\n  flags -> %r\n  query -> %r" % (name, jt, fmt, text, flags, a.stdout[:300] + a.stderr[:200], b.stdout[:300] + b.stderr[:200]))
+            finally:
+                s.cleanup()
+        self.assertGreater(seen["pairs"], 300)
+        self.assertGreater(seen["ok"], 100, seen)
+        if os.environ.get("TABLE_J3B_REPORT"):
+            print("\nJ3b Q-EQ over the shapes of J2: %d pairs of runs over %d table pairs, %d answers and %d refusals" % (seen["pairs"], len(cases), seen["ok"], seen["refusals"]))
+
     def test_the_explain_documents_are_the_same(self):
         rng = random.Random(77)
         cases = [G.with_prefix(c) for c in R3.shapes()]
@@ -441,6 +474,34 @@ class Compat(unittest.TestCase):
         r = run("--query", "select a from select", cwd=s.dir)
         e = doc(r)["error"]
         self.assertEqual((e["detail"]["feature"], e["hint"]), ("subquery", "one input; there are no subqueries"))
+
+    @unittest.skipUnless(os.environ.get("J3B_BASE"), "J3B_BASE names the directory of main's build")
+    def test_the_goldens_of_the_earlier_slices_recomputed_on_the_binary_of_main(self):
+        """The 5,585 cases of the goldens of A0, A1 and A2 (the hand lists, the pinned refusals, the seeded soups, the other forms an expression arrives in), run through the binary of `main` and through this
+        one: the same status, rule and bytes, but for the hint of the two features that said there were no joins (the status and the rule hold)."""
+        import not_a2_cases as K
+        import or_a0
+        import rename_b1
+        from harness import run_argv
+        base = os.path.join(os.environ["J3B_BASE"], "table")
+        cases = list(or_a0.golden_cases()) + list(K.cases())
+        s = Scratch()
+        self.addCleanup(s.cleanup)
+        s.write("t.csv", or_a0.DATA)
+        old = {row[0]: row for row in or_a0.run_cases(cases, str(s.dir), lambda *a: run_argv([base, *a]))}
+        new = {row[0]: row for row in or_a0.run_cases(cases, str(s.dir), run)}
+        self.assertEqual(sorted(old), sorted(new))
+        moved = []
+        for cid, row in new.items():
+            if row[1:4] != old[cid][1:4]:
+                moved.append(cid)
+        by_id = {or_a0.case_id(k, a): (k, a) for k, a in cases}
+        import test_or_a1_compat as C1
+        for cid in moved:
+            self.assertTrue(C1.hint_moved(by_id[cid][1]), (cid, by_id[cid], old[cid][:3], new[cid][:3]))
+            self.assertEqual(new[cid][1:3], old[cid][1:3], cid)
+        self.assertGreater(len(old), 5000)
+        print("\nJ3b: %d cases of the goldens of A0, A1 and A2 through main and through this binary: %d differ, all in the hint of join or subquery" % (len(old), len(moved)))
 
     def test_the_flags_of_a_join_are_unchanged(self):
         # the flag form of a join is not touched by the query form: the fixtures' joins by flags, by the tool and by the reference of the tests of J3

@@ -66,6 +66,10 @@ REFUSALS = [
     ("select c.id from 'p.csv' as a left join 'b.csv' as b on a.id = b.id", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
     ("select a.name as n from 'p.csv' as a join 'b.csv' as b on a.id = b.id order by n.name", "syntax", "n.name", Q.WHAT_UNKNOWN_ALIAS),
     ("select a.name as n from 'p.csv' as a join 'b.csv' as b on a.id = b.id order by n::int", "syntax", "n::int", Q.WHAT_QUALIFIED),
+    ("select a.id from 'p.csv' as a inner outer join 'b.csv' as b on a.id = b.id", "syntax", "outer", Q.WHAT_JOIN_WORD),
+    # a keyword is not a table's name: the statement is not a join statement, and a dot is refused as ever
+    ("select a.id from 'p.csv' as select join 'b.csv' as b on a.id = b.id", "syntax", ".", WHAT_BYTE),
+    ("select a.id from 'p.csv' as on join 'b.csv' as b on a.id = b.id", "syntax", ".", WHAT_BYTE),
     # earliest of several is the one told
     ("select a.id, c.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id where id = 1", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
     ("select id, c.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id", "syntax", "id,", Q.WHAT_QUALIFIED),
