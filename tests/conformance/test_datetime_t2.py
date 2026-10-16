@@ -705,6 +705,112 @@ class Parallel(unittest.TestCase):
         self.assertEqual(sum(int(l.rsplit(",", 1)[1]) for l in a), 800)
 
 
+# ---- the other readers and shapes: JSON lines, a join, standard input, delimiters, bounds ------------------------------------------------------
+
+class Shapes(unittest.TestCase):
+    """A bucketed key goes through the code every group goes through: JSON lines in, a joined row, another delimiter, quoted cells, CRLF, the bounds and the guard idiom."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.s = Scratch()
+        cls.rows = [("1", "2026-01-02T01:00:00+02:00", "2026-02-10", "2026-01-31 23:59:59"), ("2", "2026-01-01T23:30:00Z", "2026-02-11", "2026-02-01 00:00:00"),
+                    ("3", "2026-03-01T00:00:00Z", "2025-12-31", "2025-12-31T12:00:00.5"), ("4", "2026-01-01T12:00:00.250000-12:00", "2026-02-10", "2026-01-31 23:59:59")]
+        cls.s.write("t.csv", csv_text([["id", "ts", "d", "w"]] + [list(r) for r in cls.rows]))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.s.cleanup()
+
+    def expect(self, col, kind, unit):
+        idx = {"ts": 1, "d": 2, "w": 3}[col]
+        counts = {}
+        for r in self.rows:
+            v = ref.bucket(kind, ref.parse(kind, r[idx].encode())[1], unit)
+            counts[v] = counts.get(v, 0) + 1
+        return ["%s,count" % col] + ["%s,%d" % (ref.canon(kind, v), counts[v]) for v in sorted(counts)]
+
+    def test_csv_file_and_standard_input(self):
+        for col, kind, unit in (("ts", "timestamp", "day"), ("ts", "timestamp", "hour"), ("d", "date", "month"), ("w", "datetime", "hour"), ("w", "datetime", "year")):
+            flags = ["--group", "%s%s@%s" % (col, SUFFIX[kind], unit), "--format", "csv"]
+            r = run("--root", self.s.dir, *flags, "t.csv")
+            self.assertEqual((r.status, r.stdout.decode().splitlines()), (0, self.expect(col, kind, unit)), (col, unit, r.stdout[:200]))
+            via = run(*flags, stdin=(self.s.dir / "t.csv").read_bytes())
+            self.assertEqual(via.stdout, r.stdout)
+
+    def test_json_lines_in_file_and_standard_input(self):
+        lines = "".join(json.dumps({"id": int(r[0]), "ts": r[1], "d": r[2], "w": r[3]}) + "\n" for r in self.rows)
+        self.s.write("t.jsonl", lines)
+        for col, kind, unit in (("ts", "timestamp", "day"), ("ts", "timestamp", "month"), ("d", "date", "month"), ("w", "datetime", "hour"), ("w", "datetime", "year")):
+            flags = ["--input-format", "jsonl", "--fields", col, "--group", "%s%s@%s" % (col, SUFFIX[kind], unit), "--format", "csv"]
+            r = run("--root", self.s.dir, *flags, "t.jsonl")
+            self.assertEqual((r.status, r.stdout.decode().splitlines()), (0, self.expect(col, kind, unit)), (col, unit, r.stdout[:200]))
+            via = run(*flags, stdin=lines.encode())
+            self.assertEqual(via.stdout, r.stdout)
+            for threads in (2, 4):
+                t = run("--root", self.s.dir, *flags, "--threads", threads, "--chunk-bytes", 16, "--parallel-min-bytes", 0, "t.jsonl")
+                self.assertEqual(t.stdout, r.stdout)
+        # a JSON number is not a timestamp: refused as without the unit, with the context of a group key
+        self.s.write("n.jsonl", '{"ts":1767308400}\n')
+        r = run("--root", self.s.dir, "--input-format", "jsonl", "--fields", "ts", "--group", "ts:timestamp@day", "n.jsonl")
+        self.assertEqual((r.status, r.first_rule(), r.error()["detail"]["context"]), (8, "value.not-timestamp", "group"))
+
+    def test_a_joined_row_has_a_bucket_on_either_side(self):
+        self.s.write("b.csv", "kk,name,bts\n1,a,2026-05-17T23:30:00-03:00\n2,b,2026-05-18T00:30:00Z\n")
+        self.s.write("p.csv", "id,k,ts\n1,1,2026-01-02T01:00:00+02:00\n2,2,2026-01-01T23:30:00Z\n3,1,2026-03-01T00:00:00Z\n")
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=kk", "--group", "ts:timestamp@month,name", "--format", "csv", "p.csv")
+        self.assertEqual(r.stdout.decode().splitlines(), ["ts,name,count", "2026-01-01T00:00:00Z,a,1", "2026-01-01T00:00:00Z,b,1", "2026-03-01T00:00:00Z,a,1"])
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=kk", "--group", "bts:timestamp@day,ts:timestamp@year", "--agg", "count,min:ts:timestamp", "--format", "csv", "p.csv")
+        self.assertEqual(r.stdout.decode().splitlines(), ["bts,ts,count,min:ts", "2026-05-18T00:00:00Z,2026-01-01T00:00:00Z,3,2026-01-01T23:00:00Z"])
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=kk", "--group", "bts:timestamp@day", "--where", "ts:timestamp >= '2026-03-01T00:00:00Z'", "--format", "csv", "p.csv")
+        self.assertEqual(r.stdout.decode().splitlines(), ["bts,count", "2026-05-18T00:00:00Z,1"])
+        # a cell of the build file that is no timestamp is refused with the context of a group key
+        self.s.write("b2.csv", "kk,name,bts\n1,a,2026-05-17T23:30:00\n")
+        r = run("--root", self.s.dir, "--join", "b2.csv", "--on", "k=kk", "--group", "bts:timestamp@day", "p.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "value.timezone-missing"))
+
+    def test_tab_semicolon_quoted_and_crlf(self):
+        cells = ["2026-01-02T01:00:00+02:00", "2026-01-01T23:30:00Z", "2026-03-01T00:00:00Z", "2026-01-02T04:00:00+05:00"]
+        for name, delim, name_delim, nl, quote in (("a.tsv", "\t", "tab", "\n", False), ("a.ssv", ";", ";", "\n", False), ("a.crlf", ",", ",", "\r\n", False), ("a.q", ",", ",", "\n", True)):
+            body = "id%sts%s" % (delim, nl) + "".join("%d%s%s%s" % (i, delim, ('"%s"' % c) if quote else c, nl) for i, c in enumerate(cells))
+            r = self.s.table(name, body, "--group", "ts:timestamp@day", "--format", "csv", "--delimiter", name_delim)
+            self.assertEqual(r.status, 0, (name, r.stdout[:300]))
+            # 01:00+02:00 and 23:30Z are the 1st (UTC); 04:00+05:00 is the 1st at 23:00Z; the 1st of March is alone
+            self.assertEqual(r.stdout.decode().splitlines(), [l.replace(",", delim) for l in ["ts,count", "2026-01-01T00:00:00Z,3", "2026-03-01T00:00:00Z,1"]], name)
+
+    def test_a_bucket_makes_fewer_groups_than_the_bound_counts(self):
+        cells = ["2026-01-0%dT%02d:00:00Z" % (1 + i % 2, i % 24) for i in range(10)]
+        data = csv_text([["v"]] + [[c] for c in cells])
+        r = self.s.table("m.csv", data, "--group", "v:timestamp", "--max-groups", "2")
+        self.assertEqual((r.status, r.first_rule()), (8, "limit.too-many-groups"))
+        r = self.s.table("m.csv", data, "--group", "v:timestamp@day", "--max-groups", "2", "--format", "csv")
+        self.assertEqual((r.status, r.stdout.decode().splitlines()), (0, ["v,count", "2026-01-01T00:00:00Z,5", "2026-01-02T00:00:00Z,5"]))
+
+    def test_the_guard_idiom_keeps_an_empty_cell_out(self):
+        data = "id,v\n1,2026-01-01T10:00:00Z\n2,\n3,2026-01-01T20:00:00Z\n"
+        r = self.s.table("e.csv", data, "--group", "v:timestamp@day")
+        self.assertEqual((r.status, r.first_rule()), (8, "value.not-timestamp"))
+        self.assertEqual(r.error()["detail"]["row"], 2)
+        r = self.s.table("e.csv", data, "--where", "v != ''", "--group", "v:timestamp@day", "--format", "csv")
+        self.assertEqual(r.stdout.decode().splitlines(), ["v,count", "2026-01-01T00:00:00Z,2"])
+
+    def test_no_rows_and_one_row(self):
+        for body in ("v\n", "v\n2026-01-01T10:00:00Z\n"):
+            a = self.s.table("z.csv", body, "--group", "v:timestamp@day", "--format", "csv")
+            b = self.s.table("z.csv", body, "--group", "v:timestamp", "--format", "csv")
+            self.assertEqual(a.status, 0)
+            self.assertEqual(len(a.stdout.splitlines()), len(b.stdout.splitlines()))
+        a = self.s.table("z.csv", "v\n2026-01-01T10:00:00Z\n", "--group", "v:timestamp@day", "--format", "csv")
+        self.assertEqual(a.stdout.decode().splitlines(), ["v,count", "2026-01-01T00:00:00Z,1"])
+
+    def test_top_from_and_limit_page_the_buckets(self):
+        cells = ["2026-%02d-15T00:00:00Z" % (1 + i % 12) for i in range(36)]
+        data = csv_text([["v"]] + [[c] for c in cells])
+        r = self.s.table("pg.csv", data, "--group", "v:timestamp@month", "--format", "csv", "--limit", "3", "--from", "4")
+        self.assertEqual(r.stdout.decode().splitlines(), ["v,count", "2026-05-01T00:00:00Z,3", "2026-06-01T00:00:00Z,3", "2026-07-01T00:00:00Z,3"])
+        r = self.s.table("pg.csv", data, "--group", "v:timestamp@month", "--sort", "-v", "--top", "2", "--format", "csv")
+        self.assertEqual(r.stdout.decode().splitlines(), ["v,count", "2026-12-01T00:00:00Z,3", "2026-11-01T00:00:00Z,3"])
+
+
 # ---- --explain, help, introspect ------------------------------------------------------------------------------------------------------
 
 class Surface(unittest.TestCase):
