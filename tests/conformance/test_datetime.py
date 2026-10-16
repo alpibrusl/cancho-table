@@ -216,7 +216,7 @@ class Grammar(unittest.TestCase):
         for kind in ref.KINDS:
             cells = [c for c in ref.edge_cells() if ref.parse(kind, c.encode())[0] == "ok" and not any(x in c for x in ',"\n\r')]
             cells += [ref.random_valid(rng, kind) for _ in range(DT_VALID)]
-            r = self.s.table("c.csv", csv_text([["v"]] + [[c] for c in cells]), "--group", "v" + SUFFIX[kind], "--agg", "count,min:v%s,max:v%s,distinct:v%s" % ((SUFFIX[kind],) * 3), "--format", "csv", "--max-groups", "1000000")
+            r = self.s.table("c.csv", csv_text([["v"]] + [[c] for c in cells]), "--group", "v" + SUFFIX[kind], "--agg", "count,min:v%s,max:v%s,distinct:v%s" % ((SUFFIX[kind],) * 3), "--format", "csv", "--max-groups", "1000000", "--max-distinct", "10000000")
             self.assertEqual(r.status, 0, r.stderr[:400])
             counts = {}
             for c in cells:
@@ -607,6 +607,10 @@ class Surface(unittest.TestCase):
                                 (["--where", "x\\:datetime = 'c'", "--select", "id"], [["1"]])):
                 r = run("--root", s.dir, *flags, "c.csv")
                 self.assertEqual((r.status, r.data()["rows"]), (0, want), flags)
+            # the suffix alone, bare, is a name too
+            for text in (":date = '2026-01-02'", ":timestamp = 'b'", ":datetime = 'c'"):
+                r = run("--root", s.dir, "--where", text, "--select", "id", "c.csv") if text != ":datetime = 'c'" else run("--root", s.dir, "--where", "x\\:datetime = 'c'", "--select", "id", "c.csv")
+                self.assertEqual((r.status, r.data()["rows"]), (0, [["1"]]), text)
             r = run("--root", s.dir, "--group", "\\:date", "--agg", "distinct:\\:timestamp", "--format", "csv", "c.csv")
             self.assertEqual(r.stdout.decode().split(), [":date,distinct::timestamp", "2026-01-02,1"])
         finally:

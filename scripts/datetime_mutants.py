@@ -88,8 +88,6 @@ MUTANTS = [
     ("a datetime with a Z is read", "dtparse.cho", "    } else if tail != 0 {\n        return refuse(22, 0);", "    } else if tail != 0 && tail != 1 {\n        return refuse(22, 0);"),
     ("+hhmm is read as an offset", "dtparse.cho", "    return len(tail) == 6 && (int_of(tail[0]) == '+'", "    return len(tail) >= 5 && (int_of(tail[0]) == '+'"),
     # ---- the fraction
-    ("a fraction is cut at the millisecond", "dtparse.cho", "    while i < frac {\n        micro = micro * 10 + int_of(data[20 + i]) - '0';", "    while i < frac && i < 3 {\n        micro = micro * 10 + int_of(data[20 + i]) - '0';"),
-    ("a fraction is not scaled to microseconds", "dtparse.cho", "    while i < 6 && frac > 0 {\n        micro = micro * 10;", "    while i < 5 && frac > 0 {\n        micro = micro * 10;"),
     ("seven fractional digits are read", "dtparse.cho", "    if frac > 6 {", "    if frac > 7 {"),
     ("six fractional digits are refused", "dtparse.cho", "    if frac > 6 {", "    if frac > 5 {"),
     ("the digits of a refused fraction are one short", "dtparse.cho", "        return refuse(17, frac);", "        return refuse(17, frac - 1);"),
@@ -120,12 +118,14 @@ MUTANTS = [
     ("the fast reading forgets the seconds", "dtparse.cho", "    var value = (days_from_civil(year, month, day) * 86400 + hh * 3600 + mi * 60 + ss) * 1000000 + micro;", "    var value = (days_from_civil(year, month, day) * 86400 + hh * 3600 + mi * 60) * 1000000 + micro;"),
     ("the fast reading takes minutes for 100 seconds", "dtparse.cho", "    var value = (days_from_civil(year, month, day) * 86400 + hh * 3600 + mi * 60 + ss) * 1000000 + micro;", "    var value = (days_from_civil(year, month, day) * 86400 + hh * 3600 + mi * 100 + ss) * 1000000 + micro;"),
     # ---- the range
+    # (Not here, equivalent by construction: a defect of the step-by-step reader's fraction that makes it smaller, or of its edge tests `value < first` and `value > last` that refuses the first or the last
+    # instant. That reader only decides a range refusal, because `fast_time` has taken every cell that is in range, and both limits are whole seconds (the first instant and the one after the last), which a
+    # smaller fraction cannot cross. The defects that make a value larger, or move a limit by more than a microsecond, are mutants.)
+    ("the step-by-step reader adds the fraction twice", "dtparse.cho", "    var value = seconds * 1000000 + micro;", "    var value = seconds * 1000000 + micro + micro;"),
     ("the range is checked before the offset is applied",
      "dtparse.cho",
      "        value = value - offset_us;\n        if value < 0 - 62135596800000000 {\n            return refuse(18, 0);\n        }\n        if value > 253402300799999999 {\n            return refuse(19, 0);\n        }",
      "        if value < 0 - 62135596800000000 {\n            return refuse(18, 0);\n        }\n        if value > 253402300799999999 {\n            return refuse(19, 0);\n        }\n        value = value - offset_us;"),
-    ("the first instant is refused", "dtparse.cho", "        if value < 0 - 62135596800000000 {", "        if value <= 0 - 62135596800000000 {"),
-    ("the last instant is refused", "dtparse.cho", "        if value > 253402300799999999 {", "        if value >= 253402300799999999 {"),
     ("an instant before the first one is after", "dtparse.cho", "            return refuse(18, 0);", "            return refuse(19, 0);"),
     ("an instant after the last one is read", "dtparse.cho", "        if value > 253402300799999999 {", "        if value > 253402300799999999 + 86400000000 {"),
     # ---- the order of the checks
