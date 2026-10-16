@@ -412,8 +412,9 @@ class Flags(unittest.TestCase):
             with self.subTest(extra):
                 self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", *extra)[0], 0)
         self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--report", "types"), (2, "args.conflict"))
+        # J5 (docs/joins.md section 21): a jsonl probe is a join like any other (it was args.conflict before)
         self.s.write("j.jsonl", '{"k":"a"}\n')
-        self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--input-format", "jsonl", "--fields", "k", file="j.jsonl"), (2, "args.conflict"))
+        self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--input-format", "jsonl", "--fields", "k", file="j.jsonl")[0], 0)
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--report", "types", "p.csv")
         self.assertIn("pipe", r.error()["hint"])
 
