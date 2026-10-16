@@ -17,7 +17,9 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_datetime", "test_rules"]
+# the cheap classes first: a mutant is stopped at the first test that fails, and most are killed by the first few
+TESTS = ["test_datetime.Surface", "test_datetime.Guards", "test_datetime.Fuzz", "test_datetime.Grammar", "test_datetime.Round", "test_datetime.Diff", "test_datetime.Parallel", "test_datetime.Oracle",
+         "test_datetime.Algorithm", "test_rules"]
 
 # the operators of `holds_date`, the one place the three types compare a cell with its literals (expr.cho)
 HOLDS_HEAD = "    let (x, bad) = dtparse.parse(cell, typed);\n    if bad != 0 {\n        return bad;\n    }\n    var l = 0;\n    while l < many {\n        let w = query.lit_at(plan, first + l, 2);\n        var yes = false;\n        if kind == 2 || op == 0 {\n            yes = x == w;\n"
@@ -224,4 +226,10 @@ MUTANTS = [
 ]
 
 if __name__ == "__main__":
-    sys.exit(mutlib.main(MUTANTS, TESTS))
+    # MUT_SHARD=I/N runs the I-th of N parts of the list (each in a checkout of its own: a run rebuilds tools/table in place), for a loaded machine
+    shard = __import__('os').environ.get("MUT_SHARD")
+    chosen = MUTANTS
+    if shard:
+        i, n = (int(x) for x in shard.split("/"))
+        chosen = [m for k, m in enumerate(MUTANTS) if k % n == i]
+    sys.exit(mutlib.main(chosen, TESTS))
