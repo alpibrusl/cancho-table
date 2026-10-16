@@ -72,7 +72,7 @@ MUTANTS = [
     # (the reading is written twice: `fast_time` accepts what is well formed, `parse_time` says why when it is not; a defect of each is a mutant)
     ("the offset is applied twice", "dtparse.cho", "        value = value - offset_us;\n        if value < 0 - 62135596800000000 || value", "        value = value - 2 * offset_us;\n        if value < 0 - 62135596800000000 || value"),
     ("the offset is not applied", "dtparse.cho", "        value = value - offset_us;\n        if value < 0 - 62135596800000000 || value", "        value = value;\n        if value < 0 - 62135596800000000 || value"),
-    ("the offset is applied twice before a range refusal", "dtparse.cho", "        value = value - offset_us;\n        if value < 0 - 62135596800000000 {", "        value = value - 2 * offset_us;\n        if value < 0 - 62135596800000000 {"),
+    # (Not here, equivalent: the step-by-step reader applying the offset twice. A cell it sees is out of range, and the offset that took it out is the sign that doubling takes it further out.)
     ("the offset is not applied before a range refusal", "dtparse.cho", "        value = value - offset_us;\n        if value < 0 - 62135596800000000 {", "        value = value;\n        if value < 0 - 62135596800000000 {"),
     ("the minutes of the offset are dropped", "dtparse.cho", "                offset_us = (oh * 3600 + om * 60) * 1000000;", "                offset_us = (oh * 3600) * 1000000;"),
     ("the hours of the offset are dropped", "dtparse.cho", "                offset_us = (oh * 3600 + om * 60) * 1000000;", "                offset_us = (om * 60) * 1000000;"),
