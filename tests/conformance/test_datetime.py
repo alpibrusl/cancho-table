@@ -5,7 +5,7 @@ These are the gates of docs/datetime.md section 12, written before the code (T0)
 * G-ORACLE-GRAMMAR: `datetime_ref.py` (Python, fixed offsets, no zoneinfo, no code shared with the tool) decides every cell: the instant, or the tag and `detail.reason` /
   `detail.offset` / `detail.digits` / `detail.direction`. The cells are the named edge cases of the doc and random ones; DT_CELLS (default 300 refused and 3000 valid cells a type)
   scales the generated part (the doc's pass line is 100,000).
-* G-ORACLE-SQL: for the cells both engines accept, DuckDB and SQLite give the instant the tool gives (skipped when the engine is not installed: DUCKDB names the binary).
+* G-ORACLE-SQL: for the cells both engines accept, DuckDB and SQLite give the instant the tool gives (skipped when the engine is not installed: DUCKDB names the binary; DT_ORACLE cells a type, default 2000).
 * G-ROUND: the printed key of a value reads back as the same value, and printing it again gives the same text.
 * G-DIFF: random tables and plans (conditions, `in`, order keys, group keys, min, max, distinct, top) against a Python evaluation of the same plan.
 * G-PAR: threads 1..64 x chunk sizes, standard input against the file: the same bytes, refusals included.
@@ -32,6 +32,7 @@ from harness import Scratch, binary, introspect, run, run_argv, validate
 DT_CELLS = int(os.environ.get("DT_CELLS", "300"))
 DT_VALID = int(os.environ.get("DT_VALID", "3000"))
 DT_TABLES = int(os.environ.get("DT_TABLES", "40"))
+DT_ORACLE = int(os.environ.get("DT_ORACLE", "2000"))
 SUFFIX = {"date": ":date", "timestamp": ":timestamp", "datetime": ":datetime"}
 CTX = "distinct"
 
@@ -899,7 +900,7 @@ class Oracle(unittest.TestCase):
         if not exe:
             self.skipTest("no duckdb")
         for kind in ("timestamp", "date"):
-            cells = self.cells(kind, 2000)
+            cells = self.cells(kind, DT_ORACLE)
             cast = "timestamptz" if kind == "timestamp" else "date"
             values = ",".join("('%s')" % c for c in cells)
             if kind == "timestamp":
@@ -924,7 +925,7 @@ class Oracle(unittest.TestCase):
 
     def test_sqlite(self):
         db = sqlite3.connect(":memory:")
-        cells = self.cells("timestamp", 2000)
+        cells = self.cells("timestamp", DT_ORACLE)
         whole = [c for c in cells if "." not in c]
         s = Scratch()
         try:

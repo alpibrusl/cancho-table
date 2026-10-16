@@ -237,6 +237,17 @@ def edge_cells():
               "9999-12-31T23:59:59.999999-01:00", "9999-12-31T23:59:59.999999+01:00", "9999-12-31T23:59:59Z", "9999-12-31T23:59:59+14:00", "9999-12-31T23:59:59-12:00",
               "0001-01-01T14:00:00+14:00", "0001-01-01T13:59:59+14:00", "0001-01-01T12:00:00-12:00", "0001-01-01T00:00:00.000000+00:00", "9999-12-31T09:59:59.999999-14:00",
               "9999-12-31T10:00:00-14:00", "0001-01-02T00:00:00+24:00", "0001-01-01T23:59:59+23:59"]
+    # the ends of the range at offsets of hours and minutes: the first instant, the one before it, the last, the one after it, written in each offset (when the local year exists)
+    for off in ("+00:30", "-00:30", "+05:30", "-05:30", "+09:45", "-03:30", "+14:00", "-12:00", "+23:59", "-23:59", "+00:01", "-00:01", "+01:01", "-01:01"):
+        sign = 1 if off[0] == "+" else -1
+        shift = sign * (int(off[1:3]) * 3600 + int(off[4:6]) * 60) * 1000000
+        for instant in (MIN_US - 1, MIN_US, MAX_US, MAX_US + 1):
+            try:
+                local = EPOCH + dt.timedelta(microseconds=instant + shift)
+            except OverflowError:
+                continue
+            if 1 <= local.year <= 9999:
+                cells.append("%04d-%02d-%02dT%02d:%02d:%02d.%06d%s" % (local.year, local.month, local.day, local.hour, local.minute, local.second, local.microsecond, off))
     for sep in SEPS:
         for off in OFFSETS + [""]:
             cells.append("2026-01-02%s01:02:03%s" % (sep, off))
@@ -277,7 +288,14 @@ def edge_cells():
 
 
 def random_valid(rng, kind):
-    """A valid cell of `kind` in a random spelling."""
+    """A valid cell of `kind` in a random spelling (a timestamp near the year 1 or 9999 whose offset takes it out of the range is drawn again)."""
+    while True:
+        cell = _random_cell(rng, kind)
+        if parse(kind, cell.encode())[0] == "ok":
+            return cell
+
+
+def _random_cell(rng, kind):
     y = rng.choice([rng.randint(1, 9999), rng.randint(1900, 2100), rng.choice(LEAP)])
     m = rng.randint(1, 12)
     d = rng.randint(1, calendar.monthrange(y, m)[1])
