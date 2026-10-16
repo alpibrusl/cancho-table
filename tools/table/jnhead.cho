@@ -14,6 +14,7 @@ import explain;
 import finish;
 import jnfail;
 import jnflags;
+import jxsrc;
 import query;
 import reader;
 import spec;
@@ -229,12 +230,12 @@ pub fn drop_united[&h](heap: &!h Heap, u: United) -> [heap] int {
 }
 
 // `jtype`: 0 inner, 1 left, 2 semi, 3 anti.
-pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, errs: fail.Errors, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &c buffer.Buffer, bends: &d vec.Vec[int], probe_known: bool, shown_p: &s [byte], shown_b: &t [byte], jtype: int) -> [heap, args] (United, fail.Errors) {
+pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], errs: fail.Errors, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &c buffer.Buffer, bends: &d vec.Vec[int], probe_known: bool, shown_p: &s [byte], shown_b: &t [byte], jtype: int) -> [heap, args] (United, fail.Errors) {
     let table = spec.flag_table();
     var e = errs;
     let np = vec.size(pends);
     let nb = vec.size(bends);
-    let on = jnflags.parse_on(heap, cli.text(args, parsed, table, "on"));
+    let on = jnflags.on_of(heap, args, parsed, jxs);
     var pairs = 0;
     borrow on as &onr in {
         pairs = onr.pairs;
@@ -299,14 +300,21 @@ pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t](heap: &!h Heap, args: &g Args, 
             }
         }
     }
-    let prefix = cli.text(args, parsed, table, "join-prefix");
-    var names = buffer.empty(heap, buffer.size(pnames) + buffer.size(bnames) + nb * len(prefix) + 1);
+    let prefixb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_prefix(), "join-prefix");
+    let given_prefix = jxsrc.has(parsed, jxs, jxsrc.s_prefix(), "join-prefix");
+    var plen = 0;
+    borrow prefixb as &pxr0 in {
+        plen = buffer.size(pxr0);
+    }
+    var names = buffer.empty(heap, buffer.size(pnames) + buffer.size(bnames) + nb * plen + 1);
     var ends = vec.empty(heap, np + nb + 1, 0);
     if ok && probe_known && jtype <= 1 {
         borrow dropped as &dr in {
-            if jnfail.collisions(pnames, pends, bnames, bends, prefix, contents(dr)) > 0 {
-                e = jnfail.collision(heap, e, args, parsed, pnames, pends, bnames, bends, prefix, shown_b, table, contents(dr));
-                ok = false;
+            borrow prefixb as &pxr in {
+                if jnfail.collisions(pnames, pends, bnames, bends, buffer.bytes(pxr), contents(dr)) > 0 {
+                    e = jnfail.collision(heap, e, args, parsed, pnames, pends, bnames, bends, buffer.bytes(pxr), shown_b, given_prefix, contents(dr));
+                    ok = false;
+                }
             }
         }
     }
@@ -328,7 +336,9 @@ pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t](heap: &!h Heap, args: &g Args, 
         if col > 0 {
             from = vec.get(bends, col - 1);
         }
-        names = buffer.append(heap, names, prefix);
+        borrow prefixb as &pxr in {
+            names = buffer.append(heap, names, buffer.bytes(pxr));
+        }
         names = buffer.append(heap, names, buffer.bytes(bnames)[from..vec.get(bends, col)]);
         var total = 0;
         borrow names as &nr in {
@@ -338,5 +348,6 @@ pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t](heap: &!h Heap, args: &g Args, 
         k = k + 1;
     }
     unbox_slice(heap, dropped);
+    buffer.drop(heap, prefixb);
     return (United { names: names, ends: ends, keys: keys, kept: kept, pairs: pairs, np: np, nb: nb, nk: nk, ok: ok && probe_known }, e);
 }

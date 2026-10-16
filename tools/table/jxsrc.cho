@@ -1,0 +1,78 @@
+edition 5;
+
+module jxsrc;
+
+// Where the join code reads the flags of a join from (docs/joins.md section 20). A call with `--join` has them in its arguments; a `--query` that has a join says them in its text, and the
+// translation of the query (`qtrans`, sections 8 to 13) is kept in the plan (`query.jx_text`) as six texts, each ended by a zero byte:
+//
+//     0 --join (the path)   1 --on   2 --join-type   3 --join-prefix   4 --join-where   5 --where
+//
+// Every place that read one of these six flags asks here. With no text of a query (an empty one) the answer is the flag's own, so the flags are read exactly as they were.
+
+import std.buffer;
+import spec;
+import toolbox.cli;
+
+pub fn s_join() -> [] int {
+    return 0;
+}
+
+pub fn s_on() -> [] int {
+    return 1;
+}
+
+pub fn s_type() -> [] int {
+    return 2;
+}
+
+pub fn s_prefix() -> [] int {
+    return 3;
+}
+
+pub fn s_join_where() -> [] int {
+    return 4;
+}
+
+pub fn s_where() -> [] int {
+    return 5;
+}
+
+// Whether the join is a query's.
+pub fn queried[&x](jxs: &x [byte]) -> [] bool {
+    return len(jxs) > 0;
+}
+
+// Section `k` of the text of a query's join.
+pub fn section[&x](jxs: &x [byte], k: int) -> [] &x [byte] {
+    var begin = 0;
+    var seen = 0;
+    var i = 0;
+    while i < len(jxs) && seen < k {
+        if int_of(jxs[i]) == 0 {
+            seen = seen + 1;
+            begin = i + 1;
+        }
+        i = i + 1;
+    }
+    var end = begin;
+    while end < len(jxs) && int_of(jxs[end]) != 0 {
+        end = end + 1;
+    }
+    return jxs[begin..end];
+}
+
+// Whether the flag `name` is given: for a query's join, whether its text is not empty (the join, the type and the key are always there).
+pub fn has[&p, &x](parsed: &p cli.Parsed, jxs: &x [byte], k: int, name: &static [byte]) -> [] bool {
+    if len(jxs) > 0 {
+        return k <= 2 || len(section(jxs, k)) > 0;
+    }
+    return cli.has(parsed, spec.flag_table(), name);
+}
+
+// The text of the flag `name`: a copy, the flag's or the query's.
+pub fn text[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], k: int, name: &static [byte]) -> [heap, args] buffer.Buffer {
+    if len(jxs) > 0 {
+        return buffer.append(heap, buffer.empty(heap, len(section(jxs, k)) + 1), section(jxs, k));
+    }
+    return buffer.append(heap, buffer.empty(heap, 64), cli.text(args, parsed, spec.flag_table(), name));
+}

@@ -100,6 +100,45 @@ pub fn expected(code: int) -> [] &static [byte] {
     if code == 31 {
         return "a name after as (a name that is a keyword is written \"like this\")";
     }
+    if code == 90 {
+        return "a 'file name' in quotes (the second table of a join is a file)";
+    }
+    if code == 91 {
+        return "as and a name for the table: every table of a join is named";
+    }
+    if code == 92 {
+        return "a name that the first table does not have";
+    }
+    if code == 93 {
+        return "on and the key equalities: a.k = b.k";
+    }
+    if code == 94 {
+        return "a key equality first: alias.column = alias.column, one column of each table";
+    }
+    if code == 95 {
+        return "one column of each table in a key equality";
+    }
+    if code == 96 {
+        return "the same type on both columns of a key equality";
+    }
+    if code == 97 {
+        return "at most 8 key equalities";
+    }
+    if code == 98 {
+        return "the key equalities before the conditions on the right table";
+    }
+    if code == 99 {
+        return "a column of a join is written alias.column";
+    }
+    if code == 100 {
+        return "the name of one of the two tables of the join";
+    }
+    if code == 102 {
+        return "join";
+    }
+    if code == 103 {
+        return "a column name after the table name and the dot";
+    }
     if code == 46 {
         return "an order by name that is the alias of one column of the answer only";
     }
@@ -180,6 +219,39 @@ pub fn feature(code: int) -> [] &static [byte] {
     if code == 80 {
         return "order-by-position";
     }
+    if code == 110 {
+        return "right join";
+    }
+    if code == 111 {
+        return "full join";
+    }
+    if code == 112 {
+        return "cross join";
+    }
+    if code == 113 {
+        return "left outer join";
+    }
+    if code == 114 {
+        return "more than one join";
+    }
+    if code == 115 {
+        return "a condition on the left table in on";
+    }
+    if code == 116 {
+        return "standard input as the build side";
+    }
+    if code == 117 {
+        return "column-position-in-join";
+    }
+    if code == 118 {
+        return "a column of the right table of a semi or anti join";
+    }
+    if code == 119 {
+        return "table-star";
+    }
+    if code == 120 {
+        return "or in on";
+    }
     return "order-by-dash-name";
 }
 
@@ -200,8 +272,44 @@ pub fn hint(code: int) -> [] &static [byte] {
     if code == 64 {
         return "the grammar groups by the text of a column; a grouping by value is the flag --group x:int, x:dec(N) or x:float";
     }
-    if code == 66 || code == 67 {
-        return "one input; there are no joins and no subqueries yet";
+    if code == 66 {
+        return "one input; there are no subqueries";
+    }
+    if code == 67 {
+        return "a join names both tables and their key: from 'a.csv' as a join 'b.csv' as b on a.k = b.k";
+    }
+    if code == 110 {
+        return "swap the two files and write left join";
+    }
+    if code == 111 {
+        return "write left join, and a second call with the files swapped and anti for the rows the first one leaves out";
+    }
+    if code == 112 {
+        return "a join needs its key: on a.k = b.k";
+    }
+    if code == 113 {
+        return "write left join";
+    }
+    if code == 114 {
+        return "pipe the first join's --format csv into the second: table ... | table --join c.csv ...";
+    }
+    if code == 115 {
+        return "put it in where, which filters the left rows";
+    }
+    if code == 116 {
+        return "the build side is a file: pipe the other table into the first source, from stdin as a";
+    }
+    if code == 117 {
+        return "name the column, alias.column: a position is not a name of one table of a join";
+    }
+    if code == 118 {
+        return "a semi or anti join gives the columns of the left table only: test the right table in on, on a.k = b.k and b.x = 1";
+    }
+    if code == 119 {
+        return "name the columns, or select * for every column of the join";
+    }
+    if code == 120 {
+        return "a key is equalities joined by and; put alternatives on the right table in parentheses after and: on a.k = b.k and (b.x = 1 or b.x = 2)";
     }
     if code == 68 {
         return "a condition compares a column with a value, not with another column";

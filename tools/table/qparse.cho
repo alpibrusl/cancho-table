@@ -132,20 +132,234 @@ fn record[&m](m: &!m [int]) -> [] int {
     return at;
 }
 
-// A column: a name (bare, and not a keyword), a quoted name, or a position. Answers its token, or -1 with the error `what` (or `what_keyword` when a keyword is there).
+// ---- the join (docs/joins.md sections 2.3 and 20)
+
+// The token `i`, or the end token when `i` is past the last.
+fn tok_at[&m](m: &m [int], i: int) -> [] int {
+    if i > m[qarena.s_tokens()] - 1 {
+        return m[qarena.s_tokens()] - 1;
+    }
+    return i;
+}
+
+fn word_at[&q, &m](q: &q [byte], m: &m [int], i: int, word: &static [byte]) -> [] bool {
+    let j = tok_at(m, i);
+    return qarena.tok_kind(m, j) == qlex.t_id() && lower_eq(q, qarena.tok_start(m, j), qarena.tok_end(m, j), word);
+}
+
+fn sym_at[&m](m: &m [int], i: int, which: int) -> [] bool {
+    let j = tok_at(m, i);
+    return qarena.tok_kind(m, j) == qlex.t_sym() && qarena.tok_aux(m, j) == which;
+}
+
+// A name a table of a join may have: a bare word that is no keyword, or a "quoted" one.
+fn alias_at[&q, &m](q: &q [byte], m: &m [int], i: int) -> [] bool {
+    let j = tok_at(m, i);
+    return qarena.tok_kind(m, j) == qlex.t_qid() || qarena.tok_kind(m, j) == qlex.t_id() && !keyword(q, m, j);
+}
+
+// Whether two name tokens (a bare word or a "quoted" name) are the same name: a doubled quote in a quoted one is one quote.
+pub fn name_eq[&q, &m](q: &q [byte], m: &m [int], x: int, y: int) -> [] bool {
+    var i = qarena.tok_start(m, x);
+    var e1 = qarena.tok_end(m, x);
+    let qx = qarena.tok_kind(m, x) == qlex.t_qid();
+    if qx {
+        i = i + 1;
+        e1 = e1 - 1;
+    }
+    var j = qarena.tok_start(m, y);
+    var e2 = qarena.tok_end(m, y);
+    let qy = qarena.tok_kind(m, y) == qlex.t_qid();
+    if qy {
+        j = j + 1;
+        e2 = e2 - 1;
+    }
+    while i < e1 && j < e2 {
+        let cx = int_of(q[i]);
+        let cy = int_of(q[j]);
+        if cx != cy {
+            return false;
+        }
+        if qx && cx == 34 {
+            i = i + 2;
+        } else {
+            i = i + 1;
+        }
+        if qy && cy == 34 {
+            j = j + 2;
+        } else {
+            j = j + 1;
+        }
+    }
+    return i >= e1 && j >= e2;
+}
+
+// The refusal that does not stop the parse: only the first is kept, and not in a look-ahead.
+fn note[&m](m: &!m [int], kind: int, code: int, at: int) -> [] int {
+    if m[qarena.s_dry()] == 0 && m[qarena.s_pend_code()] == 0 {
+        m[qarena.s_pend_kind()] = kind;
+        m[qarena.s_pend_code()] = code;
+        m[qarena.s_pend_offset()] = at;
+    }
+    return 0;
+}
+
+// At the end of the parse: the earliest of the refusal that stopped it and the first one noted (a tie is the noted one). Answers 1 when there is a refusal.
+pub fn settle_pending[&m](m: &!m [int]) -> [] int {
+    if m[qarena.s_pend_code()] != 0 {
+        if m[qarena.s_code()] == 0 || m[qarena.s_pend_offset()] <= m[qarena.s_offset()] {
+            m[qarena.s_kind()] = m[qarena.s_pend_kind()];
+            m[qarena.s_code()] = m[qarena.s_pend_code()];
+            m[qarena.s_offset()] = m[qarena.s_pend_offset()];
+        }
+    }
+    return m[qarena.s_code()];
+}
+
+// Whether the name token `n` is the second half of alias.column (a dot before it, in a join).
+pub fn qualified[&m](m: &m [int], n: int) -> [] bool {
+    return m[qarena.s_join()] == 1 && n >= 2 && sym_at(m, n - 1, qlex.y_dot());
+}
+
+// Which table the qualified name token `n` is the column of: 1 the first, 2 the second, 0 neither (and for a name that is not qualified).
+fn side_of[&q, &m](q: &q [byte], m: &m [int], n: int) -> [] int {
+    if !qualified(m, n) {
+        return 0;
+    }
+    if name_eq(q, m, n - 2, m[qarena.s_alias_a()]) {
+        return 1;
+    }
+    let b = m[qarena.s_alias_b()];
+    if b >= 0 && name_eq(q, m, n - 2, b) {
+        return 2;
+    }
+    return 0;
+}
+
+// The head of a join statement, worked out from the tokens before the parse reads the select list: `from SRC as A` and then a join word (join, inner, left, right, full, cross, or semi or anti
+// before join). Sets the slots; a statement that has not that shape is not a join statement, and is read as it always was.
+fn scan_head[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    m[qarena.s_join()] = 0;
+    m[qarena.s_alias_b()] = 0 - 1;
+    let n = m[qarena.s_tokens()];
+    var from = 0 - 1;
+    var i = 0;
+    while i < n && from < 0 {
+        if word_at(q, m, i, "from") {
+            from = i;
+        }
+        i = i + 1;
+    }
+    if from < 0 {
+        return 0;
+    }
+    let src = from + 1;
+    if !(qarena.tok_kind(m, tok_at(m, src)) == qlex.t_str() || word_at(q, m, src, "stdin")) {
+        return 0;
+    }
+    if !word_at(q, m, from + 2, "as") || !alias_at(q, m, from + 3) {
+        return 0;
+    }
+    let k = from + 4;
+    var jt = 0 - 1;
+    var jpos = 0 - 1;
+    if word_at(q, m, k, "join") {
+        jt = 0;
+        jpos = k;
+    } else if word_at(q, m, k, "inner") || word_at(q, m, k, "left") || word_at(q, m, k, "right") || word_at(q, m, k, "full") || word_at(q, m, k, "cross") {
+        jt = 0;
+        if word_at(q, m, k, "left") {
+            jt = 1;
+        } else if word_at(q, m, k, "right") {
+            jt = 4;
+        } else if word_at(q, m, k, "full") {
+            jt = 5;
+        } else if word_at(q, m, k, "cross") {
+            jt = 6;
+        }
+        if word_at(q, m, k + 1, "join") {
+            jpos = k + 1;
+        } else if word_at(q, m, k, "left") && word_at(q, m, k + 1, "outer") && word_at(q, m, k + 2, "join") {
+            jpos = k + 2;
+        }
+    } else if (word_at(q, m, k, "semi") || word_at(q, m, k, "anti")) && word_at(q, m, k + 1, "join") {
+        jt = 2;
+        if word_at(q, m, k, "anti") {
+            jt = 3;
+        }
+        jpos = k + 1;
+    } else {
+        return 0;
+    }
+    m[qarena.s_join()] = 1;
+    m[qarena.s_alias_a()] = from + 3;
+    m[qarena.s_jtype()] = jt;
+    if jpos >= 0 && qarena.tok_kind(m, tok_at(m, jpos + 1)) == qlex.t_str() && word_at(q, m, jpos + 2, "as") && alias_at(q, m, jpos + 3) {
+        m[qarena.s_alias_b()] = jpos + 3;
+    }
+    return 0;
+}
+
+// The name after the dot of alias.column, the cursor being at the dot; the qualified name's token. The checks of the table: it is one of the two (else noted), the on's conditions name the second only,
+// and a semi or anti join gives no column of the second table to the rest of the statement.
+fn after_dot[&q, &m](q: &q [byte], m: &!m [int], first: int, what_keyword: int) -> [] int {
+    step(m);
+    let n = tk(m, 0);
+    let nk = qarena.tok_kind(m, n);
+    if nk == qlex.t_id() {
+        if keyword(q, m, n) {
+            qarena.fail(m, 1, what_keyword, qarena.tok_start(m, n));
+            return 0 - 1;
+        }
+    } else if nk == qlex.t_pos() {
+        step(m);
+        note(m, 2, 117, qarena.tok_start(m, n));
+        return n;
+    } else if nk == qlex.t_sym() && qarena.tok_aux(m, n) == qlex.y_star() {
+        qarena.fail(m, 2, 119, qarena.tok_start(m, n));
+        return 0 - 1;
+    } else if nk != qlex.t_qid() {
+        qarena.fail(m, 1, 103, qarena.tok_start(m, n));
+        return 0 - 1;
+    }
+    step(m);
+    let side = side_of(q, m, n);
+    if side == 0 && m[qarena.s_alias_b()] >= 0 {
+        note(m, 1, 100, qarena.tok_start(m, first));
+    }
+    if side == 1 && m[qarena.s_in_conds()] == 1 {
+        note(m, 2, 115, qarena.tok_start(m, first));
+    }
+    if side == 2 && m[qarena.s_jtype()] >= 2 && m[qarena.s_jtype()] <= 3 && m[qarena.s_in_on()] == 0 {
+        note(m, 2, 118, qarena.tok_start(m, first));
+    }
+    return n;
+}
+
+// A column: a name (bare, and not a keyword), a quoted name, or a position; in a join, alias.column. Answers its token (the name's, for alias.column), or -1 with the error `what` (or `what_keyword` when a
+// keyword is there). In a join a column that is not written alias.column is noted (code 99) and the parse goes on.
 fn column[&q, &m](q: &q [byte], m: &!m [int], what: int, what_keyword: int) -> [] int {
     let i = tk(m, 0);
     let kind = qarena.tok_kind(m, i);
-    if kind == qlex.t_id() {
-        if keyword(q, m, i) {
+    if kind == qlex.t_id() || kind == qlex.t_qid() {
+        if kind == qlex.t_id() && keyword(q, m, i) {
             qarena.fail(m, 1, what_keyword, qarena.tok_start(m, i));
             return 0 - 1;
         }
         step(m);
+        if m[qarena.s_join()] == 1 {
+            if is_sym(m, 0, qlex.y_dot()) {
+                return after_dot(q, m, i, what_keyword);
+            }
+            note(m, 1, 99, qarena.tok_start(m, i));
+        }
         return i;
     }
-    if kind == qlex.t_qid() || kind == qlex.t_pos() {
+    if kind == qlex.t_pos() {
         step(m);
+        if m[qarena.s_join()] == 1 {
+            note(m, 2, 117, qarena.tok_start(m, i));
+        }
         return i;
     }
     qarena.fail(m, 1, what, qarena.tok_start(m, i));
@@ -771,6 +985,29 @@ fn group_columns[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
     return 0;
 }
 
+// Whether the cursor is at a bare name that is the `as` name of an item of the select list, in a join (not followed by a dot or a `::`).
+fn bare_as_name[&q, &m](q: &q [byte], m: &m [int]) -> [] bool {
+    if m[qarena.s_join()] != 1 {
+        return false;
+    }
+    let t0 = tk(m, 0);
+    if !(qarena.tok_kind(m, t0) == qlex.t_qid() || qarena.tok_kind(m, t0) == qlex.t_id() && !keyword(q, m, t0)) {
+        return false;
+    }
+    if is_sym(m, 1, qlex.y_dot()) || is_sym(m, 1, qlex.y_cast()) {
+        return false;
+    }
+    var k = 0;
+    while k < m[qarena.s_item_count()] {
+        let a = m[m[qarena.s_items()] + 8 * k + 7] - 1;
+        if a >= 0 && name_eq(q, m, t0, a) {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
 // ORDER BY: keys, each a column (with a type) or an aggregate, then asc or desc.
 fn order_keys[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
     m[qarena.s_orders()] = m[qarena.s_rec_base()];
@@ -787,7 +1024,17 @@ fn order_keys[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
             // where the call ends, for a repair that copies it (agg_call left it in the slot the order key keeps its start in)
             m[r + 7] = m[r + 6];
         } else {
-            let (c, t) = typed(q, m, 4, 5);
+            var c = 0 - 1;
+            var t = 0;
+            if bare_as_name(q, m) {
+                // a bare name in a join is an `as` name of the select list (the only unqualified name a join query has)
+                c = tk(m, 0);
+                step(m);
+            } else {
+                let (c2, t2) = typed(q, m, 4, 5);
+                c = c2;
+                t = t2;
+            }
             if c < 0 {
                 return 1;
             }
@@ -809,11 +1056,203 @@ fn order_keys[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
     return 0;
 }
 
+// Whether the tokens from the cursor are `column = column`, the second one written alias.column or a cast of one: a look-ahead, after which the cursor, the error and the notes are as they were.
+fn looks_eq[&q, &m](q: &q [byte], m: &!m [int]) -> [] bool {
+    let k0 = m[qarena.s_k()];
+    let ek = m[qarena.s_kind()];
+    let ec = m[qarena.s_code()];
+    let eo = m[qarena.s_offset()];
+    let d0 = m[qarena.s_dry()];
+    m[qarena.s_dry()] = 1;
+    var ok = false;
+    let (c, t) = typed(q, m, 4, 5);
+    if c >= 0 && eat_sym(m, qlex.y_eq()) {
+        let n1 = tk(m, 0);
+        let k1 = qarena.tok_kind(m, n1);
+        ok = (k1 == qlex.t_id() || k1 == qlex.t_qid()) && is_sym(m, 1, qlex.y_dot()) || is_word(q, m, 0, "cast") && is_sym(m, 1, qlex.y_open());
+    }
+    m[qarena.s_k()] = k0;
+    m[qarena.s_kind()] = ek;
+    m[qarena.s_code()] = ec;
+    m[qarena.s_offset()] = eo;
+    m[qarena.s_dry()] = d0;
+    return ok;
+}
+
+// One key equality of the on: `column = column`, one column of each table and both read as the same type. Its record: the probe column's name token, the build column's, the type.
+fn key_pair[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    let (l, lt) = typed(q, m, 4, 5);
+    if l < 0 {
+        return 1;
+    }
+    if expect_sym(m, qlex.y_eq(), 13) != 0 {
+        return 1;
+    }
+    let at2 = start_of(m, 0);
+    let (r, rt) = typed(q, m, 4, 5);
+    if r < 0 {
+        return 1;
+    }
+    let ls = side_of(q, m, l);
+    let rs = side_of(q, m, r);
+    if ls != 0 && ls == rs {
+        return qarena.fail(m, 1, 95, at2);
+    }
+    if lt != rt {
+        return qarena.fail(m, 1, 96, at2);
+    }
+    var p = l;
+    var b = r;
+    if rs == 1 || ls == 2 {
+        p = r;
+        b = l;
+    }
+    if m[qarena.s_pair_count()] == 0 {
+        m[qarena.s_pairs()] = m[qarena.s_rec_base()];
+    }
+    let rec = record(m);
+    m[rec] = p;
+    m[rec + 1] = b;
+    m[rec + 2] = lt;
+    m[qarena.s_pair_count()] = m[qarena.s_pair_count()] + 1;
+    return 0;
+}
+
+// The on clause: key equalities joined by `and`, then conditions on the second table joined by `and` (a level of a parenthesis may hold an `or`; the top level may not).
+fn on_clause[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    m[qarena.s_in_on()] = 1;
+    m[qarena.s_cond_count()] = 0;
+    var eqs = true;
+    var started = false;
+    var last_and = 0;
+    var more = true;
+    while more {
+        let start = start_of(m, 0);
+        if eqs && looks_eq(q, m) {
+            if m[qarena.s_pair_count()] >= 8 {
+                return qarena.fail(m, 1, 97, start);
+            }
+            if key_pair(q, m) != 0 {
+                return 1;
+            }
+        } else if !eqs && looks_eq(q, m) {
+            return qarena.fail(m, 1, 98, start);
+        } else {
+            if m[qarena.s_pair_count()] == 0 {
+                return qarena.fail(m, 1, 94, start);
+            }
+            if eqs {
+                eqs = false;
+                m[qarena.s_jconds()] = m[qarena.s_rec_base()];
+            }
+            if started {
+                structure(m, 0 - 3, last_and);
+            }
+            m[qarena.s_in_conds()] = 1;
+            let before = m[qarena.s_mix()];
+            if unit(q, m, 0) != 0 {
+                return 1;
+            }
+            m[qarena.s_in_conds()] = 0;
+            if before == 0 && m[qarena.s_mix()] != 0 {
+                m[qarena.s_mix_on()] = 1;
+            }
+            started = true;
+        }
+        let here = start_of(m, 0);
+        if is_word(q, m, 0, "and") {
+            step(m);
+            last_and = here;
+        } else if is_word(q, m, 0, "or") {
+            return qarena.fail(m, 2, 120, here);
+        } else {
+            more = false;
+        }
+    }
+    if !eqs {
+        m[qarena.s_jconds_end()] = m[qarena.s_rec_base()];
+        m[qarena.s_jcond_count()] = m[qarena.s_cond_count()];
+    }
+    m[qarena.s_cond_count()] = 0;
+    m[qarena.s_in_on()] = 0;
+    return 0;
+}
+
+// After the first source of a join statement: `as A [jtype] join 'path' as B on ...`. The scan found the shape; this reads it and says what is wrong with the rest of it.
+fn join_head[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
+    step(m);
+    step(m);
+    let at = start_of(m, 0);
+    if is_word(q, m, 0, "right") {
+        return qarena.fail(m, 2, 110, at);
+    }
+    if is_word(q, m, 0, "full") {
+        return qarena.fail(m, 2, 111, at);
+    }
+    if is_word(q, m, 0, "cross") {
+        return qarena.fail(m, 2, 112, at);
+    }
+    if is_word(q, m, 0, "inner") || is_word(q, m, 0, "left") || is_word(q, m, 0, "semi") || is_word(q, m, 0, "anti") {
+        let left = is_word(q, m, 0, "left");
+        step(m);
+        if left && is_word(q, m, 0, "outer") {
+            return qarena.fail(m, 2, 113, start_of(m, 0));
+        }
+    }
+    if !eat_word(q, m, "join") {
+        return qarena.fail(m, 1, 102, start_of(m, 0));
+    }
+    let t = tk(m, 0);
+    step(m);
+    if qarena.tok_kind(m, t) == qlex.t_str() {
+        m[qarena.s_join_path()] = t;
+    } else if qarena.tok_kind(m, t) == qlex.t_id() && lower_eq(q, qarena.tok_start(m, t), qarena.tok_end(m, t), "stdin") {
+        return qarena.fail(m, 2, 116, qarena.tok_start(m, t));
+    } else {
+        return qarena.fail(m, 1, 90, qarena.tok_start(m, t));
+    }
+    if !eat_word(q, m, "as") {
+        return qarena.fail(m, 1, 91, start_of(m, 0));
+    }
+    let tb = tk(m, 0);
+    if !alias_at(q, m, tb) {
+        return qarena.fail(m, 1, 31, qarena.tok_start(m, tb));
+    }
+    step(m);
+    if name_eq(q, m, tb, m[qarena.s_alias_a()]) {
+        return qarena.fail(m, 1, 92, qarena.tok_start(m, tb));
+    }
+    if !eat_word(q, m, "on") {
+        return qarena.fail(m, 1, 93, start_of(m, 0));
+    }
+    if on_clause(q, m) != 0 {
+        return 1;
+    }
+    if is_word(q, m, 0, "join") || is_word(q, m, 0, "inner") || is_word(q, m, 0, "left") || is_word(q, m, 0, "right") || is_word(q, m, 0, "full") || is_word(q, m, 0, "cross") {
+        return qarena.fail(m, 2, 114, start_of(m, 0));
+    }
+    if (is_word(q, m, 0, "semi") || is_word(q, m, 0, "anti")) && word_at(q, m, m[qarena.s_k()] + 1, "join") {
+        return qarena.fail(m, 2, 114, start_of(m, 0));
+    }
+    return 0;
+}
+
 // The whole statement. Answers 0, or 1 with the error set.
 pub fn statement[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
     m[qarena.s_limit()] = 0 - 1;
     m[qarena.s_offset_value()] = 0 - 1;
     m[qarena.s_clause()] = 0;
+    scan_head(q, m);
+    if m[qarena.s_join()] == 0 {
+        // a dot is read only in a join: a query that is not the head of one is refused at its first dot, as it always was
+        var d = 0;
+        while d < m[qarena.s_tokens()] {
+            if qarena.tok_kind(m, d) == qlex.t_sym() && qarena.tok_aux(m, d) == qlex.y_dot() {
+                return qarena.fail(m, 1, 25, qarena.tok_start(m, d));
+            }
+            d = d + 1;
+        }
+    }
     if !eat_word(q, m, "select") {
         return qarena.fail(m, 1, 1, start_of(m, 0));
     }
@@ -840,7 +1279,11 @@ pub fn statement[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
         } else {
             return qarena.fail(m, 1, 6, a);
         }
-        if is_word(q, m, 0, "join") || is_word(q, m, 0, "left") || is_word(q, m, 0, "inner") || is_word(q, m, 0, "cross") || is_word(q, m, 0, "full") {
+        if m[qarena.s_join()] == 1 {
+            if join_head(q, m) != 0 {
+                return 1;
+            }
+        } else if is_word(q, m, 0, "join") || is_word(q, m, 0, "left") || is_word(q, m, 0, "inner") || is_word(q, m, 0, "cross") || is_word(q, m, 0, "full") {
             return qarena.fail(m, 2, 67, start_of(m, 0));
         }
         m[qarena.s_clause()] = 2;

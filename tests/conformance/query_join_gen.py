@@ -189,11 +189,23 @@ def settle_page(plan):
     return plan
 
 
+def spelled(plan, case):
+    """The plan as the query says it, written as flags: an `or` that is the whole of an on condition is in parentheses (the query has no other way to put it after an `and`), and a rename of
+    columns of a rows plan with no select list names them, since `as` is a part of a select item."""
+    p = dict(plan)
+    if p.get("jw") is not None and p["jw"][0] == "or":
+        p["jw"] = R3.PAREN(p["jw"])
+    if p.get("rename") and p.get("group") is None and p.get("aggs") is None and not p.get("select"):
+        jt = p["jtype"]
+        p["select"] = list(case.P[0]) + ([PREFIX + b for b in case.B[0]] if jt in ("inner", "left") else [])
+    return p
+
+
 def draw(rng, cases, jt):
     """(case, plan) for a join type: a plan of the J3 reference that the query form can say."""
     for _ in range(200):
         case = rng.choice(cases)
         plan = R3.random_plan(rng, case, jt)
         if expressible(plan):
-            return case, settle_page(plan)
+            return case, spelled(settle_page(plan), case)
     raise AssertionError("no expressible plan drawn")

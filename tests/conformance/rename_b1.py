@@ -272,3 +272,12 @@ def b1_changed(text):
     import query_ref_a2
     lat = text.encode("utf-8").decode("latin-1")
     return reading_of(lat, query_ref_a2) != reading_of(lat, query_ref)
+
+
+def j3b_hint_moved(text):
+    """Whether the query is refused today as `query.unsupported` for the feature `join` or `subquery`: slice J3b (docs/joins.md section 20) changed the hint of those two, which said there were no joins,
+    and nothing else of the answer. The goldens of the earlier slices hold every other case to main's bytes; for these they hold the status and the rule, and test_join_j3b.py holds the rest."""
+    import query_ref
+    lat = text.encode("utf-8").decode("latin-1")
+    r = reading_of(lat, query_ref)
+    return len(r) == 3 and r[0] == "unsupported" and r[2] in ("join", "subquery")

@@ -13,6 +13,10 @@ FIXTURES = {
     # columns whose names the flags must escape, and a table to join them with
     "o1.csv": 'k:1,my col,a,b,#1,-d\n1,A,x,y,p,q\n2,B,x,z,r,s\n3,C,w,z,t,u\n',
     "o2.csv": "k=2,x,y,a=b,e\\f,d\n1,P,Q,R,S,T\n2,U,V,W,X,Y\n9,Z,Z,Z,Z,Z\n",
+    # a probe whose column is called like a column the join gives the second table: join.column-collision
+    "pc.csv": "id,b.city\n1,x\n2,y\n",
+    # columns called like the words of a condition
+    "o3.csv": "id,and,in,contains\n1,x,y,z\n2,w,y,z\n",
 }
 
 END = "END"
@@ -48,6 +52,20 @@ REFUSALS = [
     ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = c.id", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
     (HEAD + " group by p.id", "syntax", "p.id", Q.WHAT_UNKNOWN_ALIAS),
     ("select a.id, B.city from 'p.csv' as a join 'b.csv' as b on a.id = b.id", "syntax", "B.city", Q.WHAT_UNKNOWN_ALIAS),
+    # a dot is read only in a join; a lexical error after it is told after it, as it always was
+    ("select a.b from 'f' where c = 'x", "syntax", ".", WHAT_BYTE),
+    ("select a.b from 'join.csv' where c = 'x", "syntax", ".", WHAT_BYTE),
+    ("select a.id from 'p.csv' as a right 'b.csv' as b on a.id = b.id", "unsupported", "right", Q.F_RIGHT),
+    ("select a.id from 'p.csv' as a full 'b.csv' as b on a.id = b.id", "unsupported", "full", Q.F_FULL),
+    ("select a.id from 'p.csv' as a cross 'b.csv' as b on a.id = b.id", "unsupported", "cross", Q.F_CROSS),
+    # the second table's alias is known from the head, whatever the join word
+    ("select c.id from 'p.csv' as a left outer join 'b.csv' as b on a.id = b.id", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
+    ("select c.id from 'p.csv' as a inner join 'b.csv' as b on a.id = b.id", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
+    ("select c.id from 'p.csv' as a semi join 'b.csv' as b on a.id = b.id", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
+    ("select c.id from 'p.csv' as a anti join 'b.csv' as b on a.id = b.id", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
+    ("select c.id from 'p.csv' as a left join 'b.csv' as b on a.id = b.id", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
+    ("select a.name as n from 'p.csv' as a join 'b.csv' as b on a.id = b.id order by n.name", "syntax", "n.name", Q.WHAT_UNKNOWN_ALIAS),
+    ("select a.name as n from 'p.csv' as a join 'b.csv' as b on a.id = b.id order by n::int", "syntax", "n::int", Q.WHAT_QUALIFIED),
     # earliest of several is the one told
     ("select a.id, c.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id where id = 1", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
     ("select id, c.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id", "syntax", "id,", Q.WHAT_QUALIFIED),
@@ -169,19 +187,37 @@ ACCEPTED = [
     ("select a.id from 'p.csv' as a left join 'b.csv' as b on a.id = b.id and (b.city = 'x' or not (b.n > 5))",
      ["--join", "b.csv", "--on", "id=id", "--join-type", "left", "--join-prefix", "b.", "--join-where", "(city = 'x' or not (n > 5))", "--select", "id"], ("file", "p.csv")),
     ("select a.id from 'p.csv' as a join 'b.csv' as b on b.id = a.id where b.city in ('x', 'y') and a.v::int > 5 order by b.city",
-     ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--select", "id", "--where", "'b.city' in ('x', 'y') and v:int > 5", "--order-by", "b.city"], ("file", "p.csv")),
+     ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--select", "id", "--where", "b.city in ('x', 'y') and v:int > 5", "--order-by", "b.city"], ("file", "p.csv")),
     ("select a.name as who, b.city as town from 'p.csv' as a left join 'b.csv' as b on a.id = b.id order by town, who desc",
      ["--join", "b.csv", "--on", "id=id", "--join-type", "left", "--join-prefix", "b.", "--select", "name,b.city", "--order-by", "b.city,-name", "--rename", "#1=who,#2=town"], ("file", "p.csv")),
     ("select a.odd, count(distinct b.city), max(a.v) from 'p.csv' as a join 'b.csv' as b on a.id = b.id group by a.odd order by a.odd desc",
      ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--group", "odd", "--agg", "distinct:b.city,max:v", "--sort", "-odd"], ("file", "p.csv")),
     ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and b.n = '200' limit 5",
      ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--join-where", "n = '200'", "--select", "id", "--limit", "5"], ("file", "p.csv")),
+    ("select a.id from 'p.csv' as a join 'b.csv' as b on cast(a.id as int) = cast(b.id as int)",
+     ["--join", "b.csv", "--on", "id=id:int", "--join-type", "inner", "--join-prefix", "b.", "--select", "id"], ("file", "p.csv")),
+    ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id::dec(2) = b.id::dec(2) and b.n::float > 1.5",
+     ["--join", "b.csv", "--on", "id=id:dec(2)", "--join-type", "inner", "--join-prefix", "b.", "--join-where", "n:float > 1.5", "--select", "id"], ("file", "p.csv")),
+    ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and b.city = 'x' and b.n > 5",
+     ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--join-where", "city = 'x' and n > 5", "--select", "id"], ("file", "p.csv")),
+    ("select a.id from 'p.csv' as a join 'b.csv' as b on b.id = a.id and not b.city = 'x' and (b.n > 5 or b.n < 1)",
+     ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--join-where", "not (city = 'x') and (n > 5 or n < 1)", "--select", "id"], ("file", "p.csv")),
+    ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id where b.city = 'x' and \"b\".x = 'y'".replace('\"b\".x', "b.n"),
+     ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--select", "id", "--where", "b.city = 'x' and b.n = 'y'"], ("file", "p.csv")),
+    ("select \"b t\".city from 'p.csv' as \"p t\" join 'b.csv' as \"b t\" on \"p t\".id = \"b t\".id where \"b t\".city = 'x'",
+     ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b t.", "--select", "b t.city", "--where", "'b t.city' = 'x'"], ("file", "p.csv")),
+    ("select a.id from 'p.csv' as a join 'o3.csv' as b on a.id = b.id where b.\"and\" = 'x' or b.\"in\" in ('y')",
+     ["--join", "o3.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--select", "id", "--where", "'b.and' = 'x' or 'b.in' in ('y')"], ("file", "p.csv")),
     ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id offset 2",
      ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--select", "id", "--from", "2"], ("file", "p.csv")),
 ]
 
 # columns whose names need escaping in the flags: the query writes them "quoted", the flags escape them in their own ways
 ODD = [
+    ("select a.id from 'p.csv' as \"p\"\"t\" join 'b.csv' as \"b\"\"t\" on \"p\"\"t\".id = \"b\"\"t\".id".replace("a.id", "\"b\"\"t\".city"),
+     ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b\"t.", "--select", "b\"t.city"], ("file", "p.csv")),
+    ("select a.\"#1\" from 'o1.csv' as a join 'o2.csv' as b on a.\"#1\" = b.x",
+     ["--join", "o2.csv", "--on", "\\#1=x", "--join-type", "inner", "--join-prefix", "b.", "--select", "\\#1"], ("file", "o1.csv")),
     ("select a.\"my col\", b.\"a=b\", b.\"e\\f\" from 'o1.csv' as a join 'o2.csv' as b on a.\"k:1\" = b.\"k=2\"",
      ["--join", "o2.csv", "--on", "k\\:1=k\\=2", "--join-type", "inner", "--join-prefix", "b.", "--select", "my col,b.a=b,b.e\\\\f"], ("file", "o1.csv")),
     ("select a.\"#1\", a.\"-d\", b.d from 'o1.csv' as a left join 'o2.csv' as b on a.\"k:1\" = b.\"k=2\" order by a.\"-d\" desc",

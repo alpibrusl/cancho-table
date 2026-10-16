@@ -15,7 +15,10 @@ import expr;
 import finish;
 import flags;
 import inputs;
+import jxsrc;
 import orparse;
+import qrefuse;
+import qtrans;
 import query;
 import spec;
 import wrepair;
@@ -83,6 +86,18 @@ pub fn type_of[&w](word: &w [byte]) -> [] int {
         }
     }
     return 0;
+}
+
+// `--on` as the call says it: the flag's, or the query's.
+pub fn on_of[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte]) -> [heap, args] On {
+    let onb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_on(), "on");
+    var on = parse_on(heap, "");
+    borrow onb as &obr in {
+        drop_on(heap, on);
+        on = parse_on(heap, buffer.bytes(obr));
+    }
+    buffer.drop(heap, onb);
+    return on;
 }
 
 pub fn parse_on[&h, &g](heap: &!h Heap, given: &g [byte]) -> [heap] On {
@@ -256,8 +271,8 @@ pub fn parse_on[&h, &g](heap: &!h Heap, given: &g [byte]) -> [heap] On {
     return On { status: status, pairs: pairs, names: names, ends: ends, kinds: kinds, types: types, using: using };
 }
 
-// What is wrong with the flags of a join, added to `errs`.
-pub fn check[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, inp: inputs.Inputs, errs: fail.Errors) -> [heap, args] fail.Errors {
+// What is wrong with the flags of a join, added to `errs`. `jxs` is the text of the join of a `--query` (empty for the flags, which are then read from the arguments).
+pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, inp: inputs.Inputs, jxs: &x [byte], errs: fail.Errors) -> [heap, args] fail.Errors {
     let table = spec.flag_table();
     var e = errs;
     if !inp.has_join {
@@ -266,75 +281,101 @@ pub fn check[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, i
         }
         return e;
     }
-    if bytes.equal(cli.text(args, parsed, table, "join"), "-") {
-        e = flags.problem(heap, e, "args.bad-value", "the --join file is read whole before the first probe row, so it cannot be standard input", "name the file in --join and pipe the other one into FILE", "--join");
+    let path = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_join(), "join");
+    borrow path as &pr in {
+        if bytes.equal(buffer.bytes(pr), "-") {
+            e = flags.problem(heap, e, "args.bad-value", "the --join file is read whole before the first probe row, so it cannot be standard input", "name the file in --join and pipe the other one into FILE", "--join");
+        }
     }
-    if !cli.has(parsed, table, "on") {
+    buffer.drop(heap, path);
+    if !jxsrc.has(parsed, jxs, jxsrc.s_on(), "on") {
         e = flags.problem(heap, e, "args.required-flag", "--join needs --on: the column of FILE and the column of the --join file whose cells are equal", "--on user=id", "--join --on");
     } else {
-        let on = parse_on(heap, cli.text(args, parsed, table, "on"));
-        var ostatus = 0;
-        borrow on as &onr in {
-            ostatus = onr.status;
+        let onb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_on(), "on");
+        borrow onb as &obr in {
+            let on = parse_on(heap, buffer.bytes(obr));
+            var ostatus = 0;
+            borrow on as &onr in {
+                ostatus = onr.status;
+            }
+            var why = "";
+            var hint = "--on user=id";
+            if ostatus == 1 {
+                why = "--on is a list of pairs: PROBE=BUILD, a column of FILE, an equals sign and a column of the --join file, or one name that both files have";
+            } else if ostatus == 3 {
+                why = "a type goes at the end of a pair, after the build column: --on user=id:int, and never after the probe column; a colon in a name is written with a backslash before it";
+                hint = "--on user=id:int, or --on 'a\\:b=c' for a column called a:b";
+            } else if ostatus == 4 {
+                why = "a backslash in --on escapes only a comma, a backslash, an equals sign, a colon or a leading #";
+            } else if ostatus == 5 {
+                why = "--on has two equals signs in a pair: write a backslash before one that is part of a name";
+                hint = "--on 'a\\=b=c'";
+            } else if ostatus == 6 {
+                why = "a name in --on is empty, or a pair is: a list is PROBE=BUILD,PROBE=BUILD with a comma between pairs and none at the end";
+            } else if ostatus == 7 {
+                why = "the type of a pair is :int, :float or :dec(S) with S from 0 to 18";
+                hint = "--on user=id:int, --on price=cost:dec(2)";
+            } else if ostatus == 8 {
+                why = "a pair has one type, at its end: --on user=id:int, and not --on user=id:int:int";
+            } else if ostatus == 9 {
+                why = "a position alone is not a name that both files share: write both sides, --on '#2=#2', or the name";
+                hint = "--on '#2=#2' or --on user";
+            } else if ostatus == 10 {
+                why = "--on takes 1 to 8 pairs";
+                hint = "join on fewer columns, or pipe a first join as csv into a second call";
+            }
+            if ostatus != 0 {
+                e = flags.problem(heap, e, "args.bad-value", why, hint, "--on");
+            }
+            drop_on(heap, on);
         }
-        var why = "";
-        var hint = "--on user=id";
-        if ostatus == 1 {
-            why = "--on is a list of pairs: PROBE=BUILD, a column of FILE, an equals sign and a column of the --join file, or one name that both files have";
-        } else if ostatus == 3 {
-            why = "a type goes at the end of a pair, after the build column: --on user=id:int, and never after the probe column; a colon in a name is written with a backslash before it";
-            hint = "--on user=id:int, or --on 'a\\:b=c' for a column called a:b";
-        } else if ostatus == 4 {
-            why = "a backslash in --on escapes only a comma, a backslash, an equals sign, a colon or a leading #";
-        } else if ostatus == 5 {
-            why = "--on has two equals signs in a pair: write a backslash before one that is part of a name";
-            hint = "--on 'a\\=b=c'";
-        } else if ostatus == 6 {
-            why = "a name in --on is empty, or a pair is: a list is PROBE=BUILD,PROBE=BUILD with a comma between pairs and none at the end";
-        } else if ostatus == 7 {
-            why = "the type of a pair is :int, :float or :dec(S) with S from 0 to 18";
-            hint = "--on user=id:int, --on price=cost:dec(2)";
-        } else if ostatus == 8 {
-            why = "a pair has one type, at its end: --on user=id:int, and not --on user=id:int:int";
-        } else if ostatus == 9 {
-            why = "a position alone is not a name that both files share: write both sides, --on '#2=#2', or the name";
-            hint = "--on '#2=#2' or --on user";
-        } else if ostatus == 10 {
-            why = "--on takes 1 to 8 pairs";
-            hint = "join on fewer columns, or pipe a first join as csv into a second call";
-        }
-        if ostatus != 0 {
-            e = flags.problem(heap, e, "args.bad-value", why, hint, "--on");
-        }
-        drop_on(heap, on);
+        buffer.drop(heap, onb);
     }
-    if cli.has(parsed, table, "join-prefix") {
+    if jxsrc.has(parsed, jxs, jxsrc.s_prefix(), "join-prefix") {
         // (one lookup of the flag table for the type, not two: a lookup scans the table, and it is most of what a small call costs)
-        let kind = cli.text(args, parsed, table, "join-type");
-        if bytes.equal(kind, "semi") || bytes.equal(kind, "anti") {
+        let kindb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_type(), "join-type");
+        var semi = false;
+        borrow kindb as &kr in {
+            semi = bytes.equal(buffer.bytes(kr), "semi") || bytes.equal(buffer.bytes(kr), "anti");
+        }
+        buffer.drop(heap, kindb);
+        if semi {
             e = flags.problem(heap, e, "args.conflict", "a semi or anti join gives the probe columns only, so there is no column of the --join file for --join-prefix to name", "drop --join-prefix", "--join-type --join-prefix");
         }
     }
     if inp.has_report {
         e = flags.problem(heap, e, "args.conflict", "--report types describes the columns of one file, and the joined row has padded cells and a key with two spellings: it does not take a join", "write the join as --format csv and pipe it into a second call that reports", "--join --report");
     }
-    if cli.has(parsed, table, "join-where") {
+    if jxsrc.has(parsed, jxs, jxsrc.s_join_where(), "join-where") {
         // the expression is read here, before any file is opened; the names in it are resolved against the --join file's header with the key columns
-        let given = cli.text(args, parsed, table, "join-where");
-        let (t, what, at) = orparse.parse(heap, query.empty(heap), given);
-        query.drop(heap, t);
-        if what == orparse.mixed() {
-            e = wrepair.refuse_for(heap, e, given, at, args, cli.value_index(parsed, table, "join-where"), cli.value_is_whole(parsed, table, "join-where"), "--join-where");
-        } else if what != 0 {
-            var w = fail.open_in(heap, finish.extra(), "where.syntax", "--join-where is not an expression", "the grammar is in the help of --where: COLUMN OP VALUE joined by and or by or, with parentheses and not");
-            w = fail.repair_none(heap, w, "what the expression was meant to say is not known");
-            w = fail.detail_open(heap, w);
-            w = fail.detail_str(heap, w, "flag", "--join-where");
-            w = fail.detail_int(heap, w, "offset", at);
-            w = fail.detail_str(heap, w, "expected", expr.expected(what));
-            w = fail.detail_text(heap, w, "expression", given);
-            e = fail.add(heap, e, w);
+        let gb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_join_where(), "join-where");
+        borrow gb as &gr in {
+            let given = buffer.bytes(gr);
+            let (t, what, at) = orparse.parse(heap, query.empty(heap), given);
+            query.drop(heap, t);
+            if what == orparse.mixed() {
+                var flag_at = 0 - 1;
+                var whole = false;
+                if !jxsrc.queried(jxs) {
+                    flag_at = cli.value_index(parsed, table, "join-where");
+                    whole = cli.value_is_whole(parsed, table, "join-where");
+                }
+                e = wrepair.refuse_for(heap, e, given, at, args, flag_at, whole, "--join-where");
+            } else if what != 0 && jxsrc.queried(jxs) {
+                // a literal of the query's on that does not fit the type its column is read as: refused at the literal of the query
+                e = qrefuse.literal_refusal(heap, e, inp.query_text, what, at + qtrans.jw_base());
+            } else if what != 0 {
+                var w = fail.open_in(heap, finish.extra(), "where.syntax", "--join-where is not an expression", "the grammar is in the help of --where: COLUMN OP VALUE joined by and or by or, with parentheses and not");
+                w = fail.repair_none(heap, w, "what the expression was meant to say is not known");
+                w = fail.detail_open(heap, w);
+                w = fail.detail_str(heap, w, "flag", "--join-where");
+                w = fail.detail_int(heap, w, "offset", at);
+                w = fail.detail_str(heap, w, "expected", expr.expected(what));
+                w = fail.detail_text(heap, w, "expression", given);
+                e = fail.add(heap, e, w);
+            }
         }
+        buffer.drop(heap, gb);
     }
     if inp.jsonl {
         e = flags.problem(heap, e, "args.conflict", "a join reads csv or tsv on both sides in this version", "drop --input-format, or convert the input to csv", "--join --input-format");

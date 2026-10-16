@@ -66,6 +66,9 @@ class Compat(unittest.TestCase):
         expr = C1.expression_of(argv)
         if C1.expr_b1(argv):
             return None                    # slice B1 reads it differently from slice A2: held by test_rename_b1_compat.py
+        if C1.hint_moved(argv):
+            self.assertEqual(row[:2], old[:2], cid)       # slice J3b rewrote the hint of the features join and subquery: held by test_join_j3b.py
+            return None
         r1, r2 = readings(expr)
         if row[:3] == old[:3]:
             # (a refusal in the formats that carry no detail -- csv, JSON lines -- is one line of text that does not say where or what was expected: the same bytes for two readings)

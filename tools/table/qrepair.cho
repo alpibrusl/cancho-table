@@ -336,6 +336,23 @@ fn option_into[&h, &t, &g, &x](heap: &!h Heap, w: json.Writer, t: &t qtrans.Tran
             if qtrans.info_at(t, qtrans.i_rows()) == 1 {
                 o = fail.choose_arg(heap, o, "--rows");
             }
+            if qtrans.info_at(t, qtrans.i_join()) == 1 {
+                // the join the query says, as the flags of a join
+                o = fail.choose_arg(heap, o, "--join");
+                o = fail.choose_arg(heap, o, qtrans.section(t, 8));
+                o = fail.choose_arg(heap, o, "--on");
+                o = fail.choose_arg(heap, o, qtrans.section(t, 9));
+                o = fail.choose_arg(heap, o, "--join-type");
+                o = fail.choose_arg(heap, o, qtrans.section(t, 10));
+                if len(qtrans.section(t, 11)) > 0 {
+                    o = fail.choose_arg(heap, o, "--join-prefix");
+                    o = fail.choose_arg(heap, o, qtrans.section(t, 11));
+                }
+                if len(qtrans.section(t, 12)) > 0 {
+                    o = fail.choose_arg(heap, o, "--join-where");
+                    o = fail.choose_arg(heap, o, qtrans.section(t, 12));
+                }
+            }
             if qtrans.info_at(t, qtrans.i_group()) == 1 {
                 o = fail.choose_arg(heap, o, "--group");
                 o = fail.choose_arg(heap, o, qtrans.section(t, 2));

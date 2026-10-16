@@ -117,6 +117,12 @@ def expr_b1(argv):
     return expr is not None and expr[0] == "query" and rename_b1.b1_changed(expr[1])
 
 
+def hint_moved(argv):
+    """Whether the expression of a case is a query refused as unsupported `join` or `subquery`, whose hint slice J3b rewrote (the hint said there were no joins)."""
+    expr = expression_of(argv)
+    return expr is not None and expr[0] == "query" and rename_b1.j3b_hint_moved(expr[1])
+
+
 def as_doc(r):
     try:
         lines = r.stdout.decode("utf-8").splitlines()
@@ -170,6 +176,9 @@ class Compat(unittest.TestCase):
                 same += 1
                 if b1:
                     continue                      # slice B1 reads it differently from slice A2: held by test_rename_b1_compat.py
+                if hint_moved(argv):
+                    self.assertEqual((row[1], row[2]), (g_status, g_rule), cid)      # slice J3b rewrote the hint of the features join and subquery: held by test_join_j3b.py
+                    continue
                 self.assertEqual((row[1], row[2], row[3]), (g_status, g_rule, g_sha), "%s %r: read the same by both grammars, so main's bytes" % (cid, expr))
                 if cid in a0:
                     self.assertEqual((row[1], row[2], row[4]), (a0[cid][0], a0[cid][1], a0[cid][3]), cid)

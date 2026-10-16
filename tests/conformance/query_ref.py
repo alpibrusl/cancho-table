@@ -795,6 +795,11 @@ def where_word(c):
         return "#%s" % c[1]
     if IDENT.fullmatch(c[1]) and c[1] not in ("and", "in", "contains"):
         return c[1]
+    if len(c) == 4 and c[3] == "b":
+        # a column of the second table of a join, alias.name, is one word of the grammar when both halves are plain words
+        alias = c[1][:len(c[1]) - len(c[2]) - 1]
+        if IDENT.fullmatch(alias) and IDENT.fullmatch(c[2]) and c[2] not in ("and", "in", "contains"):
+            return c[1]
     return "'" + c[1].replace("'", "''") + "'"
 
 

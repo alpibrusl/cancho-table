@@ -79,6 +79,12 @@ def cases():
     return out
 
 
+def digest(binary, p):
+    """The md5 of (status, standard output, standard error), the path of the binary (a repair offers the invocation back, argv[0] first) written {BIN}."""
+    b = binary.encode()
+    return hashlib.md5(repr((p.returncode, p.stdout.replace(b, b"{BIN}"), p.stderr.replace(b, b"{BIN}"))).encode()).hexdigest()
+
+
 def run_case(binary, case, workdir):
     cid, argv, stdin, key = case
     if key != "fixed":
@@ -93,9 +99,9 @@ def run_case(binary, case, workdir):
             q = subprocess.run([binary, "--query", query, "--format", "json"], capture_output=True, cwd=d, input=b"", timeout=60)
         finally:
             shutil.rmtree(d, ignore_errors=True)
-        return cid, hashlib.md5(repr((p.returncode, p.stdout, p.stderr, q.returncode, q.stdout, q.stderr)).encode()).hexdigest()
+        return cid, digest(binary, p) + digest(binary, q)
     p = subprocess.run([binary, *argv], capture_output=True, cwd=workdir, input=stdin if stdin is not None else b"", timeout=60)
-    return cid, hashlib.md5(repr((p.returncode, p.stdout, p.stderr)).encode()).hexdigest()
+    return cid, digest(binary, p)
 
 
 def compute(binary):

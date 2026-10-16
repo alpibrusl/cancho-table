@@ -204,6 +204,96 @@ class Pinned(Base):
         self.assertEqual((r.status, r.stdout), (0, b"name,n,sum:b.n\nbo2,2,500\nbob,2,500\nann,1,100\n"))
 
 
+class Refusals(Base):
+    """What the run says of a join is the same for the query and for the flags it stands for: the refusals of the build file, of the keys, of the bounds, of the names."""
+
+    RUNS = [
+        ("select a.id from 'p.csv' as a join '-' as b on a.id = b.id", []),
+        ("select a.id from 'p.csv' as a join 'nope.csv' as b on a.id = b.id", []),
+        ("select a.id from 'p.csv' as a join '../x.csv' as b on a.id = b.id", []),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.nope = b.id", []),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.nope", []),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.name::int = b.city::int", []),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id::int = b.id::int", []),
+        ("select a.id from 'p.csv' as a left join 'b.csv' as b on a.id = b.id where b.n::int > 100", []),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and b.nope = 'x'", []),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and b.city::int = 1", []),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id", ["--max-state-bytes", "10"]),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id", ["--max-join-rows", "1"]),
+        ("select a.id, count(*) from 'p.csv' as a join 'b.csv' as b on a.id = b.id group by a.id", ["--max-state-bytes", "300"]),
+        ("select a.id from 'pc.csv' as a join 'b.csv' as b on a.id = b.id", []),
+        ("select a.id from 'pc.csv' as a semi join 'b.csv' as b on a.id = b.id", []),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id", ["--max-rows", "2"]),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id", ["--delimiter", "tab"]),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id", ["--input-format", "jsonl"]),
+        ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id", ["--max-join-rows", "0"]),
+    ]
+
+    def test_the_same_refusal_in_both_forms(self):
+        for query, extra in self.RUNS:
+            flags, source = query_ref.translate(query)
+            operand = [source[1]] if source and source[0] == "file" else []
+            for fmt in ("json", "csv"):
+                with self.subTest(query=query, extra=extra, fmt=fmt):
+                    a = self.flags(*flags, *extra, "--format", fmt, *operand)
+                    b = self.q(query, *extra, "--format", fmt)
+                    self.assertEqual(comparable(a), comparable(b), (flags, a.stdout[:300], b.stdout[:300]))
+
+    def test_some_of_them_are_refusals(self):
+        rules = set()
+        for query, extra in self.RUNS:
+            r = self.q(query, *extra)
+            rules.add(rule_of(r))
+        for rule in ("args.bad-value", "column.unknown", "value.not-integer", "limit.state-too-large", "limit.too-many-join-rows", "join.column-collision", "limit.too-many-rows", "input.fields-required"):
+            self.assertIn(rule, rules, sorted(r for r in rules if r))
+
+    def test_the_explain_of_every_pinned_translation_is_the_explain_of_its_flags(self):
+        for query, flags, source in C.ACCEPTED + C.ODD:
+            with self.subTest(query=query):
+                operand = [source[1]] if source and source[0] == "file" else []
+                stdin = C.FIXTURES["p.csv"].encode() if source and source[0] == "stdin" else None
+                a = self.flags(*flags, "--explain", *operand, stdin=stdin)
+                b = self.q(query, "--explain", stdin=stdin)
+                self.assertEqual(a.status, 0, a)
+                self.assertEqual(comparable(a), comparable(b))
+
+    def test_the_flags_that_say_the_join_too_are_another_plan(self):
+        q = "select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id"
+        for flag in (["--join", "b.csv"], ["--on", "id=id"], ["--join-type", "left"], ["--join-prefix", "x_"], ["--join-where", "n > 1"]):
+            with self.subTest(flag=flag):
+                r = self.q(q, *flag)
+                self.assertEqual((r.status, rule_of(r)), (2, "args.conflict"), r)
+                self.assertIn(flag[0], doc(r)["error"]["detail"]["flags"])
+        r = self.q(q, "--max-join-rows", "1")
+        self.assertEqual(rule_of(r), "limit.too-many-join-rows")
+        r = self.q("select id from 'p.csv'", "--max-join-rows", "1")
+        self.assertEqual(rule_of(r), "args.required-flag")
+
+    def test_an_offered_repair_of_a_join_query_is_accepted(self):
+        q = "select a.id from 'p.csv' as a left join 'b.csv' as b on a.id = b.id and b.n > 100 where a.v = '10' or a.v = '20' and b.city = 'x'"
+        r = self.q(q)
+        self.assertEqual(rule_of(r), "query.mixed-and-or")
+        e = doc(r)["error"]
+        self.assertEqual(e["repair"]["kind"], "choose", e)
+        self.assertEqual(len(e["repair"]["options"]), 2)
+        answers = []
+        for option in e["repair"]["options"]:
+            again = run(*option["argv"][1:], "--format", "csv", cwd=self.cwd)
+            self.assertEqual(again.status, 0, (option, again))
+            answers.append(again.stdout)
+        # the two readings are two questions: by precedence (a or (b and c)) and left to right ((a or b) and c)
+        by_precedence = self.q("select a.id from 'p.csv' as a left join 'b.csv' as b on a.id = b.id and b.n > 100 where a.v = '10' or (a.v = '20' and b.city = 'x')", "--format", "csv")
+        left_to_right = self.q("select a.id from 'p.csv' as a left join 'b.csv' as b on a.id = b.id and b.n > 100 where (a.v = '10' or a.v = '20') and b.city = 'x'", "--format", "csv")
+        self.assertEqual(sorted(answers), sorted([by_precedence.stdout, left_to_right.stdout]))
+        # a refusal that has a correction (like -> contains) offers the whole join again
+        r = self.q("select a.id from 'p.csv' as a semi join 'b.csv' as b on a.id = b.id and b.city = 'y' where a.name like '%o%'")
+        e = doc(r)["error"]
+        self.assertEqual((e["rule"], e["repair"]["kind"]), ("query.unsupported", "choose"), e)
+        again = run(*e["repair"]["options"][0]["argv"][1:], "--format", "csv", cwd=self.cwd)
+        self.assertEqual(again.status, 0, again)
+        self.assertEqual(again.stdout, self.q("select a.id from 'p.csv' as a semi join 'b.csv' as b on a.id = b.id and b.city = 'y' where a.name contains 'o'", "--format", "csv").stdout)
+
+
 # ---- Q-EQ -------------------------------------------------------------------------------------------------------------------------------------
 
 class Equivalence(unittest.TestCase):
@@ -335,6 +425,19 @@ class Compat(unittest.TestCase):
         base = K.compute(os.path.join(os.environ["J3B_BASE"], "table"))
         self.assertEqual(sorted(k for k in base if base[k] != K.compute(binary())[k]), [])
 
+    def test_the_hints_of_the_two_features_that_said_there_were_no_joins_say_what_there_is(self):
+        # the only answers of a refusal that are not main's bytes (test_or_a1_compat.hint_moved holds the status and the rule of the rest)
+        s = Scratch()
+        self.addCleanup(s.cleanup)
+        fixtures(s)
+        r = run("--query", "select a from 'f' join 'g' on a = a", cwd=s.dir)
+        e = doc(r)["error"]
+        self.assertEqual((e["rule"], e["detail"]["feature"], e["detail"]["offset"]), ("query.unsupported", "join", 18))
+        self.assertEqual(e["hint"], "a join names both tables and their key: from 'a.csv' as a join 'b.csv' as b on a.k = b.k")
+        r = run("--query", "select a from select", cwd=s.dir)
+        e = doc(r)["error"]
+        self.assertEqual((e["detail"]["feature"], e["hint"]), ("subquery", "one input; there are no subqueries"))
+
     def test_the_flags_of_a_join_are_unchanged(self):
         # the flag form of a join is not touched by the query form: the fixtures' joins by flags, by the tool and by the reference of the tests of J3
         s = Scratch()
@@ -358,40 +461,37 @@ class Surface(unittest.TestCase):
     def test_the_features_of_a_join_are_told_in_the_help(self):
         text = introspect()["flags"]
         joined = " ".join(f["help"] for f in text if f["name"] == "--query")
-        for feature in ("right", "full", "outer", "one join"):
+        for feature in ("right", "full", "cross", "left outer join", "second join", "standard input as the second table", "alias.column"):
             self.assertIn(feature, joined)
 
 
 class Mcp(unittest.TestCase):
-    """The `query` property with a join, over the MCP server: the text of the answer is the CLI's."""
+    """The server maps `file` and `stdin` to the operand, so a query that names its source with `from` has two (docs/joins.md section 20): a join query is that query, and the server's way to a join is
+    the properties `join`, `on`, `join-type`, `join-prefix` and `join-where` (slice J4)."""
 
-    def test_a_join_query_over_the_server(self):
+    def test_a_join_query_over_the_server_is_a_query_that_names_its_source(self):
         import test_mcp_stdin as MS
         s = Scratch()
         self.addCleanup(s.cleanup)
         fixtures(s)
-        for query in ("select a.name, b.city from 'p.csv' as a left join 'b.csv' as b on a.id = b.id order by a.name",
-                      "select a.id from 'p.csv' as a anti join 'b.csv' as b on a.id = b.id",
-                      "select b.city, count(*) from 'p.csv' as a join 'b.csv' as b on a.id = b.id group by b.city",
-                      "select a.id from 'p.csv' as a join 'b.csv' as b on a.id = c.id",
-                      "select id from 'p.csv' as a join 'b.csv' as b on a.id = b.id"):
-            with self.subTest(query=query):
-                [r], status = MS.talk(s.dir, [MS.call({"query": query, "format": "csv"})])
-                cli = run("--root", s.dir, "--query", query, "--format", "csv")
-                self.assertEqual(r["result"]["content"][0]["text"].encode(), cli.stdout if cli.status == 0 else r["result"]["content"][0]["text"].encode())
-                self.assertEqual(r["result"]["_meta"]["exit_code"], cli.status)
+        answers = []
+        for args in ({"query": "select id from 'p.csv'", "file": "p.csv"},
+                     {"query": "select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id", "file": "p.csv"},
+                     {"query": "select a.id from stdin as a join 'b.csv' as b on a.id = b.id", "stdin": "id\n1\n"},
+                     {"query": "select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id"}):
+            [r], _ = MS.talk(s.dir, [MS.call(args)])
+            answers.append(r["result"]["content"][0]["text"] if "result" in r else r["error"]["data"]["rule"])
+        rules = [json.loads(a)["error"]["rule"] if a.startswith("{") else a for a in answers]
+        self.assertEqual(rules, ["args.conflict", "args.conflict", "args.conflict", "mcp.input-missing"])
 
-    def test_a_join_query_with_a_source_text_is_the_refusal_a_query_with_from_has(self):
-        # the `stdin` of the server is the FILE operand `-`: a query that names its source with `from` says it twice, join or not
+    def test_the_join_properties_do_what_a_query_does(self):
         import test_mcp_stdin as MS
         s = Scratch()
         self.addCleanup(s.cleanup)
         fixtures(s)
-        rules = []
-        for query in ("select id from 'p.csv'", "select a.id from stdin as a join 'b.csv' as b on a.id = b.id", "select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id"):
-            [r], _ = MS.talk(s.dir, [MS.call({"query": query, "stdin": "id\n1\n"})])
-            rules.append(json.loads(r["result"]["content"][0]["text"])["error"]["rule"])
-        self.assertEqual(rules, ["args.conflict"] * 3)
+        [r], _ = MS.talk(s.dir, [MS.call({"file": "p.csv", "join": "b.csv", "on": "id=id", "join-type": "left", "join-prefix": "b.", "select": "name,b.city", "order-by": "name", "format": "csv"})])
+        q = run("--root", s.dir, "--query", "select a.name, b.city from 'p.csv' as a left join 'b.csv' as b on a.id = b.id order by a.name", "--format", "csv")
+        self.assertEqual(r["result"]["content"][0]["text"].encode(), q.stdout)
 
 
 # ---- fuzz ---------------------------------------------------------------------------------------------------------------------------------------
