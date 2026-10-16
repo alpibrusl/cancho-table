@@ -278,6 +278,9 @@ EQUIVALENT_REASONS = {
     "write: the sections of the join are all there are": "`rest_from` is asked for a translation that succeeded, which has all its sections: the branch for fewer sections than asked is never taken",
     "flags: the join of a query has no key": "the type and the key of a query are always texts that are not empty (`inner` and a pair), so `has` answers yes for them whether or not it asks the section",
     "flags: the type of a query is not given": "the type of a query is always a word that is not empty, so asking the section answers what `k <= 2` answered",
+    "flags: the check reads the prefix from the flag": "the translation of a semi or anti join gives no prefix, so the check that a semi or anti join has none finds nothing to refuse whether it reads the query's text or the flag's (which a query does not have)",
+    "flags: the check reads the type from the flag": "the type is read only to refuse a prefix beside a semi or anti join, and the query that has a prefix is an inner or a left join, as is the flag's default",
+    "flags: the mix of a flag is told with a position of a query": "a query whose conditions of the on mix `and` and `or` is refused by the translation, so the check of `--join-where` never meets a mix in a query's text",
     "write: the name of a pair is the joined one": "the first column of a pair is the first table's, whose joined name is its own",
 }
 ALL = MUTANTS

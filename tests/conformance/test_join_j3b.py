@@ -264,6 +264,20 @@ class Refusals(Base):
                 self.assertEqual(a.status, 0, a)
                 self.assertEqual(comparable(a), comparable(b))
 
+    def test_a_collision_in_a_query_has_a_prefix_given_and_offers_none(self):
+        # the alias is the prefix of the query: the repair of a collision, a prefix with the stem of the file's name, is not offered
+        r = self.q("select a.id from 'pc.csv' as a join 'b.csv' as b on a.id = b.id")
+        e = doc(r)["error"]
+        self.assertEqual(e["rule"], "join.column-collision", r)
+        self.assertEqual(e["repair"]["kind"], "none")
+        self.assertIn("a prefix was given", e["repair"]["reason"])
+        self.assertEqual(e["detail"]["prefix"], "b.")
+        self.assertEqual(e["detail"]["collisions"], 1)
+        f = self.flags("--join", "b.csv", "--on", "id=id", "--join-prefix", "b.", "pc.csv")
+        self.assertEqual(doc(f)["error"]["repair"]["kind"], "none")
+        g = self.flags("--join", "b.csv", "--on", "id=id", "pc.csv")
+        self.assertEqual(doc(g)["error"]["rule"], "join.column-collision")        # (no prefix: id is in both, so the flag form offers the stem of the file name)
+
     def test_the_flags_that_say_the_join_too_are_another_plan(self):
         q = "select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id"
         for flag in (["--join", "b.csv"], ["--on", "id=id"], ["--join-type", "left"], ["--join-prefix", "x_"], ["--join-where", "n > 1"]):
