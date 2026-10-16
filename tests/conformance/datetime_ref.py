@@ -354,3 +354,97 @@ def fuzz_cell(rng):
         return bytes(rng.choice(b"0123456789-:TtZz+. ,") for _ in range(rng.randint(0, 40)))
     base = random_valid(rng, rng.choice(KINDS)).encode()
     return mutate(rng, base) if r < 0.9 else base + bytes(rng.choice(b"0123456789.") for _ in range(rng.randint(40, 80)))
+
+
+# ---- the bucket of a group key (docs/datetime.md section 7, slice T2) ------------------------------------------------------------------
+#
+# `--group ts:timestamp@day`: the key of a row is the FIRST VALUE OF THE BUCKET its value falls in, a value of the same type. The bucket of a :timestamp is a function of the INSTANT (the
+# UTC day, hour, month or year), of a :datetime the wall-clock reading, of a :date the written day. Written with `datetime.replace` on the value read back as a calendar date and
+# a clock, never with a division, so it shares nothing with the tool (which divides, with the value shifted to the year 1 so that no operand is negative).
+
+UNITS = ("hour", "day", "month", "year")
+UNITS_OF = {"date": ("month", "year"), "timestamp": UNITS, "datetime": UNITS}
+# the units the grammar knows but T2 does not build, and the ones that are no unit at all
+NOT_BUILT = ("week",)
+FINER = {"date": ("hour", "day")}      # a unit that exists but is finer than the type: `:date@hour`, `:date@day`
+
+
+def bucket(kind, value, unit):
+    """The first value of the bucket of `value` (days for a date, microseconds otherwise)."""
+    if unit not in UNITS_OF[kind]:
+        raise ValueError((kind, unit))
+    if kind == "date":
+        d = EPOCH.date() + dt.timedelta(days=value)
+        d = d.replace(day=1) if unit == "month" else d.replace(month=1, day=1)
+        return (d - EPOCH.date()).days
+    t = EPOCH + dt.timedelta(microseconds=value)
+    if unit == "hour":
+        t = t.replace(minute=0, second=0, microsecond=0)
+    elif unit == "day":
+        t = t.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif unit == "month":
+        t = t.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    else:
+        t = t.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return (t - EPOCH) // US
+
+
+def bucket_refusal(kind, unit):
+    """What `--group c:KIND@UNIT` is: None when it is built, else (reason, word) where reason is the `detail.reason` of the `args.bad-value` refusal (T2 as built, docs/datetime.md
+    section 19): `week-not-built`, `finer-than-type` or `unknown-unit`."""
+    if unit in UNITS_OF[kind]:
+        return None
+    if unit in NOT_BUILT:
+        return "week-not-built"
+    if unit in FINER.get(kind, ()):
+        return "finer-than-type"
+    return "unknown-unit"
+
+
+def first_value_cells(kind, rng, n):
+    """Valid cells near the edges of every unit: the instant before, at and after a boundary, written in several offsets and spellings."""
+    boundaries = []
+    for y in (1, 2, 4, 100, 400, 1600, 1899, 1900, 1969, 1970, 1971, 1999, 2000, 2023, 2024, 2025, 2026, 2099, 2100, 2399, 2400, 9998, 9999):
+        boundaries += [dt.datetime(y, 1, 1), dt.datetime(y, 12, 31, 23)]
+        for m in (2, 3, 12):
+            boundaries.append(dt.datetime(y, m, 1))
+            if m == 2:
+                boundaries.append(dt.datetime(y, 2, calendar.monthrange(y, 2)[1]))
+    boundaries += [dt.datetime(1969, 12, 31, 23, 59, 59), dt.datetime(1970, 1, 1), dt.datetime(9999, 12, 31, 23, 59, 59)]
+    cells = []
+    for b in boundaries:
+        for delta in (-1, 0, 1, 3600 * 1000000 - 1, 3600 * 1000000, 86400 * 1000000 - 1, 86400 * 1000000):
+            try:
+                t = b + dt.timedelta(microseconds=delta)
+            except OverflowError:
+                continue
+            if not 1 <= t.year <= 9999:
+                continue
+            micro = (t - EPOCH) // US
+            if kind == "date":
+                cells.append("%04d-%02d-%02d" % (t.year, t.month, t.day))
+                continue
+            if kind == "datetime":
+                cells.append("%04d-%02d-%02d%s%02d:%02d:%02d.%06d" % (t.year, t.month, t.day, rng.choice(SEPS), t.hour, t.minute, t.second, t.microsecond))
+                cells.append("%04d-%02d-%02d %02d:%02d:%02d" % (t.year, t.month, t.day, t.hour, t.minute, t.second))
+                continue
+            for off in ("Z", "+00:00", "+14:00", "-12:00", "+23:59", "-23:59", "+05:30", "-03:30", "+01:00", "-01:00", "z", "+09:45"):
+                sign = 1 if off[0] != "-" else -1
+                shift = 0 if off in ("Z", "z") else sign * (int(off[1:3]) * 3600 + int(off[4:6]) * 60) * 1000000
+                try:
+                    local = EPOCH + dt.timedelta(microseconds=micro + shift)
+                except OverflowError:
+                    continue
+                if not 1 <= local.year <= 9999:
+                    continue
+                cell = "%04d-%02d-%02d%s%02d:%02d:%02d.%06d%s" % (local.year, local.month, local.day, rng.choice(SEPS), local.hour, local.minute, local.second, local.microsecond, off)
+                if parse("timestamp", cell.encode())[0] == "ok":
+                    cells.append(cell)
+    seen = []
+    done = set()
+    for c in cells:
+        if c not in done:
+            done.add(c)
+            seen.append(c)
+    rng.shuffle(seen)
+    return seen[:n] if n else seen
