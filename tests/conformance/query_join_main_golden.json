@@ -1,0 +1,712 @@
+{
+"binary":"ca33910",
+"cases":{
+"accepted 0 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 0 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 1 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 1 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 10 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 10 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 11 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 11 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 12 csv":"4c3e58b427c501b15d8f357ae89839f9",
+"accepted 12 json":"b376b54fa7e966e75675e2f356976141",
+"accepted 13 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 13 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 14 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 14 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 15 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 15 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 16 csv":"d08fa4bcea1dc55512b613974ff0500c",
+"accepted 16 json":"403a0b137dfda402bb565b5f0011cd9a",
+"accepted 17 csv":"0affd3d91921228d40432f1e88c6abc5",
+"accepted 17 json":"183f6a25fabd2925e68e0c278cd95e5b",
+"accepted 2 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 2 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 3 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 3 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 4 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 4 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 5 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 5 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 6 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 6 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 7 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 7 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 8 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 8 json":"4b627d238cf4d8deb95e788b86922ec9",
+"accepted 9 csv":"f5e54500e46f37a158d3704a0eee1c6e",
+"accepted 9 json":"4b627d238cf4d8deb95e788b86922ec9",
+"example 0 csv":"982b83f40be7770388db43b139cd78c5",
+"example 0 json":"fde866045951b4086345a4ce63b02c83",
+"example 1 csv":"6d6ebf5207a01ee26eabc753149cecee",
+"example 1 json":"6f382aeac237e6ca75a1674e9c50bfaf",
+"example 10 csv":"65630805e2af875a06798f9caaf5fa90",
+"example 10 json":"c5a83cdbdf7a68ceb38cb8cacf904c90",
+"example 11 csv":"702e0b38a8a0186ba372172c3c18af48",
+"example 11 json":"c9c79e2b632ced9f6af394a2c133ddd3",
+"example 12 csv":"b88c6df46008240b27abe36286cfe03c",
+"example 12 json":"69e4875fb4945d14dfeb5557b497d6b7",
+"example 13 csv":"e87a1376a35e5c7bdec1f2b92074a362",
+"example 13 json":"a2eed45491625ba63096ba3edab5c806",
+"example 14 csv":"025698fe043fc08b1588cc8045fbafa7",
+"example 14 json":"5e56ffd504c9fd66c0c740f93eaa9f25",
+"example 15 csv":"9c43a60abc820dc60cbd74ed1587cdb0",
+"example 15 json":"ee618563217c7f40bf45ab138f49368c",
+"example 2 csv":"564e91111eb20f560eea6cac6b28f965",
+"example 2 json":"acf22dea19c219f3695b3d2109d497b8",
+"example 3 csv":"0062f6be3b421618b0e4a08db55221bd",
+"example 3 json":"93d834e63dffc2d70c42239222f0a463",
+"example 4 csv":"704f36aa9c5073272d3c06254b43b869",
+"example 4 json":"96ad6a96cbeaf14bf9a2f54c91a3a8ca",
+"example 5 csv":"23101cfe7bf611cb997e8f18da1bc954",
+"example 5 json":"5725ac3bf25553b114b398f5c87168c1",
+"example 6 csv":"e47e04fbf054b226f29f5c8d19538b07",
+"example 6 json":"37385c7cb4053cded9f2c70bc60912c2",
+"example 7 csv":"ca927d73f63530005f29d2b9364c90b1",
+"example 7 json":"6d0ba05dff0976e6d5a4019bac125f61",
+"example 8 csv":"f166bbb10932a0ac6c4c197a3ebba31e",
+"example 8 json":"896c834345d59d315ee9609e2a940938",
+"example 9 csv":"97632930a1a80464ad3196ffac87fa1e",
+"example 9 json":"ee36a78e928246e381bd874d8db0cfa9",
+"near 0 csv":"9c43a60abc820dc60cbd74ed1587cdb0",
+"near 0 json":"446d8fda52e232216e81493b133e99a7",
+"near 1 csv":"9c43a60abc820dc60cbd74ed1587cdb0",
+"near 1 json":"446d8fda52e232216e81493b133e99a7",
+"near 10 csv":"0affd3d91921228d40432f1e88c6abc5",
+"near 10 json":"183f6a25fabd2925e68e0c278cd95e5b",
+"near 11 csv":"9391dca7e11ce8b9d96844984e59f499",
+"near 11 json":"a0f54e03e9ca322cb3fdcd6a2a5643da",
+"near 12 csv":"da681c9b1ba441b7453bfb4bc72c7a84",
+"near 12 json":"68dabdffe0ed758048c8041d3548094a",
+"near 13 csv":"92949093fc01d2cb0468cb3961a64453",
+"near 13 json":"5d7e828785330158c0984c326922bbd7",
+"near 14 csv":"0affd3d91921228d40432f1e88c6abc5",
+"near 14 json":"183f6a25fabd2925e68e0c278cd95e5b",
+"near 15 csv":"d08fa4bcea1dc55512b613974ff0500c",
+"near 15 json":"403a0b137dfda402bb565b5f0011cd9a",
+"near 16 csv":"449ddbd32c100689a8d451bf0e44ea20",
+"near 16 json":"49b5b1c68f2e3dfe61da0827db79746e",
+"near 17 csv":"256ca5f8845a5f2ed8f21cfea88a8b97",
+"near 17 json":"6980a1a44002ccaf6eb17537c1bd2db6",
+"near 2 csv":"9e5df69e808391d2ba19a62e0014d740",
+"near 2 json":"57358258f670411c8dd04e2f2bf858af",
+"near 3 csv":"3ddd3d025832e89d9b66eee31971ad09",
+"near 3 json":"889f5188caae24352764a0eb71a6f603",
+"near 4 csv":"748bc678f7a5310a60ac43aece02ed51",
+"near 4 json":"3efa9e11e8c8618d01764aa621039450",
+"near 5 csv":"b77241501458eddf7b911c2aca6b4663",
+"near 5 json":"32552bd7da66ba641ea3539d5a03487d",
+"near 6 csv":"d526eff52b1374c38613bcd6c2fd6839",
+"near 6 json":"2d895ce7fd677f0dff18f403607cfe50",
+"near 7 csv":"5daac2ed7220aeea08ee1096484d8e12",
+"near 7 json":"b841af687c8b16f953305d9b5f3736e8",
+"near 8 csv":"16b1cf5286f5735152dbd1ab60914c45",
+"near 8 json":"a2a29d8023f705c9d1bbfbdbe02f502f",
+"near 9 csv":"0affd3d91921228d40432f1e88c6abc5",
+"near 9 json":"183f6a25fabd2925e68e0c278cd95e5b",
+"random 0":"017b3539bc7799ed458fc2af79d2fe7abde87f4f4dc417bb1eed2d24c5c1da55",
+"random 1":"72308ab0fb690307f6225a1731b68d25055c1ed1ccd91de7c0c38982584e2e88",
+"random 10":"027f616520bf306d36b6f7a759df2063742f50f0706f9601b6db1425a2558cb7",
+"random 11":"29719a76f122724f8a26012b73a4dfe303c1bc1543955dc3653fe4314c7a6868",
+"random 12":"7f4390ee9b113476ea0c7980e4b298e1ce1a6c63dd23f7d06ab4965945230f0c",
+"random 13":"7d1d51f82dea5e7522280c20db38dbe9f3c7bd360d3efa1edaf917d90a6de98c",
+"random 14":"f1c7d617e25f8bf444ab2e3fd020cfb4b79e7e0eaf78da6189aa1d596dfb5cf5",
+"random 15":"e3fbdc6d493555002859098ea90059f02569579f91f2347f479fa4ea04449693",
+"random 16":"bc532a84be5f32e6538bbb2700e42695b4da30d05934fce69c181b9a182322d2",
+"random 17":"e4c4775b5435b05c1a07de9806dacfb86059f2725e7f9b7c6cb21228488e5a7b",
+"random 18":"5bea0273477034d066c07eb259c88c007e180615b57fb0d5d0103f7fe3821241",
+"random 19":"910765633517867af7386f0f78f02e07203bc29d4618af06b5e8992543bd18fd",
+"random 2":"e87a1376a35e5c7bdec1f2b92074a362c74a3542188f0ac1b6436afd14bb9821",
+"random 20":"0d82d29addd05f50737133fa65656908cc7c13acdc1ff1b63da8ee57983d9c54",
+"random 21":"1b83f868d1f7ecfebe473ac858f8ad76fca73401bfeab0f87cddc80dc75ed105",
+"random 22":"c6ce885a5be89474d531aad6dca4430678192cef8f48d422103fbea36b268ca9",
+"random 23":"902dbaab389b997b93600866e4d7fe0adeaf9cb026e249bbb168295a2a50d6ec",
+"random 24":"33a25941086501220aa030cef2f8c6995d9261ecb3e61608bafb6cefa679bc7b",
+"random 25":"4ed673d977d0f22b625377e961e9a6ec4fe5dc12cc7e530cd268f600da4ef972",
+"random 26":"4e1714d8d3500670498dbad597447dfcf02dc9c496363f8167099d1ce6f5bc78",
+"random 27":"0562b7742074f560fea1e9b98cff3d25ab2af3d5cab32890c7ca024cbfb82d5b",
+"random 28":"cd1789055c4cbb84678e34f4ee79954048f87c455101ea3e282280b3cc626d39",
+"random 29":"e87a1376a35e5c7bdec1f2b92074a36242816a8e019470753f62712e1c9966ba",
+"random 3":"da7b76ac1b5d0db8a29924642699b6fa2cf7f17f95dcf82bb72d097e51e6209b",
+"random 30":"bf97db564b888ca01bfef77b6cc80ef633fb7b8c1a79929a2162892dec22eb2f",
+"random 31":"2e78c88ae6f6a9bf4c62c1300c995c309ccc61da2e008d97742c2aa87b3e9dd1",
+"random 32":"36f1549777fc73eee27cbd0a84d8cf29c0c594f44599cf25a2836d8f5aeb5569",
+"random 33":"2eb64ad3134272d9e34896419006a464552e0fa56470047027a5d5616c0dfe4d",
+"random 34":"4ed673d977d0f22b625377e961e9a6ec08797398eb317f65371b0d1dbb8855b3",
+"random 35":"4a76e001e7e32de1b9002b089f975678222e3d58ed7413a483c231ddbd7be4a9",
+"random 36":"588d286ee7cd54221b7c38357501c6faf02fa7d72533cb9ce751e959457d1c74",
+"random 37":"212968d3586ceca5ece93e8bc50ac181fd21ad196db32f3343858060d3bafead",
+"random 38":"d6a57950cebad6586c7df5c7facc9a6526ae24f376e799a53feaf25e4486d25c",
+"random 39":"38143c656dcffda525c401b48f39dcee1ed91a575c2f71c61fe4c6c0c011c66f",
+"random 4":"d4d99a062fcdf4fee9d8910ef4187f900f92585336024646de8ee8f451eedb10",
+"random 40":"35c11da71d9227108386926767a4b1d2650b5eae7d6667db4255e30c7df402b4",
+"random 41":"65db04d70c9d4adbe693736b85d81cc302b89ce8f5576372980f977080d6569d",
+"random 42":"4ed673d977d0f22b625377e961e9a6eccd3831fa4a16a2c9fcf48c9bdf9fce72",
+"random 43":"fe6aff30bbf2e8b9add981d37b21871cbcf623f934c4f0345d55f55376832023",
+"random 44":"18da38b3050772732f6051aebee8189c420bc601f1656612413e693e638632fd",
+"random 45":"654429a1a37a07d321d3cad76c5704a03193b362f870bd908acaaa1c3a87cb47",
+"random 46":"7fa17355a4048cdcd5f05ec1c209a61ddf9f3a394fc50d4eac2a03b3f02205ff",
+"random 47":"b7399302677a839883bf21afe57dfc3a9aefbfdc7e43d2a90d43329e7ae648dd",
+"random 48":"b4959ba75ec4a4e18ff16ad145808c11219042e70f759cbfdab80e1cb38a8cc1",
+"random 49":"894df8af369cd1871687bd77355fb0cfff08f7e93a56e756ce10120fe08bb899",
+"random 5":"4cf68aa19d4fb271fdb5c7d3e77d808cd96d5e3a2d3cb60f68677058fb768522",
+"random 50":"86254a9b6c3fae51c71ce5b046663f34a58e1d9fb21dd267cb2026120040bcce",
+"random 51":"601a1e6b54dc3c9f0cb6c1899e87d3476e38d7640afe2135c008ef289e6ca315",
+"random 52":"3a64c45be042b32095a0e9bc04eac047bbe5a62fac0dea8cb50009929b5e8dd9",
+"random 53":"d499b8f6a792251a7ed174c724f388af90955f063200daffb81b7ae81450c319",
+"random 54":"efa72e45c70b86358e6588b53307c74a4f7d31ca7fb72a8e3ed2db262bb11d45",
+"random 55":"55ebe60072173c235d037e353fed64443d097882106a9d2c53c8e9988db28cfc",
+"random 56":"6ae6c7e5e481b56f57063bd7b06cbedcd751fccf51409c2a83ed8333f8279bf7",
+"random 57":"e87a1376a35e5c7bdec1f2b92074a362a28fc4970df3457cb5e42c215ecefc25",
+"random 58":"3bf093bbebb95a90f841de2a41d12a9f1b9dc3ed7db8d9a4957c51777de678c1",
+"random 59":"e23ffe9cae37cbbc2ba430e42ff8c5ab3c60dd7876160f3e3a1e5ab37b77871d",
+"random 6":"d191df81ebcf1df300148c675a69516e75a6d94a57f8fdf2f079a90586a18f09",
+"random 60":"2f65518d6b999c084d2c06ca7d996feb8ba9789b92d7952ca64e263647ffa3e7",
+"random 61":"822bfd12286fa444e3a4f1963077eb113de3ba0563abe658ce964d292dc892c8",
+"random 62":"bd392679520b559f4c57066698a638f62cf7f17f95dcf82bb72d097e51e6209b",
+"random 63":"54c87caee1203f426a21d6874e3dba0ebb14f02e728ff60e38f6fda3dacf3b9a",
+"random 64":"1b83f868d1f7ecfebe473ac858f8ad76fca73401bfeab0f87cddc80dc75ed105",
+"random 65":"a2bd3bced7f2155e42a9b9209285ba873203eaf06eef639c51b1586dc7bf0dad",
+"random 66":"8ae02695a025a3e78a7bf66baeff42ffc2f4269c154f3939ed829a18d20e9700",
+"random 67":"5a88d51989a4cce63f88d78e514a6a7e02cc02b6b79256da8646d816bdfeabce",
+"random 68":"c1f62a9289b6fa55ee7df056e30ab055b590994353509ca1064a19b5d794dccb",
+"random 69":"10f5a039fd5de69fde459d5fe3d3ed8d56d90ad6d079107013277ce88d50f4ee",
+"random 7":"3a1960e18324d30dd768f82dcf585e8a3bf1816e2e12d1179af08e0c205b663a",
+"random 70":"036ec0037e217ff864dcfdd281646fe1b0fe738af3f4463deb477eb05595a422",
+"random 71":"8ed1d2e24195f28430291d764cfc74405f6e9466aa041a42a66fd8510f31cfec",
+"random 72":"be435506bfacb4d6c20975482ca897e534714c1c716d776e401a15e3fa740dbf",
+"random 73":"ef24bf33b1892d77661313294608dd08bde16e54ab7944484bbf3c278397a7f7",
+"random 74":"88190bcef661efa5a92e30cce48816d1f1cc542aa293a2c55dd5650fcc887583",
+"random 75":"3a8c8919dbe716cc453379c7355c22b2191837cb61026785593fad750307a7e7",
+"random 76":"9c5e97f68ff97c4f40d450cd903508ea62e6032d4e042f4e8ddfdacec191add2",
+"random 77":"c4c6c17b1b7ecf8dc98cc81585def81590044f88df5a12bb7d3677c8896357c2",
+"random 78":"605746a8f4f4b9f5d2882a2edc8995a0edc2810187d5c3983b6af3ceb7c2c9e0",
+"random 79":"eecd4cbdd690d0f5392b6ca034be4da6dce40f495a010242f954c59cd8d45ff4",
+"random 8":"532531e5129d4cb3220e098de454cb8974ca3689a079c997ce8e25623a644fa1",
+"random 9":"824bf80081b5fa41be5f2d1357086a89f22e6403463916ffa2f13bc460b40484",
+"refusal 0":"5e1bff066102875cf0fa76086c1af502",
+"refusal 1":"85312a6aaeaa3365101e57f6a7446a92",
+"refusal 10":"6c39cb02eb851d12e4a2f865b65074dc",
+"refusal 100":"4946d041989890cc663db41069cf9625",
+"refusal 101":"2aee62c32efce0f37e8d139b9be5ec0b",
+"refusal 102":"5fcb3998fd159c3dbf695b67413f4460",
+"refusal 103":"8e37bba59eae17412259fe597ad6d220",
+"refusal 104":"ce8aad0d4838f52d53f9eb4d729dde77",
+"refusal 105":"85003a611765a2a04f30cf97b9ea157e",
+"refusal 106":"0171e3a2a08a94f7b4947fd7b58512f4",
+"refusal 107":"a1e85ff9df7f4973f5f62e556da1dfdd",
+"refusal 108":"69b7a94f143eb72d0435091e42daed23",
+"refusal 109":"8aee159de98d4b8c6910cef137ed2fcf",
+"refusal 11":"85312a6aaeaa3365101e57f6a7446a92",
+"refusal 110":"12fe85eeb79ab21c5ae5ee24d054b8e0",
+"refusal 111":"d11cd112d30c3aa0cac4c8aac8eeced5",
+"refusal 112":"9a4387d1ea10659c039f2d2103cfb5ce",
+"refusal 113":"82c63f42a29eded9ef5bf1005c443c12",
+"refusal 114":"f808090464dee19a752fd7147d4c55a1",
+"refusal 115":"fe872950ca93cb71e224f08af199484a",
+"refusal 116":"0ebcb41ca57f861be359d55a17352654",
+"refusal 117":"5ade1f0a919c02d3326c9501ab74abfb",
+"refusal 118":"41fbf92fb97e9c8a8a9588f061b64ffe",
+"refusal 119":"961a7dd201d9c85835b13817c32be4dc",
+"refusal 12":"601c7f4d4e65560ffc6d2cbd8a1c5eb8",
+"refusal 120":"c62695b76164dba0155a59becde1c2cf",
+"refusal 121":"cd5bab5f8be42df0d29a02270d904f33",
+"refusal 122":"ac73ee9a1f336334bb4af2bce2f511e8",
+"refusal 123":"675d8676d051793c11e841e51f1baf6e",
+"refusal 124":"b30da3ed7099b097a33cd8bded2b7de5",
+"refusal 125":"b48425177ef34c3216362ccf4af071db",
+"refusal 126":"161838c73e9f9d3a5a5444c0d869f0a8",
+"refusal 127":"3cbc13b3fa6a108170e35716fa12b2d3",
+"refusal 128":"654af7caccff0d879af513c5e42025ff",
+"refusal 129":"f0b8959e01a208cb405e102d51d2fd85",
+"refusal 13":"ebf28b60e3f3d1b5e308b9c8b30973f7",
+"refusal 130":"09c4dccde03b2c7b9795997cfb5ebf7e",
+"refusal 131":"26af1b922fa636b0683d8bcabb798c30",
+"refusal 132":"fb66ae750c772822f2e5d96a707ce8d4",
+"refusal 133":"5947f9373332042002019499dc95c421",
+"refusal 134":"689ee13e6497739b9f5fa812925ab802",
+"refusal 135":"56b6c6681baaa7a60ad1eb58f84b661d",
+"refusal 136":"9f8c3e7f882bebdfbcee520027e52031",
+"refusal 137":"0b218a37f6e9b9e4ced4da58d5f3f4cf",
+"refusal 138":"887b22c1837ac986f074c8704f865e0b",
+"refusal 139":"c1eca1d9db84e525329f29e0acd27b81",
+"refusal 14":"8e64a3543a6902a36854ef7937bf8f66",
+"refusal 140":"a4d35632b4e462457ff262f578c6920a",
+"refusal 141":"dff5e0d5b7eb1a94d52475f9c28a7f29",
+"refusal 142":"d431470fd2f6fbeefb5b5211a8486100",
+"refusal 143":"ac779cf42c2f260aaee0b10cf41344aa",
+"refusal 144":"80a69b4ceaa5b8fd0aeee1cffc67aa83",
+"refusal 145":"36a7be7f61194ac9378f5f22a237ae2d",
+"refusal 146":"2b362ca1517a71755067c0992f3acd7d",
+"refusal 147":"eefa946284f52d89abfb35d16f471278",
+"refusal 148":"6835ae08e253c05e0081369cf3265ed2",
+"refusal 149":"d371a5d8f43fb376d52054849e26ac16",
+"refusal 15":"e8f250a6ec41d5ee5388e8c0859d8830",
+"refusal 150":"868e27c3861fb778a59c6cd325ee9b15",
+"refusal 151":"31dc136a72dd6c8f54f70f8a9a05743d",
+"refusal 152":"25215fdb1acf722c27c6e3017eabaa5a",
+"refusal 153":"6c2af81ebeb0f9b837ff688a14143253",
+"refusal 154":"8e56be4958563d9fde6e4163114dd6ab",
+"refusal 155":"83e910f9374a37da9e369c0a05a9f1ed",
+"refusal 156":"8bfb0f0a3c2e9a656800a24a7a05abff",
+"refusal 157":"4d37b66f3b237641082d148e1549b5b9",
+"refusal 158":"62934c47e2f958398f6e276f5c330aae",
+"refusal 159":"85807b6782389119fd8666870c41ecc4",
+"refusal 16":"8f54999d2243b41f531b79bd2945f63d",
+"refusal 160":"30b9be627abc5a49960277afe2b49d74",
+"refusal 161":"e0393b9ff440e0f92f9a1105a4a75ff0",
+"refusal 162":"948701f834c29c0e19e3f42a6fdf31c8",
+"refusal 163":"e38fa4cd3871c9fe40609ebafb6c9e65",
+"refusal 164":"039dd1e83da20cd3f7d146669162cd11",
+"refusal 165":"d6ed8357b4257d5a84f042e790b994c3",
+"refusal 166":"6628717fe7ab8029f49b7f97b95bb3da",
+"refusal 167":"82845aeeb075bf4c02842efe8afe5a86",
+"refusal 168":"efdd420c7ee66b25a4caba34715c63fb",
+"refusal 169":"c20d1583993f9855e8c735133b71bb46",
+"refusal 17":"12e07beecf651f2fc5919826651dada7",
+"refusal 170":"e3e317ebe22d9ebb1b69a7b0a74dea01",
+"refusal 171":"0bc5629712b9856268f3ea641faa9761",
+"refusal 172":"5f0eb53f4b7a1c0b110dd630672092b7",
+"refusal 173":"8bd2ab7e2109606a4876814973e9ed2d",
+"refusal 174":"f3386b6da7cd8d7a30f7c21e180e67a8",
+"refusal 175":"6398969acc8e22d4952472de85111e29",
+"refusal 176":"b807f3a4d4a6bec5e29a22b188e8551b",
+"refusal 177":"adc6a4a9b08781a9da95c6918d65c82a",
+"refusal 178":"09791bab4dc051d9bf369b39e0652318",
+"refusal 179":"0e69ae47868147547ba6689bd0ec7b78",
+"refusal 18":"431fe48d0224b6dc335374685a6764b2",
+"refusal 180":"b9a9c941424448f7a8420866e3fe687c",
+"refusal 181":"ac6ea91f9dccc9283542ec89afae9b6a",
+"refusal 182":"604fab16be3832257f41afea9c189f61",
+"refusal 183":"5de5ecb18e9c57254b9bf7b3defb86b0",
+"refusal 184":"129ce411e97595f93065c2c5aa54151a",
+"refusal 185":"1869af9e4aad683f9ffe9d5617d73c91",
+"refusal 186":"8a29546448eb1adf6fe7e2269ee2b9a9",
+"refusal 187":"41b02a4663e2c47f7c2f96df6f51fbf5",
+"refusal 188":"059ddab4471a6316ff39a2da4735c72d",
+"refusal 189":"be9652ae450b6d7f5d517921961fec72",
+"refusal 19":"db186320104d6169b38d1f56f39a2a28",
+"refusal 190":"a399007256615346965750766f350994",
+"refusal 191":"b53e327f7231b58798f9418f5cb5e4a6",
+"refusal 192":"b1e9ae311cf94e478f525ecb007847da",
+"refusal 193":"22c2ef7fa0b25e15f0896debafbf579c",
+"refusal 194":"381a12a6e12f4a73c57f84250ff53a85",
+"refusal 195":"190499c2dd8ccb1729cc0dc703de24c2",
+"refusal 196":"01ffbb341a732d66c2d66b18e5695c70",
+"refusal 197":"02e7f03ca3c5eed338cb17aee66f7e35",
+"refusal 198":"5dd3605935f369a81822beba20207752",
+"refusal 199":"769b9ac6ac19abfa7b744394b648885d",
+"refusal 2":"58249dbc3c8ad37936af3e147f0101f5",
+"refusal 20":"318e8f8588106787273bee7dfca422d7",
+"refusal 200":"3beb3ec200e0a92f55cc444843416a71",
+"refusal 201":"741f487185c8ef486286dca283514c66",
+"refusal 202":"9fe7fc57cff156432db7ba05c34a831d",
+"refusal 203":"d3d0dbfd44f7182afeea7c5671aae178",
+"refusal 204":"050162931ddcae35cb341af4b803c7f2",
+"refusal 21":"e834d5246d6f9bd937b8f3ddb1413e79",
+"refusal 22":"97873f3a063cc47f4e5740e27b9f66c8",
+"refusal 23":"4076bf15778ad1d24f8995e9b1cf2177",
+"refusal 24":"2bce196b98fa34a63534de35e2f27271",
+"refusal 25":"8504b27ba85d6fd0d9bc5f3b50278173",
+"refusal 26":"f0797d2db57937b93f460ac6d8952eb2",
+"refusal 27":"355d3b7cc6fd6800dd071039c14f4f06",
+"refusal 28":"cacce34b9aaf7c4b80b9559d966445ca",
+"refusal 29":"59d442cd7524c6b8aaf8c71629da4be1",
+"refusal 3":"0242a4b8d2ca02d05cd92baf3f3c0455",
+"refusal 30":"7356c8606c72fb6c91374c830a78e731",
+"refusal 31":"a30a94137a24002269abba792e189b3d",
+"refusal 32":"f7a5036413dc7135571794c3f94527a8",
+"refusal 33":"8f90e7f4c175ed105043e093160f6e34",
+"refusal 34":"3ddc1570c1c192df7f6e0440bf996729",
+"refusal 35":"8d1f4e678dda48755d2c1b8c24e3071b",
+"refusal 36":"fe0aa6f05ea29ef15a24a89d759e4d50",
+"refusal 37":"7151fd52180db102d16784a8636d590e",
+"refusal 38":"7d2eee35f1adcf6fb21a9a47c49643e0",
+"refusal 39":"a8e6a426daaabb9f4d6ef6346f1f9e87",
+"refusal 4":"e0d432c84683ab8390e3e8e7c13151fb",
+"refusal 40":"748786aaaf7310ec88530b1fedee689b",
+"refusal 41":"98052791dbb039cc7aa80c1c6cc56636",
+"refusal 42":"5b6345ef7af5b777b84ca3bb85d5fff3",
+"refusal 43":"ceaae5d3cf953a9718aca33e54ee0ac8",
+"refusal 44":"1e102a85dcca30c580b0365f2aef350c",
+"refusal 45":"25d0ecd1a9d44b0cbca0a3f7152989b8",
+"refusal 46":"02cb4c86b91a05b9af211dea7e95e074",
+"refusal 47":"5e7640d084e5e941f2d5512f6e1f7b8c",
+"refusal 48":"50fffbbceb35f2cb684ba725267c4f8b",
+"refusal 49":"ef2d6bd2101774e782b084cc46709892",
+"refusal 5":"9eb8a2939ade4577f2f10c1e5d4d4ed2",
+"refusal 50":"790b7ba4ef7ec9d7a33254dc9651ff89",
+"refusal 51":"935f363cb021c7f6ca8e41b203953e0b",
+"refusal 52":"00b5633849bb6ff85f43faad3a7bf2f7",
+"refusal 53":"4eea897ce9895e03c39c5513aa51bee8",
+"refusal 54":"bf5e68803ae965baf32133d22dad3546",
+"refusal 55":"3ec49a1092bc8ce704e86ad40e634e31",
+"refusal 56":"b9704c49233bd801cf958b1030fd7b47",
+"refusal 57":"d045341b24a122e4828cbb713071a47b",
+"refusal 58":"ecefe4be3cdb2f8734a4490312a0281e",
+"refusal 59":"358b557d43ece1e53c1395eabbc87b7f",
+"refusal 60":"adbad34300ae45373c9d6f48ae0a6a93",
+"refusal 61":"d478236f8cfaa66e90ba10bf81b3ecd2",
+"refusal 62":"e02632a7e21716da697668a0adae45ef",
+"refusal 63":"8fd42d8589734e2438782583f066ae0e",
+"refusal 64":"6af54e775f99d89496ccc2c4f0648117",
+"refusal 65":"95aca454b418d8f0f4b5d4f1e98a6340",
+"refusal 66":"dea3fc1e2cf9ab743c740f6f0c159adf",
+"refusal 67":"894f177f99edf0fb47775af6076a1eae",
+"refusal 68":"7ff764f3452488e3767211fdb6932f31",
+"refusal 69":"015cfcaba42272ff8c885d39f552fd33",
+"refusal 70":"242ecbd1cfdaf77464a4c718723c0fb5",
+"refusal 71":"fa2ca0d1223bd6be785a8322ad3873b0",
+"refusal 72":"e75975322f0cd31f0e7000061a8ef819",
+"refusal 73":"4b90bb20be59c3c55cc2bfa842dc3a85",
+"refusal 74":"3cc02b4b38bf13429823d905de114a19",
+"refusal 75":"54e75c71d169c9845e88a4de558588a5",
+"refusal 76":"74e7d554b53e23da733bd6dbcea19a92",
+"refusal 77":"baafea075c0838b65939e8194430dcd1",
+"refusal 78":"241874b96be9c365f7c5a4e99522c288",
+"refusal 79":"97f616f8733d461c0a9504d017d35921",
+"refusal 80":"63b6f8705fdd12a64bd3fb5a6ff2a41e",
+"refusal 81":"df27fdf81e8c7f1c354b341386ea1524",
+"refusal 82":"17f21e6302a75620dbe3006976e298f3",
+"refusal 83":"430d1641db20d8c935def412ee782b68",
+"refusal 84":"405a82f8a613f4557f7c39c4bacd9521",
+"refusal 85":"49521f51df9306ca54eff9c901eebaaf",
+"refusal 86":"2fc996304d838afec59370a6a2039c12",
+"refusal 87":"790b40ffec9b09b1a75c198be6df6a37",
+"refusal 88":"1c5d25902caa0f65e2c4fad46cbb2de3",
+"refusal 89":"fe6f0300f9bca5423964c4eb721e4d16",
+"refusal 90":"049ee41e124abca00341641adc2af961",
+"refusal 91":"639e57f5293004c936793ce0a5964fd5",
+"refusal 92":"a23a4ffe9c09f527a35eb8b61059eba6",
+"refusal 93":"956086cd6d284414cbf5db4dbd611505",
+"refusal 94":"5d991666254cc51125e256ef5d6989d0",
+"refusal 95":"81fa107fe1ffb656c8a61112c67bba93",
+"refusal 96":"8198b529de8fa68ade36014c48c3844f",
+"refusal 97":"e4c9cc0242f8ffd28841de2ac424e380",
+"refusal 98":"f30c34e930f03e0eeebb1278bb6d274d",
+"refusal 99":"34f7925eadc3d7e9d316e91c642f920c"
+},
+"random":[
+[
+"n2,bytes,it's,price,null,#3,contains,k.v\n100.1,\"line\nbreak\",500,500,b,\"q\"\"t\",9999999999,\u00e9\n7.00,#1,1,5,ab,\"c,d\",500,\"c,d\"\n-2.75,b,500,-3,x y,\u00e9,-3,ab\n12.50,,404,2,200,,500,9\n0.25,Zed,9999999999,100,\"c,d\",,42,\u00e9\n-2.75,9,16,5,ab,9,2,Zed\n,200,9999999999,9999999999,9,\"q\"\"t\",1,\n,ab,5,9999999999,,b,5,x y\n12.50,\"c,d\",,5,200,9,2,Zed\n1.5,ab,500,404,a,\"q\"\"t\",500,\n7.00,ab,404,343,,Zed,42,\n100.1,ab,397,1,,o'k,9999999999,#1\n-2.75,a,-3,678,,x y,500,200\n",
+"Select\t*\tFROM\t'f.csv'\tWhere\tn2 Contains 'a\\b' and cast(\"contains\" as int) != -3 and cast(#7 as int) <= 42 and bytes <= '\u00e9' and \"null\" != '9' and \"contains\" != '-3'\tLimit\t1\tOffset\t0"
+],
+[
+"-dash,b@2,status,n1,n2\n7.00,,#1,1,a\n,100,\"q\"\"t\",5,\"c,d\"\n0.25,404,200,,\"line\nbreak\"\n1.5,7,o'k,996,\"q\"\"t\"\n100.1,-3,\"c,d\",100,a\n100.1,9999999999,\"line\nbreak\",9999999999,b\n-2.75,500,o'k,404,\n-2.75,9999999999,\"line\nbreak\",5,9\n3,-3,200,-3,a\n7.00,907,ab,5,a\n0.25,500,9,0,\u00e9\n0.25,5,\"line\nbreak\",1,10\n0.25,,b,404,\n",
+"Select\tn1, count(*)\tFROM\t'f.csv'\tWhere\t\"-dash\" < 'b' or \"-dash\" > '100.1'\tGroup\tBy\tn1\tOrder\tBY\tn1 desc"
+],
+[
+"bytes,it's,a:int,city\n42,3,200,\n,0.25,\"q\"\"t\",\"line\nbreak\"\n5,12.50,ab,o'k\n500,3,#1,200\n-3,7.00,ab,\"q\"\"t\"\n9999999999,3,\"c,d\",9\n404,3,#1,#1\n5,7.00,ab,\u00e9\n404,7.00,\"line\nbreak\",\"line\nbreak\"\n100,12.50,o'k,\u00e9\n42,7.00,#1,\u00e9\n-3,1.5,ab,Zed\n0,100.1,a,ab\n1,1.5,,a\n2,-2.75,\"q\"\"t\",10\n0,,,b\n0,-2.75,#1,\n-3,3,b,o'k\n404,12.50,10,\"line\nbreak\"\n42,-2.75,,\n9999999999,,,b\n500,100.1,Zed,\"c,d\"\n-3,7.00,#1,\n0,3,b,b\n0,12.50,a,\"c,d\"\n",
+"select  \"a:int\", count(*), sum(\"it's\"::dec(3))  from  'f.csv'  Where  (\"a:int\" <= 'a' OR city In ('line\nbreak', '')) AND (city >= 'b' OR \"a:int\" > '\u00e9')  GROUP  by  \"a:int\""
+],
+[
+"status,price,-dash,b@2,limit,n2,id\nab,\u00e9,,7.00,3,200,100\n10,200,0.25,12.50,0.25,\"q\"\"t\",7\n9,o'k,3,0.25,1.5,\u00e9,167\n\"line\nbreak\",\u00e9,100.1,7.00,0.25,b,404\n10,200,0.25,3,1.5,10,\no'k,200,-2.75,1.5,1.5,\"line\nbreak\",\n\"q\"\"t\",x y,1.5,0.25,12.50,\"q\"\"t\",500\n9,\"line\nbreak\",7.00,3,100.1,x y,500\no'k,,-2.75,3,100.1,,42\no'k,x y,1.5,100.1,,,-3\no'k,10,-2.75,7.00,7.00,\u00e9,7\n,Zed,100.1,100.1,-2.75,o'k,404\nab,#1,-2.75,12.50,1.5,Zed,-3\nx y,9,7.00,-2.75,0.25,9,9999999999\n\"q\"\"t\",a,12.50,3,-2.75,\"q\"\"t\",949\n#1,10,-2.75,-2.75,12.50,9,1\na,,-2.75,3,1.5,b,5\n\"line\nbreak\",a,-2.75,12.50,7.00,10,5\n\"line\nbreak\",b,7.00,7.00,1.5,\u00e9,7\n\u00e9,\"q\"\"t\",,7.00,,,0\na,b,3,0.25,3,\u00e9,5\n",
+"select \"-dash\", \"limit\", \"limit\" From 'f.csv' where \"-dash\"::dec(3) IN (0.25, 3) AND #6 = '9' AND id in ('500', 0, '500')"
+],
+[
+"status,\"x,y\",n1,n2,id,-dash\n0,7.00,x y,x y,7.00,42\n42,-2.75,Zed,b,7.00,7\n,100.1,9,Zed,-2.75,2\n0,3,x y,,0.25,5\n5,3,o'k,\u00e9,-2.75,1\n5,-2.75,Zed,200,3,\n7,0.25,,ab,3,-3\n7,3,x y,ab,1.5,2\n",
+"SELECT n2, \"x,y\", count(*) FROM 'f.csv' WHERE n1 > 'x y' And \"x,y\"::dec(2) = 100.1 And id::dec(2) != -2.75 Group By n2, \"x,y\""
+],
+[
+"id,status,name,\"x,y\",like,order,b@2\n1.5,404,1.5,a,Zed,12.50,x y\n12.50,9999999999,100.1,200,a,12.50,x y\n0.25,0,100.1,x y,x y,0.25,\"c,d\"\n1.5,0,0.25,a,\"q\"\"t\",-2.75,\"c,d\"\n,5,12.50,\"c,d\",o'k,0.25,b\n",
+"SELECT  *  from  'f.csv'  Where  (cast(id as dec(2)) <= 3 or \"order\" <> '\u00e9') And \"x,y\" < 'x y'  ORDER  BY  \"like\", \"order\" DESC  LIMIT  5  OFFSET  1"
+],
+[
+"it's,n2,price,id,b@2\n200,1,\"line\nbreak\",#1,7.00\nb,1,\"q\"\"t\",\"c,d\",7.00\n,0,Zed,200,7.00\n\"line\nbreak\",993,\"line\nbreak\",a,12.50\nx y,1,,b,0.25\nZed,2,9,#1,12.50\na,9999999999,x y,\"line\nbreak\",12.50\n\"c,d\",,#1,b,12.50\nb,404,9,b,3\n9,5,x y,#1,12.50\n,-3,Zed,\"c,d\",-2.75\n\"q\"\"t\",-3,\u00e9,\"c,d\",100.1\nx y,42,ab,200,100.1\no'k,404,ab,x y,-2.75\na,-3,#1,\"c,d\",1.5\nab,0,10,\"line\nbreak\",3\no'k,9999999999,\u00e9,a,1.5\na,473,,,-2.75\nb,7,200,\"c,d\",7.00\n9,404,\"c,d\",x y,-2.75\n10,7,a,9,0.25\n\"q\"\"t\",0,Zed,,100.1\n,0,,10,12.50\n",
+"Select\nn2, #1, n2\nfrom\n'f.csv'\nwhere\n\"it's\" < 'line\nbreak' and \"b@2\" < '200' and \"it's\" < 'x y'\nOrder\nBy\n\"b@2\" asc, \"it's\" asc"
+],
+[
+"null,id,and,t,\"x,y\",name,a b,-dash\n100,-3,7.00,-3,Zed,560,1.5,9999999999\n42,404,12.50,5,x y,42,0.25,1\n42,100,,500,200,348,3,1\n7,1,100.1,9999999999,x y,9999999999,3,1\n7,100,7.00,404,x y,100,0.25,9999999999\n5,2,12.50,,ab,2,0.25,2\n-3,0,7.00,9999999999,\"q\"\"t\",1,3,5\n42,0,-2.75,-3,,100,0.25,42\n404,404,1.5,42,\"c,d\",500,,42\n0,9999999999,100.1,42,o'k,500,0.25,5\n100,5,0.25,7,Zed,42,100.1,42\n5,5,-2.75,9999999999,,1,7.00,404\n9999999999,820,3,86,ab,,3,-3\n9999999999,500,1.5,,,2,7.00,5\n,5,0.25,2,#1,9999999999,-2.75,500\n500,404,-2.75,,ab,633,1.5,500\n1,5,1.5,404,10,404,-2.75,204\n",
+"SELECT\nid , count(*)\nFROM\n'f.csv'\nwhere\n\"-dash\" <> '204' And \"x,y\" <> 'q\"t'\ngroup\nBY\nid"
+],
+[
+"bytes,-dash,select,\"q\"\"d\",\"x,y\",null,name\n10,,\"q\"\"t\",200,b,1.5,b\n9,,,b,,12.50,ab\n",
+"SELECT  *  FROM  'f.csv'  Limit  100"
+],
+[
+"k.v,city,b@2,#3,select,id\n,7.00,\u00e9,#1,100.1,0.25\nZed,3,10,Zed,0.25,12.50\na,1.5,9,a,100.1,1.5\na,-2.75,9,a,12.50,1.5\n\u00e9,12.50,\"q\"\"t\",10,-2.75,-2.75\na,,\u00e9,#1,-2.75,1.5\n\"q\"\"t\",12.50,\"line\nbreak\",,100.1,-2.75\n",
+"Select\n*\nFROM\n'f.csv'\norder\nBY\n\"select\" asc"
+],
+[
+"a:int,n2,price,city,like,\"q\"\"d\",b@2,contains\nab,42,10,12.50,\u00e9,\u00e9,,200\no'k,42,\"c,d\",1.5,o'k,ab,\"q\"\"t\",a\n9,500,b,-2.75,200,b,10,ab\nZed,100,,-2.75,9,\"c,d\",,9\nab,42,a,1.5,o'k,x y,\u00e9,200\n,500,x y,-2.75,ab,\"c,d\",ab,\u00e9\n\"q\"\"t\",500,\"q\"\"t\",7.00,,a,ab,\"c,d\"\n10,100,200,100.1,10,\"q\"\"t\",\"line\nbreak\",ab\no'k,5,\u00e9,100.1,10,x y,9,x y\na,1,x y,3,\u00e9,10,o'k,\u00e9\nZed,7,\"c,d\",7.00,\"line\nbreak\",\"c,d\",\"line\nbreak\",\u00e9\n,5,\"q\"\"t\",7.00,Zed,\"q\"\"t\",9,\n\"c,d\",9999999999,\"c,d\",-2.75,200,\"c,d\",o'k,\"c,d\"\n9,1,#1,100.1,10,\u00e9,#1,\u00e9\n9,42,b,-2.75,\u00e9,ab,\"line\nbreak\",200\n,100,\u00e9,7.00,a,o'k,\u00e9,200\n10,42,,1.5,,200,\u00e9,10\n\u00e9,2,,-2.75,b,\u00e9,a,9\n\"c,d\",404,ab,3,o'k,\"line\nbreak\",Zed,\n200,9999999999,\"q\"\"t\",7.00,\"line\nbreak\",a,ab,Zed\n,-3,ab,7.00,,\"q\"\"t\",10,ab\n",
+"Select \"b@2\" , count(*) from 'f.csv' WHERE \"b@2\" >= 'ab' Group BY \"b@2\" Order by \"b@2\""
+],
+[
+"order,in,n2,#3,b@2,\"q\"\"d\",t\n1.5,-3,,\"c,d\",Zed,100.1,9999999999\n100.1,1,5,a,10,1.5,1\n7.00,5,404,#1,b,12.50,42\n0.25,,1,#1,a,3,5\n12.50,2,1,Zed,,7.00,0\n3,9999999999,2,x y,,7.00,1\n-2.75,-3,404,\u00e9,\u00e9,3,7\n7.00,5,500,\"q\"\"t\",\u00e9,1.5,500\n12.50,7,-3,\"line\nbreak\",#1,12.50,9999999999\n-2.75,5,7,Zed,ab,-2.75,1\n3,672,2,200,,100.1,0\n1.5,7,1,o'k,200,100.1,42\n100.1,100,404,\u00e9,\"q\"\"t\",-2.75,9999999999\n0.25,42,752,\"c,d\",\"line\nbreak\",7.00,-3\n1.5,1,9999999999,x y,o'k,100.1,2\n0.25,404,100,Zed,10,12.50,5\n",
+"select * FROM 'f.csv' Where cast(\"in\" as int) = 7 OR \"b@2\" > 'line\nbreak' OR \"q\"\"d\"::dec(3) = 1.5"
+],
+[
+"city,#3,n2,\"x,y\",Mixed Case,select\n12.50,,,7.00,200,100.1\n",
+"select \"#3\" From 'f.csv' Where ((\"select\" != '100.1' AND (\"Mixed Case\" < '200' or cast(city as dec(2)) = 12.50)) Or city > 'c,d') and (\"Mixed Case\" != 'c,d' Or \"Mixed Case\" < 'a\\b') order BY \"x,y\" Desc LIMIT 5"
+],
+[
+"name,bytes,h\u00e9llo,city,\"x,y\",n1,it's\n7,#1,12.50,42,\"c,d\",-2.75,9999999999\n9999999999,b,-2.75,269,\u00e9,12.50,404\n5,o'k,3,100,\u00e9,12.50,5\n1,,3,,9,,825\n7,\"q\"\"t\",0.25,42,9,-2.75,140\n404,\u00e9,,42,\u00e9,0.25,9999999999\n5,\"q\"\"t\",-2.75,0,9,1.5,7\n7,#1,3,0,,3,500\n9999999999,10,,2,x y,7.00,100\n5,\"q\"\"t\",0.25,100,b,-2.75,7\n500,a,3,0,9,0.25,7\n,o'k,-2.75,0,x y,7.00,\n500,200,,9999999999,\"c,d\",1.5,5\n,9,-2.75,404,\"q\"\"t\",7.00,1\n500,o'k,0.25,7,o'k,,\n500,9,0.25,2,9,100.1,0\n100,\"c,d\",12.50,7,,,5\n42,9,3,404,\"line\nbreak\",7.00,5\n,\"c,d\",12.50,-3,b,3,0\n9999999999,a,1.5,2,\u00e9,1.5,7\n-3,o'k,1.5,42,\u00e9,,5\n0,200,3,2,#1,0.25,263\n2,a,12.50,0,200,-2.75,-3\n404,x y,100.1,9999999999,\u00e9,3,0\n100,\u00e9,1.5,0,o'k,7.00,100\n",
+"SELECT #5, \"x,y\", n1 FROM 'f.csv' WHERE (\"h\u00e9llo\" != '1.5' Or \"x,y\" <= 'a') And (cast(\"h\u00e9llo\" as dec(3)) < 12.50 or ((\"x,y\" <> 'a' or \"it's\" < 'q\"t') and \"x,y\" <> 'b'))"
+],
+[
+"a:int,b@2,t,id,k.v,price,city\n,500,x y,100.1,\u00e9,b,9\n\"q\"\"t\",404,b,100.1,\u00e9,,9\n9,5,\u00e9,7.00,x y,9,x y\na,1,\u00e9,3,ab,\"c,d\",\"c,d\"\n\u00e9,404,\"c,d\",3,ab,x y,a\n\"q\"\"t\",0,\u00e9,3,x y,a,\"c,d\"\nb,5,a,0.25,10,x y,ab\na,500,Zed,100.1,x y,200,\"line\nbreak\"\n#1,2,9,3,\"q\"\"t\",10,\"c,d\"\n\u00e9,,\"q\"\"t\",0.25,10,Zed,\nZed,2,\"q\"\"t\",,#1,\"q\"\"t\",\"c,d\"\n",
+"select \"k.v\", \"k.v\" from 'f.csv' Where \"k.v\" < '\u00e9' order by #2::int DESC, price ASC Limit 1"
+],
+[
+"a:int,id,name,-dash\nx y,0.25,5,10\nx y,-2.75,404,\"c,d\"\n\u00e9,3,952,\"q\"\"t\"\n10,3,0,\"line\nbreak\"\n10,100.1,,ab\nb,3,,9\nx y,-2.75,500,Zed\nab,0.25,42,10\n200,0.25,9999999999,\"q\"\"t\"\n,100.1,0,a\nab,-2.75,404,\n9,3,-3,#1\nb,1.5,100,a\n#1,3,0,200\n",
+"select  #1  From  'f.csv'  Where  \"-dash\" in ('o''k', 'q\"t') Or name::int = -3 Or id <> '-2.75'"
+],
+[
+"1st,from,n2,\"x,y\",n1,id,#3,h\u00e9llo\n,,,7,3,o'k,9999999999,-2.75\na,1.5,10,,3,x y,1,3\na,7.00,200,1,-2.75,,,12.50\n200,-2.75,,42,100.1,10,1,1.5\n\"line\nbreak\",1.5,a,116,7.00,ab,7,-2.75\n,1.5,ab,0,100.1,x y,,\n,-2.75,10,9999999999,1.5,ab,2,3\nZed,0.25,9,5,7.00,,1,7.00\nx y,12.50,\"c,d\",500,-2.75,,109,1.5\n10,7.00,,1,3,b,5,100.1\n,-2.75,a,0,1.5,\"line\nbreak\",5,7.00\n\"line\nbreak\",100.1,200,-3,7.00,Zed,42,3\n200,12.50,,7,7.00,b,-3,100.1\n10,12.50,b,404,1.5,ab,2,3\n,100.1,\"q\"\"t\",100,0.25,o'k,5,12.50\n\"q\"\"t\",1.5,\"q\"\"t\",500,-2.75,o'k,,12.50\nab,3,,868,1.5,a,5,0.25\n\u00e9,7.00,,500,1.5,o'k,-3,3\n\"q\"\"t\",-2.75,\"q\"\"t\",927,12.50,x y,668,100.1\n200,100.1,x y,-3,1.5,o'k,7,3\n10,1.5,a,1,12.50,Zed,-3,100.1\nx y,7.00,a,42,0.25,Zed,207,-2.75\na,-2.75,#1,1,3,a,7,7.00\n\"q\"\"t\",3,\u00e9,5,12.50,o'k,0,7.00\n10,3,x y,7,0.25,o'k,5,3\n",
+"Select\t*\tFROM\t'f.csv'"
+],
+[
+"t,limit,from,#3,price,b@2\nab,\"line\nbreak\",,-2.75,9999999999,3\n9,\u00e9,10,-2.75,100,1.5\n#1,\"c,d\",10,,500,12.50\no'k,,x y,-2.75,500,0.25\n200,ab,200,7.00,0,0.25\n,\"c,d\",#1,0.25,404,\n,\"c,d\",\u00e9,12.50,2,12.50\n,x y,200,0.25,,1.5\nx y,,\"c,d\",1.5,5,0.25\n10,#1,\u00e9,3,500,1.5\n10,\"c,d\",Zed,-2.75,,-2.75\na,o'k,ab,-2.75,42,7.00\n\"q\"\"t\",\u00e9,b,12.50,920,12.50\n\"c,d\",ab,\"c,d\",0.25,404,0.25\nx y,,a,100.1,5,1.5\n9,a,9,12.50,100,3\n#1,Zed,x y,0.25,100,1.5\no'k,#1,a,7.00,1,-2.75\n200,x y,x y,100.1,5,12.50\n10,10,\"q\"\"t\",3,2,12.50\n\"line\nbreak\",\"c,d\",200,3,2,12.50\n\"q\"\"t\",\"line\nbreak\",10,12.50,404,12.50\n,\"c,d\",b,3,7,0.25\n\"c,d\",ab,x y,0.25,9999999999,1.5\n10,,200,12.50,42,3\n",
+"SELECT price, \"b@2\", t From 'f.csv' WHERE \"limit\" > 'c,d' AND \"limit\" = '\u00e9' AND \"#3\" contains '0.25'"
+],
+[
+"name,-dash,bytes,n2,a:int,group,h\u00e9llo,\"q\"\"d\"\n9,3,0.25,0.25,12.50,3,\u00e9,0.25\n\u00e9,-2.75,3,-2.75,100.1,7.00,Zed,7.00\n\"q\"\"t\",-2.75,100.1,0.25,0.25,7.00,\"line\nbreak\",3\nab,12.50,-2.75,7.00,7.00,-2.75,\"line\nbreak\",\n10,1.5,7.00,3,0.25,100.1,ab,100.1\nx y,3,-2.75,-2.75,7.00,100.1,200,-2.75\n9,1.5,,0.25,3,-2.75,\"q\"\"t\",7.00\nab,7.00,0.25,0.25,7.00,0.25,#1,7.00\n200,1.5,-2.75,7.00,0.25,0.25,o'k,0.25\n#1,100.1,-2.75,-2.75,1.5,3,a,3\nZed,0.25,100.1,1.5,7.00,100.1,9,3\nb,1.5,7.00,12.50,100.1,0.25,200,-2.75\n\"line\nbreak\",7.00,0.25,1.5,7.00,12.50,,7.00\nb,0.25,-2.75,100.1,12.50,100.1,a,100.1\n\"line\nbreak\",3,3,-2.75,1.5,100.1,\"line\nbreak\",\n10,0.25,-2.75,,7.00,12.50,,0.25\nZed,1.5,7.00,3,12.50,100.1,\"c,d\",12.50\no'k,3,12.50,100.1,100.1,-2.75,o'k,100.1\nb,12.50,1.5,0.25,12.50,1.5,ab,1.5\nZed,,7.00,12.50,0.25,12.50,,\n10,12.50,,100.1,0.25,0.25,o'k,7.00\n9,0.25,3,3,-2.75,0.25,,12.50\nZed,7.00,12.50,3,0.25,7.00,Zed,1.5\n,7.00,100.1,-2.75,7.00,1.5,\"q\"\"t\",7.00\n200,-2.75,0.25,7.00,100.1,0.25,\u00e9,100.1\n",
+"select\t#7, \"q\"\"d\", \"-dash\"\tfrom\t'f.csv'\tWhere\t\"-dash\" <> '1.5' AND (cast(\"group\" as dec(3)) < 1.5 OR (cast(n2 as dec(2)) >= 1.5 and \"group\" != 'q\"t') OR (\"h\u00e9llo\" <= '10' AND cast(\"q\"\"d\" as dec(2)) != 12.50))\tOrder\tby\tbytes desc\toffset\t0"
+],
+[
+"x\\y,n1,price,a:int,bytes,name\n0,Zed,200,\"line\nbreak\",9,1\n-3,10,\"c,d\",x y,\"line\nbreak\",9999999999\n500,b,\"q\"\"t\",ab,b,0\n404,\"line\nbreak\",\"line\nbreak\",\"q\"\"t\",9,5\n100,,x y,\"c,d\",\"q\"\"t\",404\n9999999999,b,,\"q\"\"t\",b,9999999999\n100,b,ab,200,b,9999999999\n9999999999,ab,,,,500\n7,\"line\nbreak\",a,,b,404\n42,10,200,#1,,7\n100,200,9,a,200,1\n478,o'k,ab,9,#1,9999999999\n-3,,o'k,\"c,d\",o'k,\n5,ab,,b,\"line\nbreak\",-3\n9999999999,o'k,#1,a,ab,-3\n1,x y,\u00e9,#1,,42\n5,200,\u00e9,\"c,d\",Zed,2\n404,\"c,d\",,\u00e9,x y,100\n139,ab,#1,b,\"q\"\"t\",-3\n0,9,b,\"c,d\",\"line\nbreak\",404\n2,\"q\"\"t\",x y,\"c,d\",o'k,1\n0,a,b,b,b,404\n7,b,a,,b,42\n404,,Zed,,10,0\n",
+"select\t\"x\\y\" , n1 , count(*) , count(distinct \"x\\y\")\tfrom\t'f.csv'\tWHERE\t\"x\\y\"::int = 404\tGROUP\tBY\t\"x\\y\", n1\torder\tBy\tcount(distinct \"x\\y\")"
+],
+[
+"it's,k.v,city,t,price,status,x\\y\no'k,b,10,\"q\"\"t\",-2.75,12.50,Zed\n10,#1,\u00e9,a,12.50,12.50,a\n,x y,#1,\u00e9,12.50,0.25,\"q\"\"t\"\n\"q\"\"t\",9,ab,\u00e9,12.50,-2.75,\nab,9,10,a,7.00,100.1,\"c,d\"\n10,9,b,\"line\nbreak\",1.5,1.5,x y\n,,,,-2.75,12.50,\n\"line\nbreak\",200,ab,b,12.50,7.00,x y\n\"q\"\"t\",,\"c,d\",,100.1,7.00,9\no'k,ab,b,,3,0.25,9\n10,\u00e9,200,,1.5,-2.75,o'k\nab,\u00e9,b,,12.50,-2.75,#1\n\u00e9,10,a,ab,3,-2.75,x y\n,\"c,d\",9,Zed,0.25,0.25,\u00e9\n,b,o'k,,12.50,0.25,a\no'k,ab,,\"c,d\",3,100.1,#1\n\"line\nbreak\",#1,\u00e9,b,0.25,12.50,#1\n\"c,d\",9,200,\"line\nbreak\",100.1,100.1,200\n#1,a,o'k,\"line\nbreak\",0.25,100.1,200\nx y,\u00e9,b,ab,12.50,100.1,ab\n",
+"SELECT * FROM 'f.csv' WHERE #1 > 'o''k' And \"k.v\" in ('9', 'ab') Limit 1"
+],
+[
+"\"q\"\"d\",#3,price,from,t,-dash,bytes,contains\n404,100.1,0.25,,1,a,\"line\nbreak\",\"q\"\"t\"\n",
+"Select\ncount(*)\nFrom\n'f.csv'\nWhere\n\"q\"\"d\"::int <= 1 AND (cast(\"#3\" as dec(2)) <> 100.1 or \"contains\" in ('9', 'q\"t', 'q\"t')) AND price Contains 'b'"
+],
+[
+"city,it's,bytes,-dash,n2,id\n5,b,100.1,\u00e9,-3,100\n9999999999,x y,100.1,\"q\"\"t\",,100\n7,\"q\"\"t\",12.50,o'k,7,500\n9999999999,\"q\"\"t\",3,\"q\"\"t\",5,0\n5,\"line\nbreak\",12.50,o'k,0,9999999999\n671,Zed,7.00,\u00e9,1,2\n700,\"c,d\",100.1,10,-3,0\n9999999999,b,100.1,#1,1,9999999999\n500,9,1.5,b,5,120\n2,,7.00,Zed,9999999999,768\n7,Zed,1.5,\u00e9,9999999999,404\n0,#1,,a,404,404\n42,9,100.1,,1,-3\n7,\"line\nbreak\",0.25,ab,500,2\n404,9,1.5,,2,100\n500,9,-2.75,\u00e9,,0\n9999999999,,1.5,b,500,100\n538,o'k,7.00,200,9999999999,7\n",
+"select count(*) FROM 'f.csv' LIMIT 1"
+],
+[
+"it's,\"x,y\",price,n1\n",
+"SELECT  \"it's\"  From  'f.csv'  WHERE  #1::dec(3) = -2.75"
+],
+[
+"bytes,name,\"q\"\"d\",#3,x\\y\n503,,b,-3,7\n42,a,o'k,1,9999999999\n404,x y,x y,-3,9999999999\n5,10,\"line\nbreak\",5,1\n42,,Zed,1,42\n189,\"q\"\"t\",200,0,\n404,10,b,100,404\n100,x y,x y,1,0\n500,,\"q\"\"t\",7,9999999999\n326,,\"c,d\",2,2\n-3,\"c,d\",9,,5\n570,ab,10,2,500\n500,#1,,404,9999999999\n2,Zed,ab,42,5\n5,#1,\u00e9,7,5\n-3,\u00e9,10,2,2\n",
+"Select  \"#3\", #5  FROM  'f.csv'  WHERE  name = 'q\"t'  order  BY  cast(\"x\\y\" as int)"
+],
+[
+"a:int,n1,bytes,n2,id,from,#3\n3,,3,\"q\"\"t\",\"line\nbreak\",0,-3\n3,\"c,d\",3,,a,7,100\n3,,3,o'k,9,5,9999999999\n12.50,200,0.25,,\u00e9,404,404\n3,\"c,d\",-2.75,b,x y,0,-3\n-2.75,,0.25,#1,\u00e9,500,0\n12.50,b,100.1,#1,\"line\nbreak\",1,95\n-2.75,,12.50,\u00e9,o'k,5,1\n0.25,,7.00,x y,a,100,\n0.25,\u00e9,0.25,a,\"c,d\",0,7\n7.00,\"q\"\"t\",1.5,ab,\"q\"\"t\",2,9999999999\n-2.75,200,1.5,b,\"line\nbreak\",1,777\n7.00,b,12.50,\"c,d\",10,7,9999999999\n100.1,b,,#1,\"line\nbreak\",2,1\n1.5,200,3,10,\"line\nbreak\",100,1\n3,x y,12.50,10,,5,7\n7.00,9,1.5,Zed,\"c,d\",0,500\n7.00,ab,7.00,,\"q\"\"t\",0,404\n1.5,x y,1.5,b,b,,0\n",
+"SELECT\nid, n1\nFrom\n'f.csv'\nwhere\n\"a:int\"::dec(3) <> 0.25 or n2 in ('b', 'Zed') OR cast(\"a:int\" as dec(2)) = -2.75 OR cast(#7 as int) >= -3\nORDER\nBy\n#6 desc"
+],
+[
+"name,t,1st,-dash,id,status,x\\y\n7.00,\"q\"\"t\",7.00,31,-2.75,-2.75,\n,\"line\nbreak\",0.25,100,12.50,,12.50\n3,\u00e9,1.5,500,7.00,,0.25\n1.5,o'k,7.00,,3,1.5,100.1\n1.5,,0.25,-3,100.1,0.25,-2.75\n1.5,ab,-2.75,-3,100.1,-2.75,-2.75\n",
+"SELECT  \"-dash\"  From  'f.csv'  order  BY  #3"
+],
+[
+"x\\y,\"q\"\"d\",#3,price,from,status\n7.00,1.5,0.25,,404,42\n12.50,-2.75,3,200,0,1\n100.1,-2.75,12.50,,,-3\n1.5,3,3,o'k,2,500\n12.50,7.00,-2.75,o'k,42,7\n100.1,0.25,0.25,\u00e9,,404\n100.1,-2.75,,x y,1,\n100.1,1.5,7.00,a,100,858\n3,1.5,1.5,9,2,404\n-2.75,0.25,,x y,100,5\n7.00,100.1,-2.75,200,-3,1\n0.25,12.50,1.5,Zed,558,2\n1.5,-2.75,3,Zed,5,500\n3,100.1,3,ab,,205\n3,1.5,1.5,#1,9999999999,-3\n-2.75,1.5,12.50,\u00e9,957,500\n0.25,1.5,0.25,x y,-3,500\n-2.75,12.50,1.5,x y,100,7\n,-2.75,1.5,\"c,d\",7,2\n",
+"SELECT \"q\"\"d\" FROM 'f.csv' WHERE \"from\" > 1 order BY #2 Offset 3"
+],
+[
+"sum:x,status,a:int,name,x\\y,city,bytes\n0.25,7.00,-2.75,100.1,-3,,12.50\n,100.1,1.5,0.25,100,Zed,1.5\n",
+"select\n\"x\\y\", count(*)\nfrom\n'f.csv'\nWhere\n(bytes::dec(2) In (1.5, 12.50, 0) AND cast(\"x\\y\" as int) = 0) Or \"x\\y\" In ('-3', '-3')\nGroup\nBy\n\"x\\y\""
+],
+[
+"n1,city,name,from,a:int,a b,id,b@2\n\u00e9,\"line\nbreak\",0.25,10,3,3,10,x y\n,9,7.00,#1,0.25,0.25,o'k,\"line\nbreak\"\n\"q\"\"t\",\"q\"\"t\",-2.75,o'k,7.00,100.1,,x y\n,\"q\"\"t\",-2.75,ab,1.5,7.00,,\nb,,1.5,\"line\nbreak\",12.50,3,b,\n\"c,d\",,100.1,a,3,12.50,9,Zed\nZed,10,,#1,0.25,3,a,\"q\"\"t\"\n200,\"q\"\"t\",3,,7.00,100.1,ab,o'k\n\"q\"\"t\",b,3,\"c,d\",-2.75,3,,o'k\na,\"c,d\",,#1,0.25,,Zed,b\n9,#1,7.00,200,12.50,7.00,\"q\"\"t\",\n\"line\nbreak\",\"q\"\"t\",12.50,#1,-2.75,1.5,b,10\n200,ab,,9,0.25,0.25,x y,\n#1,#1,0.25,,7.00,100.1,ab,10\n\"line\nbreak\",,12.50,#1,12.50,3,\u00e9,Zed\nZed,o'k,0.25,\"line\nbreak\",-2.75,12.50,#1,Zed\n\"c,d\",10,,9,12.50,,\u00e9,\n\u00e9,b,100.1,b,0.25,3,200,200\n\"c,d\",o'k,1.5,,3,,,\"q\"\"t\"\n10,\u00e9,0.25,#1,0.25,100.1,o'k,b\n#1,,-2.75,10,12.50,100.1,o'k,\n",
+"Select\t\"a:int\" , count(*) , sum(cast(\"a:int\" as dec(3))) , sum(cast(\"a b\" as dec(2)))\tfrom\t'f.csv'\twhere\t\"a b\"::dec(3) <= 3\tGROUP\tby\t\"a:int\""
+],
+[
+"name,t,id,b@2,\"x,y\",price\n3,,7,-2.75,x y,200\n-2.75,2,7,1.5,#1,10\n,7,2,0.25,9,o'k\n1.5,,404,0.25,x y,200\n100.1,2,9999999999,12.50,200,#1\n0.25,9999999999,7,100.1,\"c,d\",\"line\nbreak\"\n12.50,42,,7.00,a,200\n3,9999999999,404,12.50,\"c,d\",o'k\n7.00,100,42,12.50,\"c,d\",\n1.5,7,-3,,a,\"c,d\"\n0.25,404,1,3,Zed,#1\n3,162,9999999999,12.50,10,o'k\n0.25,2,197,7.00,\"c,d\",200\n100.1,2,7,,#1,9\n0.25,404,100,3,\"c,d\",b\n-2.75,-3,0,3,x y,\n0.25,42,404,3,#1,a\n",
+"SELECT #3 , count(*) , min(cast(\"b@2\" as dec(2))) FROM 'f.csv' group BY #3 limit 1"
+],
+[
+"id,status,bytes,#3,a:int\n-2.75,1,100,12.50,0.25\n12.50,100,0,7.00,12.50\n7.00,0,404,12.50,3\n12.50,5,42,-2.75,100.1\n0.25,999,7,-2.75,-2.75\n0.25,0,42,1.5,0.25\n100.1,5,42,7.00,\n0.25,1,42,7.00,1.5\n7.00,42,9999999999,7.00,12.50\n-2.75,0,404,1.5,-2.75\n12.50,1,0,12.50,7.00\n100.1,500,536,3,12.50\n3,404,1,0.25,0.25\n-2.75,9999999999,5,3,12.50\n100.1,5,275,1.5,\n0.25,100,5,7.00,100.1\n12.50,304,5,12.50,100.1\n",
+"SELECT  #4 , status , count(*) , sum(cast(\"a:int\" as dec(2))) , max(bytes)  From  'f.csv'  Where  (#4 > '3' and \"a:int\" = '12.50') And bytes <= '1' And status <> '5'  Group  By  #4, status  ORDER  by  status asc  LIMIT  100"
+],
+[
+"name,-dash,id,n2,from,city,a:int\no'k,1,3,,,,ab\n#1,500,100.1,-3,a,12.50,b\n\"q\"\"t\",100,7.00,2,#1,7.00,\n\"line\nbreak\",0,1.5,500,o'k,7.00,o'k\n\"line\nbreak\",100,0.25,500,,100.1,\u00e9\na,0,12.50,100,\"c,d\",0.25,o'k\n",
+"SELECT #5, count(*), sum(\"from\"), count(distinct name) from 'f.csv' where \"a:int\" <> 'b' and id::dec(2) in (3, 100.1) group by #5"
+],
+[
+"b@2,-dash,t,k.v,city,bytes\na,9,7,\"line\nbreak\",Zed,a\n200,Zed,67,,Zed,o'k\n,x y,2,200,,#1\n9,ab,42,,o'k,Zed\n\"q\"\"t\",\"c,d\",500,9,b,\n10,b,0,,o'k,9\nab,#1,34,\u00e9,x y,\"q\"\"t\"\n\"q\"\"t\",200,404,10,10,ab\nab,o'k,-3,#1,9,200\n200,o'k,9999999999,9,200,Zed\n10,\u00e9,5,Zed,b,\n\u00e9,\"line\nbreak\",2,200,9,a\n\u00e9,10,1,b,#1,x y\n10,200,,,\u00e9,\"line\nbreak\"\no'k,\"q\"\"t\",7,b,9,b\n\"line\nbreak\",10,404,#1,a,\n",
+"select\tcity , \"k.v\" , count(*) , min(\"b@2\")\tFrom\t'f.csv'\twhere\t\"-dash\" > ''\tgroup\tBY\tcity, \"k.v\""
+],
+[
+"n1,\"x,y\",b@2,id\n\u00e9,,1,0.25\n\"line\nbreak\",a,2,100.1\n\"q\"\"t\",Zed,-3,100.1\n",
+"SELECT\tcount(*) , max(id::dec(3)) , sum(cast(id as dec(2)))\tFrom\t'f.csv'\twhere\t\"x,y\" <= '' and cast(id as dec(2)) > 0.25 and \"b@2\"::int != 2\tORDER\tby\tmax(id::dec(3)) desc\tLimit\t100"
+],
+[
+"price,\"x,y\",n1,b@2,group\no'k,9999999999,a,1,-3\n9,2,,558,404\n\u00e9,-3,\"c,d\",0,1\n",
+"Select\t\"group\", n1, n1\tFROM\t'f.csv'\tWHERE\t(price != 'a\\b' and \"x,y\"::int <= 404) OR #5::int != -3"
+],
+[
+"\"x,y\",status,id,price,a:int\n10,Zed,500,10,x y\n#1,#1,0,\"q\"\"t\",\"c,d\"\n200,200,404,#1,x y\nZed,\"c,d\",404,b,x y\nab,#1,100,\"line\nbreak\",\n\"c,d\",\u00e9,1,\"c,d\",#1\nab,200,9999999999,200,200\na,#1,0,\"c,d\",\"q\"\"t\"\nx y,ab,5,\"c,d\",\n200,\"c,d\",500,\u00e9,b\no'k,Zed,42,o'k,\"c,d\"\n\"q\"\"t\",\"q\"\"t\",500,\u00e9,\u00e9\n",
+"SELECT\tstatus\tFrom\t'f.csv'\tWhere\tstatus = '' and #1 < 'q\"t' and #1 = 'ab'\tOrder\tby\tid, price"
+],
+[
+"bytes,b@2,t,x\\y,city,id\n\"line\nbreak\",o'k,\"q\"\"t\",\u00e9,100.1,500\n\"line\nbreak\",a,,o'k,-2.75,42\n",
+"Select * FROM 'f.csv' Where (\"b@2\" = 'o''k' AND \"b@2\" <> 'a') Or (\"b@2\" CONTAINS 'q\"t' and \"x\\y\" != '\u00e9' and (#4 < 'a' Or \"b@2\" <> 'a'))"
+],
+[
+"x\\y,a b,#3,limit,id,city,price,n2,and\n100.1,500,,0.25,ab,1.5,7,o'k,\"q\"\"t\"\n100.1,7,ab,1.5,#1,0.25,2,\"q\"\"t\",Zed\n7.00,941,9,-2.75,9,1.5,9999999999,,\u00e9\n-2.75,2,200,7.00,,0.25,348,#1,\n100.1,7,\"q\"\"t\",-2.75,Zed,1.5,1,\"c,d\",x y\n1.5,100,\"c,d\",12.50,\u00e9,-2.75,7,a,10\n12.50,2,b,3,\"line\nbreak\",100.1,5,o'k,ab\n-2.75,42,b,1.5,,3,7,\"q\"\"t\",\"q\"\"t\"\n100.1,5,#1,7.00,\"c,d\",0.25,100,200,o'k\n-2.75,-3,x y,,,0.25,1,a,x y\n100.1,500,200,100.1,200,1.5,2,10,\"q\"\"t\"\n7.00,100,,100.1,#1,7.00,7,x y,a\n-2.75,500,,7.00,a,,1,,\"q\"\"t\"\n3,5,ab,-2.75,\u00e9,7.00,0,x y,200\n100.1,7,\"line\nbreak\",0.25,10,7.00,42,b,a\n12.50,9999999999,ab,100.1,Zed,7.00,0,x y,\n7.00,7,9,7.00,Zed,0.25,1,\"q\"\"t\",ab\n7.00,-3,200,,,12.50,5,o'k,200\n7.00,404,\"q\"\"t\",3,\u00e9,100.1,500,#1,\"line\nbreak\"\n,42,x y,1.5,9,12.50,9999999999,a,x y\n100.1,100,a,100.1,x y,100.1,1,o'k,#1\n100.1,7,9,3,\u00e9,12.50,500,b,9\n12.50,5,b,7.00,a,3,0,b,a\n",
+"SELECT  *  From  'f.csv'  WHERE  \"#3\" contains '\u00e9' And n2 <> '' And \"and\" <> '10'"
+],
+[
+"price,h\u00e9llo,\"q\"\"d\",like,-dash,\"x,y\",city,id\nx y,100,-3,,a,200,404,\no'k,7,404,\"q\"\"t\",x y,10,811,9\n10,404,1,a,,200,9999999999,ab\n#1,-3,404,\"line\nbreak\",9,200,2,\u00e9\no'k,500,5,Zed,\u00e9,200,7,b\nb,1,1,200,9,,2,b\n\"c,d\",500,5,,o'k,,884,o'k\n\"c,d\",0,5,a,200,\u00e9,5,200\n,42,100,b,\u00e9,,861,\nx y,1,0,,,9,1,200\n\"c,d\",1,9999999999,Zed,ab,a,0,\n\"c,d\",2,625,o'k,o'k,b,-3,9\n,404,100,,200,\u00e9,9999999999,200\n,42,5,\u00e9,10,\"line\nbreak\",940,x y\nZed,1,100,b,o'k,o'k,404,#1\n\"q\"\"t\",1,828,9,\"q\"\"t\",,-3,b\n",
+"SELECT  \"h\u00e9llo\", \"q\"\"d\", \"q\"\"d\"  from  'f.csv'  Where  \"q\"\"d\"::int < 404  LIMIT  1"
+],
+[
+"#3,price,name,b@2\n#1,0,-2.75,42\n\"line\nbreak\",1,1.5,323\nZed,2,100.1,2\nZed,1,12.50,0\n\u00e9,5,1.5,42\n\"c,d\",-3,12.50,2\nab,404,100.1,0\n\"line\nbreak\",5,7.00,2\nx y,42,12.50,\n10,100,3,5\n,0,100.1,0\n\"q\"\"t\",100,100.1,\n\u00e9,404,100.1,500\n\u00e9,42,7.00,500\n\u00e9,0,1.5,-3\na,5,-2.75,9999999999\nx y,,3,270\n\"c,d\",42,7.00,404\n,9999999999,3,5\na,,100.1,42\n",
+"select #4, count(*), count(distinct \"b@2\"), max(name::dec(2)) FROM 'f.csv' Group by #4 ORDER BY count(*) Desc Offset 0"
+],
+[
+"\"x,y\",count,price,#3,t,name\n\u00e9,,1.5,x y,12.50,o'k\nab,1.5,12.50,ab,,\u00e9\n,3,7.00,,1.5,\"q\"\"t\"\n,7.00,1.5,b,100.1,\"line\nbreak\"\n\"line\nbreak\",,,ab,1.5,#1\n9,7.00,100.1,200,100.1,b\n\"q\"\"t\",1.5,12.50,o'k,100.1,10\n,12.50,12.50,200,7.00,\"q\"\"t\"\nx y,100.1,-2.75,a,3,b\n\"line\nbreak\",12.50,1.5,,7.00,\u00e9\nZed,3,0.25,9,12.50,ab\n\"line\nbreak\",12.50,7.00,a,-2.75,Zed\n200,0.25,0.25,\u00e9,1.5,x y\n\"q\"\"t\",7.00,7.00,\"line\nbreak\",3,ab\nx y,3,-2.75,a,100.1,\"line\nbreak\"\n,12.50,3,o'k,3,Zed\n\u00e9,12.50,,\"q\"\"t\",,x y\n\"line\nbreak\",100.1,100.1,\"line\nbreak\",-2.75,\"c,d\"\n\"line\nbreak\",12.50,0.25,10,7.00,a\nb,7.00,7.00,o'k,7.00,\"line\nbreak\"\n",
+"SELECT  count(*), min(#1)  FROM  'f.csv'  where  cast(count as dec(2)) = 12.50  Order  BY  count(*)"
+],
+[
+"name,a:int,price,status,x\\y,n1\n665,404,0,12.50,0.25,42\n1,-3,44,1.5,3,9999999999\n42,1,,0.25,7.00,100\n42,5,9999999999,-2.75,-2.75,404\n9999999999,9999999999,0,1.5,3,-3\n5,9999999999,2,-2.75,100.1,-3\n2,0,9999999999,100.1,1.5,404\n500,9999999999,500,7.00,1.5,404\n,7,2,1.5,0.25,-3\n2,500,42,1.5,7.00,0\n1,1,2,3,12.50,-3\n500,5,9999999999,3,3,1\n500,0,0,1.5,1.5,9999999999\n2,-3,404,12.50,100.1,100\n0,1,42,1.5,12.50,100\n5,404,500,100.1,7.00,\n5,404,0,1.5,0.25,404\n",
+"select\tcount(*) , count(distinct \"a:int\") , sum(\"a:int\"::int)\tfrom\t'f.csv'\tWhere\tcast(\"x\\y\" as dec(2)) <= 3 And cast(#5 as dec(3)) < 3\tLIMIT\t2"
+],
+[
+"price,\"x,y\",in,a:int,n2,status\nb,9,10,-2.75,100,0\na,x y,b,1.5,-3,9999999999\n9,10,#1,-2.75,2,42\n",
+"Select\n*\nfrom\n'f.csv'\nOFFSET\n3"
+],
+[
+"b@2,name,#3,n1\n310,100,42,0.25\n2,-3,42,100.1\n0,404,5,100.1\n0,9999999999,38,100.1\n42,9999999999,500,3\n813,-3,859,\n0,9999999999,42,3\n1,621,,1.5\n1,9999999999,-3,100.1\n0,182,5,7.00\n7,-3,404,3\n7,404,2,100.1\n404,404,-3,0.25\n42,5,500,3\n404,-3,42,3\n1,9999999999,100,100.1\n500,2,0,1.5\n-3,500,,3\n9999999999,2,9999999999,-2.75\n500,9999999999,0,\n0,500,2,100.1\n100,-3,7,3\n9999999999,2,404,7.00\n404,404,821,12.50\n",
+"select\t\"#3\", \"b@2\", \"b@2\"\tFROM\t'f.csv'\tWHERE\tn1 < 'c,d' or #1 <> '42'\torder\tBY\t\"b@2\" asc"
+],
+[
+"#3,from,a b,id,status,k.v,name,\"x,y\"\n0,0.25,#1,1.5,1.5,o'k,715,\"line\nbreak\"\n-3,100.1,,,12.50,,404,\"q\"\"t\"\n100,12.50,\"line\nbreak\",3,-2.75,a,9999999999,10\n2,-2.75,\"q\"\"t\",1.5,,#1,404,o'k\n",
+"SELECT\tstatus, \"k.v\"\tFROM\t'f.csv'\twhere\tid::dec(2) = 3 OR #8 <= 'line\nbreak'\tLimit\t100"
+],
+[
+"name,bytes,#3,price,n1,a:int\n404,1.5,#1,b,500,#1\n-3,1.5,\"c,d\",ab,5,\u00e9\n624,100.1,10,b,42,\n2,12.50,b,o'k,9999999999,ab\n-3,1.5,#1,,1,\"c,d\"\n100,7.00,#1,\"q\"\"t\",100,\"q\"\"t\"\n1,,\"q\"\"t\",x y,500,a\n100,0.25,Zed,,9999999999,#1\n,-2.75,a,o'k,500,200\n,12.50,\u00e9,Zed,,ab\n9999999999,100.1,b,10,42,a\n5,,#1,x y,7,ab\n7,0.25,9,,-3,x y\n100,100.1,\"line\nbreak\",9,1,\"q\"\"t\"\n9999999999,3,,9,-3,9\n-3,0.25,\u00e9,\"c,d\",42,o'k\n2,0.25,Zed,#1,0,200\n1,12.50,,9,5,10\n1,,x y,9,9999999999,\u00e9\n1,100.1,Zed,ab,9999999999,a\n7,0.25,10,x y,2,\"q\"\"t\"\n,3,Zed,\"q\"\"t\",500,\"q\"\"t\"\n",
+"select \"#3\" , count(*) , count(distinct \"a:int\") , count(distinct cast(bytes as dec(3))) FROM 'f.csv' WHERE \"a:int\" > 'x y' And \"#3\" >= 'c,d' Group BY \"#3\" Order BY count(distinct cast(bytes as dec(3))) Limit 100"
+],
+[
+"sum:x,a:int,t,group,name,in,n1,\"x,y\"\n,42,\"line\nbreak\",Zed,7.00,1.5,b,\"q\"\"t\"\n9,5,9,\"c,d\",7.00,0.25,x y,10\n\"line\nbreak\",500,\"c,d\",10,100.1,12.50,,\"q\"\"t\"\n\u00e9,2,ab,10,1.5,7.00,\"c,d\",\"q\"\"t\"\n10,,,,100.1,0.25,\u00e9,o'k\n9,404,ab,#1,0.25,1.5,a,\"q\"\"t\"\na,2,9,10,3,-2.75,#1,9\n",
+"Select  count(*)  FROM  'f.csv'  Where  \"in\" = '0.25'  order  By  count(*) DESC"
+],
+[
+"price,sum:x,b@2,n2,t,n1,\"x,y\"\nab,12.50,1.5,0.25,#1,7.00,9999999999\n,0.25,0.25,12.50,10,7.00,42\n",
+"select\n#6 , count(*)\nFROM\n'f.csv'\nGROUP\nBY\n#6\nORDER\nby\ncount(*) Desc"
+],
+[
+"status,name,\"x,y\",id,and,null,price,group,a:int\n100.1,-2.75,9999999999,b,\"line\nbreak\",o'k,Zed,\u00e9,\u00e9\n100.1,3,940,\"line\nbreak\",a,b,9,a,o'k\n1.5,0.25,5,x y,ab,o'k,b,\"c,d\",\n100.1,100.1,100,\u00e9,,o'k,\u00e9,b,x y\n3,7.00,984,\"line\nbreak\",\"c,d\",10,200,ab,\"q\"\"t\"\n0.25,0.25,100,200,\"line\nbreak\",\"line\nbreak\",Zed,,\n3,7.00,0,#1,\"line\nbreak\",b,9,200,ab\n12.50,-2.75,5,x y,200,b,#1,200,\"q\"\"t\"\n-2.75,0.25,9999999999,o'k,a,,ab,#1,Zed\n1.5,0.25,100,Zed,9,o'k,b,ab,9\n12.50,1.5,5,\"c,d\",o'k,x y,ab,\"c,d\",b\n12.50,100.1,763,a,,,#1,200,\"q\"\"t\"\n12.50,7.00,0,\"c,d\",,x y,,a,\"c,d\"\n1.5,0.25,404,a,\"q\"\"t\",10,,ab,a\n12.50,0.25,5,\u00e9,\"c,d\",\"c,d\",#1,\"line\nbreak\",\"c,d\"\n3,3,42,x y,10,x y,200,\u00e9,Zed\n,-2.75,,,Zed,,,x y,o'k\n3,3,500,10,x y,Zed,ab,,x y\n7.00,-2.75,42,10,b,\"q\"\"t\",ab,\"q\"\"t\",10\n",
+"Select\n\"null\", count(*)\nfrom\n'f.csv'\nWhere\n\"null\" <= '#1' Or \"a:int\" Contains '' OR id in ('b', 'c,d', '') Or \"x,y\"::int In (9999999999, 100, 404)\ngroup\nBY\n\"null\"\nORDER\nBY\ncount(*) ASC\nLIMIT\n2"
+],
+[
+"h\u00e9llo,t,contains,\"x,y\",#3,status,city\n200,#1,0.25,100.1,5,10,#1\nZed,x y,-2.75,0.25,-3,,#1\nb,,-2.75,-2.75,9999999999,\u00e9,x y\no'k,ab,,,404,9,\"line\nbreak\"\nZed,\u00e9,12.50,7.00,9999999999,9,Zed\nx y,\"c,d\",7.00,3,42,,b\n,x y,0.25,100.1,1,\"q\"\"t\",b\na,a,1.5,100.1,0,a,200\nx y,a,3,-2.75,0,x y,o'k\no'k,,7.00,0.25,42,#1,\"line\nbreak\"\nb,a,100.1,3,9999999999,10,Zed\nZed,Zed,,12.50,7,10,\n200,ab,12.50,7.00,500,b,200\n\"line\nbreak\",Zed,3,100.1,500,b,a\nZed,Zed,100.1,1.5,5,9,a\nb,o'k,7.00,,42,b,\"c,d\"\n,9,7.00,100.1,9999999999,a,10\n\"line\nbreak\",\"q\"\"t\",-2.75,12.50,500,\"q\"\"t\",\nx y,200,12.50,1.5,500,o'k,\n\"c,d\",\"q\"\"t\",100.1,7.00,404,a,ab\n",
+"SELECT\n\"contains\", \"#3\", status\nFROM\n'f.csv'\nWhere\n\"h\u00e9llo\" >= '200'\norder\nby\n\"x,y\", \"contains\""
+],
+[
+"-dash,b@2,h\u00e9llo,price,t\n,\"c,d\",ab,x y,9999999999\n10,,ab,200,108\n\u00e9,\"line\nbreak\",\"c,d\",,5\n",
+"SELECT\t*\tFROM\t'f.csv'\tWHERE\t\"h\u00e9llo\" < 'ab' And price = '' And t <> 'q\"t'\tOrder\tBy\tt, \"h\u00e9llo\" desc"
+],
+[
+"bytes,\"x,y\",null,1st,limit,a:int,n1\n7,\"c,d\",9,,3,100,0.25\n100,\"line\nbreak\",x y,188,-2.75,-3,\n,\"line\nbreak\",ab,2,100.1,5,3\n173,Zed,9,-3,12.50,500,7.00\n100,,,0,1.5,100,\n",
+"select\n\"1st\" , count(*)\nfrom\n'f.csv'\nWhere\nbytes IN (0, 1) Or (\"x,y\" >= 'line\nbreak' AND (bytes > 1 Or #4 > 'q\"t') AND \"x,y\" >= 'line\nbreak') Or \"a:int\" Contains '100'\nGROUP\nBY\n\"1st\"\noffset\n3"
+],
+[
+"id,limit,contains,b@2,t,-dash,n1,n2,order\na,12.50,,3,12.50,12.50,3,\"c,d\",o'k\n9,12.50,10,7.00,7.00,3,0.25,\"q\"\"t\",9\nZed,0.25,,12.50,0.25,12.50,1.5,\"q\"\"t\",\"q\"\"t\"\nab,3,\"c,d\",0.25,7.00,-2.75,3,9,o'k\nab,3,\"q\"\"t\",7.00,,1.5,-2.75,o'k,#1\n\u00e9,7.00,,12.50,-2.75,0.25,100.1,\"q\"\"t\",a\n\"q\"\"t\",3,,3,12.50,0.25,,\"line\nbreak\",\"line\nbreak\"\no'k,,9,-2.75,100.1,1.5,-2.75,#1,\n#1,0.25,\"q\"\"t\",100.1,7.00,1.5,3,,a\nx y,7.00,x y,1.5,12.50,7.00,,#1,ab\n,0.25,#1,3,12.50,3,1.5,#1,Zed\n,1.5,\u00e9,0.25,3,1.5,7.00,#1,\"line\nbreak\"\na,0.25,ab,100.1,100.1,7.00,-2.75,o'k,200\nab,12.50,b,0.25,-2.75,7.00,1.5,x y,\"q\"\"t\"\n200,100.1,,3,1.5,-2.75,,,\"c,d\"\n10,12.50,o'k,7.00,3,3,3,,Zed\n",
+"SELECT\n*\nFrom\n'f.csv'\nWhere\n\"contains\" = 'and' and \"contains\" <= 'q\"t' and cast(\"b@2\" as dec(3)) >= 0\nLIMIT\n5"
+],
+[
+"bytes,-dash,contains,#3,sum:x,n2,name\n9999999999,x y,\u00e9,9999999999,,Zed,ab\n2,a,\"c,d\",404,,,Zed\n100,\"q\"\"t\",o'k,404,9,Zed,10\n0,\"c,d\",\"c,d\",404,\"line\nbreak\",x y,200\n0,\u00e9,\"q\"\"t\",100,\"c,d\",#1,b\n42,200,\u00e9,100,#1,10,#1\n7,b,10,-3,ab,Zed,ab\n644,o'k,10,1,9,a,\n",
+"select count(*), mean(\"sum:x\", 0), count(distinct bytes) from 'f.csv' WHERE \"sum:x\" CONTAINS '9' Order by mean(\"sum:x\", 0)"
+],
+[
+"price,-dash,bytes,from,a:int\na,a,\"line\nbreak\",\u00e9,Zed\n,\"line\nbreak\",\"q\"\"t\",10,ab\n9,,\"q\"\"t\",o'k,Zed\n9,x y,\"c,d\",,#1\n9,\u00e9,\"q\"\"t\",200,a\n#1,o'k,b,10,\"c,d\"\nx y,b,\"q\"\"t\",\"c,d\",\nZed,#1,9,#1,200\na,,o'k,x y,\"q\"\"t\"\n\"c,d\",9,\"line\nbreak\",#1,\u00e9\na,a,\u00e9,ab,\nb,x y,Zed,a,Zed\n\u00e9,10,\"q\"\"t\",,b\n\"q\"\"t\",9,b,,\"q\"\"t\"\nb,#1,,#1,9\na,,\"q\"\"t\",Zed,\"line\nbreak\"\na,,9,200,Zed\n",
+"select\n*\nfrom\n'f.csv'\nwhere\n\"a:int\" > 'Zed' Or price in ('a', 'a', '9')\nOrder\nBy\n\"-dash\" Desc, \"-dash\" desc"
+],
+[
+"b@2,it's,t,price,n1\n-3,200,100,200,200\n-3,Zed,100,,10\n2,ab,9999999999,,\u00e9\n-3,\"line\nbreak\",404,o'k,o'k\n500,a,2,#1,a\n-3,a,-3,9,10\n-3,9,100,a,\n-3,,2,,10\n9999999999,a,,\"c,d\",\"line\nbreak\"\n262,10,-3,200,\"q\"\"t\"\n5,b,500,200,b\n430,#1,5,x y,\u00e9\n5,,7,10,#1\n9999999999,200,249,\"line\nbreak\",10\n42,\u00e9,404,9,\"c,d\"\n-3,a,1,x y,#1\n100,Zed,500,10,9\n404,9,9999999999,,#1\n",
+"SELECT price, \"it's\", count(*) FROM 'f.csv' Where \"b@2\" < 404 group BY price, \"it's\" ORDER By count(*) Desc Limit 100"
+],
+[
+"a:int,t,\"x,y\",city\nb,-3,-2.75,\n\u00e9,500,7.00,\"q\"\"t\"\nab,-3,12.50,200\n\"q\"\"t\",404,,a\na,500,100.1,\u00e9\n,,0.25,\u00e9\na,2,,x y\na,5,100.1,\n10,,100.1,\u00e9\n9,500,1.5,#1\n\"line\nbreak\",1,-2.75,9\n\"q\"\"t\",100,3,b\n",
+"SELECT \"a:int\" , count(*) , count(distinct cast(\"x,y\" as dec(3))) FROM 'f.csv' Group BY \"a:int\""
+],
+[
+"b@2,n2,-dash,\"q\"\"d\",name\n10,\"line\nbreak\",,9999999999,0\nx y,\u00e9,Zed,1,2\n#1,a,x y,404,-3\n,\u00e9,x y,5,-3\nab,b,x y,404,2\n#1,ab,,0,\nb,\"c,d\",,7,847\no'k,a,o'k,2,5\no'k,#1,\"c,d\",787,0\n,10,,404,42\n200,\u00e9,10,100,-3\n9,\"q\"\"t\",200,2,387\n#1,\"line\nbreak\",Zed,404,100\na,b,b,404,817\n\"c,d\",b,ab,1,100\n",
+"Select\t\"b@2\", \"q\"\"d\"\tFrom\t'f.csv'\tWhere\t\"q\"\"d\" Contains '787' AND \"-dash\" >= 'c,d' AND \"q\"\"d\" >= '1'\tOFFSET\t1"
+],
+[
+"-dash,select,id,a:int,like,from,name,n1,t\n-2.75,7,-3,#1,42,,10,500,500\n3,609,0,\u00e9,500,#1,x y,2,5\n12.50,5,42,10,,o'k,o'k,1,\n7.00,100,,ab,500,,10,404,404\n12.50,1,836,#1,5,o'k,,42,100\n1.5,723,0,,2,9,b,9999999999,500\n",
+"Select\t\"select\", id, count(*), sum(\"like\"), mean(\"a:int\", 3)\tfrom\t'f.csv'\tWHERE\tcast(#2 as int) = 723 And \"like\" CONTAINS '500'\tGROUP\tby\t\"select\", id\tlimit\t100"
+],
+[
+"it's,t,n2,\"x,y\",k.v\n12.50,\u00e9,2,-2.75,-3\n0.25,\u00e9,5,1.5,131\n7.00,9,9999999999,-2.75,42\n7.00,b,,1.5,100\n-2.75,#1,558,12.50,404\n-2.75,200,7,12.50,5\n1.5,a,0,1.5,9999999999\n100.1,200,9999999999,3,5\n1.5,9,5,,42\n12.50,Zed,9999999999,-2.75,0\n3,Zed,839,1.5,5\n-2.75,b,500,-2.75,-3\n100.1,\"q\"\"t\",0,-2.75,404\n",
+"SELECT\tcount(*)\tFrom\t'f.csv'\tWhere\tcast(\"x,y\" as dec(3)) = -2.75 And \"k.v\"::int = 42 And t contains 'x y'"
+],
+[
+"city,id,-dash,#3,name,group\n,12.50,x y,42,-3,7.00\nab,-2.75,\"q\"\"t\",0,0,1.5\na,1.5,#1,1,42,\n\"q\"\"t\",12.50,\"q\"\"t\",9999999999,9999999999,1.5\no'k,100.1,200,500,1,100.1\n200,-2.75,,5,-3,0.25\nx y,12.50,\"q\"\"t\",2,-3,12.50\nab,7.00,x y,404,-3,100.1\n10,1.5,9,404,9999999999,-2.75\n,3,o'k,9999999999,404,12.50\n",
+"SELECT #3 , count(*) FROM 'f.csv' Where cast(\"group\" as dec(3)) < 100.1 or id::dec(3) in (12.50, 100.1) or (\"group\" >= '10' and \"-dash\" >= 'x y' and (city Contains 'a' OR id <> '12.50')) group BY #3 ORDER BY count(*) desc"
+],
+[
+"-dash,price,b@2,n2\n,42,,12.50\n0.25,0,200,0.25\n1.5,-3,#1,12.50\n",
+"select  price, \"-dash\"  From  'f.csv'  WHERE  \"-dash\"::dec(3) <= 12.50  Order  by  #3, #1 desc  Offset  3"
+],
+[
+"contains,city,status,#3,k.v,id,n1,it's\n-3,3,3,b,1.5,\u00e9,1,\n-3,,7.00,o'k,1.5,b,974,500\n5,3,3,9,1.5,Zed,9999999999,404\n100,0.25,0.25,,1.5,ab,7,500\n-3,1.5,7.00,#1,,\"q\"\"t\",64,404\n5,3,0.25,\u00e9,100.1,200,0,100\n,7.00,3,#1,3,ab,-3,7\n1,100.1,12.50,a,3,\"q\"\"t\",500,-3\n42,1.5,100.1,ab,7.00,Zed,100,2\n9999999999,100.1,0.25,10,,x y,42,1\n,100.1,3,\u00e9,12.50,\u00e9,7,-3\n42,7.00,0.25,9,100.1,\u00e9,500,5\n404,1.5,1.5,\u00e9,0.25,b,676,42\n42,12.50,-2.75,b,100.1,\"line\nbreak\",7,100\n404,100.1,3,ab,1.5,\"line\nbreak\",7,\n100,3,100.1,\"c,d\",1.5,200,0,2\n0,100.1,1.5,\"c,d\",1.5,,-3,2\n42,7.00,-2.75,b,1.5,\"q\"\"t\",9999999999,9999999999\n1,12.50,,\"q\"\"t\",100.1,,42,5\n",
+"Select\tstatus, count(*), count(distinct id)\tFROM\t'f.csv'\tGroup\tBY\tstatus"
+],
+[
+"sum:x,id,name,\"q\"\"d\",#3,a:int,like,bytes\n",
+"SELECT\tcount(*)\tFROM\t'f.csv'\tWhere\tcast(\"q\"\"d\" as int) < 404 And (#6 <> 'x y' Or cast(\"q\"\"d\" as int) = -3 Or \"sum:x\" > 'b')\torder\tby\tcount(*)"
+],
+[
+"price,n2,#3,\"x,y\",h\u00e9llo,t,order\nab,7.00,#1,9999999999,Zed,9999999999,3\n#1,1.5,o'k,7,,7,-2.75\n,12.50,\"line\nbreak\",500,\"q\"\"t\",42,0.25\nZed,-2.75,,9999999999,x y,2,12.50\nx y,3,\"q\"\"t\",1,200,100,7.00\n9,0.25,9,7,9,966,1.5\n10,100.1,,9999999999,ab,7,7.00\n\"q\"\"t\",7.00,,7,\u00e9,500,0.25\nZed,7.00,#1,5,a,2,3\n,100.1,x y,-3,\u00e9,-3,0.25\n9,,ab,404,200,42,-2.75\n,0.25,\u00e9,9999999999,ab,2,7.00\n\"c,d\",12.50,x y,5,10,1,1.5\n,-2.75,x y,,,-3,\n#1,,,42,ab,0,3\n10,-2.75,Zed,100,\"q\"\"t\",7,1.5\n",
+"Select * From 'f.csv' Where \"order\" != 'q\"t' and price > '200' Order by \"#3\" asc, \"h\u00e9llo\" DESC offset 0"
+],
+[
+"t,a:int,h\u00e9llo,status,from,in,\"x,y\",city\n,,\"c,d\",Zed,404,7,10,100.1\n10,1.5,\"q\"\"t\",\u00e9,-3,100,b,-2.75\n\"c,d\",7.00,200,Zed,42,0,200,100.1\na,100.1,x y,b,42,100,,-2.75\n#1,7.00,\"line\nbreak\",\"line\nbreak\",100,-3,#1,3\nb,-2.75,Zed,9,5,42,ab,100.1\nab,1.5,9,\"q\"\"t\",1,-3,x y,7.00\n\"q\"\"t\",100.1,b,x y,0,411,#1,7.00\nb,12.50,10,\"line\nbreak\",-3,100,10,1.5\n#1,7.00,\"line\nbreak\",9,9999999999,7,x y,3\n,0.25,9,\"q\"\"t\",500,838,\u00e9,1.5\n",
+"Select  #3, \"x,y\", \"x,y\"  FROM  'f.csv'  where  \"h\u00e9llo\" <> 'line\nbreak' Or t < 'c,d' Or (status in ('9', 'and', '9') AND (\"a:int\" != '7.00' OR city::dec(3) = 100.1) AND \"in\" <> '10')  order  by  \"x,y\", \"h\u00e9llo\"  limit  100"
+],
+[
+"k.v,n2,bytes,price,in,it's,n1,a:int,1st\n100.1,2,0,\"c,d\",10,100.1,\"q\"\"t\",42,\"line\nbreak\"\n1.5,42,-3,,Zed,3,200,,\u00e9\n100.1,0,9999999999,\"line\nbreak\",\"q\"\"t\",3,Zed,2,9\n0.25,7,513,\"line\nbreak\",10,1.5,10,9999999999,b\n0.25,9999999999,404,a,x y,7.00,10,977,ab\n7.00,,42,b,,7.00,b,-3,a\n12.50,5,1,\"line\nbreak\",,100.1,a,1,#1\n0.25,404,-3,a,9,1.5,,1,\"line\nbreak\"\n-2.75,500,408,,,100.1,\"c,d\",42,Zed\n12.50,-3,2,\u00e9,a,12.50,\"q\"\"t\",2,200\n0.25,42,-3,\"line\nbreak\",9,0.25,\"c,d\",5,a\n-2.75,100,0,\"q\"\"t\",9,-2.75,o'k,500,x y\n100.1,100,1,o'k,b,1.5,\"c,d\",844,10\n-2.75,500,0,x y,a,-2.75,,404,#1\n0.25,-3,5,a,,0.25,Zed,,200\n100.1,0,2,\"q\"\"t\",#1,1.5,,5,\n1.5,81,404,\u00e9,o'k,1.5,ab,0,200\n-2.75,5,42,Zed,200,1.5,x y,2,9\n3,500,500,,a,1.5,,-3,\n0.25,-3,9999999999,b,10,100.1,\"c,d\",,Zed\n",
+"Select\n#8 , count(*)\nFROM\n'f.csv'\nWhere\n\"in\" > 'x y' AND \"in\" < 'x y' AND \"k.v\" <= '0.25'\ngroup\nBY\n#8\nLimit\n5"
+],
+[
+"x\\y,#3,t,n1,name,bytes\n-2.75,5,,\"c,d\",2,200\n",
+"select\tt , count(*)\tfrom\t'f.csv'\tWHERE\tname < '2' and \"x\\y\" Contains '' and cast(#2 as int) in (5, 5) and n1 < 'c,d' and \"#3\" > '5' and \"#3\"::int > 5\tGROUP\tby\tt"
+],
+[
+"x\\y,a:int,city,status\n\"c,d\",\"q\"\"t\",x y,ab\nZed,,200,9\nb,\u00e9,x y,#1\n200,,a,200\nab,,#1,x y\n\"line\nbreak\",x y,b,200\n200,,,Zed\nab,,Zed,\"q\"\"t\"\n\"q\"\"t\",\u00e9,o'k,\"line\nbreak\"\na,\"c,d\",ab,o'k\nZed,,10,\"q\"\"t\"\nZed,\"c,d\",x y,\"line\nbreak\"\n\"c,d\",\u00e9,200,\"line\nbreak\"\nb,200,ab,200\n10,9,10,ab\n\"c,d\",#1,#1,\"q\"\"t\"\nx y,\"c,d\",9,\n",
+"Select  \"x\\y\" , count(*) , count(distinct \"a:int\") , mean(\"a:int\", 3)  FROM  'f.csv'  Where  \"a:int\" = '\u00e9'  Group  By  \"x\\y\"  order  BY  count(*)"
+],
+[
+"in,\"x,y\",a:int,group,select,name,bytes\n2,,10,\"c,d\",200,2,5\n",
+"SELECT bytes from 'f.csv'"
+],
+[
+"name,t,bytes,b@2,\"x,y\"\n1.5,100,Zed,o'k,3\n1.5,0,ab,10,-2.75\n-2.75,,\"q\"\"t\",,1.5\n3,-3,o'k,b,-2.75\n-2.75,42,,\u00e9,0.25\n7.00,,Zed,#1,7.00\n0.25,2,\"c,d\",Zed,-2.75\n100.1,404,x y,\"line\nbreak\",-2.75\n7.00,100,x y,\"line\nbreak\",0.25\n1.5,42,\u00e9,ab,100.1\n7.00,0,b,#1,0.25\n",
+"SELECT\n#1, \"x,y\"\nfrom\n'f.csv'\nWhere\nbytes = 'c,d' AND bytes >= 'ab' AND name > '100.1' AND #5 In ('\u00e9', '1.5', '1.5') AND \"x,y\"::dec(3) < -2.75 AND \"b@2\" Contains ''\nORDER\nby\nbytes ASC"
+],
+[
+"a:int,t,limit,b@2,city,n2,bytes\n0.25,o'k,7.00,7,12.50,\"c,d\",-3\n12.50,\"q\"\"t\",-2.75,5,,a,2\n3,9,3,100,7.00,\"line\nbreak\",7\n3,,0.25,5,-2.75,9,1\n100.1,,12.50,42,7.00,#1,404\n-2.75,Zed,-2.75,2,1.5,10,343\n3,9,7.00,2,-2.75,9,42\n12.50,\"q\"\"t\",1.5,-3,100.1,,1\n3,,,500,0.25,#1,\n-2.75,,0.25,73,7.00,Zed,-3\n0.25,,,1,12.50,b,9999999999\n1.5,b,-2.75,500,0.25,x y,2\n12.50,b,-2.75,138,-2.75,\"line\nbreak\",404\n7.00,\"line\nbreak\",1.5,2,0.25,#1,9999999999\n",
+"Select\n\"limit\", \"a:int\"\nFROM\n'f.csv'\norder\nBY\nbytes"
+],
+[
+"n2,from,a:int,count,status,\"x,y\",name,in,price\n9,#1,200,ab,Zed,7.00,280,,12.50\n200,b,,Zed,ab,7.00,498,o'k,12.50\n,\"q\"\"t\",a,b,ab,3,1,\"line\nbreak\",7.00\nx y,b,#1,b,200,3,9999999999,a,1.5\nZed,200,\"q\"\"t\",,9,-2.75,2,,7.00\nZed,,\"q\"\"t\",\"q\"\"t\",b,3,7,10,12.50\n\"q\"\"t\",ab,x y,,x y,1.5,404,#1,-2.75\no'k,200,\"c,d\",10,,-2.75,42,x y,7.00\nb,,10,,9,,533,#1,100.1\n10,\"q\"\"t\",ab,10,,1.5,1,b,0.25\n9,9,,Zed,x y,12.50,0,Zed,3\n9,ab,x y,\"line\nbreak\",b,12.50,42,ab,7.00\nab,\u00e9,o'k,\"q\"\"t\",#1,0.25,946,Zed,1.5\n\"c,d\",\u00e9,ab,,\"line\nbreak\",7.00,2,a,-2.75\no'k,x y,o'k,200,o'k,1.5,1,9,-2.75\na,\"q\"\"t\",200,,,-2.75,0,\"line\nbreak\",0.25\n\"q\"\"t\",10,a,\u00e9,\"line\nbreak\",3,-3,\"line\nbreak\",-2.75\n\"q\"\"t\",b,,9,x y,7.00,9999999999,\"q\"\"t\",12.50\na,o'k,o'k,x y,\"line\nbreak\",0.25,42,\"line\nbreak\",3\no'k,x y,#1,10,o'k,0.25,,ab,12.50\n200,ab,\"c,d\",\"c,d\",ab,1.5,42,\"c,d\",-2.75\nb,o'k,ab,#1,\"c,d\",7.00,-3,\"line\nbreak\",3\n#1,\u00e9,,9,\"q\"\"t\",7.00,5,\"q\"\"t\",-2.75\n#1,,200,200,\"c,d\",1.5,1,a,-2.75\no'k,\"line\nbreak\",ab,,,7.00,420,9,0.25\n",
+"Select \"from\" , count(*) from 'f.csv' where count != '' AND (\"in\" IN ('a', 'line\nbreak') or cast(#6 as dec(3)) = 7.00) Group BY \"from\""
+],
+[
+"price,t,it's,status,b@2\na,a,9,12.50,\"q\"\"t\"\nx y,9,\"line\nbreak\",7.00,ab\n#1,200,a,,200\n#1,#1,#1,12.50,\"q\"\"t\"\n\"q\"\"t\",Zed,200,,ab\nZed,,,-2.75,#1\nab,b,200,-2.75,200\nZed,o'k,200,-2.75,ab\n",
+"select  \"b@2\", \"it's\", \"b@2\"  From  'f.csv'  Where  \"it's\" = '200' And \"it's\" CONTAINS 'a\\b'"
+],
+[
+"#3,t,bytes,city,status,null,in,contains,b@2\n0,\u00e9,b,,1.5,3,0.25,,\"c,d\"\n9999999999,Zed,#1,7.00,,0.25,1.5,10,\"line\nbreak\"\n7,o'k,x y,3,100.1,0.25,-2.75,9,b\n42,,\"c,d\",-2.75,3,7.00,12.50,a,10\n7,o'k,9,-2.75,12.50,3,0.25,#1,a\n1,ab,x y,3,3,7.00,7.00,10,a\n9999999999,,\"c,d\",0.25,100.1,3,100.1,Zed,x y\n,9,10,-2.75,1.5,3,0.25,o'k,ab\n,Zed,\u00e9,100.1,7.00,-2.75,3,,#1\n42,\"c,d\",#1,1.5,3,,-2.75,b,ab\n42,,b,100.1,100.1,3,0.25,a,200\n0,\"c,d\",9,12.50,1.5,1.5,100.1,Zed,10\n500,,\u00e9,100.1,1.5,1.5,1.5,#1,\n-3,x y,200,100.1,12.50,100.1,3,x y,o'k\n500,a,\u00e9,3,1.5,,12.50,200,\n368,a,Zed,1.5,,7.00,7.00,\u00e9,b\n9999999999,a,x y,1.5,0.25,12.50,0.25,o'k,200\n42,,ab,12.50,,3,,,10\n100,x y,Zed,-2.75,1.5,7.00,100.1,,\"c,d\"\n",
+"Select \"#3\" FROM 'f.csv' where \"null\"::dec(3) != 0 AND bytes <= 'Zed' Order BY \"in\" desc, \"contains\" DESC"
+],
+[
+"price,null,name,\"q\"\"d\",\"x,y\",#3,from,bytes\n",
+"Select \"null\" From 'f.csv' ORDER BY \"null\" Desc LIMIT 100"
+],
+[
+"price,\"q\"\"d\",it's,\"x,y\",status,h\u00e9llo\nb,7,Zed,1.5,12.50,200\n#1,102,#1,1.5,3,200\n\"line\nbreak\",404,200,1.5,-2.75,\n\"q\"\"t\",-3,Zed,3,7.00,a\na,,#1,3,-2.75,#1\n",
+"SELECT\n#6, price, #1\nfrom\n'f.csv'\nWHERE\n#6 != '200' AND (\"it's\" in ('9', 'a\\b') OR \"q\"\"d\"::int = 100 OR \"it's\" <= 'and')"
+],
+[
+"id,it's,price,n1,-dash\n,9,42,12.50,12.50\nx y,,263,12.50,100.1\n200,200,84,1.5,100.1\n\"q\"\"t\",\"q\"\"t\",9999999999,-2.75,0.25\n\"line\nbreak\",,9999999999,,1.5\n,#1,1,3,-2.75\n\"q\"\"t\",ab,100,3,12.50\nx y,9,7,7.00,7.00\nab,,,1.5,0.25\nZed,\"q\"\"t\",2,3,3\no'k,ab,100,-2.75,-2.75\n",
+"SELECT\n\"-dash\"\nfrom\n'f.csv'\nWhere\nid contains 'ab'"
+],
+[
+"#3,n2,h\u00e9llo,bytes,count,-dash\n\"q\"\"t\",10,1.5,#1,#1,#1\na,,12.50,o'k,#1,x y\na,#1,1.5,Zed,#1,200\na,#1,7.00,\"line\nbreak\",\u00e9,\"line\nbreak\"\na,10,100.1,a,,Zed\n\"c,d\",Zed,12.50,\"line\nbreak\",#1,ab\n\"line\nbreak\",o'k,12.50,b,\u00e9,#1\n9,\"q\"\"t\",100.1,Zed,x y,ab\n\u00e9,a,100.1,,#1,#1\no'k,9,7.00,10,10,o'k\n#1,#1,12.50,200,10,10\no'k,ab,7.00,,9,#1\nab,,3,\u00e9,b,o'k\nZed,,100.1,\"c,d\",a,x y\nb,,3,o'k,10,9\no'k,b,-2.75,\u00e9,ab,#1\no'k,ab,-2.75,,9,b\n\"c,d\",\u00e9,12.50,\"q\"\"t\",Zed,\n#1,\u00e9,7.00,\"c,d\",o'k,\"line\nbreak\"\n",
+"Select\n#6, \"-dash\", count\nFROM\n'f.csv'\nWhere\n\"-dash\" < '#1'\nOrder\nBY\n\"h\u00e9llo\" DESC"
+]
+]
+}

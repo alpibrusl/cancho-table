@@ -132,6 +132,88 @@ pub fn s_mix() -> [] int {
     return 28;
 }
 
+// ---- the join (docs/joins.md section 20)
+
+// 0 not worked out, 1 the query mentions a word of a join, 2 it does not (qlex)
+pub fn s_joined() -> [] int {
+    return 29;
+}
+
+// 1 when the statement is `from SRC as A` and a join word: every column of it is written alias.column
+pub fn s_join() -> [] int {
+    return 30;
+}
+
+// the token of the alias of the first table, of the second (-1 when the head does not give one), and the kind of join: 0 inner, 1 left, 2 semi, 3 anti, 4 right, 5 full, 6 cross
+pub fn s_alias_a() -> [] int {
+    return 31;
+}
+
+pub fn s_alias_b() -> [] int {
+    return 32;
+}
+
+pub fn s_jtype() -> [] int {
+    return 33;
+}
+
+// the first refusal that does not stop the parse (a column that is not written alias.column, an alias that is not a table's, ...): kind, code, offset; the earliest of it and of the one that stopped the parse is told
+pub fn s_pend_kind() -> [] int {
+    return 34;
+}
+
+pub fn s_pend_code() -> [] int {
+    return 35;
+}
+
+pub fn s_pend_offset() -> [] int {
+    return 36;
+}
+
+// 1 in the on clause, 1 in the conditions on the right table of it, 1 in a look-ahead (nothing is noted)
+pub fn s_in_on() -> [] int {
+    return 37;
+}
+
+pub fn s_in_conds() -> [] int {
+    return 38;
+}
+
+pub fn s_dry() -> [] int {
+    return 39;
+}
+
+// the records of the key equalities (eight integers each: the probe name's token, the build name's, the type) and how many; the conditions of the on (they begin at `s_jconds`, end at `s_jconds_end`)
+pub fn s_pairs() -> [] int {
+    return 40;
+}
+
+pub fn s_pair_count() -> [] int {
+    return 41;
+}
+
+pub fn s_jconds() -> [] int {
+    return 42;
+}
+
+pub fn s_jconds_end() -> [] int {
+    return 43;
+}
+
+pub fn s_jcond_count() -> [] int {
+    return 44;
+}
+
+// 1 when the `and` and `or` that mix are inside the conditions of an on
+pub fn s_mix_on() -> [] int {
+    return 45;
+}
+
+// the token of the second table's file name
+pub fn s_join_path() -> [] int {
+    return 46;
+}
+
 pub fn tokens_at() -> [] int {
     return 64;
 }

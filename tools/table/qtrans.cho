@@ -10,6 +10,10 @@ module qtrans;
 //
 //     0 --select   1 --where   2 --group   3 --agg   4 --order-by   5 --sort   6 the source (a path)   7 --rename
 //
+// and, for a statement that has a join, six more (docs/joins.md section 20), which `rest_from` hands over as one text for the plan to keep
+//
+//     8 --join (the path)   9 --on   10 --join-type (a word)   11 --join-prefix (the alias and a dot; empty for a semi or anti join)   12 --join-where   13 a copy of --where (section 1)
+//
 // and `info` the integers (the slots below) and, after them, for a literal that may not fit its column, where it is in the --where text and in the query.
 
 import std.buffer;
@@ -127,14 +131,43 @@ pub fn i_rename() -> [] int {
     return 21;
 }
 
+// 1 when the statement has a join: the sections 8 to 13 are then the flags of the join (see `rest_from`)
+pub fn i_join() -> [] int {
+    return 22;
+}
+
+// the literals of the on's conditions are mapped at this offset beyond the where's (a refusal of the join-where flag is found by it)
+pub fn jw_base() -> [] int {
+    return 1000000;
+}
+
 pub fn largest() -> [] int {
     return 4096;
 }
 
 // ---- names ---------------------------------------------------------------------------------------------------------------------
 
-// The name a column token stands for: a bare word as it is, a quoted name without its quotes (a doubled quote is one), a position as `#digits`.
+// The name a column token stands for in the answer: in a join the name of the joined row, the alias and a dot before a column of the second table (the first table's columns keep their names).
 fn decode[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], tok: int) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, 16);
+    if qparse.qualified(m, tok) && m[qarena.s_alias_b()] >= 0 && qparse.name_eq(q, m, tok - 2, m[qarena.s_alias_b()]) {
+        let alias = decode_own(heap, q, m, tok - 2);
+        borrow alias as &ar in {
+            out = buffer.append(heap, out, buffer.bytes(ar));
+        }
+        buffer.drop(heap, alias);
+        out = buffer.push(heap, out, byte_of('.'));
+    }
+    let own = decode_own(heap, q, m, tok);
+    borrow own as &nr in {
+        out = buffer.append(heap, out, buffer.bytes(nr));
+    }
+    buffer.drop(heap, own);
+    return out;
+}
+
+// The name a column token is in its own table: a bare word as it is, a quoted name without its quotes (a doubled quote is one), a position as `#digits`.
+fn decode_own[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], tok: int) -> [heap] buffer.Buffer {
     var out = buffer.empty(heap, 16);
     let a = qarena.tok_start(m, tok);
     let b = qarena.tok_end(m, tok);
@@ -237,15 +270,41 @@ fn is_identifier[&d](name: &d [byte]) -> [] bool {
     return true;
 }
 
+// Whether the name token `tok` is a column of the second table of a join whose alias and name are both plain words (no quote, no space, not one of the expression's own words): `b.name`
+// is then written bare in --where, as a person writes it.
+fn dotted_bare[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &m [int], tok: int) -> [heap] bool {
+    if !qparse.qualified(m, tok) || m[qarena.s_alias_b()] < 0 || !qparse.name_eq(q, m, tok - 2, m[qarena.s_alias_b()]) {
+        return false;
+    }
+    let alias = decode_own(heap, q, m, tok - 2);
+    let own = decode_own(heap, q, m, tok);
+    var ok = false;
+    borrow alias as &ar in {
+        borrow own as &nr in {
+            ok = is_identifier(buffer.bytes(ar)) && is_identifier(buffer.bytes(nr)) && !bytes.equal(buffer.bytes(nr), "and") && !bytes.equal(buffer.bytes(nr), "in") && !bytes.equal(buffer.bytes(nr), "contains");
+        }
+    }
+    buffer.drop(heap, alias);
+    buffer.drop(heap, own);
+    return ok;
+}
+
 // A column in --where: a position as it is, a plain identifier (that is not one of the expression's own words) bare, any other name 'quoted' with a doubled quote.
-fn put_where_column[&h, &q, &m](heap: &!h Heap, out: buffer.Buffer, q: &q [byte], m: &m [int], tok: int) -> [heap] buffer.Buffer {
-    let name = decode(heap, q, m, tok);
+fn put_where_column[&h, &q, &m](heap: &!h Heap, out: buffer.Buffer, q: &q [byte], m: &m [int], tok: int, own: bool) -> [heap] buffer.Buffer {
+    var name = decode(heap, q, m, tok);
+    if own {
+        buffer.drop(heap, name);
+        name = decode_own(heap, q, m, tok);
+    }
     var o = out;
     borrow name as &nr in {
         let n = buffer.bytes(nr);
         if is_position(m, tok) {
             o = buffer.append(heap, o, n);
         } else if is_identifier(n) && !bytes.equal(n, "and") && !bytes.equal(n, "in") && !bytes.equal(n, "contains") {
+            o = buffer.append(heap, o, n);
+        } else if !own && dotted_bare(heap, q, m, tok) {
+            // a column of the second table of a join, alias.name, is one word of the grammar when both halves are plain words
             o = buffer.append(heap, o, n);
         } else {
             o = buffer.push(heap, o, byte_of(39));
@@ -404,8 +463,107 @@ fn put_new[&h, &d](heap: &!h Heap, out: buffer.Buffer, name: &d [byte]) -> [heap
     return o;
 }
 
+// A name in the list of --on: a backslash before a comma, a backslash, an equals sign, a colon, and a leading `#`.
+fn put_on_name[&h, &d](heap: &!h Heap, out: buffer.Buffer, name: &d [byte]) -> [heap] buffer.Buffer {
+    var o = out;
+    var i = 0;
+    while i < len(name) {
+        let c = int_of(name[i]);
+        if c == ',' || c == '\\' || c == '=' || c == ':' || c == '#' && i == 0 {
+            o = buffer.push(heap, o, byte_of('\\'));
+        }
+        o = buffer.push(heap, o, name[i]);
+        i = i + 1;
+    }
+    return o;
+}
+
 fn put_zero[&h](heap: &!h Heap, out: buffer.Buffer) -> [heap] buffer.Buffer {
     return buffer.push(heap, out, byte_of(0));
+}
+
+// The text of a where clause as the flag writes it, from the records `from` to `to` (the conditions, their values after them, and the structure: parentheses, `and`, `or`, `not`): a column by its name in
+// the answer, or by its name in its own table when `own` (the conditions of the on become --join-where, which names the second table's columns as that file does). `where_at` is where the section
+// begins in `text`; when `want_map` each literal is mapped (where it is in the section, plus `base`, where it is in the query, its column, its type). Answers the text, the info and how many literals were mapped.
+fn put_conditions[&h, &q, &m](heap: &!h Heap, text0: buffer.Buffer, info0: vec.Vec[int], q: &q [byte], m: &m [int], from: int, to: int, own: bool, want_map: bool, where_at: int, base: int) -> [heap] (buffer.Buffer, vec.Vec[int], int) {
+    var text = text0;
+    var info = info0;
+    var at = from;
+    var maps = 0;
+    while at < to {
+        let col = m[at];
+        if col < 0 {
+            // the structure: ( ) and or not, as the query wrote them (and the parenthesis a `not` before a condition needs)
+            if col == 0 - 1 {
+                text = buffer.push(heap, text, byte_of('('));
+            } else if col == 0 - 2 {
+                text = buffer.push(heap, text, byte_of(')'));
+            } else if col == 0 - 3 {
+                text = buffer.append(heap, text, " and ");
+            } else if col == 0 - 5 {
+                text = buffer.append(heap, text, "not ");
+            } else {
+                text = buffer.append(heap, text, " or ");
+            }
+            at = at + 8;
+        } else {
+            let t = m[at + 1];
+            let op = m[at + 2];
+            let nv = m[at + 3];
+            text = put_where_column(heap, text, q, m, col, own);
+            text = put_type(heap, text, t);
+            text = buffer.push(heap, text, byte_of(32));
+            if op == 7 {
+                text = buffer.append(heap, text, "in (");
+            } else if op == 8 {
+                text = buffer.append(heap, text, "not in (");
+            } else if op == 9 {
+                text = buffer.append(heap, text, "not contains ");
+            } else if op == 6 {
+                text = buffer.append(heap, text, "contains ");
+            } else if op == 0 {
+                text = buffer.append(heap, text, "= ");
+            } else if op == 1 {
+                text = buffer.append(heap, text, "!= ");
+            } else if op == 2 {
+                text = buffer.append(heap, text, "< ");
+            } else if op == 3 {
+                text = buffer.append(heap, text, "<= ");
+            } else if op == 4 {
+                text = buffer.append(heap, text, "> ");
+            } else {
+                text = buffer.append(heap, text, ">= ");
+            }
+            var v = 0;
+            while v < nv {
+                if v > 0 {
+                    text = buffer.append(heap, text, ", ");
+                }
+                let tok = m[at + 8 + v];
+                if want_map {
+                    // where the literal begins in the --where text, and in the query, and the column and the type it is read as
+                    var here = 0;
+                    borrow text as &hr in {
+                        here = buffer.size(hr);
+                    }
+                    info = vec.push(heap, info, here - where_at + base);
+                    info = vec.push(heap, info, qarena.tok_start(m, tok));
+                    info = vec.push(heap, info, qarena.tok_end(m, tok));
+                    info = vec.push(heap, info, qarena.tok_start(m, col));
+                    info = vec.push(heap, info, qarena.tok_end(m, col));
+                    info = vec.push(heap, info, t);
+                    maps = maps + 1;
+                }
+                text = buffer.append(heap, text, q[qarena.tok_start(m, tok)..qarena.tok_end(m, tok)]);
+                v = v + 1;
+            }
+            if op == 7 || op == 8 {
+                text = buffer.push(heap, text, byte_of(')'));
+            }
+            at = at + 8 + nv;
+        }
+    }
+    return (text, info, maps);
 }
 
 // ---- the translation -----------------------------------------------------------------------------------------------------------
@@ -497,80 +655,14 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
     borrow text as &wr in {
         where_at = buffer.size(wr);
     }
-    var at = m[qarena.s_conds()];
     var maps = 0;
-    while at < m[qarena.s_conds_end()] {
-        let col = m[at];
-        if col < 0 {
-            // the structure: ( ) and or not, as the query wrote them (and the parenthesis a `not` before a condition needs)
-            if col == 0 - 1 {
-                text = buffer.push(heap, text, byte_of('('));
-            } else if col == 0 - 2 {
-                text = buffer.push(heap, text, byte_of(')'));
-            } else if col == 0 - 3 {
-                text = buffer.append(heap, text, " and ");
-            } else if col == 0 - 5 {
-                text = buffer.append(heap, text, "not ");
-            } else {
-                text = buffer.append(heap, text, " or ");
-            }
-            at = at + 8;
-        } else {
-            let t = m[at + 1];
-            let op = m[at + 2];
-            let nv = m[at + 3];
-            text = put_where_column(heap, text, q, m, col);
-            text = put_type(heap, text, t);
-            text = buffer.push(heap, text, byte_of(32));
-            if op == 7 {
-                text = buffer.append(heap, text, "in (");
-            } else if op == 8 {
-                text = buffer.append(heap, text, "not in (");
-            } else if op == 9 {
-                text = buffer.append(heap, text, "not contains ");
-            } else if op == 6 {
-                text = buffer.append(heap, text, "contains ");
-            } else if op == 0 {
-                text = buffer.append(heap, text, "= ");
-            } else if op == 1 {
-                text = buffer.append(heap, text, "!= ");
-            } else if op == 2 {
-                text = buffer.append(heap, text, "< ");
-            } else if op == 3 {
-                text = buffer.append(heap, text, "<= ");
-            } else if op == 4 {
-                text = buffer.append(heap, text, "> ");
-            } else {
-                text = buffer.append(heap, text, ">= ");
-            }
-            var v = 0;
-            while v < nv {
-                if v > 0 {
-                    text = buffer.append(heap, text, ", ");
-                }
-                let tok = m[at + 8 + v];
-                if want_map {
-                    // where the literal begins in the --where text, and in the query, and the column and the type it is read as
-                    var here = 0;
-                    borrow text as &hr in {
-                        here = buffer.size(hr);
-                    }
-                    info = vec.push(heap, info, here - where_at);
-                    info = vec.push(heap, info, qarena.tok_start(m, tok));
-                    info = vec.push(heap, info, qarena.tok_end(m, tok));
-                    info = vec.push(heap, info, qarena.tok_start(m, col));
-                    info = vec.push(heap, info, qarena.tok_end(m, col));
-                    info = vec.push(heap, info, t);
-                    maps = maps + 1;
-                }
-                text = buffer.append(heap, text, q[qarena.tok_start(m, tok)..qarena.tok_end(m, tok)]);
-                v = v + 1;
-            }
-            if op == 7 || op == 8 {
-                text = buffer.push(heap, text, byte_of(')'));
-            }
-            at = at + 8 + nv;
-        }
+    let (t2, i2, m2) = put_conditions(heap, text, info, q, m, m[qarena.s_conds()], m[qarena.s_conds_end()], false, want_map, where_at, 0);
+    text = t2;
+    info = i2;
+    maps = m2;
+    var where_end = 0;
+    borrow text as &wr2 in {
+        where_end = buffer.size(wr2);
     }
     if n_conds > 0 {
         info = put_info(info, i_where(), 1);
@@ -815,6 +907,83 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
         info = put_info(info, i_rename(), 1);
     }
     text = put_zero(heap, text);
+    if m[qarena.s_join()] == 1 {
+        // 8 --join: the path, as a source's is written
+        let ptok = m[qarena.s_join_path()];
+        var pj = qarena.tok_start(m, ptok) + 1;
+        while pj < qarena.tok_end(m, ptok) - 1 {
+            text = buffer.push(heap, text, q[pj]);
+            if int_of(q[pj]) == 39 {
+                pj = pj + 1;
+            }
+            pj = pj + 1;
+        }
+        text = put_zero(heap, text);
+        // 9 --on: the key equalities, each `PROBE=BUILD` with the columns' own names and the type at the end
+        var pr = 0;
+        while pr < m[qarena.s_pair_count()] {
+            let rec = m[qarena.s_pairs()] + 8 * pr;
+            if pr > 0 {
+                text = buffer.push(heap, text, byte_of(','));
+            }
+            let left = decode_own(heap, q, m, m[rec]);
+            borrow left as &lr in {
+                text = put_on_name(heap, text, buffer.bytes(lr));
+            }
+            buffer.drop(heap, left);
+            text = buffer.push(heap, text, byte_of('='));
+            let right = decode_own(heap, q, m, m[rec + 1]);
+            borrow right as &rr in {
+                text = put_on_name(heap, text, buffer.bytes(rr));
+            }
+            buffer.drop(heap, right);
+            text = put_type(heap, text, m[rec + 2]);
+            pr = pr + 1;
+        }
+        text = put_zero(heap, text);
+        // 10 --join-type, 11 --join-prefix (the second table's alias and a dot: its columns are written so in the answer; a semi or anti join gives none)
+        let jt = m[qarena.s_jtype()];
+        if jt == 1 {
+            text = buffer.append(heap, text, "left");
+        } else if jt == 2 {
+            text = buffer.append(heap, text, "semi");
+        } else if jt == 3 {
+            text = buffer.append(heap, text, "anti");
+        } else {
+            text = buffer.append(heap, text, "inner");
+        }
+        text = put_zero(heap, text);
+        if jt <= 1 {
+            let alias = decode_own(heap, q, m, m[qarena.s_alias_b()]);
+            borrow alias as &ar in {
+                text = buffer.append(heap, text, buffer.bytes(ar));
+            }
+            buffer.drop(heap, alias);
+            text = buffer.push(heap, text, byte_of('.'));
+        }
+        text = put_zero(heap, text);
+        // 12 --join-where: the conditions of the on, a column by the name its own file gives it
+        var jw_at = 0;
+        borrow text as &jr in {
+            jw_at = buffer.size(jr);
+        }
+        let (t3, i3, m3) = put_conditions(heap, text, info, q, m, m[qarena.s_jconds()], m[qarena.s_jconds_end()], true, want_map, jw_at, jw_base());
+        text = t3;
+        info = i3;
+        maps = maps + m3;
+        text = put_zero(heap, text);
+        // 13 a copy of --where
+        var copy = buffer.empty(heap, 16);
+        borrow text as &cr in {
+            copy = buffer.append(heap, copy, buffer.bytes(cr)[where_at..where_end]);
+        }
+        borrow copy as &cr2 in {
+            text = buffer.append(heap, text, buffer.bytes(cr2));
+        }
+        buffer.drop(heap, copy);
+        text = put_zero(heap, text);
+        info = put_info(info, i_join(), 1);
+    }
     info = put_info(info, i_source(), m[qarena.s_source()]);
     if m[qarena.s_limit()] >= 0 {
         info = put_info(info, i_limit_given(), 1);
@@ -866,6 +1035,10 @@ pub fn translate[&h, &q](heap: &!h Heap, q: &q [byte], want_map: bool) -> [heap]
         var bad = qlex.lex(q, m);
         if bad == 0 {
             bad = qparse.statement(q, m);
+            // (in a join the earliest of the refusal that stopped the parse and the first one it noted on the way is the one told)
+            if qparse.settle_pending(m) != 0 {
+                bad = 1;
+            }
         }
         if bad == 0 {
             let (t2, i2) = emit(heap, q, m, text, info, want_map);
@@ -877,7 +1050,7 @@ pub fn translate[&h, &q](heap: &!h Heap, q: &q [byte], want_map: bool) -> [heap]
         at = m[qarena.s_offset()];
         if m[qarena.s_mix()] > 0 {
             // `and` mixed with `or` comes before whatever the rest of the statement says
-            if bad == 0 && code == 0 {
+            if bad == 0 && code == 0 && m[qarena.s_mix_on()] == 0 {
                 tolerant = 1;
             }
             status = 5;
@@ -899,6 +1072,25 @@ pub fn translate[&h, &q](heap: &!h Heap, q: &q [byte], want_map: bool) -> [heap]
     info = put_info(info, i_group_at(), group_at);
     info = put_info(info, i_group_end(), group_end);
     return Translated { text: text, info: info };
+}
+
+// The text from the beginning of section `k` to the end: the sections 8 to 13 of a join statement as one text (empty for a statement with none), which the plan keeps.
+pub fn rest_from[&t](t: &t Translated, k: int) -> [] &t [byte] {
+    let all = buffer.bytes(t.text);
+    var begin = 0;
+    var seen = 0;
+    var i = 0;
+    while i < len(all) && seen < k {
+        if int_of(all[i]) == 0 {
+            seen = seen + 1;
+            begin = i + 1;
+        }
+        i = i + 1;
+    }
+    if seen < k {
+        return all[len(all)..len(all)];
+    }
+    return all[begin..len(all)];
 }
 
 pub fn drop[&h](heap: &!h Heap, t: Translated) -> [heap] int {

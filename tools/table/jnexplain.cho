@@ -16,6 +16,7 @@ import jnfail;
 import jnflags;
 import jnhead;
 import jnwhere;
+import jxsrc;
 import orparse;
 import qpath;
 import query;
@@ -82,9 +83,9 @@ fn type_name[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buff
 }
 
 // The text of the `join` member. `jtype`: 0 inner, 1 left, 2 semi, 3 anti.
-fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte]) -> [heap, args] buffer.Buffer {
+fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte]) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
-    let on = jnflags.parse_on(heap, cli.text(args, parsed, table, "on"));
+    let on = jnflags.on_of(heap, args, parsed, jxs);
     let budget = cli.nat(args, parsed, table, "max-state-bytes");
     var typed = false;
     var j = 0;
@@ -150,7 +151,11 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j](heap: &!h Heap, args: &g Args, parse
         o = buffer.append(heap, o, "null");
     }
     o = buffer.append(heap, o, ",\"prefix\":");
-    o = text.append_json(heap, o, cli.text(args, parsed, table, "join-prefix"));
+    let prefixb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_prefix(), "join-prefix");
+    borrow prefixb as &pxr in {
+        o = text.append_json(heap, o, buffer.bytes(pxr));
+    }
+    buffer.drop(heap, prefixb);
     o = buffer.append(heap, o, ",\"using\":[");
     var listed = 0;
     borrow on as &onr in {
@@ -225,7 +230,7 @@ fn size_of[&f](file: &!f File) -> [file_read] int {
     return size;
 }
 
-pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, fs: &fs Fs(""), root: &rt [byte], opened: File, stdin: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree0: query.Query, names_at: int, errs: fail.Errors, payload0: buffer.Buffer) -> [heap, args, fs_read(""), dir_read] (query.Query, fail.Errors, buffer.Buffer) {
+pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], fs: &fs Fs(""), root: &rt [byte], opened: File, stdin: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree0: query.Query, names_at: int, errs: fail.Errors, payload0: buffer.Buffer) -> [heap, args, fs_read(""), dir_read] (query.Query, fail.Errors, buffer.Buffer) {
     let table = spec.flag_table();
     var e = errs;
     var payload = payload0;
@@ -244,8 +249,17 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
     var hb = jnhead.no_head(heap);
     var bsize = 0 - 1;
     var read_build = false;
-    let (full, shown_at, checked) = qpath.resolve(heap, root, cli.text(args, parsed, table, "join"), e);
-    e = checked;
+    var full = buffer.empty(heap, 1);
+    var shown_at = 0 - 1;
+    let jpb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_join(), "join");
+    borrow jpb as &jpr in {
+        buffer.drop(heap, full);
+        let (full2, shown2, checked) = qpath.resolve(heap, root, buffer.bytes(jpr), e);
+        full = full2;
+        shown_at = shown2;
+        e = checked;
+    }
+    buffer.drop(heap, jpb);
     var shown_b_copy = buffer.empty(heap, 1);
     borrow full as &fr in {
         if shown_at >= 0 {
@@ -305,20 +319,24 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
     var jends = vec.empty(heap, 1, 0);
     var ok = false;
     var jtype = 0;
-    let jw_on = cli.has(parsed, table, "join-where");
+    let jw_on = jxsrc.has(parsed, jxs, jxsrc.s_join_where(), "join-where");
     var jwtree = query.empty(heap);
-    let word = cli.text(args, parsed, table, "join-type");
-    if bytes.equal(word, "left") {
-        jtype = 1;
-    } else if bytes.equal(word, "semi") {
-        jtype = 2;
-    } else if bytes.equal(word, "anti") {
-        jtype = 3;
+    let wordb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_type(), "join-type");
+    borrow wordb as &wdr in {
+        let word = buffer.bytes(wdr);
+        if bytes.equal(word, "left") {
+            jtype = 1;
+        } else if bytes.equal(word, "semi") {
+            jtype = 2;
+        } else if bytes.equal(word, "anti") {
+            jtype = 3;
+        }
     }
+    buffer.drop(heap, wordb);
     borrow shown_b_copy as &sb in {
         borrow hp as &hpr in {
             borrow hb as &hbr in {
-                let (u, e2) = jnhead.unite(heap, args, parsed, e, hpr.names, hpr.ends, hbr.names, hbr.ends, !stdin, shown, buffer.bytes(sb), jtype);
+                let (u, e2) = jnhead.unite(heap, args, parsed, jxs, e, hpr.names, hpr.ends, hbr.names, hbr.ends, !stdin, shown, buffer.bytes(sb), jtype);
                 e = e2;
                 borrow u as &ur in {
                     pairs = ur.pairs;
@@ -339,8 +357,12 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
                 if jw_on {
                     // `--join-where` against the build file's header, as the run reads it
                     query.drop(heap, jwtree);
-                    let (t1, what, at) = orparse.parse(heap, query.empty(heap), cli.text(args, parsed, table, "join-where"));
-                    jwtree = t1;
+                    let jwb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_join_where(), "join-where");
+                    borrow jwb as &jwr in {
+                        let (t1, what, at) = orparse.parse(heap, query.empty(heap), buffer.bytes(jwr));
+                        jwtree = t1;
+                    }
+                    buffer.drop(heap, jwb);
                     borrow jwtree as &jq in {
                         let (e3, c3, ok3) = jnwhere.resolve(heap, e, jq, hbr.names, hbr.ends, buffer.bytes(sb));
                         e = e3;
@@ -381,17 +403,25 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
     var where_json = buffer.append(heap, buffer.empty(heap, 8), "null");
     var jw_json = buffer.append(heap, buffer.empty(heap, 8), "[]");
     if jw_on {
-        let jtext = cli.text(args, parsed, table, "join-where");
-        let ju = orparse.top_units(heap, jtext);
-        buffer.drop(heap, jw_json);
-        borrow ju as &jur in {
-            jw_json = jnwhere.units_json(heap, jtext, jur);
+        let jtextb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_join_where(), "join-where");
+        borrow jtextb as &jtr in {
+            let jtext = buffer.bytes(jtr);
+            let ju = orparse.top_units(heap, jtext);
+            buffer.drop(heap, jw_json);
+            borrow ju as &jur in {
+                jw_json = jnwhere.units_json(heap, jtext, jur);
+            }
+            vec.drop(heap, ju);
         }
-        vec.drop(heap, ju);
+        buffer.drop(heap, jtextb);
     }
     if !stdin {
-        let wtext = cli.text(args, parsed, table, "where");
-        let wu = orparse.top_units(heap, wtext);
+        let wtextb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_where(), "where");
+        var wu = vec.empty(heap, 1, 0);
+        borrow wtextb as &wtr in {
+            vec.drop(heap, wu);
+            wu = orparse.top_units(heap, buffer.bytes(wtr));
+        }
         var nw = 0;
         borrow tree0 as &t0 in {
             nw = query.count_of(t0, 1);
@@ -429,11 +459,14 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
             }
         }
         buffer.drop(heap, where_json);
-        borrow wu as &wur in {
-            borrow cls as &clr in {
-                where_json = jnwhere.split_json(heap, wtext, wur, contents(clr));
+        borrow wtextb as &wtr3 in {
+            borrow wu as &wur in {
+                borrow cls as &clr in {
+                    where_json = jnwhere.split_json(heap, buffer.bytes(wtr3), wur, contents(clr));
+                }
             }
         }
+        buffer.drop(heap, wtextb);
         unbox_slice(heap, cls);
         vec.drop(heap, wu);
     }
@@ -453,7 +486,7 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs](heap: &!h Heap, args: &g Args, parsed: &
         borrow keys as &ky in {
             borrow where_json as &wjr in {
                 borrow jw_json as &jjr in {
-                    doc = join_doc(heap, args, parsed, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, !stdin, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared);
+                    doc = join_doc(heap, args, parsed, jxs, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, !stdin, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared);
                 }
             }
         }

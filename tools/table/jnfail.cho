@@ -131,9 +131,8 @@ fn stem_prefix[&h, &s](heap: &!h Heap, shown: &s [byte]) -> [heap] buffer.Buffer
 
 // `join.column-collision`: a name that both headers have, with the prefix given (or ""). Nothing is renamed. The repair is the invocation with `--join-prefix` and the stem of the build
 // file's name, offered only when no prefix was given and the result has no collision; otherwise there is none.
-pub fn collision[&h, &g, &p, &a, &b, &x, &y, &q, &s, &z](heap: &!h Heap, e: fail.Errors, args: &g Args, parsed: &p cli.Parsed, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], prefix: &q [byte], shown: &s [byte], table: &static [byte], dropped: &z [int]) -> [heap, args] fail.Errors {
+pub fn collision[&h, &g, &p, &a, &b, &x, &y, &q, &s, &z](heap: &!h Heap, e: fail.Errors, args: &g Args, parsed: &p cli.Parsed, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], prefix: &q [byte], shown: &s [byte], given: bool, dropped: &z [int]) -> [heap, args] fail.Errors {
     var o = fail.open_in(heap, finish.extra(), "join.column-collision", "a column name is in both files, and the joined row would have it twice (nothing is renamed on the way)", "give the --join file's columns a prefix with --join-prefix, or select and name them by position");
-    let given = cli.has(parsed, table, "join-prefix");
     let stem = stem_prefix(heap, shown);
     var good = false;
     borrow stem as &sr in {

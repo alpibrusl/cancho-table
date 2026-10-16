@@ -74,6 +74,7 @@ def main():
     ap.add_argument("--small", type=int, default=20000)
     ap.add_argument("--large", type=int, default=60000)
     ap.add_argument("--json", default="")
+    ap.add_argument("--all", action="store_true", help="also run the old binary on the cells that are new only (from J3b on `main` has them all), and judge them")
     a = ap.parse_args()
     import gate_regress as G
     out = {"limit": LIMIT, "small": a.small, "large": a.large, "cells": []}
@@ -117,7 +118,13 @@ def main():
         for name, extra in j3.items():
             mk = lambda b, n, extra=extra: [b, "--root", str(d), "--join", "build.csv", "--on", "k=k", *(["--join-prefix", "b_"] if "--join-type" not in extra or True else []), *extra, "--format", "csv", "--max-rows", "1000000", "--max-groups", "1000000", "probe-%d.csv" % n]
             n1, n2, nrow = per_row(a.new, mk, a.small, a.large)
-            if name.startswith("join inner, --where"):
+            if a.all:
+                o1, o2, orow = per_row(a.old, mk, a.small, a.large)
+                bad = nrow / orow > LIMIT
+                failed |= bad
+                print("%-40s %12.2f %12.2f %9.4f %9d %9d  %s" % (name, orow, nrow, nrow / orow, o2, n2, "OVER" if bad else ""))
+                out["cells"].append({"cell": name, "old_per_row": orow, "new_per_row": nrow, "ratio": nrow / orow, "old_total": o2, "new_total": n2})
+            elif name.startswith("join inner, --where"):
                 o1, o2, orow = per_row(a.old, mk, a.small, a.large)
                 print("%-40s %12.2f %12.2f %9.4f %9d %9d  (for the record)" % (name, orow, nrow, nrow / orow, o2, n2))
                 out["cells"].append({"cell": name, "old_per_row": orow, "new_per_row": nrow, "ratio": nrow / orow, "old_total": o2, "new_total": n2})
@@ -146,6 +153,13 @@ def main():
                 extra = ["--on", "k=k"] + extra
             mk = lambda b, n, extra=extra: [b, "--root", str(d), "--join", "b%d.csv" % n, *extra, "--format", "csv", "p1.csv"]
             n1, n2, nrow = per_row(a.new, mk, small_b, large_b)
+            if a.all:
+                o1, o2, orow = per_row(a.old, mk, small_b, large_b)
+                bad = nrow / orow > LIMIT
+                failed |= bad
+                print("%-40s %12.2f %12.2f %9.4f %9d %9d  %s" % (name, orow, nrow, nrow / orow, o2, n2, "OVER" if bad else ""))
+                out["cells"].append({"cell": name, "old_per_row": orow, "new_per_row": nrow, "ratio": nrow / orow, "old_total": o2, "new_total": n2})
+                continue
             print("%-40s %12s %12.2f %9s %9s %9d" % (name, "-", nrow, "-", "-", n2))
             out["cells"].append({"cell": name, "new_per_row": nrow, "new_total": n2})
         # the shapes J2 adds, new only
@@ -162,6 +176,13 @@ def main():
             argv_on = ["--on", "k=k"] if "--on" not in extra else []
             mk = lambda b, n, extra=extra, argv_on=argv_on: [b, "--root", str(d), "--join", "build.csv", *argv_on, *extra, "--format", "csv", "--max-rows", "1000000", "probe-%d.csv" % n]
             n1, n2, nrow = per_row(a.new, mk, a.small, a.large)
+            if a.all:
+                o1, o2, orow = per_row(a.old, mk, a.small, a.large)
+                bad = nrow / orow > LIMIT
+                failed |= bad
+                print("%-40s %12.2f %12.2f %9.4f %9d %9d  %s" % (name, orow, nrow, nrow / orow, o2, n2, "OVER" if bad else ""))
+                out["cells"].append({"cell": name, "old_per_row": orow, "new_per_row": nrow, "ratio": nrow / orow, "old_total": o2, "new_total": n2})
+                continue
             print("%-40s %12s %12.2f %9s %9s %9d" % (name, "-", nrow, "-", "-", n2))
             out["cells"].append({"cell": name, "new_per_row": nrow, "new_total": n2})
     if a.json:

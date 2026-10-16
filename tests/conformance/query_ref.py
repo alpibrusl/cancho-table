@@ -44,6 +44,35 @@ WHAT_SORT_AMBIGUOUS = "an order by name that no earlier column of the answer has
 WHAT_CEILING = "fewer conditions or values: the ceiling is 64 conditions and 1024 values"
 WHAT_DEPTH = "fewer nested parentheses: the ceiling is 8"
 MAX_DEPTH = 8
+MAX_PAIRS = 8
+
+# the join (docs/joins.md sections 2.3 and 20): what is expected, and the features the language leaves out
+WHAT_FILE2 = "a 'file name' in quotes (the second table of a join is a file)"
+WHAT_AS_TABLE = "as and a name for the table: every table of a join is named"
+WHAT_ALIAS_SAME = "a name that the first table does not have"
+WHAT_ON = "on and the key equalities: a.k = b.k"
+WHAT_FIRST_EQ = "a key equality first: alias.column = alias.column, one column of each table"
+WHAT_EQ_SIDES = "one column of each table in a key equality"
+WHAT_EQ_TYPES = "the same type on both columns of a key equality"
+WHAT_PAIRS = "at most 8 key equalities"
+WHAT_EQ_LATE = "the key equalities before the conditions on the right table"
+WHAT_QUALIFIED = "a column of a join is written alias.column"
+WHAT_UNKNOWN_ALIAS = "the name of one of the two tables of the join"
+WHAT_JOIN_WORD = "join"
+WHAT_AFTER_DOT = "a column name after the table name and the dot"
+H_SUBQUERY = "one input; there are no subqueries"
+H_JOIN = "a join names both tables and their key: from 'a.csv' as a join 'b.csv' as b on a.k = b.k"
+F_POSITION, H_POSITION = "column-position-in-join", "name the column, alias.column: a position is not a name of one table of a join"
+F_STAR, H_STAR = "table-star", "name the columns, or select * for every column of the join"
+F_LEFT_IN_ON, H_LEFT_IN_ON = "a condition on the left table in on", "put it in where, which filters the left rows"
+F_RIGHT_OF_SEMI, H_RIGHT_OF_SEMI = "a column of the right table of a semi or anti join", "a semi or anti join gives the columns of the left table only: test the right table in on, on a.k = b.k and b.x = 1"
+F_RIGHT, H_RIGHT = "right join", "swap the two files and write left join"
+F_FULL, H_FULL = "full join", "write left join, and a second call with the files swapped and anti for the rows the first one leaves out"
+F_CROSS, H_CROSS = "cross join", "a join needs its key: on a.k = b.k"
+F_OUTER, H_OUTER = "left outer join", "write left join"
+F_MORE, H_MORE = "more than one join", "pipe the first join's --format csv into the second: table ... | table --join c.csv ..."
+F_STDIN_BUILD, H_STDIN_BUILD = "standard input as the build side", "the build side is a file: pipe the other table into the first source, from stdin as a"
+F_OR_ON, H_OR_ON = "or in on", "a key is equalities joined by and; put alternatives on the right table in parentheses after and: on a.k = b.k and (b.x = 1 or b.x = 2)"
 
 
 class QueryError(Exception):
@@ -55,6 +84,35 @@ class QueryError(Exception):
 
 
 # ---- lexer -------------------------------------------------------------------------------------------------------------------
+
+def mentions_join(q):
+    """Whether a bare word of a join (join, inner, left, right, full, cross) is in the query outside its quotes (the lexer reads a `.` only then; any other query is refused at the dot, as it always was). It stops at a quote that never closes."""
+    i, n = 0, len(q)
+    while i < n:
+        c = q[i]
+        if c in "'\"":
+            j = i + 1
+            while True:
+                if j >= n:
+                    return False
+                if q[j] == c:
+                    if j + 1 < n and q[j + 1] == c:
+                        j += 2
+                        continue
+                    break
+                j += 1
+            i = j + 1
+        elif c.isascii() and (c.isalnum() or c == "_"):
+            j = i
+            while j < n and q[j].isascii() and (q[j].isalnum() or q[j] == "_"):
+                j += 1
+            if q[i:j].lower() in ("join", "inner", "left", "right", "full", "cross"):
+                return True
+            i = j
+        else:
+            i += 1
+    return False
+
 
 def lex(q):
     if len(q) > MAX_QUERY:
@@ -120,6 +178,9 @@ def lex(q):
             i += 1
         elif c in "|+/%-":
             raise QueryError("unsupported", i, feature="expression", hint="no arithmetic or concatenation: a column is a column")
+        elif c == "." and mentions_join(q):
+            toks.append(("SYM", ".", i))
+            i += 1
         else:
             raise QueryError("syntax", i, expected="a column, a keyword, a string or a number")
     toks.append(("END", None, n))
@@ -128,11 +189,68 @@ def lex(q):
 
 # ---- parser ------------------------------------------------------------------------------------------------------------------
 
+def alias_ok(tok):
+    """A name a table of a join may have: a bare word that is no keyword, or a "quoted" one."""
+    return tok[0] == "QID" or tok[0] == "ID" and tok[1].lower() not in RESERVED and tok[1].lower() not in FUTURE
+
+
 class P:
     def __init__(self, q):
         self.q, self.t, self.k = q, lex(q), 0
         self.mix = None
         self.conds, self.wh = [], []
+        # the join (docs/joins.md 20): `join` is set when the statement has the head `from SRC as A` and a join word after it; then every column is qualified
+        self.join = None
+        self.pending = None      # the first refusal that does not stop the parse (a column that is not written alias.column, an alias that is not a table's): the earliest one is told
+        self.dry = False         # a look-ahead: nothing is noted
+        self.in_on = False
+        self.in_conds = False
+        self.mix_on = False
+        self.jconds, self.jwh = [], []
+        self.bare_names = ()      # the `as` names of the select list, which an order by may use bare
+        self.scan_head()
+
+    def tok(self, i):
+        return self.t[min(i, len(self.t) - 1)]
+
+    def scan_head(self):
+        t = self.t
+        i = next((n for n, x in enumerate(t) if x[0] == "ID" and x[1].lower() == "from"), None)
+        if i is None:
+            return
+        src, as_, al, jw = self.tok(i + 1), self.tok(i + 2), self.tok(i + 3), self.tok(i + 4)
+        if not (src[0] == "STR" or src[0] == "ID" and src[1].lower() == "stdin"):
+            return
+        if not (as_[0] == "ID" and as_[1].lower() == "as" and alias_ok(al)):
+            return
+        w = jw[1].lower() if jw[0] == "ID" else None
+        jt, jpos = None, None
+        if w == "join":
+            jt, jpos = "inner", i + 4
+        elif w in ("inner", "left", "right", "full", "cross"):
+            jt = w
+            n1 = self.tok(i + 5)
+            if n1[0] == "ID" and n1[1].lower() == "join":
+                jpos = i + 5
+            elif w == "left" and n1[0] == "ID" and n1[1].lower() == "outer" and self.tok(i + 6)[0] == "ID" and self.tok(i + 6)[1].lower() == "join":
+                jpos = i + 6
+        elif w in ("semi", "anti"):
+            n1 = self.tok(i + 5)
+            if not (n1[0] == "ID" and n1[1].lower() == "join"):
+                return
+            jt, jpos = w, i + 5
+        else:
+            return
+        b = None
+        if jpos is not None:
+            s2, a2, b2 = self.tok(jpos + 1), self.tok(jpos + 2), self.tok(jpos + 3)
+            if s2[0] == "STR" and a2[0] == "ID" and a2[1].lower() == "as" and alias_ok(b2):
+                b = b2[1]
+        self.join = {"a": al[1], "a_at": al[2], "b": b, "type": jt}
+
+    def note(self, err):
+        if self.pending is None and not self.dry:
+            self.pending = err
 
     def peek(self, d=0):
         return self.t[min(self.k + d, len(self.t) - 1)]
@@ -167,21 +285,53 @@ class P:
         if not self.eat_sym(s):
             raise QueryError("syntax", self.peek()[2], expected=what or s)
 
-    # column := IDENT | "QID" | #N      (an IDENT may not be a reserved word)
+    # column := IDENT | "QID" | #N      (an IDENT may not be a reserved word); in a join, alias . IDENT | alias . "QID"
     def column(self, what=WHAT_COLUMN):
         t = self.peek()
         if t[0] == "ID":
             if t[1].lower() in RESERVED or t[1].lower() in FUTURE:
                 raise QueryError("syntax", t[2], expected=what + WHAT_KEYWORD)
             self.k += 1
-            return ("name", t[1])
+            return self.after_name(t, what)
         if t[0] == "QID":
             self.k += 1
-            return ("name", t[1])
+            return self.after_name(t, what)
         if t[0] == "POS":
             self.k += 1
+            if self.join:
+                self.note(QueryError("unsupported", t[2], feature=F_POSITION, hint=H_POSITION))
             return ("pos", t[1])
         raise QueryError("syntax", t[2], expected=what)
+
+    def after_name(self, t, what):
+        j = self.join
+        if not j:
+            return ("name", t[1])
+        if self.peek()[:2] != ("SYM", "."):
+            self.note(QueryError("syntax", t[2], expected=WHAT_QUALIFIED))
+            return ("name", t[1])
+        self.k += 1
+        n = self.peek()
+        if n[0] == "ID":
+            if n[1].lower() in RESERVED or n[1].lower() in FUTURE:
+                raise QueryError("syntax", n[2], expected=what + WHAT_KEYWORD)
+        elif n[0] == "POS":
+            self.k += 1
+            self.note(QueryError("unsupported", n[2], feature=F_POSITION, hint=H_POSITION))
+            return ("pos", n[1])
+        elif n[0] == "SYM" and n[1] == "*":
+            raise QueryError("unsupported", n[2], feature=F_STAR, hint=H_STAR)
+        elif n[0] != "QID":
+            raise QueryError("syntax", n[2], expected=WHAT_AFTER_DOT)
+        self.k += 1
+        side = "a" if t[1] == j["a"] else ("b" if j["b"] is not None and t[1] == j["b"] else None)
+        if side is None and j["b"] is not None:
+            self.note(QueryError("syntax", t[2], expected=WHAT_UNKNOWN_ALIAS))
+        if side == "a" and self.in_conds:
+            self.note(QueryError("unsupported", t[2], feature=F_LEFT_IN_ON, hint=H_LEFT_IN_ON))
+        if side == "b" and j["type"] in ("semi", "anti") and not self.in_on:
+            self.note(QueryError("unsupported", t[2], feature=F_RIGHT_OF_SEMI, hint=H_RIGHT_OF_SEMI))
+        return ("name", (j["b"] + "." + n[1]) if side == "b" else n[1], n[1], side)
 
     def typ(self):
         w = self.word()
@@ -397,25 +547,151 @@ class P:
         self.level(0)
         return self.conds
 
+    def pick(self, e):
+        """The refusal told: the earliest of the one that stopped the parse and the first noted one (a tie is the noted one)."""
+        if self.pending is not None and self.pending.offset <= e.offset:
+            return self.pending
+        return e
+
     def parse(self):
         try:
             q = self.statement()
-        except QueryError:
+        except QueryError as e:
             if self.mix is not None:
                 raise QueryError("mixed", self.mix)
-            raise
+            raise self.pick(e)
         if self.mix is not None:
             raise QueryError("mixed", self.mix)
+        if self.pending is not None:
+            raise self.pending
         q["items"] = q["items"]
         q["where"] = self.wh
         return q
 
+    # ---- the join (docs/joins.md 2.3 and 20)
+
+    def looks_eq(self):
+        """Whether the tokens from here are `column = column` with the second one written alias.column: a look-ahead, nothing is kept."""
+        save = (self.k, self.dry)
+        self.dry = True
+        try:
+            self.expr()
+            ok = self.eat_sym("=")
+            if ok:
+                n1, n2 = self.peek(), self.peek(1)
+                ok = (n1[0] in ("ID", "QID") and n2[:2] == ("SYM", ".")) or (n1[0] == "ID" and n1[1].lower() == "cast" and n2[:2] == ("SYM", "("))
+        except QueryError:
+            ok = False
+        self.k, self.dry = save
+        return ok
+
+    def eq(self):
+        l, lty = self.expr()
+        self.expect_sym("=")
+        at2 = self.peek()[2]
+        r, rty = self.expr()
+        ls = l[3] if l[0] == "name" and len(l) == 4 else None
+        rs = r[3] if r[0] == "name" and len(r) == 4 else None
+        if ls is not None and ls == rs:
+            raise QueryError("syntax", at2, expected=WHAT_EQ_SIDES)
+        if lty != rty:
+            raise QueryError("syntax", at2, expected=WHAT_EQ_TYPES)
+        if rs == "a" or ls == "b":
+            l, r = r, l
+        own = lambda c: c[2] if c[0] == "name" and len(c) == 4 else (c[1] if c[0] == "name" else "#" + c[1])
+        return (own(l), own(r), lty)
+
+    def on_clause(self):
+        self.in_on = True
+        pairs, conds, started, eqs = [], [], False, True
+        keep = (self.conds, self.wh, self.mix)
+        self.conds, self.wh = [], []
+        while True:
+            start = self.peek()[2]
+            if eqs and self.looks_eq():
+                if len(pairs) >= MAX_PAIRS:
+                    raise QueryError("syntax", start, expected=WHAT_PAIRS)
+                pairs.append(self.eq())
+            elif not eqs and self.looks_eq():
+                raise QueryError("syntax", start, expected=WHAT_EQ_LATE)
+            else:
+                if not pairs:
+                    raise QueryError("syntax", start, expected=WHAT_FIRST_EQ)
+                eqs = False
+                if started:
+                    self.wh.append("and")
+                self.in_conds = True
+                before = self.mix
+                self.unit(0)
+                self.in_conds = False
+                if before is None and self.mix is not None:
+                    self.mix_on = True
+                started = True
+            w = self.word()
+            if w == "and":
+                self.k += 1
+                continue
+            if w == "or":
+                raise QueryError("unsupported", self.peek()[2], feature=F_OR_ON, hint=H_OR_ON)
+            break
+        self.jconds, self.jwh = self.conds, self.wh
+        self.conds, self.wh = keep[0], keep[1]
+        self.in_on = False
+        return pairs
+
+    def join_head(self):
+        """After `from SRC`: `as A [jtype] join 'path' as B on ...`. The scan found the shape; this reads it and says what is wrong with the rest of it."""
+        self.expect_word("as")
+        self.take()
+        at = self.peek()[2]
+        w = self.word()
+        if w == "right":
+            raise QueryError("unsupported", at, feature=F_RIGHT, hint=H_RIGHT)
+        if w == "full":
+            raise QueryError("unsupported", at, feature=F_FULL, hint=H_FULL)
+        if w == "cross":
+            raise QueryError("unsupported", at, feature=F_CROSS, hint=H_CROSS)
+        if w in ("inner", "left", "semi", "anti"):
+            self.k += 1
+            if w == "left" and self.word() == "outer":
+                raise QueryError("unsupported", self.peek()[2], feature=F_OUTER, hint=H_OUTER)
+        if not self.eat_word("join"):
+            raise QueryError("syntax", self.peek()[2], expected=WHAT_JOIN_WORD)
+        t = self.take()
+        if t[0] == "STR":
+            path = t[1]
+        elif t[0] == "ID" and t[1].lower() == "stdin":
+            raise QueryError("unsupported", t[2], feature=F_STDIN_BUILD, hint=H_STDIN_BUILD)
+        else:
+            raise QueryError("syntax", t[2], expected=WHAT_FILE2)
+        if not self.eat_word("as"):
+            raise QueryError("syntax", self.peek()[2], expected=WHAT_AS_TABLE)
+        tb = self.peek()
+        if not alias_ok(tb):
+            raise QueryError("syntax", tb[2], expected=WHAT_ALIAS)
+        self.k += 1
+        if tb[1] == self.join["a"]:
+            raise QueryError("syntax", tb[2], expected=WHAT_ALIAS_SAME)
+        if not self.eat_word("on"):
+            raise QueryError("syntax", self.peek()[2], expected=WHAT_ON)
+        pairs = self.on_clause()
+        w = self.word()
+        if w in ("join", "inner", "left", "right", "full", "cross") or w in ("semi", "anti") and self.word(1) == "join":
+            raise QueryError("unsupported", self.peek()[2], feature=F_MORE, hint=H_MORE)
+        self.join.update({"path": path, "pairs": pairs, "jconds": self.jconds, "jwh": self.jwh})
+
     def statement(self):
+        if not self.join:
+            # a dot is read only when the query is a join (the word `join` is in it); a query that is not the head of one is refused at its first dot as it always was
+            for tk in self.t:
+                if tk[:2] == ("SYM", "."):
+                    raise QueryError("syntax", tk[2], expected="a column, a keyword, a string or a number")
         self.expect_word("select", "select")
         items_at = self.peek()[2]
         items = self.items()
         items_end = self.peek()[2]
-        q = {"items": items, "items_at": items_at, "items_end": items_end, "group_end": None, "source": None, "conds": [], "group": [], "group_at": None, "order": [], "limit": None, "offset": None}
+        self.bare_names = [alias_of(i) for i in items if alias_of(i) is not None]
+        q = {"join": self.join, "items": items, "items_at": items_at, "items_end": items_end, "group_end": None, "source": None, "conds": [], "group": [], "group_at": None, "order": [], "limit": None, "offset": None}
         if self.eat_word("from"):
             t = self.take()
             if t[0] == "STR":
@@ -423,11 +699,13 @@ class P:
             elif t[0] == "ID" and t[1].lower() == "stdin":
                 q["source"] = ("stdin", None)
             elif t[0] == "ID" and t[1].lower() in ("select", "join", "left", "inner", "cross"):
-                raise QueryError("unsupported", t[2], feature="subquery" if t[1].lower() == "select" else "join", hint="one input; there are no joins yet")
+                raise QueryError("unsupported", t[2], feature="subquery" if t[1].lower() == "select" else "join", hint=H_SUBQUERY if t[1].lower() == "select" else H_JOIN)
             else:
                 raise QueryError("syntax", t[2], expected="a 'file name' in quotes, or stdin")
-            if self.word() in ("join", "left", "inner", "cross", "full"):
-                raise QueryError("unsupported", self.peek()[2], feature="join", hint="one input; there are no joins yet")
+            if self.join:
+                self.join_head()
+            elif self.word() in ("join", "left", "inner", "cross", "full"):
+                raise QueryError("unsupported", self.peek()[2], feature="join", hint=H_JOIN)
         if self.eat_word("where"):
             q["conds"] = self.cond()
         if self.eat_word("group"):
@@ -449,8 +727,13 @@ class P:
             self.expect_word("by", "by")
             while True:
                 at = self.peek()[2]
+                t0, t1 = self.peek(), self.peek(1)
                 if self.is_call():
                     k = ("agg", self.agg_call())
+                elif self.join and t0[0] in ("ID", "QID") and t0[1] in self.bare_names and alias_ok(t0) and t1[:2] not in (("SYM", "."), ("SYM", "::")):
+                    # a bare name in a join is an `as` name of the select list (the only unqualified name a join query has)
+                    self.k += 1
+                    k = ("col", (("name", t0[1]), None))
                 else:
                     k = ("col", self.expr())
                 d = False
@@ -512,6 +795,11 @@ def where_word(c):
         return "#%s" % c[1]
     if IDENT.fullmatch(c[1]) and c[1] not in ("and", "in", "contains"):
         return c[1]
+    if len(c) == 4 and c[3] == "b":
+        # a column of the second table of a join, alias.name, is one word of the grammar when both halves are plain words
+        alias = c[1][:len(c[1]) - len(c[2]) - 1]
+        if IDENT.fullmatch(alias) and IDENT.fullmatch(c[2]) and c[2] not in ("and", "in", "contains"):
+            return c[1]
     return "'" + c[1].replace("'", "''") + "'"
 
 
@@ -580,9 +868,54 @@ def translate_ignoring_mix(q):
     if isinstance(q, bytes):
         q = q.decode("latin-1")
     p = P(q)
-    ast = p.statement()
+    try:
+        ast = p.statement()
+    except QueryError as e:
+        raise p.pick(e)
+    if p.pending is not None:
+        raise p.pending
+    if p.mix_on:
+        raise QueryError("mixed", p.mix)      # the mix is inside the conditions of an on: the repair of a where clause does not read it
     ast["where"] = p.wh
     return _translate(ast)
+
+
+def where_text(wh, own=False):
+    """The text of a where clause (the leaves and the structure `unit` kept), a column by its name in the joined row, or by the name its own file gives it (`own`: --join-where)."""
+    text = ""
+    for c in wh:
+        if c in ("(", ")"):
+            text += c
+        elif c == "not":
+            text += "not "
+        elif isinstance(c, str):
+            text += " %s " % c
+        else:
+            col, ty = c["col"]
+            if own and col[0] == "name" and len(col) == 4:
+                col = ("name", col[2])
+            w = where_word(col) + type_suffix(ty)
+            if c["op"] in ("in", "not in"):
+                text += w + " %s (" % c["op"] + ", ".join(where_value(v) for v in c["vals"]) + ")"
+            else:
+                text += "%s %s %s" % (w, c["op"], where_value(c["vals"][0]))
+    return text
+
+
+def on_name(name):
+    """a column in --on: a backslash before a comma, a backslash, an equals sign, a colon, and a leading #."""
+    s = name.replace("\\", "\\\\").replace(",", "\\,").replace("=", "\\=").replace(":", "\\:")
+    return "\\" + s if s.startswith("#") else s
+
+
+def join_flags(j):
+    on = ",".join("%s=%s%s" % (on_name(p[0]), on_name(p[1]), type_suffix(p[2])) for p in j["pairs"])
+    out = ["--join", j["path"], "--on", on, "--join-type", j["type"]]
+    if j["type"] in ("inner", "left"):
+        out += ["--join-prefix", j["b"] + "."]
+    if j["jwh"]:
+        out += ["--join-where", where_text(j["jwh"], own=True)]
+    return out
 
 
 def _translate(ast):
@@ -609,22 +942,7 @@ def _translate(ast):
         if not star:
             argv += ["--select", ",".join(list_name(c[1]) for c in cols)]
     if ast["conds"]:
-        text = ""
-        for c in ast["where"]:
-            if c in ("(", ")"):
-                text += c
-            elif c == "not":
-                text += "not "
-            elif isinstance(c, str):
-                text += " %s " % c
-            else:
-                col, ty = c["col"]
-                w = where_word(col) + type_suffix(ty)
-                if c["op"] in ("in", "not in"):
-                    text += w + " %s (" % c["op"] + ", ".join(where_value(v) for v in c["vals"]) + ")"
-                else:
-                    text += "%s %s %s" % (w, c["op"], where_value(c["vals"][0]))
-        argv += ["--where", text]
+        argv += ["--where", where_text(ast["where"])]
     if ast["order"]:
         if grouped:
             if len(ast["order"]) != 1:
@@ -676,6 +994,8 @@ def _translate(ast):
         argv += ["--limit", str(ast["limit"])]
     if ast["offset"] is not None:
         argv += ["--from", str(ast["offset"])]
+    if ast.get("join"):
+        argv = join_flags(ast["join"]) + argv
     if star and not ast["conds"] and not ast["order"] and not grouped:
         argv = ["--rows"] + argv        # `select *` alone has no other flag form
     return argv, ast["source"]
