@@ -32,7 +32,8 @@ QUESTIONS = [
     ("timestamp (+02:00, 6 digits) >= a literal", ["--where", "ts2 >= '2024-06-01T00:00:00Z'", "--agg", "count"], ["--where", "ts2:timestamp >= '2024-06-01T00:00:00Z'", "--agg", "count"]),
     ("date >= a literal", ["--where", "d >= '2024-06-01'", "--agg", "count"], ["--where", "d:date >= '2024-06-01'", "--agg", "count"]),
     ("datetime >= a literal", ["--where", "w >= '2024-06-01 00:00:00'", "--agg", "count"], ["--where", "w:datetime >= '2024-06-01 00:00:00'", "--agg", "count"]),
-    ("max of a timestamp", ["--agg", "distinct:ts"], ["--agg", "max:ts:timestamp"]),
+    ("max of a decimal (the text side reads no cell)", ["--agg", "count"], ["--agg", "max:price:dec(2)"]),
+    ("max of a timestamp (the text side reads no cell)", ["--agg", "count"], ["--agg", "max:ts:timestamp"]),
     ("group by a date (about 1,500 groups)", ["--group", "d"], ["--group", "d:date"]),
     ("order by a timestamp, top 100", ["--order-by", "ts", "--select", "id", "--top", "100"], ["--order-by", "ts:timestamp", "--select", "id", "--top", "100"]),
 ]
