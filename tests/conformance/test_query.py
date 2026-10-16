@@ -461,7 +461,8 @@ class Documents(Base):
 
     def examples_in(self, path):
         found = []
-        for line in (ROOT / path).read_text().splitlines():
+        # a command typed over several lines (a backslash at the end, as in the transcript of the demo video) is one command, as the shell reads it
+        for line in re.sub(r"\\\n", "", (ROOT / path).read_text()).splitlines():
             line = re.sub(r"<[^>]+>", "", line).replace("&gt;", ">").replace("&lt;", "<").replace("&quot;", '"').replace("&amp;", "&")
             m = re.match(r"\$ table (.*--query .*)$", line.strip())
             if m:
