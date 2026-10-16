@@ -994,6 +994,108 @@
                     "build": {
                       "$ref": "#/$defs/text_or_bytes"
                     },
+                    "probe_reader": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "format": {
+                              "const": "jsonl"
+                            },
+                            "fields": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/text_or_bytes"
+                              }
+                            },
+                            "absent": {
+                              "enum": [
+                                "refuse",
+                                "empty"
+                              ]
+                            },
+                            "max_json_nodes": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "format",
+                            "fields",
+                            "absent",
+                            "max_json_nodes"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "format": {
+                              "const": "csv"
+                            },
+                            "delimiter": {
+                              "$ref": "#/$defs/text_or_bytes"
+                            }
+                          },
+                          "required": [
+                            "format",
+                            "delimiter"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
+                    "build_reader": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "format": {
+                              "const": "jsonl"
+                            },
+                            "fields": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/text_or_bytes"
+                              }
+                            },
+                            "absent": {
+                              "enum": [
+                                "refuse",
+                                "empty"
+                              ]
+                            },
+                            "max_json_nodes": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          },
+                          "required": [
+                            "format",
+                            "fields",
+                            "absent",
+                            "max_json_nodes"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "format": {
+                              "const": "csv"
+                            },
+                            "delimiter": {
+                              "$ref": "#/$defs/text_or_bytes"
+                            }
+                          },
+                          "required": [
+                            "format",
+                            "delimiter"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    },
                     "role_choice": {
                       "type": "string"
                     },

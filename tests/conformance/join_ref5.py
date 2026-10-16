@@ -231,13 +231,21 @@ def object_text(pairs):
     return render(tree)
 
 
-def write_jsonl(path, header, rows, rng, crlf=False, bom=False, blanks=False, extra_keys=False, shuffle=False, final_newline=True, spaces=False):
+def write_jsonl(path, header, rows, rng, crlf=False, bom=False, blanks=False, extra_keys=False, shuffle=False, final_newline=True, spaces=False, holes=False):
     """A JSON-lines file of `rows` under the declared `header` (paths): one object per row, the cells as `json_text` renders them, keys in a random order when `shuffle`, an
-    undeclared key added when `extra_keys`, a blank line (empty, spaces, a lone CR) between records when `blanks`."""
+    undeclared key added when `extra_keys`, a blank line (empty, spaces, a lone CR) between records when `blanks`, an empty cell written as null or left out when `holes` (read back
+    as the empty cell under `--absent empty`)."""
     eol = "\r\n" if crlf else "\n"
     out = []
     for r in rows:
-        pairs = [(h.decode("utf-8"), json_text(c, rng)) for h, c in zip(header, r)]
+        pairs = []
+        for h, c in zip(header, r):
+            if holes and c == b"" and rng.random() < 0.8:
+                # an empty cell as the absent cell: null, or no key at all (read as empty under --absent empty)
+                if rng.random() < 0.5:
+                    pairs.append((h.decode("utf-8"), "null"))
+                continue
+            pairs.append((h.decode("utf-8"), json_text(c, rng)))
         if shuffle:
             rng.shuffle(pairs)
         if extra_keys:
@@ -304,7 +312,7 @@ def table_pair(rng, pn, bn, nrows_p, nrows_b, keys, pk=0, bk=0, pextra=None, bex
 
 # cells that a JSON string must escape, that are not ASCII, that are numbers written every way a JSON number is, and the ones of a text key that look alike
 ESCAPES = [b'q"uote', b"back\\slash", b"tab\there", b"new\nline", b"cr\rlf", b"slash/solidus", b"\x01\x02ctrl", b"a,b", b"semi;colon", b"mix \"\\\n\t,;"]
-UNICODE = ["é".encode(), "é".encode(), "日本語".encode(), "😀".encode(), "Ünï".encode(), "ß".encode(), " nbsp".encode(), " sep".encode(), "Ω".encode(), "ǅ".encode()]
+UNICODE = ["é".encode(), "e\u0301".encode(), "日本語".encode(), "😀".encode(), "Ünï".encode(), "ß".encode(), "\u00a0nbsp".encode(), "Ω".encode(), "ǅ".encode()]
 BIG_INTS = [b"0", b"-0", b"7", b"9223372036854775807", b"9223372036854775808", b"-9223372036854775808", b"-9223372036854775809", b"123456789012345678901234567890",
             b"18446744073709551616", b"-99999999999999999999999999"]
 FLOATS17 = [b"0.30000000000000004", b"0.1", b"1.7976931348623157e308", b"5e-324", b"1.0", b"1E5", b"1e+5", b"-0.0", b"123456789.12345678", b"0.12345678901234567",

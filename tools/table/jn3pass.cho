@@ -62,7 +62,7 @@ fn s_size() -> [] int {
 }
 
 // The bytes a sorter holds before the row that does not fit: the records and the unquoted bytes, and 8 integers for each key and 2 more for each row held (`sorter.add`).
-fn sorted_held[&s](g: &s agg.Groups) -> [] int {
+pub fn sorted_held[&s](g: &s agg.Groups) -> [] int {
     return buffer.size(g.keyb) + buffer.size(g.dkey) + 8 * sorter.stride_of(g.stride) * g.pairs;
 }
 
@@ -269,7 +269,7 @@ pub fn build_pass3[&h, &f, &k, &w, &j, &q, &c, &l](heap: &!h Heap, r0: lines.Lin
 
 // What the filters of the build say about one record whose cells are in `cells`: 1 hold it, 0 skip it, -1 `--join-where` refused a cell of it (the tally says which, `screen` has set it). The expression of
 // `--join-where` is tried first, then the conditions of the leading run of `--where` that name a column of this file (inner joins only): text conditions, which cannot refuse.
-fn filter3[&h, &w, &j, &q, &c, &l, &d, &e, &a](heap: &!h Heap, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &c [int], bcols: &l [int], push_b: bool, record: &d [byte], cells: &e [int], number: int, escr: buffer.Buffer, kept: buffer.Buffer, a: &!a [int]) -> [heap] (int, buffer.Buffer, buffer.Buffer) {
+pub fn filter3[&h, &w, &j, &q, &c, &l, &d, &e, &a](heap: &!h Heap, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &c [int], bcols: &l [int], push_b: bool, record: &d [byte], cells: &e [int], number: int, escr: buffer.Buffer, kept: buffer.Buffer, a: &!a [int]) -> [heap] (int, buffer.Buffer, buffer.Buffer) {
     var scr = escr;
     var k2 = kept;
     if jw_on {
@@ -351,7 +351,7 @@ fn emit_g[&h, &q, &c, &w, &d, &a, &z](heap: &!h Heap, groups: agg.Groups, escr: 
 
 // `jnread.probe_one` for a plan that groups or sorts: look the key up and give the groups what the join type says (one joined record for each build row of the key, the padded record when there is none for a
 // left join, the probe record once for a semi or anti join). Answers the groups and the buffers.
-fn probe_g[&h, &t, &q, &c, &w, &x, &d, &a, &z, &k, &m](heap: &!h Heap, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], cells: &!w [int], bcells: &!x [int], prec: &d [byte], number: int, st: &!z [int], a: &!a [int], keys: &k [int], kmap: &m [int], groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, kscr: buffer.Buffer, kbuf: buffer.Buffer, np: int, nb: int, delim: int, max_groups: int, max_distinct: int, gstate: int, filtering: bool, fast_ok: bool, max_join: int) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+pub fn probe_g[&h, &t, &q, &c, &w, &x, &d, &a, &z, &k, &m](heap: &!h Heap, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], cells: &!w [int], bcells: &!x [int], prec: &d [byte], number: int, st: &!z [int], a: &!a [int], keys: &k [int], kmap: &m [int], groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, kscr: buffer.Buffer, kbuf: buffer.Buffer, np: int, nb: int, delim: int, max_groups: int, max_distinct: int, gstate: int, filtering: bool, fast_ok: bool, max_join: int) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
     var groups2 = groups;
     var escr2 = escr;
     var kept2 = kept;

@@ -568,7 +568,7 @@ fn json_code_name(code: int) -> [] &static [byte] {
 // A refusal of a JSON-lines record (docs/readers.md section 12.5, jrec.cho): abort 50 to 55. It is not a branch of `explain`: a call added there changed how the compiler
 // allocated registers in `read_file`, which calls `explain`, and cost every one-thread read of a csv file 13 instructions a row on x86-64 (measured with valgrind, docs/readers.md 12.10).
 // Called by the JSON-lines loops, which call `explain` for everything else. with the line, the row and the facts the reader left in the tally.
-pub fn jsonl_refusal[&h, &g, &p, &n, &d, &k, &s](heap: &!h Heap, errs: fail.Errors, args: &g Args, parsed: &p cli.Parsed, names: &n buffer.Buffer, hends: &d vec.Vec[int], kept: &k buffer.Buffer, c: Counts, shown: &s [byte]) -> [heap, args] fail.Errors {
+pub fn jsonl_refusal[&h, &g, &p, &n, &d, &k, &s](heap: &!h Heap, errs: fail.Errors, args: &g Args, parsed: &p cli.Parsed, names: &n buffer.Buffer, hends: &d vec.Vec[int], kept: &k buffer.Buffer, c: Counts, shown: &s [byte], input: &static [byte]) -> [heap, args] fail.Errors {
     let table = spec.flag_table();
     var e = errs;
     var rule = "parse.jsonl-syntax";
@@ -627,6 +627,10 @@ pub fn jsonl_refusal[&h, &g, &p, &n, &d, &k, &s](heap: &!h Heap, errs: fail.Erro
     }
     w = fail.detail_open(heap, w);
     w = fail.detail_text(heap, w, "path", shown);
+    // (a join says which of its two files: `probe` or `build`; one file says nothing)
+    if len(input) > 0 {
+        w = fail.detail_str(heap, w, "input", input);
+    }
     w = fail.detail_int(heap, w, "line", c.abort_line);
     w = fail.detail_int(heap, w, "row", c.err_row);
     if column {

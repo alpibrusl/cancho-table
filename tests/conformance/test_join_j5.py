@@ -113,6 +113,8 @@ class Case5:
         if self.prefix and jtype in ("inner", "left"):
             a += ["--join-prefix", self.prefix.decode()]
         a += self.p.flags(True) + self.b.flags(False)
+        if self.p.kind == "jsonl" and self.b.kind == "csv":
+            a += ["--join-input-format", "csv"]            # the build is read as the probe is unless it is told otherwise
         if self.b.kind == "csv" and self.b.delim != self.pdelim:
             a += ["--join-delimiter", R5.delim_word(self.b.delim)]
         if self.absent:
@@ -231,6 +233,26 @@ class Oracle(unittest.TestCase):
                         finally:
                             c.cleanup()
 
+    def test_absent_cells_read_as_empty_ones(self):
+        # null and a missing key are the empty cell under --absent empty, in a key and in the cells beside it
+        rng = random.Random(11)
+        ph, bh = J.header("p", 3), J.header("b", 3)
+        dom = [b"k0", b"k1", b""]
+        pr = [[rng.choice(dom), rng.choice([b"x", b""]), b"p%d" % i] for i in range(40)]
+        br = [[rng.choice(dom), rng.choice([b"y", b""]), b"b%d" % i] for i in range(25)]
+        for kinds in COMBOS:
+            for jt in JTYPES:
+                with self.subTest("%s x %s [%s]" % (*kinds, jt)):
+                    p, b = side_of(kinds[0], ph, pr, {}, "p", rng), side_of(kinds[1], bh, br, {}, "b", rng)
+                    for side in (p, b):
+                        if side.kind == "jsonl":
+                            side.opts["holes"] = True
+                    c = Case5("holes", p, b, [(0, 0, None, False)], absent="empty")
+                    try:
+                        self.check(c, jt, sql=False)
+                    finally:
+                        c.cleanup()
+
     def test_typed_keys_over_cells_that_are_json_numbers(self):
         rng = random.Random(5)
         ints = [b"0", b"-0", b"7", b"007", b"+7", b"9223372036854775807", b"-9223372036854775808", b"12", b"-12", b"1"]
@@ -304,11 +326,13 @@ class Plans(unittest.TestCase):
                 c = Case5(case.name, side_of(kinds[0], ph, pr, {}, "p", rng), side_of(kinds[1], bh, br, {}, "b", rng), case.pairs, case.prefix.encode() if isinstance(case.prefix, str) else case.prefix, seed=i)
                 try:
                     want = T3.expected(plan, case)
-                    fmt = rng.choice(["csv", "json"])
+                    fmt = rng.choice(["csv", "json"]) if want[0] == "ok" else "json"
                     a = T3.argv_for(c.s.dir, case, plan, fmt)
                     a[a.index("b.csv")] = c.bfile
                     a[-1] = c.pfile
                     fl = c.p.flags(True) + c.b.flags(False)
+                    if c.p.kind == "jsonl" and c.b.kind == "csv":
+                        fl += ["--join-input-format", "csv"]
                     if c.b.kind == "csv" and c.b.delim != c.pdelim:
                         fl += ["--join-delimiter", R5.delim_word(c.b.delim)]
                     r = run(*a[:-1], *fl, a[-1])
@@ -329,6 +353,58 @@ class Plans(unittest.TestCase):
                 finally:
                     c.cleanup()
         self.assertGreater(done["ok"], 60, done)
+
+
+class SharedBudget(unittest.TestCase):
+    """The build and the groups (or the rows to sort) share `--max-state-bytes`; a jsonl probe feeds them the records a csv probe would, so the thresholds and the facts of the refusal are the same."""
+
+    def setUp(self):
+        self.s = Scratch()
+        rows = [[b"k%d" % (i % 5), b"g%d" % (i % 3), b"%d" % i] for i in range(40)]
+        J.write_csv(str(self.s.dir / "p.csv"), [b"k", b"g", b"v"], rows)
+        R5.write_jsonl(str(self.s.dir / "pj.jsonl"), [b"k", b"g", b"v"], rows, random.Random(2))
+        J.write_csv(str(self.s.dir / "b.csv"), [b"id", b"w"], [[b"k%d" % i, b"w%d" % i] for i in range(5)])
+
+    def tearDown(self):
+        self.s.cleanup()
+
+    def argv(self, probe, *plan):
+        fl = ["--input-format", "jsonl", "--fields", "k,g,v", "--join-input-format", "csv"] if probe.endswith("jsonl") else []
+        return ["--root", self.s.dir, "--join", "b.csv", "--on", "k=id", *fl, *plan, probe]
+
+    def threshold(self, probe, *plan):
+        a, b = 1, 1 << 20
+        while a < b:
+            m = (a + b) // 2
+            if run(*self.argv(probe, *plan, "--max-state-bytes", m, "--format", "csv")).status == 0:
+                b = m
+            else:
+                a = m + 1
+        return a
+
+    def test_groups_and_sorted_rows_over_a_jsonl_probe(self):
+        for plan in (["--group", "g", "--agg", "count,sum:v"], ["--order-by", "-v:int", "--select", "g,v"], ["--group", "w", "--agg", "distinct:g"]):
+            with self.subTest(plan):
+                t = self.threshold("p.csv", *plan)
+                self.assertEqual(self.threshold("pj.jsonl", *plan), t)
+                a = run(*self.argv("p.csv", *plan, "--max-state-bytes", t - 1))
+                b = run(*self.argv("pj.jsonl", *plan, "--max-state-bytes", t - 1))
+                self.assertEqual((a.first_rule(), b.first_rule()), ("limit.state-too-large", "limit.state-too-large"))
+                da, db = a.error()["detail"], b.error()["detail"]
+                for key in ("holder", "build_bytes", "held", "limit"):
+                    self.assertEqual(da[key], db[key], key)
+                self.assertEqual(db["path"], "pj.jsonl")
+
+    def test_the_guard_of_an_empty_typed_key_works_for_a_jsonl_probe(self):
+        self.s.write("pk.jsonl", '{"k":1,"v":"a"}\n{"v":"b"}\n{"k":2,"v":"c"}\n')
+        self.s.write("bi.csv", "id,w\n1,x\n2,y\n")
+        base = ["--root", self.s.dir, "--join", "bi.csv", "--join-input-format", "csv", "--on", "k=id:int", "--input-format", "jsonl", "--fields", "k,v", "--absent", "empty"]
+        r = run(*base, "pk.jsonl")
+        self.assertEqual((r.status, r.first_rule()), (8, "value.not-integer"))
+        d = r.error()["detail"]
+        self.assertEqual((d["input"], d["row"], d["line"], d["value"], d["path"]), ("probe", 2, 2, "", "pk.jsonl"))
+        r = run(*base, "--where", "k != ''", "--format", "csv", "pk.jsonl")
+        self.assertEqual((r.status, r.stdout), (0, b"k,v,id,w\n1,a,1,x\n2,c,2,y\n"))
 
 
 class ChunkEdges(unittest.TestCase):
@@ -357,7 +433,7 @@ class ChunkEdges(unittest.TestCase):
         for pad in range(0, 48, 3):
             for jt in ("inner", "left"):
                 with self.subTest(pad=pad, jt=jt):
-                    c = self.join("csv", "jsonl", 2600, pad)
+                    c = self.join("csv", "jsonl", 6000, pad)
                     size = (self.s.dir / c.bfile).stat().st_size
                     self.assertGreater(size, 3 * 65536)
                     want = expected(c, jt)
@@ -368,7 +444,7 @@ class ChunkEdges(unittest.TestCase):
 
     def test_a_jsonl_probe_through_a_pipe_in_blocks(self):
         for pad in (0, 5, 17):
-            c = self.join("jsonl", "jsonl", 2500, pad)
+            c = self.join("jsonl", "jsonl", 6000, pad)
             ph, bh = c.tables()[0][0], c.tables()[1][0]
             want = expected(c, "inner")
             f = run(*c.argv("inner", ph, bh, "--format", "csv"))
@@ -388,12 +464,12 @@ class ChunkEdges(unittest.TestCase):
         r = run("--root", s.dir, "--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w", "--on", "k", "--max-line-bytes", "100000", "p.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "limit.line-too-long"))
         d = r.error()["detail"]
-        self.assertEqual((d["path"], d["line"]), ("b.jsonl", 1))
+        self.assertEqual((d["path"], d["first_line"]), ("b.jsonl", 1))
         # the same line as the probe
         with open(s.dir / "pj.jsonl", "wb") as f:
             f.write(b'{"k":"a","w":"' + big + b'"}\n')
         s.write("bb.csv", "k,x\na,1\n")
-        r = run("--root", s.dir, "--join", "bb.csv", "--on", "k", "--input-format", "jsonl", "--fields", "k,w", "--max-line-bytes", "100000", "pj.jsonl")
+        r = run("--root", s.dir, "--join", "bb.csv", "--join-input-format", "csv", "--on", "k", "--input-format", "jsonl", "--fields", "k,w", "--join-prefix", "x_", "--max-line-bytes", "100000", "pj.jsonl")
         self.assertEqual((r.status, r.first_rule()), (8, "limit.line-too-long"))
         self.assertEqual(r.error()["detail"]["path"], "pj.jsonl")
 
@@ -416,12 +492,14 @@ class Refusals(unittest.TestCase):
     def probe(self, text, extra=(), fields="k,v"):
         self.s.write("pj2.jsonl", text)
         self.s.write("bb.csv", "k,w\na,x\nb,y\n")
-        return run("--root", self.s.dir, "--join", "bb.csv", "--on", "k", "--input-format", "jsonl", "--fields", fields, *extra, "pj2.jsonl")
+        return run("--root", self.s.dir, "--join", "bb.csv", "--join-input-format", "csv", "--on", "k", "--input-format", "jsonl", "--fields", fields, *extra, "pj2.jsonl")
 
     def detail(self, r, rule, path, line, row, column=None):
         self.assertEqual((r.status, r.first_rule()), (rule_status(rule), rule), r.stdout[:400])
         d = r.error()["detail"]
         self.assertEqual((d["path"], d["line"], d["row"]), (path, line, row))
+        # a join says which of its two files: the build is the --join file, the probe is FILE or standard input
+        self.assertEqual(d["input"], "build" if path.startswith("b.") else "probe", d)
         if column is not None:
             self.assertEqual(d["column"], column)
         return d
@@ -429,7 +507,8 @@ class Refusals(unittest.TestCase):
     def test_every_refusal_of_the_reader_for_the_build(self):
         good = '{"k":"a","w":"x"}\n'
         d = self.detail(self.build(good + '{"k":"b","w":\n'), "parse.jsonl-syntax", "b.jsonl", 2, 2)
-        self.assertIn("offset", d)
+        self.assertEqual((d["offset"], d["code"]), (13, "end"), d)
+        self.assertEqual(d["near"], '{"k":"b","w":')
         self.detail(self.build(good + "\n\n" + '[1,2]\n'), "parse.jsonl-not-object", "b.jsonl", 4, 2)
         self.detail(self.build(good + '{"k":"b"}\n'), "parse.jsonl-missing-field", "b.jsonl", 2, 2, "w")
         self.detail(self.build(good + '{"k":"b","w":null}\n'), "parse.jsonl-missing-field", "b.jsonl", 2, 2, "w")
@@ -449,7 +528,7 @@ class Refusals(unittest.TestCase):
         self.detail(self.probe('{"k":"z","v":"1"}\n{"k":"y","v":"1"}\n\n{"k":"x","v":"1"}\n{"k":"b",\n'), "parse.jsonl-syntax", "pj2.jsonl", 5, 4)
         # the probe from standard input names the input as -
         self.s.write("bb.csv", "k,w\na,x\n")
-        r = run("--root", self.s.dir, "--join", "bb.csv", "--on", "k", "--input-format", "jsonl", "--fields", "k,v", stdin=b'{"k":"a","v":"1"}\n{"k":\n')
+        r = run("--root", self.s.dir, "--join", "bb.csv", "--join-input-format", "csv", "--on", "k", "--input-format", "jsonl", "--fields", "k,v", stdin=b'{"k":"a","v":"1"}\n{"k":\n')
         self.detail(r, "parse.jsonl-syntax", "-", 2, 2)
 
     def test_a_document_that_is_not_json_lines_is_said_so_on_its_first_line_only(self):
@@ -488,6 +567,56 @@ class Refusals(unittest.TestCase):
         r = self.build('{"k":"a","w":"x"}\n', extra=["--max-json-nodes", "2"])
         self.assertEqual(r.first_rule(), "limit.json-too-many-nodes")
 
+    def test_the_row_bound_is_exact_for_the_build_and_the_probe(self):
+        five = "".join('{"k":"a%d","w":"x"}\n' % i for i in range(5))
+        r = self.build(five, extra=["--max-rows", "5", "--format", "csv"])
+        self.assertEqual(r.status, 0, r.stderr[:300])
+        r = self.build(five + '{"k":"a5","w":"x"}\n', extra=["--max-rows", "5"])
+        self.assertEqual((r.status, r.first_rule()), (8, "limit.too-many-rows"))
+        # the probe: the rows past the bound are not read, and the answer says it is cut
+        self.s.write("b.jsonl", '{"k":"a","w":"x"}\n')
+        three = "".join('{"k":"a","v":"%d"}\n' % i for i in range(3))
+        self.s.write("pm.jsonl", three)
+        argv = ["--root", self.s.dir, "--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w", "--on", "k", "--input-format", "jsonl", "--fields", "k,v", "--format", "csv"]
+        r = run(*argv, "--max-rows", "3", "pm.jsonl")
+        self.assertEqual((r.status, r.stdout), (0, b"k,v,w\na,0,x\na,1,x\na,2,x\n"), r.stderr[:300])
+        r = run(*argv, "--max-rows", "2", "pm.jsonl")
+        self.assertEqual(r.stdout, b"k,v,w\na,0,x\na,1,x\n")
+
+    def test_a_join_where_that_reads_a_jsonl_cell_as_a_number(self):
+        self.s.write("b.jsonl", '{"k":"a","w":"x","n":5}\n{"k":"b","w":"y","n":"z"}\n')
+        base = ["--root", self.s.dir, "--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w,n", "--on", "k"]
+        r = run(*base, "--join-where", "n:int > 1", "--format", "csv", "p.csv")
+        self.assertEqual(r.status, 8)
+        r = run(*base, "--join-where", "n:int > 1", "p.csv")
+        self.assertEqual((r.first_rule(), r.error()["detail"]["context"]), ("value.not-integer", "join-where"))
+        d = r.error()["detail"]
+        self.assertEqual((d["path"], d["row"], d["line"], d["value"]), ("b.jsonl", 2, 2, "z"))
+        r = run(*base, "--join-where", "n != 'z' and n:int > 1", "--format", "csv", "p.csv")
+        self.assertEqual((r.status, r.stdout), (0, b"k,v,w,n\na,1,x,5\n"))
+
+    def test_a_byte_order_mark_belongs_to_the_first_line_only(self):
+        r = self.build(b'\xef\xbb\xbf{"k":"a","w":"x"}\n', extra=["--format", "csv"])
+        self.assertEqual((r.status, r.stdout), (0, b"k,v,w\na,1,x\n"))
+        r = self.build(b'{"k":"a","w":"x"}\n\xef\xbb\xbf{"k":"b","w":"y"}\n')
+        self.detail(r, "parse.jsonl-syntax", "b.jsonl", 2, 2)
+
+    def test_a_ragged_or_unterminated_record_of_a_build_with_its_own_delimiter(self):
+        self.s.write("bs.csv", "k;w\na;x\nb\n")
+        r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "p.csv")
+        self.assertEqual((r.status, r.first_rule()), (8, "parse.csv-ragged-row"))
+        self.assertEqual(r.error()["detail"]["path"], "bs.csv")
+        self.s.write("bs.csv", 'k;w\na;"x\ny;z\n')
+        r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "p.csv")
+        self.assertEqual((r.first_rule(), r.error()["detail"]["path"]), ("parse.csv-unterminated-quote", "bs.csv"))
+        self.s.write("bs.csv", 'k;w\na;"x"y\n')
+        r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "p.csv")
+        self.assertEqual((r.first_rule(), r.error()["detail"]["path"]), ("parse.csv-bad-quote", "bs.csv"))
+        # a multi-line quoted field of such a build is one record, and it is written back whole
+        self.s.write("bs.csv", 'k;w\na;"x\ny;z"\n')
+        r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "--format", "csv", "p.csv")
+        self.assertEqual((r.status, r.stdout), (0, b'k,v,w\na,1,"x\ny;z"\n'))
+
     def test_typed_keys_over_jsonl_cells_and_the_padded_refusal(self):
         self.s.write("b.jsonl", '{"k":1,"w":"x"}\n{"k":1.5,"w":"y"}\n')
         r = run("--root", self.s.dir, "--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w", "--on", "k:int", "p.csv")
@@ -518,15 +647,19 @@ class Flags(unittest.TestCase):
     def go(self, *a):
         return run("--root", self.s.dir, "--on", "k", "--format", "csv", *a)
 
+    def doc(self, *a):
+        """A refusal as the json document (a csv answer's refusal is a line on standard error)."""
+        return run("--root", self.s.dir, "--on", "k", *a)
+
     def test_a_jsonl_probe_and_a_csv_build(self):
         r = self.go("--join", "b.csv", "--join-input-format", "csv", "--input-format", "jsonl", "--fields", "k,v", "pj.jsonl")
         self.assertEqual((r.status, r.stdout), (0, b"k,v,w\na,1,x\nb,2,y\n"))
 
     def test_the_build_defaults_to_the_probes_format_and_fields(self):
-        r = self.go("--join", "pj.jsonl", "--join-prefix", "r_", "--input-format", "jsonl", "--fields", "k,v", "pj.jsonl")
+        r = run("--root", self.s.dir, "--on", "k=k", "--format", "csv", "--join", "pj.jsonl", "--join-prefix", "r_", "--input-format", "jsonl", "--fields", "k,v", "pj.jsonl")
         self.assertEqual((r.status, r.stdout), (0, b"k,v,r_k,r_v\na,1,a,1\nb,2,b,2\n"))
-        # the probe is jsonl and the build is a csv file read as jsonl: a refusal that names the build
-        r = self.go("--join", "b.csv", "--input-format", "jsonl", "--fields", "k,v", "pj.jsonl")
+        # the probe is jsonl and the build is a csv file read as jsonl (nothing said otherwise): the build's names are the probe's, a refusal that names them
+        r = self.doc("--join", "b.csv", "--join-prefix", "x_", "--input-format", "jsonl", "--fields", "k,w", "pj.jsonl")
         self.assertEqual((r.status, r.first_rule()), (8, "parse.jsonl-syntax"))
         self.assertEqual(r.error()["detail"]["path"], "b.csv")
 
@@ -537,14 +670,14 @@ class Flags(unittest.TestCase):
     def test_a_delimiter_for_the_build(self):
         r = self.go("--join", "bs.csv", "--join-delimiter", ";", "p.csv")
         self.assertEqual((r.status, r.stdout), (0, b"k,v,w\na,1,x\nb,2,y\n"))
-        r = self.go("--join", "bs.csv", "p.csv")
+        r = self.doc("--join", "bs.csv", "p.csv")
         self.assertEqual((r.status, r.first_rule()), (3, "column.unknown"))
         self.assertEqual(r.error()["detail"]["input"], "build")
         # the output keeps the probe's delimiter, and a build cell that holds it is quoted
         self.s.write("bq.csv", 'k;w\na;"x,y"\n')
         r = self.go("--join", "bq.csv", "--join-delimiter", ";", "p.csv")
         self.assertEqual((r.status, r.stdout), (0, b'k,v,w\na,1,"x,y"\n'))
-        r = self.go("--join", "bs.csv", "--join-delimiter", "tab", "p.csv")
+        r = self.doc("--join", "bs.csv", "--join-delimiter", "tab", "p.csv")
         self.assertEqual(r.first_rule(), "column.unknown")
 
     def test_the_default_delimiter_of_the_build_is_the_probes(self):
@@ -584,15 +717,15 @@ class Flags(unittest.TestCase):
                 self.assertEqual(validate(r), [])
 
     def test_the_fields_of_a_jsonl_probe_are_required_and_the_repair_does_not_offer_a_discover_beside_a_join(self):
-        r = self.go("--join", "b.csv", "--input-format", "jsonl", "pj.jsonl")
+        r = self.doc("--join", "b.csv", "--input-format", "jsonl", "pj.jsonl")
         self.assertEqual(r.first_rule(), "input.fields-required")
         rep = r.error()["repair"]
         self.assertEqual(rep["kind"], "none", "a --discover beside --join would be refused: the join has none to offer")
 
     def test_join_where_and_the_collision_rule_see_the_declared_names(self):
-        r = self.go("--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,v", "p.csv")
+        r = self.doc("--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,v", "p.csv")
         self.assertEqual(r.first_rule(), "join.column-collision")
-        self.assertEqual(r.error()["detail"]["columns"], ["k", "v"])
+        self.assertEqual(r.error()["detail"]["columns"], ["v"])
         self.assertEqual(r.error()["repair"]["kind"], "choose")
         again = subprocess.run([binary()] + r.error()["repair"]["options"][0]["argv"][1:], capture_output=True, input=b"", timeout=60)
         self.assertNotEqual(again.returncode, 2, again.stdout[:300])
@@ -603,7 +736,7 @@ class Flags(unittest.TestCase):
         self.assertEqual(r.error()["detail"]["input"], "build")
 
     def test_a_stdin_probe_in_jsonl(self):
-        r = run("--root", self.s.dir, "--on", "k", "--join", "b.csv", "--input-format", "jsonl", "--fields", "k,v", "--format", "csv", stdin=b'{"v":1,"k":"a"}\n\n{"k":"z","v":2}\r\n{"k":"b","v":"3"}')
+        r = run("--root", self.s.dir, "--on", "k", "--join", "b.csv", "--join-input-format", "csv", "--input-format", "jsonl", "--fields", "k,v", "--format", "csv", stdin=b'{"v":1,"k":"a"}\n\n{"k":"z","v":2}\r\n{"k":"b","v":"3"}')
         self.assertEqual((r.status, r.stdout), (0, b"k,v,w\na,1,x\nb,3,y\n"))
 
 
@@ -636,7 +769,7 @@ class Identity(unittest.TestCase):
             s.write("b.csv", "k,w\na,x\n")
             data = b'{"k":"a","v":"1"}\n{"k":"b"}\n'
             s.write("pj.jsonl", data)
-            argv = ["--root", s.dir, "--on", "k", "--join", "b.csv", "--input-format", "jsonl", "--fields", "k,v"]
+            argv = ["--root", s.dir, "--on", "k", "--join", "b.csv", "--join-input-format", "csv", "--input-format", "jsonl", "--fields", "k,v"]
             f = run(*argv, "pj.jsonl")
             p = run(*argv, stdin=data)
             self.assertEqual((f.status, p.status, f.first_rule(), p.first_rule()), (8, 8, "parse.jsonl-missing-field", "parse.jsonl-missing-field"))
@@ -757,12 +890,6 @@ class Accounting(unittest.TestCase):
         R5.write_jsonl(str(self.s.dir / "same.jsonl"), hdr, rows, random.Random(1))
         for jtype in JTYPES:
             held = {}
-            for fmt, name in (("csv", "same.csv"), ("jsonl", "same.jsonl")):
-                fl = ["--join-input-format", "jsonl", "--join-fields", "a,b,c"] if fmt == "jsonl" else []
-                argv = ["--root", self.s.dir, "--join", name, *fl, "--on", "a=a", "--join-type", jtype] + (["--join-prefix", "r_"] if jtype in ("inner", "left") else []) + ["--where", "a = no-such-key", "--format", "csv", "--max-state-bytes", "1", "p.csv"]
-                d = run(*argv).error()["detail"]
-                held[fmt] = (d["held"], d["limit"])
-                # the bound that fits: the count it reached is what the next run needs
             lo, hi = 1, 1 << 24
             for fmt, name in (("csv", "same.csv"), ("jsonl", "same.jsonl")):
                 fl = ["--join-input-format", "jsonl", "--join-fields", "a,b,c"] if fmt == "jsonl" else []
@@ -813,7 +940,8 @@ class Explain(unittest.TestCase):
         r = self.ex("--join", "b.jsonl", "--input-format", "jsonl", "--fields", "k,v", "--absent", "empty", "--join-fields", "k,w", "pj.jsonl")
         self.assertEqual(r.status, 0, r.stdout[:300])
         e = r.data()["explain"]
-        self.assertEqual((e["source"]["format"], e["source"]["fields"], e["source"]["absent"]), ("jsonl", ["k", "v"], "empty"))
+        self.assertEqual((e["source"]["format"], e["source"]["absent"]), ("jsonl", "empty"))
+        self.assertEqual(e["join"]["probe_reader"], {"format": "jsonl", "fields": ["k", "v"], "absent": "empty", "max_json_nodes": 4096})
         self.assertEqual(e["join"]["build_reader"], {"format": "jsonl", "fields": ["k", "w"], "absent": "empty", "max_json_nodes": 4096})
         self.assertEqual(e["join"]["output_columns"], 3)
 
@@ -829,6 +957,22 @@ class Explain(unittest.TestCase):
         self.assertEqual(r.data()["explain"]["join"]["build_reader"], {"format": "csv", "delimiter": ";"})
         r = self.ex("--join", "bs.csv", "--join-delimiter", ";", "--delimiter", ";", "--select", "k", "p.csv")
         self.assertNotIn(b"build_reader", r.stdout)
+
+    def test_a_tab_delimiter_is_said_as_a_tab(self):
+        self.s.write("bt.tsv", "k\tw\na\tx\n")
+        r = self.ex("--join", "bt.tsv", "--join-delimiter", "tab", "p.csv")
+        self.assertEqual(r.data()["explain"]["join"]["build_reader"], {"format": "csv", "delimiter": "\t"})
+
+    def test_the_bound_is_the_stated_one(self):
+        # docs/joins.md section 21: records <= size / 3 + 1, each at most its line and the columns more; accounted <= 2 * (size + columns * rows) + 76 * rows (44 * rows and 1 * for a keys-only build)
+        for n in (1, 40, 700):
+            self.s.write("bn.jsonl", "".join('{"k":"key%d","w":"x"}\n' % i for i in range(n)))
+            size = (self.s.dir / "bn.jsonl").stat().st_size
+            rows = size // 3 + 1
+            for jt, want in (("inner", 2 * (size + 2 * rows) + 76 * rows), ("semi", (size + 2 * rows) + 44 * rows)):
+                r = self.ex("--join", "bn.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w", "--join-type", jt, *(["--join-prefix", "r_"] if jt == "inner" else []), "p.csv")
+                self.assertEqual(r.data()["explain"]["join"]["build_state"]["accounted_at_most"], want, (n, jt))
+                self.assertEqual(r.data()["explain"]["join"]["build_state"]["file_bytes"], size)
 
     def test_the_refusals_before_a_row_are_the_runs(self):
         for argv in (["--join", "b.jsonl", "--join-input-format", "jsonl", "p.csv"], ["--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,,", "p.csv"],
@@ -931,8 +1075,18 @@ class Mcp(unittest.TestCase):
                     p = subprocess.run(argv, capture_output=True, input=b"", timeout=60)
                     self.assertEqual(r["result"]["content"][0]["text"].encode(), p.stdout.decode("utf-8", "replace").encode())
                     self.assertEqual(r["result"]["_meta"]["exit_code"], p.returncode)
+            # a JSON-lines probe given as the text of the call, joined with a csv file under the root
+            (d / "j5c.csv").write_bytes(b"id,name\n1,ann\n2,bob\n")
+            text = '{"id":"2","v":"x"}\n{"id":"9","v":"y"}\n{"id":"1","v":"z"}\n'
+            for plan in ({"input-format": "jsonl", "fields": "id,v", "join": "j5c.csv", "join-input-format": "csv", "on": "id", "join-prefix": "d_", "format": "csv"},
+                         {"input-format": "jsonl", "fields": "id,v", "join": "j5c.csv", "join-input-format": "csv", "on": "id", "join-prefix": "d_", "explain": True}):
+                r = MS.one({"stdin": text, **plan}, directory=d)
+                argv = [binary(), "--root=%s" % d] + MS.flag_argv(plan) + ["--", "-"]
+                p = subprocess.run(argv, capture_output=True, input=text.encode(), timeout=60)
+                self.assertEqual((r["result"]["content"][0]["text"].encode(), r["result"]["_meta"]["exit_code"]), (p.stdout, p.returncode))
+                self.assertEqual(p.returncode, 0, p.stdout[:300])
         finally:
-            for n in ("j5b.jsonl", "j5b.tsv", "j5p.csv"):
+            for n in ("j5b.jsonl", "j5b.tsv", "j5p.csv", "j5c.csv"):
                 (d / n).unlink(missing_ok=True)
 
 
@@ -1018,7 +1172,7 @@ class Authority(unittest.TestCase):
     def test_the_three_flags_are_in_the_table_and_the_defaults_are_the_probes(self):
         d = json.loads(subprocess.run([binary(), "introspect"], capture_output=True, check=True).stdout)
         names = {f["name"] for f in d["flags"]}
-        self.assertTrue({"join-input-format", "join-fields", "join-delimiter"} <= names, sorted(names))
+        self.assertTrue({"--join-input-format", "--join-fields", "--join-delimiter"} <= names, sorted(names))
 
 
 class Strace(unittest.TestCase):

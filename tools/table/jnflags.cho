@@ -15,6 +15,7 @@ import expr;
 import finish;
 import flags;
 import inputs;
+import jnfmt;
 import jxsrc;
 import orparse;
 import qrefuse;
@@ -276,8 +277,8 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
     let table = spec.flag_table();
     var e = errs;
     if !inp.has_join {
-        if cli.has(parsed, table, "on") || cli.has(parsed, table, "join-prefix") || cli.has(parsed, table, "join-type") || cli.has(parsed, table, "max-join-rows") || cli.has(parsed, table, "join-where") {
-            e = flags.problem(heap, e, "args.required-flag", "--on, --join-type, --join-prefix, --join-where and --max-join-rows are for a join, so they need --join", "--join FILE --on PROBE=BUILD", "--join --on --join-type --join-prefix --join-where --max-join-rows");
+        if cli.has(parsed, table, "on") || cli.has(parsed, table, "join-prefix") || cli.has(parsed, table, "join-type") || cli.has(parsed, table, "max-join-rows") || cli.has(parsed, table, "join-where") || cli.has(parsed, table, "join-input-format") || cli.has(parsed, table, "join-fields") || cli.has(parsed, table, "join-delimiter") {
+            e = flags.problem(heap, e, "args.required-flag", "--on, --join-type, --join-prefix, --join-where, --max-join-rows, --join-input-format, --join-fields and --join-delimiter are for a join, so they need --join", "--join FILE --on PROBE=BUILD", "--join --on --join-type --join-prefix --join-where --max-join-rows --join-input-format --join-fields --join-delimiter");
         }
         return e;
     }
@@ -377,9 +378,8 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
         }
         buffer.drop(heap, gb);
     }
-    if inp.jsonl {
-        e = flags.problem(heap, e, "args.conflict", "a join reads csv or tsv on both sides in this version", "drop --input-format, or convert the input to csv", "--join --input-format");
-    }
+    // the formats of the two files (docs/joins.md section 21): JSON lines on either side, and the build's delimiter
+    e = jnfmt.check(heap, args, parsed, inp.jmention, e);
     if cli.has(parsed, table, "max-join-rows") {
         let n = cli.nat(args, parsed, table, "max-join-rows");
         if n < 1 || n > 1000000000 {

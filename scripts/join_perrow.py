@@ -34,11 +34,20 @@ def count(argv):
     return n, p.returncode
 
 
+REPS = 3
+
+
 def slope(binary, make, small, large):
-    a, ra = count(make(binary, small))
-    b, rb = count(make(binary, large))
-    if not a or not b or ra or rb:
-        sys.exit("no count, or a run failed: %s" % (make(binary, small),))
+    """The cost of a row: the difference of the counts at two sizes over the difference of the rows. J5: the count of each size is the MINIMUM of REPS runs (the counter of a run varies by a few parts in a thousand,
+    page faults of the larger table included, which is a percent of a per-row slope; the work is deterministic and the noise is only ever added)."""
+    a = b = 0
+    for _ in range(REPS):
+        x, ra = count(make(binary, small))
+        y, rb = count(make(binary, large))
+        if not x or not y or ra or rb:
+            sys.exit("no count, or a run failed: %s" % (make(binary, small),))
+        a = x if not a else min(a, x)
+        b = y if not b else min(b, y)
     return (b - a) / (large - small), a, b
 
 
@@ -48,6 +57,7 @@ def main():
     ap.add_argument("--new", required=True)
     ap.add_argument("--dir", default="")
     ap.add_argument("--json", default="")
+    ap.add_argument("--jsonl", action="store_true", help="J5 (docs/joins.md section 21): also the shapes with a JSON-lines side, new only (the same rows as the csv files, written as JSON lines), beside the csv cell they stand for")
     ap.add_argument("--all", action="store_true", help="compare every shape with the old binary (from J3b on `main` has them all; J2 compared the inner join only)")
     a = ap.parse_args()
     d = pathlib.Path(a.dir) if a.dir else pathlib.Path(tempfile.mkdtemp(prefix="join-perrow-"))
@@ -68,6 +78,14 @@ def main():
             lines.append("%d,%s,%d\n" % (i, k, rnd.randrange(100000)))
         (d / ("probe-%d.csv" % n)).write_text("".join(lines))
     (d / "p1.csv").write_text("id,k,v\n1,5,1\n")
+    (d / "p1.jsonl").write_text('{"id":"1","k":"5","v":"1"}\n')
+    if a.jsonl:
+        for n in (100_000, 400_000):
+            rows = (d / ("build-%d.csv" % n)).read_text().splitlines()[1:]
+            (d / ("build-%d.jsonl" % n)).write_text("".join('{"k":"%s","name":"%s"}\n' % tuple(r.split(",")) for r in rows))
+        for n in (250_000, 1_000_000):
+            rows = (d / ("probe-%d.csv" % n)).read_text().splitlines()[1:]
+            (d / ("probe-%d.jsonl" % n)).write_text("".join('{"id":"%s","k":"%s","v":"%s"}\n' % tuple(r.split(",")) for r in rows))
     shapes = [
         ("inner, one pair of text (J1's path)", True, ["--join-type", "inner", "--join-prefix", "b_", "--on", "k=k"]),
         ("left, one pair of text", False, ["--join-type", "left", "--join-prefix", "b_", "--on", "k=k"]),
@@ -88,6 +106,26 @@ def main():
         else:
             print("%-40s %14s %14.2f %8s" % (name, "-", new, "-"))
             out["cells"].append({"cell": "probe row: " + name, "new": new})
+    if a.jsonl:
+        # J5: the same inner join of one pair of text with a JSON-lines side, new only, for the record (the csv cell is the first line of the table above)
+        jshapes = [
+            ("inner, csv probe and csv build (reference)", "probe-%d.csv", "build-%d.csv", []),
+            ("inner, jsonl probe, csv build", "probe-%d.jsonl", "build-%d.csv", ["--input-format", "jsonl", "--fields", "id,k,v", "--join-input-format", "csv"]),
+            ("inner, csv probe, jsonl build", "probe-%d.csv", "build-%d.jsonl", ["--join-input-format", "jsonl", "--join-fields", "k,name"]),
+            ("inner, jsonl probe, jsonl build", "probe-%d.jsonl", "build-%d.jsonl", ["--input-format", "jsonl", "--fields", "id,k,v", "--join-fields", "k,name"]),
+        ]
+        print("\n%-40s %14s   (JSON lines, new only)" % ("per probe row (instructions)", "new"))
+        for name, pf, bf, fl in jshapes:
+            mk = lambda b, n, pf=pf, bf=bf, fl=fl: [b, "--root", str(d), "--join", bf % 100_000, "--join-type", "inner", "--join-prefix", "b_", "--on", "k=k", *fl, "--format", "csv", "--max-state-bytes", "1073741824", pf % n]
+            new, *_ = slope(a.new, mk, 250_000, 1_000_000)
+            print("%-40s %14.2f" % (name, new))
+            out["cells"].append({"cell": "probe row: " + name, "new": new})
+        print("\n%-40s %14s   (JSON lines, new only)" % ("per build row (instructions)", "new"))
+        for name, pf, bf, fl in jshapes:
+            mk = lambda b, n, bf=bf, fl=fl, pf=pf: [b, "--root", str(d), "--join", bf % n, "--join-type", "inner", "--join-prefix", "b_", "--on", "k=k", *fl, "--format", "csv", "--max-state-bytes", "1073741824", ("p1.jsonl" if pf.endswith("jsonl") else "p1.csv")]
+            new, *_ = slope(a.new, mk, 100_000, 400_000)
+            print("%-40s %14.2f" % (name, new))
+            out["cells"].append({"cell": "build row: " + name, "new": new})
     print("\n%-40s %14s %14s %8s" % ("per build row (instructions)", "old", "new", "new/old"))
     for name, both, extra in shapes:
         extra2 = [x for x in extra]
