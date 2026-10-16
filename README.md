@@ -4,9 +4,13 @@
 
 [![ci](https://github.com/alpibrusl/cancho-table/actions/workflows/ci.yml/badge.svg)](https://github.com/alpibrusl/cancho-table/actions/workflows/ci.yml)
 
-**A deterministic data primitive for AI agents.** `table` queries CSV and TSV data with explicit semantics, bounded resources, structured refusals and machine-verifiable capabilities. It is a command line, not a chat box: you (or an agent) give it flags, it gives back exact answers or a named refusal with a repair. For a person with a CSV and a question: ask it, get an exact answer. One small binary, written in [cancho](https://github.com/alpibrusl/cancho). The [project page](https://alpibrusl.github.io/cancho-table/) has the same in pages.
+**A deterministic data primitive for AI agents.** `table` queries CSV, TSV and JSON lines data with explicit semantics, bounded resources, structured refusals and machine-verifiable capabilities. It is a command line, not a chat box: you (or an agent) give it flags, it gives back exact answers or a named refusal with a repair. For a person with a CSV and a question: ask it, get an exact answer. One small binary, written in [cancho](https://github.com/alpibrusl/cancho). The [project page](https://alpibrusl.github.io/cancho-table/) has the same in pages.
 
 **Status: early.** It works and is tested; what it cannot do yet is listed below.
+
+[![A terminal session of table, a video of about two minutes: a question answered exactly, a refusal with its repair, exact decimals, a plan, JSON lines, a join, a query, the same bytes on 1 and 4 cores, and a pipe. Click to watch it on the project page.](docs/assets/demo/table-demo-poster.png)](https://alpibrusl.github.io/cancho-table/#watch)
+
+*Watch it run (about two minutes, no sound):* [the video on the project page](https://alpibrusl.github.io/cancho-table/#watch), with a transcript. The typing is simulated; every command is run for real. The recording, the script that makes it and the golden transcript are in [scripts/demo](scripts/demo/README.md).
 
 ## One complete flow
 
