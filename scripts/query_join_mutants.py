@@ -275,6 +275,9 @@ EQUIVALENT_REASONS = {
     "on: the count of the conditions is not reset first": "the count is 0 when the on begins (only a where clause counts, and it comes after)",
     "order: a bare name is an as name outside a join": "outside a join a bare name is a column, and an `as` name of the select list that `order by` names is resolved by the translation the same way (`alias_hits`)",
     "write: a name of --where with a dot is bare": "the mutant lets a column of the first table be written `alias.name`; but its joined name is its own name, so the branch before (a plain word, bare) took every name that `dotted_bare` could, and the three words it refuses are the three that branch refuses",
+    "write: the sections of the join are all there are": "`rest_from` is asked for a translation that succeeded, which has all its sections: the branch for fewer sections than asked is never taken",
+    "flags: the join of a query has no key": "the type and the key of a query are always texts that are not empty (`inner` and a pair), so `has` answers yes for them whether or not it asks the section",
+    "flags: the type of a query is not given": "the type of a query is always a word that is not empty, so asking the section answers what `k <= 2` answered",
     "write: the name of a pair is the joined one": "the first column of a pair is the first table's, whose joined name is its own",
 }
 ALL = MUTANTS

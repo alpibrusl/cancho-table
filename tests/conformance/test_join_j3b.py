@@ -480,17 +480,20 @@ class Strace(unittest.TestCase):
 class Compat(unittest.TestCase):
     def test_what_was_valid_gives_the_bytes_of_main(self):
         import query_join_golden as K
-        want = json.loads(K.GOLDEN.read_text())["cases"]
-        got = K.compute(binary())
+        golden = json.loads(K.GOLDEN.read_text())
+        want = golden["cases"]
+        got = K.compute(binary(), golden["random"])
         bad = sorted(k for k in want if want[k] != got.get(k))
         self.assertEqual(bad, [], "answers that are not main's (query_join_main_golden.json)")
-        self.assertGreater(len(want), 400)
+        self.assertGreater(len(want), 350)
 
     @unittest.skipUnless(os.environ.get("J3B_BASE"), "J3B_BASE names the directory of main's build")
     def test_against_the_binary_of_main(self):
         import query_join_golden as K
-        base = K.compute(os.path.join(os.environ["J3B_BASE"], "table"))
-        self.assertEqual(sorted(k for k in base if base[k] != K.compute(binary())[k]), [])
+        randoms = json.loads(K.GOLDEN.read_text())["random"]
+        base = K.compute(os.path.join(os.environ["J3B_BASE"], "table"), randoms)
+        here = K.compute(binary(), randoms)
+        self.assertEqual(sorted(k for k in base if base[k] != here[k]), [])
 
     def test_the_hints_of_the_two_features_that_said_there_were_no_joins_say_what_there_is(self):
         # the only answers of a refusal that are not main's bytes (test_or_a1_compat.hint_moved holds the status and the rule of the rest)

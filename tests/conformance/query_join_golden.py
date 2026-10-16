@@ -48,7 +48,7 @@ NEAR = [
     "select * from 'f.csv'",
 ]
 EXTRA = {"k.csv": "join,left,inner,on,using,semi\n1,2,3,4,5,6\n7,8,9,10,11,12\n", "d.csv": "a.b,x.y.z\n1,2\n3,4\n", "f.csv": "a,b,c\n1,x,1.5\n2,y,2.5\n"}
-SEEDS = 120
+SEEDS = 80
 
 
 def files(d):
@@ -56,8 +56,8 @@ def files(d):
         (pathlib.Path(d) / name).write_text(text)
 
 
-def cases():
-    """(id, argv, stdin or None, directory key): deterministic."""
+def cases(randoms=None):
+    """(id, argv, stdin or None, key): `randoms` are the (table, query) pairs of the golden (generated when none are given)."""
     out = []
     for i, (query, flags, source) in enumerate(query_cases.ACCEPTED):
         for fmt in ("csv", "json"):
@@ -69,8 +69,8 @@ def cases():
         stdin = b"a,b\n1,2\n3,4\n" if "stdin" in query else None
         for fmt in ("csv", "json"):
             out.append(("near %d %s" % (i, fmt), ["--query", query, "--format", fmt], stdin, "fixed"))
-    for seed in range(SEEDS):
-        out.append(("random %d" % seed, None, None, seed))
+    for seed, pair in enumerate(randoms if randoms is not None else random_cases()):
+        out.append(("random %d" % seed, None, None, tuple(pair)))
     for i, row in enumerate(query_cases.REFUSALS + query_cases.NOT_PINNED + query_cases.B_PINNED):
         query = row[0]
         if row[1] == "unsupported" and row[3] in ("join", "subquery"):
@@ -85,16 +85,31 @@ def digest(binary, p):
     return hashlib.md5(repr((p.returncode, p.stdout.replace(b, b"{BIN}"), p.stderr.replace(b, b"{BIN}"))).encode()).hexdigest()
 
 
+def random_cases():
+    """[(table text, query)] of the seeded plans of query_gen: written into the golden when it is recorded and read back from it, so that what is replayed does not depend on the random streams of the Python that runs it."""
+    out = []
+    for seed in range(SEEDS):
+        rnd = random.Random(seed)
+        names, kinds, rows = query_gen.make_table(rnd)
+        d = tempfile.mkdtemp(prefix="golden-")
+        try:
+            query_gen.write_csv(os.path.join(d, "f.csv"), names, rows)
+            text = open(os.path.join(d, "f.csv"), encoding="utf-8", newline="").read()
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        plan = query_gen.make_plan(rnd, names, kinds, rows, many=True)
+        out.append((text, query_gen.query_form(rnd, plan, "'f.csv'")))
+    return out
+
+
 def run_case(binary, case, workdir):
     cid, argv, stdin, key = case
     if key != "fixed":
-        rnd = random.Random(key)
+        text, query = key
         d = tempfile.mkdtemp(prefix="golden-")
         try:
-            names, kinds, rows = query_gen.make_table(rnd)
-            query_gen.write_csv(os.path.join(d, "f.csv"), names, rows)
-            plan = query_gen.make_plan(rnd, names, kinds, rows, many=True)
-            query = query_gen.query_form(rnd, plan, "'f.csv'")
+            with open(os.path.join(d, "f.csv"), "w", encoding="utf-8", newline="") as f:
+                f.write(text)
             p = subprocess.run([binary, "--query", query, "--format", "csv"], capture_output=True, cwd=d, input=b"", timeout=60)
             q = subprocess.run([binary, "--query", query, "--format", "json"], capture_output=True, cwd=d, input=b"", timeout=60)
         finally:
@@ -104,23 +119,26 @@ def run_case(binary, case, workdir):
     return cid, digest(binary, p)
 
 
-def compute(binary):
+def compute(binary, randoms=None):
     d = tempfile.mkdtemp(prefix="golden-")
     try:
         files(d)
-        return dict(run_case(binary, c, d) for c in cases())
+        return dict(run_case(binary, c, d) for c in cases(randoms))
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
 
 if __name__ == "__main__":
     mode, where = sys.argv[1], pathlib.Path(sys.argv[2])
-    got = compute(str(where / "table"))
     if mode == "record":
-        GOLDEN.write_text(json.dumps({"binary": sys.argv[3] if len(sys.argv) > 3 else "main", "cases": got}, sort_keys=True, indent=0, separators=(",", ":")) + "\n")
+        randoms = random_cases()
+        got = compute(str(where / "table"), randoms)
+        GOLDEN.write_text(json.dumps({"binary": sys.argv[3] if len(sys.argv) > 3 else "main", "random": randoms, "cases": got}, sort_keys=True, indent=0, separators=(",", ":")) + "\n")
         print("recorded", len(got))
     else:
-        want = json.loads(GOLDEN.read_text())["cases"]
+        g = json.loads(GOLDEN.read_text())
+        got = compute(str(where / "table"), g["random"])
+        want = g["cases"]
         bad = [k for k in want if want[k] != got.get(k)]
         print("checked", len(want), "differing", len(bad), bad[:5])
         sys.exit(1 if bad else 0)

@@ -15,6 +15,8 @@ FIXTURES = {
     "o2.csv": 'k=2,x,y,a=b,e\\f,d,"p,q",m#2\n1,P,Q,R,S,T,c1,h1\n2,U,V,W,X,Y,c9,h2\n9,Z,Z,Z,Z,Z,c3,h9\n',
     # a probe whose column is called like a column the join gives the second table: join.column-collision
     "pc.csv": "id,b.city\n1,x\n2,y\n",
+    # a file name with a quote in it
+    "it's.csv": "id,city,n\n1,x,100\n2,y,200\n",
     # columns called like the words of a condition
     "o3.csv": "id,and,in,contains\n1,x,y,z\n2,w,y,z\n",
 }
@@ -222,6 +224,8 @@ ACCEPTED = [
      ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b t.", "--select", "b t.city", "--where", "'b t.city' = 'x'"], ("file", "p.csv")),
     ("select a.id from 'p.csv' as a join 'o3.csv' as b on a.id = b.id where b.\"and\" = 'x' or b.\"in\" in ('y') or b.\"contains\" = 'z'",
      ["--join", "o3.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--select", "id", "--where", "'b.and' = 'x' or 'b.in' in ('y') or 'b.contains' = 'z'"], ("file", "p.csv")),
+    ("select b.city from 'p.csv' as a join 'it''s.csv' as b on a.id = b.id",
+     ["--join", "it's.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--select", "b.city"], ("file", "p.csv")),
     ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id offset 2",
      ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--select", "id", "--from", "2"], ("file", "p.csv")),
 ]
@@ -250,6 +254,8 @@ ODD = [
 # A literal of a condition (in where, or in the on of a join) that does not fit the type its column is read as is told as query.syntax at the literal of the query
 # (the query, the literal as written, the column's own name, the type, what the flag's parser expected of it)
 LITERALS = [
+    ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and b.city = 'x' where a.v::int = 1.5", "1.5", "v", "int", "an integer, because the column is :int"),
+    ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and b.n::int = 1.5 where a.v::int = 3 and a.name = 'zzzzzzzzzzzz'", "1.5", "n", "int", "an integer, because the column is :int"),
     ("select a.id from 'p.csv' as a join 'b.csv' as b on a.id = b.id and b.n::int = 1.5", "1.5", "n", "int", "an integer, because the column is :int"),
     ("select a.id from 'p.csv' as a left join 'b.csv' as b on a.id = b.id and b.n::dec(1) > 1.25", "1.25", "n", "dec(1)",
      "a decimal with no more fractional digits than the column's scale (write :dec(N) with a larger N to compare finer values)"),
