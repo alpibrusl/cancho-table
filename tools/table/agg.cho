@@ -40,6 +40,7 @@ import facc;
 import flt;
 import plan;
 import cellnum;
+import dtparse;
 import query;
 import toolbox.text;
 import writer;
@@ -201,6 +202,15 @@ fn put_cell[&h, &d](heap: &!h Heap, out: buffer.Buffer, scratch: buffer.Buffer, 
     return (o, scr);
 }
 
+// `query.parse_typed`, or `dtparse.parse` for a date type (22 :date, 23 :timestamp, 24 :datetime: a status of 14 and more, dtparse.cho). `parse_typed` itself is not touched: it is read by the
+// aggregates of the hot loop (`add_fast`), which a plan with a date type never takes (`engine.fast_ok`).
+fn read_typed[&d](data: &d [byte], kind: int) -> [] (int, int) {
+    if kind >= 22 {
+        return dtparse.parse(data, kind);
+    }
+    return query.parse_typed(data, kind);
+}
+
 // A field as a number of the type `kind` (1 :int, 2 + S :dec(S)): (value, status, scratch), status 0 ok, 4 not an integer, 5 past 64 bits,
 // 6 not a decimal, 7 more fractional digits than the scale, 8 too wide (`query.parse_typed`).
 fn typed_cell[&h, &d](heap: &!h Heap, scratch: buffer.Buffer, record: &d [byte], first: int, last: int, quoted: int, kind: int) -> [heap] (int, int, buffer.Buffer) {
@@ -213,13 +223,13 @@ fn typed_cell[&h, &d](heap: &!h Heap, scratch: buffer.Buffer, record: &d [byte],
         var v = 0;
         var bad = 0;
         borrow scr as &sr in {
-            let (x, y) = query.parse_typed(buffer.bytes(sr), kind);
+            let (x, y) = read_typed(buffer.bytes(sr), kind);
             v = x;
             bad = y;
         }
         return (v, bad, scr);
     }
-    let (v, bad) = query.parse_typed(record[first..last], kind);
+    let (v, bad) = read_typed(record[first..last], kind);
     return (v, bad, scr);
 }
 
@@ -1156,6 +1166,9 @@ pub fn put_value[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, t
     if (function == 2 || function == 3) && query.agg_at(tree, k, 2) == 21 {
         return flt.put_float(heap, out, value_of(g, x, k, function));
     }
+    if (function == 2 || function == 3) && query.agg_at(tree, k, 2) >= 22 {
+        return dtparse.put(heap, out, value_of(g, x, k, function), query.agg_at(tree, k, 2));
+    }
     if (function == 2 || function == 3) && query.agg_at(tree, k, 2) >= 2 {
         return dec.put_scaled(heap, out, value_of(g, x, k, function), scale);
     }
@@ -1245,6 +1258,9 @@ pub fn put_key[&h, &g, &q](heap: &!h Heap, out: buffer.Buffer, g: &g Groups, tre
     if kind == 21 {
         return flt.put_float(heap, out, v);
     }
+    if kind >= 22 {
+        return dtparse.put(heap, out, v, kind);
+    }
     return dec.put_scaled(heap, out, v, kind - 2);
 }
 
@@ -1261,6 +1277,15 @@ fn escaped_at[&d](data: &d [byte], p: int) -> [] bool {
         i = i - 1;
     }
     return n % 2 == 1;
+}
+
+// The type suffix `:date`, `:timestamp` or `:datetime` that ends `item[0..e]` and whose colon is not escaped: (its length, the type code), or (0, 0).
+fn date_tail[&d](item: &d [byte], e: int) -> [] (int, int) {
+    let (dl, dk) = dtparse.suffix_in(item[0..e], 0);
+    if dk != 0 && !escaped_at(item, e - dl) {
+        return (dl, dk);
+    }
+    return (0, 0);
 }
 
 // The tail of one raw item of `--agg` (docs/numbers.md 5.1): the length of what is left of it, its type (0 none, 1 `:int`, 2 + S `:dec(S)`,
@@ -1317,6 +1342,13 @@ fn tail_of[&d](item: &d [byte]) -> [] (int, int, int) {
             e = k2 - 5;
         }
     }
+    if kind == 0 {
+        let (dl, dk) = date_tail(item, e);
+        if dk != 0 && index_of_byte(item[0..e - dl], byte_of(':')) > 0 {
+            kind = dk;
+            e = e - dl;
+        }
+    }
     return (e, kind, mean);
 }
 
@@ -1350,6 +1382,10 @@ pub fn bare_tail[&d](item: &d [byte]) -> [] (int, int) {
             }
             return (k - 5, 2 + v);
         }
+    }
+    let (dl, dk) = date_tail(item, e);
+    if dk != 0 {
+        return (e - dl, dk);
     }
     return (e, 0);
 }
@@ -1480,6 +1516,9 @@ pub fn parse_aggs[&h, &s](heap: &!h Heap, tree: query.Query, given: &s [byte]) -
                 var kind_final = kind;
                 var mean_final = 0;
                 if function == 0 {
+                    bad = i;
+                } else if function == 1 && kind >= 22 {
+                    // a sum or a mean of dates is not a date (docs/datetime.md 6.2)
                     bad = i;
                 } else if is_mean && kind == 21 {
                     // the mean of doubles is the exact sum over the count, rounded once: it has no scale (`@N` is refused)

@@ -8,7 +8,7 @@ module expr;
 //     COND  := COLUMN OP VALUE | COLUMN "contains" VALUE | COLUMN "not" "contains" VALUE
 //            | COLUMN "in" "(" VALUE { "," VALUE } ")" | COLUMN "not" "in" "(" VALUE { "," VALUE } ")"
 //     OP    := "=" | "!=" | "<" | "<=" | ">" | ">="
-//     COLUMN:= WORD [":int" | ":float" | ":dec(" N ")"]     a name, or #N the Nth column; N is a scale, 0 to 18
+//     COLUMN:= WORD [":int" | ":float" | ":dec(" N ")" | ":date" | ":timestamp" | ":datetime"]     a name, or #N the Nth column; N is a scale, 0 to 18
 //     VALUE := WORD
 //     WORD  := bare | 'quoted'
 //
@@ -31,6 +31,7 @@ import std.buffer;
 import std.bytes;
 import flt;
 import cellnum;
+import dtparse;
 import query;
 
 fn is_delimiter(c: int) -> [] bool {
@@ -172,6 +173,18 @@ pub fn expected(what: int) -> [] &static [byte] {
     if what == 24 {
         return "in or contains after not";
     }
+    if what == 25 {
+        return "a date: YYYY-MM-DD";
+    }
+    if what == 26 {
+        return "a timestamp with an offset: 2026-01-02T00:00:00Z";
+    }
+    if what == 27 {
+        return "a date and a time without an offset: 2026-01-02 12:00:00";
+    }
+    if what == 28 {
+        return "= != < <= > >= or in: contains compares text, and this column is :date, :timestamp or :datetime";
+    }
     return "a complete expression";
 }
 
@@ -231,6 +244,13 @@ fn parse_column[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: in
             } else if after + 6 <= len(src) && bytes.equal(src[after..after + 6], ":float") && (after + 6 == len(src) || is_delimiter(int_of(src[after + 6]))) {
                 typed = 21;
                 next = after + 6;
+            } else {
+                // :date, :timestamp, :datetime (docs/datetime.md)
+                let (dl, dk) = dtparse.suffix_at(src, after);
+                if dk != 0 && (after + dl == len(src) || is_delimiter(int_of(src[after + dl]))) {
+                    typed = dk;
+                    next = after + dl;
+                }
             }
         } else if length >= 4 && escaped_last <= length - 4 {
             borrow word as &wr in {
@@ -248,6 +268,15 @@ fn parse_column[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: in
                         typed = 21;
                         length = length - 6;
                     }
+                }
+            }
+        }
+        if quoted == 0 && typed == 0 && !is_dec {
+            borrow word as &wr in {
+                let (dl, dk) = dtparse.suffix_in(buffer.bytes(wr)[0..length], escaped_last);
+                if dk != 0 {
+                    typed = dk;
+                    length = length - dl;
                 }
             }
         }
@@ -378,6 +407,15 @@ fn parse_value[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: int
                     what = 20;
                 }
             }
+        } else if typed >= 22 {
+            // a date, a timestamp or a datetime is read by the reader of the cells (25, 26, 27: which of them it was meant to be)
+            borrow word as &wr in {
+                let (v, bad) = dtparse.parse(buffer.bytes(wr), typed);
+                value = v;
+                if bad != 0 {
+                    what = 3 + typed;
+                }
+            }
         } else if typed >= 2 {
             borrow word as &wr in {
                 let (v, bad) = cellnum.parse_dec(buffer.bytes(wr), typed - 2);
@@ -420,6 +458,10 @@ pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: 
         let (kind, op, after_op, w2, a2, negated) = parse_operator(heap, src, i, typed);
         negative = negated;
         what = w2;
+        if what == 6 && typed >= 22 {
+            // `contains` on a date type: the sentence names the date types, not the numbers
+            what = 28;
+        }
         at = a2;
         i = after_op;
         var first = 0;
@@ -768,6 +810,38 @@ fn holds_dec[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many:
     return 0;
 }
 
+// The same for a :date, :timestamp or :datetime column (`typed` 22, 23, 24): the cell is read by `dtparse.parse` and compared with the literals' (read the same way when the expression was
+// parsed). A cell that is not one answers its status, 14 or more (dtparse.cho).
+fn holds_date[&q, &c](plan: &q query.Query, kind: int, op: int, first: int, many: int, typed: int, cell: &c [byte]) -> [] int {
+    let (x, bad) = dtparse.parse(cell, typed);
+    if bad != 0 {
+        return bad;
+    }
+    var l = 0;
+    while l < many {
+        let w = query.lit_at(plan, first + l, 2);
+        var yes = false;
+        if kind == 2 || op == 0 {
+            yes = x == w;
+        } else if op == 1 {
+            yes = x != w;
+        } else if op == 2 {
+            yes = x < w;
+        } else if op == 3 {
+            yes = x <= w;
+        } else if op == 4 {
+            yes = x > w;
+        } else {
+            yes = x >= w;
+        }
+        if yes {
+            return 1;
+        }
+        l = l + 1;
+    }
+    return 0;
+}
+
 // Whether `cell` satisfies condition `k`: 1 yes, 0 no, 2 the column is :int
 // and the cell is not an integer, 3 it is one that does not fit 64 bits; for a
 // :dec column 4 the cell is not a decimal, 5 it has more fractional digits than
@@ -779,6 +853,9 @@ pub fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
     let many = query.cond_at(plan, k, 5);
     let typed = query.cond_at(plan, k, 1);
     if typed >= 2 {
+        if typed >= 22 {
+            return holds_date(plan, kind, op, first, many, typed, cell);
+        }
         return holds_dec(plan, kind, op, first, many, typed - 2, cell);
     }
     if typed == 1 {

@@ -15,7 +15,7 @@ module query;
 // refers to a name by its index in that list.
 //
 // `conds` has 7 integers per condition:
-//     kind (0 compare, 1 contains, 2 in), type (0 text, 1 :int, 2 + S for :dec(S): docs/numbers.md),
+//     kind (0 compare, 1 contains, 2 in), type (0 text, 1 :int, 2 + S for :dec(S): docs/numbers.md, 21 :float, 22 :date, 23 :timestamp, 24 :datetime: docs/datetime.md),
 //     op (0 =, 1 !=, 2 <, 3 <=, 4 >, 5 >=), name (index into names),
 //     first literal and how many (into `lits`), offset (in the expression).
 // `lits` has 4 per literal: where its bytes begin and end in `ltext`, its
@@ -42,7 +42,7 @@ pub res struct Query {
     ltext: buffer.Buffer,
     aggs: vec.Vec[int],
     meta: vec.Vec[int],
-    // the type of each `--group` column, in order: 0 text, 1 :int, 2 + S :dec(S), 21 :float (docs/numbers.md 4.5)
+    // the type of each `--group` column, in order: 0 text, 1 :int, 2 + S :dec(S), 21 :float (docs/numbers.md 4.5), 22 :date, 23 :timestamp, 24 :datetime
     gkinds: vec.Vec[int],
     // the label `--sort` names (empty when there is none): an output column of the grouping, resolved when the groups are finished
     sort: buffer.Buffer,
@@ -184,7 +184,7 @@ pub fn set_reporting[&h](heap: &!h Heap, q: Query) -> [heap] Query {
     return add_order(heap, Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: g, sort: sort, flow: flow, rename: rename, jx: jx }, 0, 0);
 }
 
-// How many `--group` columns are typed (the first element of `gkinds`).
+// How many `--group` columns are typed (the first element of `gkinds`), and one for each aggregate of a date type.
 pub fn typed_groups[&q](q: &q Query) -> [] int {
     return vec.get(q.gkinds, 0);
 }
@@ -261,7 +261,7 @@ pub fn int_max() -> [] int {
     return 9223372036854775807;
 }
 
-// `data` as a cell of the numeric type `kind` (1 :int, 2 + S :dec(S), 21 :float), for an aggregate: (value, status), 0 it is, 4 not an integer,
+// `data` as a cell of the type `kind` (1 :int, 2 + S :dec(S), 21 :float), for an aggregate: (value, status), 0 it is, 4 not an integer,
 // 5 an integer past 64 bits, 6 not a decimal, 7 a decimal with more fractional digits than the scale, 8 one that is too wide (and, for a float,
 // the 9 to 13 of `flt.parse_float`; a float's value is its key, an `int` that orders as the doubles do).
 pub fn parse_typed[&d](data: &d [byte], kind: int) -> [] (int, int) {
@@ -404,7 +404,15 @@ pub fn add_agg[&h](heap: &!h Heap, q: Query, function: int, name: int, kind: int
     a = vec.push(heap, a, name);
     a = vec.push(heap, a, kind);
     a = vec.push(heap, a, mean);
-    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: a, meta: meta, gkinds: gkinds, sort: sort, flow: flow, rename: rename, jx: jx };
+    var g = gkinds;
+    if kind >= 22 {
+        // a date type (docs/datetime.md): counted with the typed group columns, so that `agg.start` makes the rows take `agg.add` and never `add_fast`, whose cells are read by `parse_typed` (the hot
+        // loop's, whose text a new case would change: section 11)
+        borrow mut g as &!gw in {
+            vec.set(gw, 0, vec.get(gw, 0) + 1);
+        }
+    }
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: a, meta: meta, gkinds: g, sort: sort, flow: flow, rename: rename, jx: jx };
 }
 
 pub fn cond_at[&q](q: &q Query, k: int, field: int) -> [] int {

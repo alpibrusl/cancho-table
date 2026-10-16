@@ -1,0 +1,65 @@
+edition 5;
+
+module dtjson;
+
+// A group written as a JSON-lines object when the plan reads a date, a timestamp or a datetime (docs/datetime.md section 8): `jout.group_row` for a plan whose keys and aggregates are all
+// text or numbers, with the one difference that a date type is a JSON string, not a number (`2026-01-01T23:00:00Z` is not one): a key of those types, and the minimum or maximum of one. The
+// count of a `distinct` is a number as every count is. Kept apart so that the writer of every other plan is the code it was.
+
+import std.buffer;
+import agg;
+import query;
+import toolbox.text;
+
+// Whether the plan has a group key or a minimum or a maximum of the date types.
+pub fn has_dates[&q](tree: &q query.Query) -> [] bool {
+    var m = 0;
+    while m < query.count_of(tree, 2) {
+        if query.gkind_at(tree, m) >= 22 {
+            return true;
+        }
+        m = m + 1;
+    }
+    m = 0;
+    while m < query.agg_count(tree) {
+        if (query.agg_at(tree, m, 0) == 2 || query.agg_at(tree, m, 0) == 3) && query.agg_at(tree, m, 2) >= 22 {
+            return true;
+        }
+        m = m + 1;
+    }
+    return false;
+}
+
+// `jout.group_row`, with the date types as strings.
+pub fn group_row[&h, &g, &q, &t, &s](heap: &!h Heap, out: buffer.Buffer, groups: &g agg.Groups, tree: &q query.Query, x: int, tmpl: &t [byte], sel: &s [int]) -> [heap] buffer.Buffer {
+    let ng = query.count_of(tree, 2);
+    let na = query.agg_count(tree);
+    var o = out;
+    var from = 0;
+    var m = 0;
+    while m < ng + na {
+        let to = sel[2 + m];
+        o = buffer.append(heap, o, tmpl[from..to]);
+        from = to;
+        if m < ng {
+            if query.gkind_at(tree, m) >= 22 {
+                o = buffer.push(heap, o, byte_of(34));
+                o = agg.put_key(heap, o, groups, tree, x, m);
+                o = buffer.push(heap, o, byte_of(34));
+            } else if query.gkind_at(tree, m) != 0 {
+                o = agg.put_key(heap, o, groups, tree, x, m);
+            } else {
+                o = text.append_json(heap, o, agg.key_field(groups, x, m));
+            }
+        } else if query.agg_at(tree, m - ng, 2) >= 22 && (query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 3) {
+            o = buffer.push(heap, o, byte_of(34));
+            o = agg.put_value(heap, o, groups, tree, x, m - ng);
+            o = buffer.push(heap, o, byte_of(34));
+        } else {
+            o = agg.put_value(heap, o, groups, tree, x, m - ng);
+        }
+        m = m + 1;
+    }
+    o = buffer.push(heap, o, byte_of(125));
+    return buffer.push(heap, o, byte_of(10));
+}

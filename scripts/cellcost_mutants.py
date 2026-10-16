@@ -63,8 +63,8 @@ MUTANTS = [
     ("a new group is taken for one that is there", "agg.cho", "                contents(g.memo)[size + 4] = hk;\n                return (0 - 2, 0);", "                contents(g.memo)[size + 4] = hk;\n                return (0, 0);"),
     # engine
     ("a refusal in place is numbered one low", "engine.cho", "    return 12 + status;\n}", "    return 11 + status;\n}"),
-    ("the aggregate that refused is lost in the answer", "engine.cho", "    return 16 + 16 * k + status;", "    return 16 + status;"),
-    ("a refusal is decoded with the wrong radix", "engine.cho", "    let status = (answer - 16) % 16;", "    let status = (answer - 16) % 15;"),
+    ("the aggregate that refused is lost in the answer", "engine.cho", "    return 16 + refusal_stride() * k + status;", "    return 16 + status;"),
+    ("a refusal is decoded with the wrong radix", "engine.cho", "    let status = (answer - 16) % refusal_stride();", "    let status = (answer - 16) % 15;"),
     # scan.next_fast
     ("a line is taken before looking for its end", "scan.cho", "    if found < 0 || found > r.cap {\n        return 9;\n    }", "    if found > r.cap {\n        return 9;\n    }"),
     ("the rest of a line held over is a line", "scan.cho", "    if r.over > 0 || buffer.size(r.held) > 0 {\n        return 9;\n    }", "    if r.over > 0 {\n        return 9;\n    }"),

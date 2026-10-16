@@ -32,7 +32,7 @@ UNIT   := COND | "(" EXPR ")" | "not" "(" EXPR ")"
 COND   := COLUMN OP VALUE | COLUMN "contains" VALUE | COLUMN "in" "(" VALUE { "," VALUE } ")"
         | COLUMN "not" "contains" VALUE | COLUMN "not" "in" "(" VALUE { "," VALUE } ")"
 OP     := "=" | "!=" | "<" | "<=" | ">" | ">="
-COLUMN := WORD [":int" | ":dec(" N ")" | ":float"]     a header name, or #N the Nth column (1-based); N is a scale, 0 to 18
+COLUMN := WORD [":int" | ":dec(" N ")" | ":float" | ":date" | ":timestamp" | ":datetime"]     a header name, or #N the Nth column (1-based); N is a scale, 0 to 18
 VALUE  := WORD
 WORD   := bare | 'quoted'
 ```
@@ -151,6 +151,20 @@ expression at the literal, not of a row. **Equal as numbers**: `1.5` and `1.50` 
 row is read; an unmarked mention is text and mixes freely. The stages after N1 are built: typed
 aggregates, group keys and sort keys of a decimal, `:float` and the type report (below, and `docs/numbers.md`).
 
+**Dates and timestamps (slice T1 of [`datetime.md`](datetime.md)).** `COLUMN:date`, `COLUMN:timestamp` and `COLUMN:datetime` read the cell as a day (`2026-01-02`), as an instant
+(`2026-01-02T01:00:00+02:00`: an offset, `Z`, `z`, `+hh:mm` or `-hh:mm`, is required) or as a wall-clock time (`2026-01-02 12:00:00`: an offset is refused). The grammar is a strict subset of
+RFC 3339 and nothing is guessed: years 0001 to 9999, a real calendar (`2026-02-30` and `1900-02-29` are refused), `T`, `t` or one space between the date and the time, hours 00 to 23 (`24:00:00` is
+refused), seconds 00 to 59 (a leap second `:60` is refused), a fraction of 1 to 6 digits (more is refused even when the extra digits are zeros: the unit is the microsecond, never rounded or cut), no
+whitespace, no basic, week or ordinal form, no zone names and no `-00:00`. A timestamp is the instant, so `2026-01-02T01:00:00+02:00`, `2026-01-01T23:00:00Z` and `2026-01-01 23:00:00.000+00:00` are one
+value: they are equal, they are one group, one `distinct` and one place in a sort. A literal is read by the same reader as the cells (`ts:timestamp >= '2026-01-02T00:00:00Z'`); one that is not a value of the
+type is `where.syntax` at the literal, and a date against a timestamp is refused too (the day's boundary is the user's statement), with the repair that writes the day out as the instants that bound it.
+`contains` is refused on all three. Comparisons are of the number (days, or microseconds), the order is the order of the instants, and ties keep the order of the file. **One type per column per plan**
+as for the numbers: `:date` beside `:timestamp` is `column.type-conflict`. The refusals have a tag each (`value.not-date`, `value.not-timestamp`, `value.timestamp-precision`, `value.timestamp-range`,
+`value.timezone-missing`, `value.timestamp-offset-present`, `value.timezone-unsupported`), name the row, the line, the column and the cell, and say in `detail.reason` and `detail.offset` what is wrong
+and where; the repair is the same invocation with the type the cell shows, when it can be written whole (`docs/refusals.md`). **Output:** a row is the input bytes, unchanged; a group key, a `min` and
+a `max` are written in the normal form, which is a function of the value (`2026-01-02`, `2026-01-01T23:00:00Z` in UTC, `2026-01-02T12:00:00.250` for a datetime, a fraction of none, three or six digits),
+a JSON string in `--format jsonl`. `sum` and `mean` of them are `agg.bad-spec`.
+
 **Empty cells.** In a text comparison an empty cell is the empty string (`name = ''`
 works). In an `:int` condition an empty cell **is not an integer: it is refused**, not
 skipped and not false. This is deliberate: a query that quietly ignored the rows with
@@ -172,7 +186,7 @@ the offset of each. `and` mixed with `or` at one level is `where.mixed-and-or`, 
 ## Groups
 
 `--group NAMES` (a list like `--select`'s, of any number of columns: the grouping has no limit of its own on them, and a column may be named more than once; the bounds are the group, state and line limits below) and `--agg LIST`, items `count`, `sum:COL`,
-`min:COL`, `max:COL`, `mean:COL[@N]`, `distinct:COL` separated by commas (default `count`). `COL` is a
+`min:COL`, `max:COL`, `mean:COL[@N]`, `distinct:COL` separated by commas (default `count`; `min`, `max` and `distinct` take `:date`, `:timestamp` and `:datetime` too, above). `COL` is a
 name or `#N`; a name with a comma is written `\,` as in a list. `sum`, `min` and `max`
 read their cell as an exact integer (same refusals, with `context` naming the
 function). **A sum is exact whatever its width: it is a pair of integers** (the low 32 bits of every cell in

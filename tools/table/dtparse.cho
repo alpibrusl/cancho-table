@@ -1,0 +1,692 @@
+edition 5;
+
+module dtparse;
+
+// The exact readers of one cell as a date, a timestamp or a datetime (docs/datetime.md sections 5, 6 and 8): `parse` (a cell as a value, or the reason it is not one),
+// `put` (a value as its normalised text) and the calendar under both (`days_from_civil` and `civil_from_days` are Howard Hinnant's, checked against Python's calendar
+// for every day of 0001..9999). The type codes are the plan's (`query.cho`): 22 `:date`, 23 `:timestamp`, 24 `:datetime`. Like `cellnum`, this module knows nothing of the plan.
+//
+// A value is an `int`: days since 1970-01-01 for a date, microseconds since 1970-01-01T00:00:00 (UTC for a timestamp, a wall-clock count for a datetime) otherwise.
+//
+// A refusal is a **status**, an `int` that is 14 or more (the numbers below 14 are the integer, decimal and float readers'): `14 + reason + 64 * extra`, with `reason` one of
+// the numbers below (`reason_of`) and `extra` the byte of the cell the fault is at (`detail.offset`), or the number of fractional digits (`reason` 17). `tag_of`, `reason_text`
+// and `extra_of` take it apart; `finish`/`dtfail.cho` write the refusal from it. **The order of the checks is the design's** (docs/datetime.md section 5): (1) the whole
+// cell against the shape, (2) year, month, day, (3) hour, minute, second and the digits of an offset, (4) the fractional digits, (5) the offset's presence against the type,
+// (6) the instant against 0001-01-01T00:00:00Z..9999-12-31T23:59:59.999999Z. The tag follows the first failing step.
+//
+//    1 date shape            2 date year          3 date month         4 date day           5 date time-part
+//    6 timestamp shape       7 year               8 month              9 day               10 hour              11 hour-24     12 minute      13 second
+//   14 leap-second          15 offset-shape      16 date-only
+//   17 precision (extra: the digits)              18 range before      19 range after
+//   20 timezone-missing: missing                  21 timezone-missing: unknown-offset
+//   22 timestamp-offset-present                   23 timezone-unsupported
+
+import std.buffer;
+import std.bytes;
+
+pub fn is_leap(y: int) -> [] bool {
+    return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+}
+
+pub fn days_in_month(y: int, m: int) -> [] int {
+    if m == 2 {
+        if is_leap(y) {
+            return 29;
+        }
+        return 28;
+    }
+    if m == 4 || m == 6 || m == 9 || m == 11 {
+        return 30;
+    }
+    return 31;
+}
+
+// Days from 1970-01-01 to the (valid) civil date: the era of 400 years is 146,097 days, the year starts on March 1st. `y` is 1 to 9999, so nothing is negative on the way.
+pub fn days_from_civil(y: int, m: int, d: int) -> [] int {
+    var yy = y;
+    var mp = m + 9;
+    if m <= 2 {
+        yy = y - 1;
+    } else {
+        mp = m - 3;
+    }
+    let era = yy / 400;
+    let yoe = yy - era * 400;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+// The civil date of `z` days from 0000-03-01 (z >= 0): (year, month, day).
+pub fn civil_from_shifted(z: int) -> [] (int, int, int) {
+    let era = z / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    var m = mp + 3;
+    var y = yoe + era * 400;
+    if mp >= 10 {
+        m = mp - 9;
+        y = y + 1;
+    }
+    return (y, m, d);
+}
+
+fn two[&d](data: &d [byte], at: int) -> [] int {
+    let a = int_of(data[at]) - '0';
+    let b = int_of(data[at + 1]) - '0';
+    if a < 0 || a > 9 || b < 0 || b > 9 {
+        return 0 - 1;
+    }
+    return a * 10 + b;
+}
+
+fn four[&d](data: &d [byte], at: int) -> [] int {
+    let a = two(data, at);
+    let b = two(data, at + 2);
+    if a < 0 || b < 0 {
+        return 0 - 1;
+    }
+    return a * 100 + b;
+}
+
+fn refuse(reason: int, extra: int) -> [] (int, int) {
+    return (0, 14 + reason + 64 * extra);
+}
+
+// The offset of the first byte of `data[0..10]` that is not `dddd-dd-dd`, or -1 when the date has the shape (a cell shorter than that fails at its length).
+fn date_shape[&d](data: &d [byte]) -> [] int {
+    let n = len(data);
+    var i = 0;
+    while i < 10 {
+        if i >= n {
+            return n;
+        }
+        let c = int_of(data[i]);
+        if i == 4 || i == 7 {
+            if c != '-' {
+                return i;
+            }
+        } else if c < '0' || c > '9' {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// The offset of the first byte of `data[11..19]` that is not `dd:dd:dd`, or -1 (the cell is known to be longer than 10 bytes).
+fn time_shape[&d](data: &d [byte]) -> [] int {
+    let n = len(data);
+    var i = 0;
+    while i < 8 {
+        if 11 + i >= n {
+            return n;
+        }
+        let c = int_of(data[11 + i]);
+        if i == 2 || i == 5 {
+            if c != ':' {
+                return 11 + i;
+            }
+        } else if c < '0' || c > '9' {
+            return 11 + i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+fn is_name_byte(c: int) -> [] bool {
+    return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '/' || c == '+' || c == ':' || c == '-';
+}
+
+// Whether `tail` is a sign and `dd:dd`.
+fn is_num_offset[&d](tail: &d [byte]) -> [] bool {
+    return len(tail) == 6 && (int_of(tail[0]) == '+' || int_of(tail[0]) == '-') && two(tail, 1) >= 0 && int_of(tail[3]) == ':' && two(tail, 4) >= 0;
+}
+
+// The status of a tail that is not empty, `Z`, `z` or a sign and `dd:dd` (step 1): a bracketed suffix or a name is a zone this tool has no database for, a sign with another
+// form is `offset-shape`, anything else a fault of shape at the byte it begins at (after the `Z` that begins it, when one does).
+fn tail_refusal[&d](tail: &d [byte], k: int) -> [] (int, int) {
+    let c = int_of(tail[0]);
+    if c == '[' {
+        return refuse(23, 0);
+    }
+    if len(tail) >= 2 && int_of(tail[1]) == '[' && (c == 'Z' || c == 'z') {
+        return refuse(23, 0);
+    }
+    if len(tail) >= 7 && int_of(tail[6]) == '[' && is_num_offset(tail[0..6]) {
+        return refuse(23, 0);
+    }
+    var at = 0;
+    if c == ' ' {
+        at = 1;
+    }
+    if at < len(tail) && (int_of(tail[at]) >= 'a' && int_of(tail[at]) <= 'z' || int_of(tail[at]) >= 'A' && int_of(tail[at]) <= 'Z') {
+        var j = at + 1;
+        while j < len(tail) && is_name_byte(int_of(tail[j])) {
+            j = j + 1;
+        }
+        if j == len(tail) {
+            return refuse(23, 0);
+        }
+    }
+    if c == '+' || c == '-' {
+        return refuse(15, k);
+    }
+    if c == 'Z' || c == 'z' {
+        return refuse(6, k + 1);
+    }
+    return refuse(6, k);
+}
+
+// `data` as a date (kind 22), a timestamp with an offset (23) or a datetime without one (24): (value, status), status 0 it is, else a refusal (see above).
+pub fn parse[&d](data: &d [byte], kind: int) -> [] (int, int) {
+    if kind == 22 {
+        return parse_date(data);
+    }
+    return parse_time(data, kind);
+}
+
+// The reading of a cell that is well formed, without naming the refusal of one that is not: (value, true), or (0, false) for any other cell, which `parse_date` or `parse_time` then reads
+// again step by step to say why (the order of the checks is theirs). It accepts exactly the cells they accept and is shorter: every digit is tested by one sign test (`x | 9 - x` is
+// negative when x is not 0 to 9) and the tests are added up, and the delimiters by one exclusive or each.
+fn fast_date[&d](data: &d [byte]) -> [] (int, bool) {
+    if len(data) != 10 {
+        return (0, false);
+    }
+    let s = data[0..10];
+    let x0 = int_of(s[0]) - '0';
+    let x1 = int_of(s[1]) - '0';
+    let x2 = int_of(s[2]) - '0';
+    let x3 = int_of(s[3]) - '0';
+    let x5 = int_of(s[5]) - '0';
+    let x6 = int_of(s[6]) - '0';
+    let x8 = int_of(s[8]) - '0';
+    let x9 = int_of(s[9]) - '0';
+    let bad = x0 | 9 - x0 | (x1 | 9 - x1) | (x2 | 9 - x2) | (x3 | 9 - x3) | (x5 | 9 - x5) | (x6 | 9 - x6) | (x8 | 9 - x8) | (x9 | 9 - x9);
+    if bad < 0 || int_of(s[4]) ^ 45 | int_of(s[7]) ^ 45 != 0 {
+        return (0, false);
+    }
+    let year = ((x0 * 10 + x1) * 10 + x2) * 10 + x3;
+    let month = x5 * 10 + x6;
+    let day = x8 * 10 + x9;
+    if year == 0 || month < 1 || month > 12 || day < 1 || day > days_in_month(year, month) {
+        return (0, false);
+    }
+    return (days_from_civil(year, month, day), true);
+}
+
+fn fast_time[&d](data: &d [byte], kind: int) -> [] (int, bool) {
+    let n = len(data);
+    if n < 19 {
+        return (0, false);
+    }
+    let s = data[0..19];
+    let x0 = int_of(s[0]) - '0';
+    let x1 = int_of(s[1]) - '0';
+    let x2 = int_of(s[2]) - '0';
+    let x3 = int_of(s[3]) - '0';
+    let x5 = int_of(s[5]) - '0';
+    let x6 = int_of(s[6]) - '0';
+    let x8 = int_of(s[8]) - '0';
+    let x9 = int_of(s[9]) - '0';
+    let x11 = int_of(s[11]) - '0';
+    let x12 = int_of(s[12]) - '0';
+    let x14 = int_of(s[14]) - '0';
+    let x15 = int_of(s[15]) - '0';
+    let x17 = int_of(s[17]) - '0';
+    let x18 = int_of(s[18]) - '0';
+    let bad = x0 | 9 - x0 | (x1 | 9 - x1) | (x2 | 9 - x2) | (x3 | 9 - x3) | (x5 | 9 - x5) | (x6 | 9 - x6) | (x8 | 9 - x8) | (x9 | 9 - x9) | (x11 | 9 - x11) | (x12 | 9 - x12) | (x14 | 9 - x14) | (x15 | 9 - x15) | (x17 | 9 - x17) | (x18 | 9 - x18);
+    let marks = int_of(s[4]) ^ 45 | int_of(s[7]) ^ 45 | int_of(s[13]) ^ 58 | int_of(s[16]) ^ 58;
+    let sep = int_of(s[10]);
+    if bad < 0 || marks != 0 || sep != 'T' && sep != 't' && sep != ' ' {
+        return (0, false);
+    }
+    let year = ((x0 * 10 + x1) * 10 + x2) * 10 + x3;
+    let month = x5 * 10 + x6;
+    let day = x8 * 10 + x9;
+    let hh = x11 * 10 + x12;
+    let mi = x14 * 10 + x15;
+    let ss = x17 * 10 + x18;
+    if year == 0 || month < 1 || month > 12 || day < 1 || day > days_in_month(year, month) || hh > 23 || mi > 59 || ss > 59 {
+        return (0, false);
+    }
+    var micro = 0;
+    var offset_us = 0;
+    var tail = 0;
+    var negative_zero = false;
+    if n > 19 {
+        var k = 19;
+        if int_of(data[19]) == '.' {
+            var j = 20;
+            var going = true;
+            while going && j < n && j < 27 {
+                let d = int_of(data[j]) - '0';
+                if d >= 0 && d <= 9 {
+                    micro = micro * 10 + d;
+                    j = j + 1;
+                } else {
+                    going = false;
+                }
+            }
+            if j == 20 || j > 26 {
+                return (0, false);
+            }
+            var f = j - 20;
+            while f < 6 {
+                micro = micro * 10;
+                f = f + 1;
+            }
+            k = j;
+        }
+        if k < n {
+            if n - k == 1 && (int_of(data[k]) == 'Z' || int_of(data[k]) == 'z') {
+                tail = 1;
+            } else if is_num_offset(data[k..n]) {
+                let oh = two(data, k + 1);
+                let om = two(data, k + 4);
+                if oh > 23 || om > 59 {
+                    return (0, false);
+                }
+                offset_us = (oh * 3600 + om * 60) * 1000000;
+                if int_of(data[k]) == '-' {
+                    negative_zero = offset_us == 0;
+                    offset_us = 0 - offset_us;
+                }
+                tail = 2;
+            } else {
+                return (0, false);
+            }
+        }
+    }
+    if kind == 23 {
+        if tail == 0 || negative_zero {
+            return (0, false);
+        }
+    } else if tail != 0 {
+        return (0, false);
+    }
+    var value = (days_from_civil(year, month, day) * 86400 + hh * 3600 + mi * 60 + ss) * 1000000 + micro;
+    if kind == 23 {
+        value = value - offset_us;
+        if value < 0 - 62135596800000000 || value > 253402300799999999 {
+            return (0, false);
+        }
+    }
+    return (value, true);
+}
+
+fn parse_date[&d](data: &d [byte]) -> [] (int, int) {
+    let (fv, ok) = fast_date(data);
+    if ok {
+        return (fv, 0);
+    }
+    let n = len(data);
+    let bad = date_shape(data);
+    if bad >= 0 {
+        return refuse(1, bad);
+    }
+    if n > 10 {
+        // a time part: the cell is a valid timestamp (it has an offset) or a valid datetime (it has none): a repair that reads it as one is then accepted
+        let (v1, s1) = parse_time(data, 23);
+        if s1 == 0 {
+            return refuse(5, 10);
+        }
+        let (v2, s2) = parse_time(data, 24);
+        if s2 == 0 {
+            return refuse(5, 10);
+        }
+        let t = time_status(data);
+        return refuse(1, t);
+    }
+    let y = four(data, 0);
+    let m = two(data, 5);
+    let d = two(data, 8);
+    if y == 0 {
+        return refuse(2, 0);
+    }
+    if m < 1 || m > 12 {
+        return refuse(3, 5);
+    }
+    if d < 1 || d > days_in_month(y, m) {
+        return refuse(4, 8);
+    }
+    return (days_from_civil(y, m, d), 0);
+}
+
+// The byte at which a cell longer than a date, whose date has the shape, is not a time part of the shape of step 1 (the byte of the shape fault), else 10.
+fn time_status[&d](data: &d [byte]) -> [] int {
+    let n = len(data);
+    if int_of(data[10]) != 'T' && int_of(data[10]) != 't' && int_of(data[10]) != ' ' {
+        return 10;
+    }
+    let t = time_shape(data);
+    if t >= 0 {
+        return t;
+    }
+    var k = 19;
+    if k < n && int_of(data[k]) == '.' {
+        var j = 20;
+        while j < n && int_of(data[j]) >= '0' && int_of(data[j]) <= '9' {
+            j = j + 1;
+        }
+        if j == 20 {
+            return 20;
+        }
+        k = j;
+    }
+    if k == n || n - k == 1 && (int_of(data[k]) == 'Z' || int_of(data[k]) == 'z') || is_num_offset(data[k..n]) {
+        return 10;
+    }
+    let (v, s) = tail_refusal(data[k..n], k);
+    if (s - 14) % 64 == 23 {
+        return k;
+    }
+    return (s - 14) / 64;
+}
+
+fn parse_time[&d](data: &d [byte], kind: int) -> [] (int, int) {
+    let (fv, ok) = fast_time(data, kind);
+    if ok {
+        return (fv, 0);
+    }
+    let n = len(data);
+    let bad = date_shape(data);
+    if bad >= 0 {
+        return refuse(6, bad);
+    }
+    if n == 10 {
+        return refuse(16, 10);
+    }
+    let sep = int_of(data[10]);
+    if sep != 'T' && sep != 't' && sep != ' ' {
+        return refuse(6, 10);
+    }
+    let t = time_shape(data);
+    if t >= 0 {
+        return refuse(6, t);
+    }
+    var k = 19;
+    var frac = 0;
+    if k < n && int_of(data[k]) == '.' {
+        var j = 20;
+        while j < n && int_of(data[j]) >= '0' && int_of(data[j]) <= '9' {
+            j = j + 1;
+        }
+        if j == 20 {
+            return refuse(6, 20);
+        }
+        frac = j - 20;
+        k = j;
+    }
+    // the tail: 0 none, 1 Z, 2 a sign and dd:dd
+    var tail = 0;
+    var offset_us = 0;
+    if k < n {
+        if n - k == 1 && (int_of(data[k]) == 'Z' || int_of(data[k]) == 'z') {
+            tail = 1;
+        } else if is_num_offset(data[k..n]) {
+            tail = 2;
+        } else {
+            return tail_refusal(data[k..n], k);
+        }
+    }
+    let year = four(data, 0);
+    let month = two(data, 5);
+    let day = two(data, 8);
+    if year == 0 {
+        return refuse(7, 0);
+    }
+    if month < 1 || month > 12 {
+        return refuse(8, 5);
+    }
+    if day < 1 || day > days_in_month(year, month) {
+        return refuse(9, 8);
+    }
+    let hh = two(data, 11);
+    let mi = two(data, 14);
+    let ss = two(data, 17);
+    if hh == 24 {
+        return refuse(11, 11);
+    }
+    if hh > 23 {
+        return refuse(10, 11);
+    }
+    if mi > 59 {
+        return refuse(12, 14);
+    }
+    if ss == 60 {
+        return refuse(14, 17);
+    }
+    if ss > 60 {
+        return refuse(13, 17);
+    }
+    if tail == 2 {
+        let oh = two(data, k + 1);
+        let om = two(data, k + 4);
+        if oh > 23 || om > 59 {
+            return refuse(15, k);
+        }
+        offset_us = (oh * 3600 + om * 60) * 1000000;
+        if int_of(data[k]) == '-' {
+            offset_us = 0 - offset_us;
+        }
+    }
+    if frac > 6 {
+        return refuse(17, frac);
+    }
+    if kind == 23 {
+        if tail == 0 {
+            return refuse(20, 0);
+        }
+        if tail == 2 && offset_us == 0 && int_of(data[k]) == '-' {
+            return refuse(21, 0);
+        }
+    } else if tail != 0 {
+        return refuse(22, 0);
+    }
+    var micro = 0;
+    var i = 0;
+    while i < frac {
+        micro = micro * 10 + int_of(data[20 + i]) - '0';
+        i = i + 1;
+    }
+    while i < 6 && frac > 0 {
+        micro = micro * 10;
+        i = i + 1;
+    }
+    let seconds = days_from_civil(year, month, day) * 86400 + hh * 3600 + mi * 60 + ss;
+    var value = seconds * 1000000 + micro;
+    if kind == 23 {
+        value = value - offset_us;
+        if value < 0 - 62135596800000000 {
+            return refuse(18, 0);
+        }
+        if value > 253402300799999999 {
+            return refuse(19, 0);
+        }
+    }
+    return (value, 0);
+}
+
+// ---- the suffixes ---------------------------------------------------------------------------------------------------------
+
+// The type suffix that ends `word`, a name read from `--where` (`escaped` is how many of its bytes, up to the last one a backslash escaped, are not the name's own): (the length of
+// the suffix, the type code), or (0, 0). A suffix needs a name before it, so a column called `:date` stays addressable.
+pub fn suffix_in[&w](word: &w [byte], escaped: int) -> [] (int, int) {
+    let n = len(word);
+    if n > 10 && bytes.equal(word[n - 10..n], ":timestamp") && escaped <= n - 10 {
+        return (10, 23);
+    }
+    if n > 9 && bytes.equal(word[n - 9..n], ":datetime") && escaped <= n - 9 {
+        return (9, 24);
+    }
+    if n > 5 && bytes.equal(word[n - 5..n], ":date") && escaped <= n - 5 {
+        return (5, 22);
+    }
+    return (0, 0);
+}
+
+// The type suffix that begins `src` at `at` (after a quoted name), without a look at what follows it: (its length, the type code), or (0, 0).
+pub fn suffix_at[&s](src: &s [byte], at: int) -> [] (int, int) {
+    if at + 10 <= len(src) && bytes.equal(src[at..at + 10], ":timestamp") {
+        return (10, 23);
+    }
+    if at + 9 <= len(src) && bytes.equal(src[at..at + 9], ":datetime") {
+        return (9, 24);
+    }
+    if at + 5 <= len(src) && bytes.equal(src[at..at + 5], ":date") {
+        return (5, 22);
+    }
+    return (0, 0);
+}
+
+// ---- taking a status apart ----------------------------------------------------------------------------------------------
+
+// The reason number of a status (see the table at the top).
+pub fn reason_of(status: int) -> [] int {
+    return (status - 14) % 64;
+}
+
+// The byte of the cell the fault is at, or the number of fractional digits (reason 17).
+pub fn extra_of(status: int) -> [] int {
+    return (status - 14) / 64;
+}
+
+// The rule a reason is refused with.
+pub fn tag_of(reason: int) -> [] &static [byte] {
+    if reason <= 5 {
+        return "value.not-date";
+    }
+    if reason <= 16 {
+        return "value.not-timestamp";
+    }
+    if reason == 17 {
+        return "value.timestamp-precision";
+    }
+    if reason <= 19 {
+        return "value.timestamp-range";
+    }
+    if reason <= 21 {
+        return "value.timezone-missing";
+    }
+    if reason == 22 {
+        return "value.timestamp-offset-present";
+    }
+    return "value.timezone-unsupported";
+}
+
+// `detail.reason` of a reason, or the empty text when the rule has none (precision, range, offset-present, unsupported).
+pub fn reason_text(reason: int) -> [] &static [byte] {
+    if reason == 1 || reason == 6 {
+        return "shape";
+    }
+    if reason == 2 || reason == 7 {
+        return "year";
+    }
+    if reason == 3 || reason == 8 {
+        return "month";
+    }
+    if reason == 4 || reason == 9 {
+        return "day";
+    }
+    if reason == 5 {
+        return "time-part";
+    }
+    if reason == 10 {
+        return "hour";
+    }
+    if reason == 11 {
+        return "hour-24";
+    }
+    if reason == 12 {
+        return "minute";
+    }
+    if reason == 13 {
+        return "second";
+    }
+    if reason == 14 {
+        return "leap-second";
+    }
+    if reason == 15 {
+        return "offset-shape";
+    }
+    if reason == 16 {
+        return "date-only";
+    }
+    if reason == 20 {
+        return "missing";
+    }
+    if reason == 21 {
+        return "unknown-offset";
+    }
+    return "";
+}
+
+// The type a type code is written as.
+pub fn type_text(kind: int) -> [] &static [byte] {
+    if kind == 22 {
+        return "date";
+    }
+    if kind == 23 {
+        return "timestamp";
+    }
+    return "datetime";
+}
+
+// ---- writing a value ----------------------------------------------------------------------------------------------------
+
+fn put2[&h](heap: &!h Heap, out: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = buffer.push(heap, out, byte_of('0' + v / 10 % 10));
+    o = buffer.push(heap, o, byte_of('0' + v % 10));
+    return o;
+}
+
+fn put_date[&h](heap: &!h Heap, out: buffer.Buffer, z: int) -> [heap] buffer.Buffer {
+    let (y, m, d) = civil_from_shifted(z);
+    var o = put2(heap, out, y / 100);
+    o = put2(heap, o, y % 100);
+    o = buffer.push(heap, o, byte_of('-'));
+    o = put2(heap, o, m);
+    o = buffer.push(heap, o, byte_of('-'));
+    return put2(heap, o, d);
+}
+
+// The normalised text of a value: `YYYY-MM-DD` for a date; `YYYY-MM-DDThh:mm:ss[.fff[fff]]Z` for a timestamp (UTC), the same without the Z for a datetime. The fraction is none when the
+// value is a whole number of seconds, three digits when it is a whole number of milliseconds, else six: a function of the value only (docs/datetime.md section 8).
+pub fn put[&h](heap: &!h Heap, out: buffer.Buffer, v: int, kind: int) -> [heap] buffer.Buffer {
+    if kind == 22 {
+        return put_date(heap, out, v + 719468);
+    }
+    // microseconds since 0001-01-01T00:00:00 (never negative for a value in range), then days from 0000-03-01 are 306 more than days since 0001-01-01
+    let u = v + 62135596800000000;
+    let seconds = u / 1000000;
+    let micro = u % 1000000;
+    let days = seconds / 86400;
+    let rest = seconds % 86400;
+    var o = put_date(heap, out, days + 306);
+    o = buffer.push(heap, o, byte_of('T'));
+    o = put2(heap, o, rest / 3600);
+    o = buffer.push(heap, o, byte_of(':'));
+    o = put2(heap, o, rest / 60 % 60);
+    o = buffer.push(heap, o, byte_of(':'));
+    o = put2(heap, o, rest % 60);
+    if micro != 0 {
+        o = buffer.push(heap, o, byte_of('.'));
+        if micro % 1000 == 0 {
+            o = put2(heap, o, micro / 10000);
+            o = buffer.push(heap, o, byte_of('0' + micro / 1000 % 10));
+        } else {
+            o = put2(heap, o, micro / 10000);
+            o = put2(heap, o, micro / 100 % 100);
+            o = put2(heap, o, micro % 100);
+        }
+    }
+    if kind == 23 {
+        o = buffer.push(heap, o, byte_of('Z'));
+    }
+    return o;
+}

@@ -28,7 +28,7 @@ MUTANTS = [
     ("the sign bit of a key is not flipped back", "agg.cho", "    return signed_hi * 4294967296 + lo ^ 0 - 9223372036854775807 - 1;", "    return signed_hi * 4294967296 + lo;"),
     ("the low half of a key is read from the high bytes", "agg.cho", "    let lo = int_of(key[4]) << 24 | int_of(key[5]) << 16 | int_of(key[6]) << 8 | int_of(key[7]);", "    let lo = int_of(key[0]) << 24 | int_of(key[5]) << 16 | int_of(key[6]) << 8 | int_of(key[7]);"),
     ("a decimal key is written at the wrong scale", "agg.cho", "dec.put_scaled(heap, out, v, kind - 2);", "dec.put_scaled(heap, out, v, kind - 1);"),
-    ("a float key is written as an integer", "agg.cho", "    if kind == 21 {\n        return flt.put_float(heap, out, v);\n    }\n    return dec.put_scaled", "    if kind == 22 {\n        return flt.put_float(heap, out, v);\n    }\n    return dec.put_scaled"),
+    ("a float key is written as an integer", "agg.cho", "    if kind == 21 {\n        return flt.put_float(heap, out, v);\n    }\n    if kind >= 22 {", "    if kind == 22 {\n        return flt.put_float(heap, out, v);\n    }\n    if kind >= 22 {"),
     ("an integer key is written as a decimal", "agg.cho", "    if kind == 1 {\n        return append_int(heap, out, v);\n    }\n    if kind == 21 {", "    if kind == 21 {"),
     ("a text key is written through the typed path", "agg.cho", "    if kind == 0 {\n        return buffer.append(heap, out, raw);\n    }\n    let v = value_of_key(raw);", "    let v = value_of_key(raw);"),
     ("a typed key in json is not quoted", "agg.cho", "            o = buffer.push(heap, o, byte_of(34));\n            o = put_key(heap, o, g, tree, x, j);\n            o = buffer.push(heap, o, byte_of(34));", "            o = put_key(heap, o, g, tree, x, j);"),
@@ -38,7 +38,7 @@ MUTANTS = [
     ("an escaped :int is a suffix", "agg.cho", "    if e > 4 && bytes.equal(item[e - 4..e], \":int\") && !escaped_at(item, e - 4) {", "    if e > 4 && bytes.equal(item[e - 4..e], \":int\") {"),
     ("a bare :float is a suffix of nothing", "agg.cho", "    if e > 6 && bytes.equal(item[e - 6..e], \":float\")", "    if e >= 6 && bytes.equal(item[e - 6..e], \":float\")"),
     ("a scale of 19 is a scale", "agg.cho", "            if v > 18 {\n                return (e, 99);", "            if v > 19 {\n                return (e, 99);"),
-    ("a :dec scale is its digits plus one", "agg.cho", "            return (k - 5, 2 + v);\n        }\n    }\n    return (e, 0);", "            return (k - 5, 3 + v);\n        }\n    }\n    return (e, 0);"),
+    ("a :dec scale is its digits plus one", "agg.cho", "            return (k - 5, 2 + v);\n        }\n    }\n    let (dl, dk) = date_tail(item, e);", "            return (k - 5, 3 + v);\n        }\n    }\n    let (dl, dk) = date_tail(item, e);"),
     ("a :dec of three digits is a scale", "agg.cho", "        if digits >= 1 && digits <= 2 && k >= 6 &&", "        if digits >= 1 && digits <= 3 && k >= 6 &&"),
     # the read of a key cell (engine.cho, query.cho)
     ("a typed group takes the fast path", "agg.cho", "costs the other plans nothing\n    if query.typed_groups(tree) != 0 {\n        borrow mut memo as &!mw in {\n            contents(mw)[memo_size() + 2] = 1152921504606846976;", "costs the other plans nothing\n    if query.typed_groups(tree) != 0 {\n        borrow mut memo as &!mw in {\n            contents(mw)[memo_size() + 2] = 0;"),
@@ -56,8 +56,8 @@ MUTANTS = [
     ("an order key that is not an integer counts as one", "query.cho", "        if order_flags(q, k) / 2 != 0 && cols[order_name(q, k)] == column {", "        if order_flags(q, k) / 2 == 0 && cols[order_name(q, k)] == column {"),
     ("a group column's type is the last one given", "query.cho", "    return vec.get(q.gkinds, j + 2);", "    return vec.get(q.gkinds, vec.size(q.gkinds) - 1);"),
     # the row sorter (sorter.cho)
-    ("a typed order key is read as an integer", "sorter.cho", "    if kind == 1 {\n        return cellnum.parse_int(data);\n    }\n    return query.parse_typed(data, kind);", "    return cellnum.parse_int(data);"),
-    ("an integer order key is read as typed", "sorter.cho", "    if kind == 1 {\n        return cellnum.parse_int(data);\n    }\n    return query.parse_typed(data, kind);", "    return query.parse_typed(data, kind);"),
+    ("a typed order key is read as an integer", "sorter.cho", "    if kind == 1 {\n        return cellnum.parse_int(data);\n    }\n    if kind >= 22 {\n        // :date, :timestamp, :datetime (dtparse.cho): a status of 14 and more\n        return dtparse.parse(data, kind);\n    }\n    return query.parse_typed(data, kind);", "    return cellnum.parse_int(data);"),
+    ("an integer order key is read as typed", "sorter.cho", "    if kind == 1 {\n        return cellnum.parse_int(data);\n    }\n    if kind >= 22 {\n        // :date, :timestamp, :datetime (dtparse.cho): a status of 14 and more\n        return dtparse.parse(data, kind);\n    }\n    return query.parse_typed(data, kind);", "    return query.parse_typed(data, kind);"),
     ("a typed order key is compared as text", "sorter.cho", "        if keys[3 * j + 2] != 0 {\n            let vx", "        if keys[3 * j + 2] == 1 {\n            let vx"),
     ("a typed first key's prefix is its text", "sorter.cho", "            if keys[2] != 0 {\n                pre[i] = vec.get(s.acc, i * stride + 2);", "            if keys[2] == 1 {\n                pre[i] = vec.get(s.acc, i * stride + 2);"),
     ("a typed key is held as text when rows are cut back", "sorter.cho", "                if keys[3 * j + 2] != 0 {\n                    fresh_rows = vec.push(heap, fresh_rows, a);", "                if keys[3 * j + 2] == 1 {\n                    fresh_rows = vec.push(heap, fresh_rows, a);"),

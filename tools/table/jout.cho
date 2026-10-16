@@ -21,6 +21,7 @@ module jout;
 import std.buffer;
 import std.vec;
 import agg;
+import dtjson;
 import gmap;
 import query;
 import toolbox.text;
@@ -120,6 +121,10 @@ pub fn row[&h, &t, &d, &c, &s](heap: &!h Heap, out: buffer.Buffer, tmpl: &t [byt
 // the key, so no leading zero, `-0` is `0.0`, and no key is not finite, because such a cell is refused when it is read), its aggregates the numbers the csv output writes. `sel` is the tail of a
 // grouping (`picked` is 0), whose n is the group columns and the aggregates.
 pub fn group_row[&h, &g, &q, &t, &s](heap: &!h Heap, out: buffer.Buffer, groups: &g agg.Groups, tree: &q query.Query, x: int, tmpl: &t [byte], sel: &s [int]) -> [heap] buffer.Buffer {
+    if dtjson.has_dates(tree) {
+        // a date, a timestamp or a datetime is a JSON string, not a number (docs/datetime.md section 8)
+        return dtjson.group_row(heap, out, groups, tree, x, tmpl, sel);
+    }
     let ng = query.count_of(tree, 2);
     let na = query.agg_count(tree);
     var o = out;

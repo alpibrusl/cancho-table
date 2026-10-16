@@ -39,7 +39,7 @@ MUTANTS = [
     ("<= is < on decimals", "expr.cho", "\n            yes = v <= w;", "\n            yes = v < w;"),
     # (Not here: `if kind == 2 || op == 0` written `if op == 0`. An `in` is parsed with op 0, so the two are the same: equivalent.)
     ("an in-list of decimals is not an equality test", "expr.cho", "\n        if kind == 2 || op == 0 {\n            yes = v == w;", "\n        if op == 0 && kind != 2 {\n            yes = v == w;"),
-    ("a decimal is compared as text", "expr.cho", "    if typed >= 2 {\n        return holds_dec(", "    if typed >= 3 {\n        return holds_dec("),
+    ("a decimal is compared as text", "expr.cho", "    if typed >= 2 {\n        if typed >= 22 {", "    if typed >= 3 {\n        if typed >= 22 {"),
     ("a cell too fine for the scale is said not to be a decimal", "expr.cho", "        if bad == 3 {\n            return 5;", "        if bad == 3 {\n            return 4;"),
     ("a cell too wide is said to be too fine", "expr.cho", "        if bad == 2 {\n            return 6;", "        if bad == 2 {\n            return 5;"),
     # the type conflict
@@ -87,7 +87,7 @@ MUTANTS = [
     ("a mean is labelled sum", "frame.cho", "                            labels = buffer.append(heap, labels, \"mean\");", "                            labels = buffer.append(heap, labels, \"sum\");"),
     ("an implicit :int does not count as a reading of the column", "query.cho", "        if agg_at(q, k, 0) != 0 && agg_at(q, k, 2) != 0 && cols[agg_at(q, k, 1)] == column {", "        if agg_at(q, k, 0) != 0 && agg_at(q, k, 2) >= 2 && cols[agg_at(q, k, 1)] == column {"),
     ("a decimal refusal of an aggregate takes the code of another", "engine.cho", "        return 20 + status;", "        return 19 + status;"),
-    ("the refusal an in-place aggregate answered is decoded in eights", "engine.cho", "    let status = (answer - 16) % 16;", "    let status = (answer - 16) % 8;"),
+    ("the refusal an in-place aggregate answered is decoded in eights", "engine.cho", "    let status = (answer - 16) % refusal_stride();", "    let status = (answer - 16) % 8;"),
     ("the digits are counted for the wrong refusal", "engine.cho", "    if status == 7 {\n        a[k_err_digits()] = digits_after_point(record, cells[3 * column], cells[3 * column + 1]);\n    }\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return column;", "    if status == 6 {\n        a[k_err_digits()] = digits_after_point(record, cells[3 * column], cells[3 * column + 1]);\n    }\n    a[k_err_row()] = a[k_records()];\n    a[k_err_line()] = opened;\n    return column;"),
     ("a mean refusal says sum", "engine.cho", "        function = 5;", "        function = 1;"),
     ("the scale of an aggregate refusal is the type code", "finish.cho", "            scale = query.agg_at(tree, c.err_cond, 2) - 2;", "            scale = query.agg_at(tree, c.err_cond, 2) - 1;"),

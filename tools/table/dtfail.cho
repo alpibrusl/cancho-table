@@ -1,0 +1,400 @@
+edition 5;
+
+module dtfail;
+
+// The refusals of a date, a timestamp or a datetime (docs/datetime.md section 10), written from the status `dtparse.parse` answered (abort 1000 + status): seven rules, each with
+// the facts of the cell (`path`, `context`, `column`, `row`, `line`, `value`, `value_truncated`) and the ones of its reason (`reason`, `offset`, `digits`, `direction`), and a repair
+// that is the same invocation with the type the cell shows it is (`:datetime` for a timestamp cell with no offset, `:timestamp` for a datetime cell with one, `:date` for a date alone,
+// `:timestamp` or `:datetime` for a date column that holds times). The repair is only offered when it can be written whole: the column is read by `--group`, `--agg` or `--order-by`
+// and by no condition (a condition has literals of the old type, which the new one would refuse), and no other column has the old type (the flags are rewritten as text), and the plan is
+// not a `--query`. This module takes the plan and the facts as arguments and imports no `finish`, which calls it.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import std.vec;
+import dtparse;
+import query;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+
+fn rule[&h](heap: &!h Heap, o: buffer.Buffer, name: &static [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, o, ",\"");
+    b = buffer.append(heap, b, name);
+    return buffer.push(heap, b, byte_of(34));
+}
+
+// The rules a plan that reads these types can still be refused with (`--explain`), `dts` the types it reads: 1 date, 2 timestamp, 4 datetime.
+pub fn possible[&h](heap: &!h Heap, o: buffer.Buffer, dts: int) -> [heap] buffer.Buffer {
+    var b = o;
+    if dts & 1 != 0 {
+        b = rule(heap, b, "value.not-date");
+    }
+    if dts & 6 != 0 {
+        b = rule(heap, b, "value.not-timestamp");
+        b = rule(heap, b, "value.timestamp-precision");
+    }
+    if dts & 2 != 0 {
+        b = rule(heap, b, "value.timestamp-range");
+        b = rule(heap, b, "value.timezone-missing");
+    }
+    if dts & 4 != 0 {
+        b = rule(heap, b, "value.timestamp-offset-present");
+    }
+    if dts & 6 != 0 {
+        b = rule(heap, b, "value.timezone-unsupported");
+    }
+    return b;
+}
+
+fn message_of(reason: int) -> [] &static [byte] {
+    if reason <= 5 {
+        return "a cell of a :date column is not a date: YYYY-MM-DD, a year from 0001, a month from 01 to 12 and a day the month has, nothing else (detail.reason says which part is wrong)";
+    }
+    if reason <= 16 {
+        return "a cell of a :timestamp or :datetime column is not a date and a time of the strict form YYYY-MM-DDThh:mm:ss[.ffffff] with the offset a timestamp needs (detail.reason says which part is wrong)";
+    }
+    if reason == 17 {
+        return "a cell of a :timestamp or :datetime column has more than 6 fractional digits: the finest unit is the microsecond, and a fraction is never rounded or cut";
+    }
+    if reason <= 19 {
+        return "the instant of a :timestamp cell, once its offset is applied, is outside 0001-01-01T00:00:00Z to 9999-12-31T23:59:59.999999Z";
+    }
+    if reason == 20 {
+        return "a cell of a :timestamp column has no offset, so it is not an instant: no zone is guessed";
+    }
+    if reason == 21 {
+        return "a cell of a :timestamp column has the offset -00:00, which RFC 3339 says means that the offset is not known: no zone is guessed";
+    }
+    if reason == 22 {
+        return "a cell of a :datetime column has an offset: a datetime is a wall-clock time, and an offset would make it an instant";
+    }
+    return "a cell of a :timestamp or :datetime column ends in a zone name or a bracketed suffix: this tool has no zone database";
+}
+
+fn hint_of(reason: int) -> [] &static [byte] {
+    if reason <= 5 {
+        return "keep out the rows with such a cell with --where first (a condition that decides the row stops the ones after it: before an and put a test that is false for such a cell, before an or one that is true), or read the column as what its cells are: a cell with a time is a :timestamp or a :datetime";
+    }
+    if reason <= 16 {
+        return "keep out the rows with such a cell with --where first (a condition that decides the row stops the ones after it: before an and put a test that is false for such a cell, before an or one that is true), or read the column as what its cells are: a cell with a date alone is a :date";
+    }
+    if reason == 17 {
+        return "the finest unit is the microsecond: keep out the rows with such a cell with --where first, or compare the column as text";
+    }
+    if reason <= 19 {
+        return "keep out the rows with such a cell with --where first, or compare the column as text";
+    }
+    if reason <= 21 {
+        return "a wall-clock time with no offset is a :datetime, and the offset of an instant is written Z or +hh:mm: read the column as what its cells are";
+    }
+    if reason == 22 {
+        return "an instant has an offset and is a :timestamp: read the column as what its cells are";
+    }
+    return "write the cell with its numeric offset (Z, +hh:mm or -hh:mm), or compare the column as text";
+}
+
+fn none_reason(reason: int) -> [] &static [byte] {
+    if reason == 17 {
+        return "the finest unit is the microsecond, and a longer fraction is not rounded or cut: which digits to drop is not known";
+    }
+    if reason <= 19 && reason >= 18 {
+        return "the instant is outside the years 0001 to 9999: what it was meant to be is not known";
+    }
+    if reason == 21 {
+        return "the offset -00:00 says that the offset is not known: which one it was is not known";
+    }
+    if reason == 23 {
+        return "a zone name needs a zone database, which this tool does not have";
+    }
+    return "what the cell was meant to be is not known";
+}
+
+// ---- the repair -----------------------------------------------------------------------------------------------------------
+
+// The type a column of this refusal should be read as, or 0: the cell shows it.
+fn repair_kind[&k](reason: int, kept: &k [byte]) -> [] int {
+    if reason == 5 {
+        let (v1, s1) = dtparse.parse(kept, 23);
+        if s1 == 0 {
+            return 23;
+        }
+        let (v2, s2) = dtparse.parse(kept, 24);
+        if s2 == 0 {
+            return 24;
+        }
+        return 0;
+    }
+    if reason == 16 {
+        return 22;
+    }
+    if reason == 20 {
+        return 24;
+    }
+    if reason == 22 {
+        return 23;
+    }
+    return 0;
+}
+
+// Whether the byte at `p` is escaped: an odd number of backslashes before it.
+fn escaped_at[&d](data: &d [byte], p: int) -> [] bool {
+    var n = 0;
+    var i = p - 1;
+    while i >= 0 && int_of(data[i]) == '\\' {
+        n = n + 1;
+        i = i - 1;
+    }
+    return n % 2 == 1;
+}
+
+// `text` (the value of `--group`, `--order-by` or `--agg`) with the type `from` that ends an item written as `to`; the number of items changed. An item ends at a comma that is not
+// escaped (a date type takes no `@N`, so nothing follows its suffix).
+fn swap_types[&h, &t](heap: &!h Heap, text: &t [byte], from: int, to: int) -> [heap] (buffer.Buffer, int) {
+    var out = buffer.empty(heap, len(text) + 8);
+    var changed = 0;
+    let n = len(text);
+    var start = 0;
+    var more = true;
+    while more {
+        var j = start;
+        while j < n && int_of(text[j]) != ',' {
+            if int_of(text[j]) == '\\' && j + 1 < n {
+                j = j + 2;
+            } else {
+                j = j + 1;
+            }
+        }
+        if j > n {
+            j = n;
+        }
+        // the item is text[start..j]
+        let (dl, dk) = dtparse.suffix_in(text[start..j], 0);
+        if dk == from && !escaped_at(text, j - dl) {
+            out = buffer.append(heap, out, text[start..j - dl]);
+            out = buffer.append(heap, out, suffix_text(to));
+            changed = changed + 1;
+        } else {
+            out = buffer.append(heap, out, text[start..j]);
+        }
+        if j < n {
+            out = buffer.push(heap, out, byte_of(','));
+            start = j + 1;
+        } else {
+            more = false;
+        }
+    }
+    return (out, changed);
+}
+
+fn suffix_text(kind: int) -> [] &static [byte] {
+    if kind == 22 {
+        return ":date";
+    }
+    if kind == 23 {
+        return ":timestamp";
+    }
+    return ":datetime";
+}
+
+// Whether the plan's mentions of the type `from` are all of the column called `name` and none is a condition: then the flags can be rewritten as text.
+fn rewritable[&q, &n](tree: &q query.Query, from: int, name: &n [byte]) -> [] bool {
+    var k = 0;
+    while k < query.count_of(tree, 1) {
+        // (a column called by its position may be this one)
+        if query.cond_at(tree, k, 1) == from && (bytes.equal(query.name_at(tree, query.cond_at(tree, k, 3)), name) || query.position_of(query.name_at(tree, query.cond_at(tree, k, 3))) >= 0) {
+            return false;
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < query.agg_count(tree) {
+        if query.agg_at(tree, k, 0) != 0 && query.agg_at(tree, k, 2) == from && !bytes.equal(query.name_at(tree, query.agg_at(tree, k, 1)), name) {
+            return false;
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < query.count_of(tree, 2) {
+        if query.gkind_at(tree, k) == from && !bytes.equal(query.name_at(tree, query.count_of(tree, 0) + query.count_of(tree, 1) + k), name) {
+            return false;
+        }
+        k = k + 1;
+    }
+    k = 0;
+    while k < query.order_count(tree) {
+        if query.order_flags(tree, k) / 2 == from && !bytes.equal(query.name_at(tree, query.order_name(tree, k)), name) {
+            return false;
+        }
+        k = k + 1;
+    }
+    return true;
+}
+
+// One flag's value rewritten, as the argument that holds it (`--flag=value` when the value is not an argument of its own): (the argument, how many items changed).
+fn flag_argument[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, flag: &static [byte], from: int, to: int) -> [heap, args] (buffer.Buffer, int, int) {
+    let table = spec.flag_table();
+    let at = cli.value_index(parsed, table, flag);
+    if at < 0 {
+        return (buffer.empty(heap, 1), 0 - 1, 0);
+    }
+    let given = cli.text(args, parsed, table, flag);
+    let (fixed, changed) = swap_types(heap, given, from, to);
+    if cli.value_is_whole(parsed, table, flag) {
+        return (fixed, at, changed);
+    }
+    var joined = buffer.append(heap, buffer.empty(heap, len(given) + 16), "--");
+    joined = buffer.append(heap, joined, flag);
+    joined = buffer.push(heap, joined, byte_of('='));
+    borrow fixed as &fr in {
+        joined = buffer.append(heap, joined, buffer.bytes(fr));
+    }
+    buffer.drop(heap, fixed);
+    return (joined, at, changed);
+}
+
+// The repair: the invocation with the flags that name the type written with the type the cell shows, or no repair. Answers the writer.
+fn repair[&h, &g, &p, &q, &n, &k](heap: &!h Heap, w: json.Writer, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, name: &n [byte], kept: &k [byte], reason: int, from: int, context_ok: bool) -> [heap, args] json.Writer {
+    let to = repair_kind(reason, kept);
+    let table = spec.flag_table();
+    if to == 0 || from == 0 || !context_ok || cli.has(parsed, table, "query") || !rewritable(tree, from, name) {
+        return fail.repair_none(heap, w, none_reason(reason));
+    }
+    let (g_arg, g_at, g_n) = flag_argument(heap, args, parsed, "group", from, to);
+    let (a_arg, a_at, a_n) = flag_argument(heap, args, parsed, "agg", from, to);
+    let (o_arg, o_at, o_n) = flag_argument(heap, args, parsed, "order-by", from, to);
+    if g_n + a_n + o_n == 0 {
+        buffer.drop(heap, g_arg);
+        buffer.drop(heap, a_arg);
+        buffer.drop(heap, o_arg);
+        return fail.repair_none(heap, w, none_reason(reason));
+    }
+    var o = fail.choose_open(heap, w);
+    o = fail.choose_option_open(heap, o);
+    var i = 0;
+    while i < arg_count(args) {
+        if i == g_at && g_n > 0 {
+            borrow g_arg as &r in {
+                o = fail.choose_arg(heap, o, buffer.bytes(r));
+            }
+        } else if i == a_at && a_n > 0 {
+            borrow a_arg as &r in {
+                o = fail.choose_arg(heap, o, buffer.bytes(r));
+            }
+        } else if i == o_at && o_n > 0 {
+            borrow o_arg as &r in {
+                o = fail.choose_arg(heap, o, buffer.bytes(r));
+            }
+        } else {
+            o = fail.choose_arg(heap, o, arg(args, i));
+        }
+        i = i + 1;
+    }
+    o = fail.choose_option_close(heap, o);
+    buffer.drop(heap, g_arg);
+    buffer.drop(heap, a_arg);
+    buffer.drop(heap, o_arg);
+    return fail.choose_close(heap, o);
+}
+
+// ---- the refusal of a bad --agg item ----------------------------------------------------------------------------------------
+
+// The hint of `agg.bad-spec` for item `bad` of `--agg` `given`: the usual one, or, for the sum or the mean of a date type, what the types are for. A sum of instants has no unit.
+pub fn agg_hint[&g](given: &g [byte], bad: int) -> [] &static [byte] {
+    let n = len(given);
+    var start = 0;
+    var index = 0;
+    var j = 0;
+    var found_start = 0;
+    var found_end = 0;
+    var more = true;
+    while more {
+        j = start;
+        while j < n && int_of(given[j]) != ',' {
+            if int_of(given[j]) == '\\' && j + 1 < n {
+                j = j + 2;
+            } else {
+                j = j + 1;
+            }
+        }
+        if j > n {
+            j = n;
+        }
+        if index == bad {
+            found_start = start;
+            found_end = j;
+        }
+        if j < n {
+            start = j + 1;
+            index = index + 1;
+        } else {
+            more = false;
+        }
+    }
+    let item = given[found_start..found_end];
+    var e = len(item);
+    var k = e;
+    while k > 0 && int_of(item[k - 1]) >= '0' && int_of(item[k - 1]) <= '9' {
+        k = k - 1;
+    }
+    if k < e && k > 0 && int_of(item[k - 1]) == '@' {
+        e = k - 1;
+    }
+    let (dl, dk) = dtparse.suffix_in(item[0..e], 0);
+    if dk != 0 && (bytes.starts_with(item, "sum:") || bytes.starts_with(item, "mean:")) {
+        return "a date, a timestamp or a datetime has no sum or mean: min:COL:TYPE, max:COL:TYPE and distinct:COL:TYPE take it, and count counts the rows, as in --agg count,min:ts:timestamp,max:ts:timestamp,distinct:d:date";
+    }
+    return "--agg count,sum:bytes,max:bytes,distinct:status; a mean of an integer column needs its scale, mean:bytes@2; a decimal column is declared sum:price:dec(2)";
+}
+
+// ---- the refusal ------------------------------------------------------------------------------------------------------------
+
+// The type of the cell that was refused, by the context it was read in (`err_fn`: -3 a group key, -2 a sort key, 1 to 5 an aggregate, else a condition): `err_cond` is the place in the plan.
+fn kind_of[&q](tree: &q query.Query, err_fn: int, err_cond: int) -> [] int {
+    if err_fn == 0 - 3 {
+        return query.gkind_at(tree, err_cond);
+    }
+    if err_fn == 0 - 2 {
+        return query.order_flags(tree, err_cond) / 2;
+    }
+    if err_fn >= 1 && err_fn <= 5 {
+        return query.agg_at(tree, err_cond, 2);
+    }
+    if err_fn == 0 || err_fn == 0 - 1 {
+        return query.cond_at(tree, err_cond, 1);
+    }
+    return 0;
+}
+
+// The refusal `abort` (1000 + a status of `dtparse.parse`) says, added to `errs`: `extra` is the tool's own rules (`finish.extra()`), `context` where the cell was read, `column` its header name.
+pub fn refusal[&h, &g, &p, &q, &n, &k, &s](heap: &!h Heap, errs: fail.Errors, extra: &static [byte], args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, column: &n [byte], kept: &k [byte], abort: int, err_fn: int, err_cond: int, row: int, line: int, context: &static [byte], shown: &s [byte]) -> [heap, args] fail.Errors {
+    let status = abort - 1000;
+    let reason = dtparse.reason_of(status);
+    let extra_n = dtparse.extra_of(status);
+    var w = fail.open_in(heap, extra, dtparse.tag_of(reason), message_of(reason), hint_of(reason));
+    let from = kind_of(tree, err_fn, err_cond);
+    let context_ok = err_fn == 0 - 3 || err_fn == 0 - 2 || err_fn >= 2 && err_fn <= 4;
+    w = repair(heap, w, args, parsed, tree, column, kept, reason, from, context_ok);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_str(heap, w, "context", context);
+    w = fail.detail_text(heap, w, "column", column);
+    w = fail.detail_int(heap, w, "row", row);
+    w = fail.detail_int(heap, w, "line", line);
+    w = fail.detail_text(heap, w, "value", kept);
+    w = fail.detail_bool(heap, w, "value_truncated", len(kept) >= 64);
+    if len(dtparse.reason_text(reason)) > 0 {
+        w = fail.detail_str(heap, w, "reason", dtparse.reason_text(reason));
+    }
+    if reason <= 16 {
+        w = fail.detail_int(heap, w, "offset", extra_n);
+    } else if reason == 17 {
+        w = fail.detail_int(heap, w, "digits", extra_n);
+    } else if reason == 18 {
+        w = fail.detail_str(heap, w, "direction", "before");
+    } else if reason == 19 {
+        w = fail.detail_str(heap, w, "direction", "after");
+    }
+    return fail.add(heap, errs, w);
+}
