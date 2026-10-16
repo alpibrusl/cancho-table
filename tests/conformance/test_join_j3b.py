@@ -335,6 +335,8 @@ class Equivalence(unittest.TestCase):
                             self.assertEqual(comparable(a), comparable(b), "%s [%s] %s\n  query: %s\n  flags: %r\n  flags -> %r\n  query -> %r" % (case.name, jt, fmt, text, flags, a.stdout[:300] + a.stderr[:200], b.stdout[:300] + b.stderr[:200]))
             finally:
                 s.cleanup()
+        if os.environ.get("TABLE_J3B_REPORT"):
+            print("\nJ3b Q-EQ: %d pairs of runs over %d plans, %d answers and %d refusals" % (seen["runs"], seen["runs"] // 6, seen["ok"], seen["refusals"]))
         # a gate that never ran, or that never saw a refusal or an answer, has gated nothing
         self.assertGreater(seen["runs"], 6 * 4 * CASES * 10)
         self.assertGreater(seen["ok"], seen["runs"] // 2, seen)
@@ -403,6 +405,8 @@ class Oracle(unittest.TestCase):
                             seen["empty"] += n == 0
             finally:
                 s.cleanup()
+        if os.environ.get("TABLE_J3B_REPORT"):
+            print("\nJ3b oracle: %d statements run by the tool and by SQLite, %d rows compared, %d with no row" % (seen["specs"], seen["rows"], seen["empty"]))
         self.assertGreater(seen["specs"], 100, seen)
         self.assertGreater(seen["rows"], 300, seen)
         self.assertLess(seen["empty"], seen["specs"] * 0.6, seen)
@@ -452,17 +456,16 @@ class Compat(unittest.TestCase):
 class Surface(unittest.TestCase):
     def test_the_help_of_query_says_the_join(self):
         flags = {f["name"]: f for f in introspect()["flags"]}
-        help_ = flags["--query"]["help"]
-        for word in ("join", "semi", "anti", "as a", "on a."):
-            self.assertIn(word, help_)
+        for word in ("join", "as a", "alias.column"):
+            self.assertIn(word, flags["--query"]["help"])
         usage = introspect()["usage"]
-        self.assertIn("join", usage.split("query:")[1].split("\n")[1] if "query:" in usage else usage)
+        self.assertIn("a join is from 'a.csv' as a", usage)
 
-    def test_the_features_of_a_join_are_told_in_the_help(self):
-        text = introspect()["flags"]
-        joined = " ".join(f["help"] for f in text if f["name"] == "--query")
-        for feature in ("right", "full", "cross", "left outer join", "second join", "standard input as the second table", "alias.column"):
-            self.assertIn(feature, joined)
+    def test_the_features_of_a_join_are_told_in_the_help_of_join(self):
+        # (the sentences are in the help of --join, a flag late in the table: every lookup of a flag reads the table up to it, so a long help early costs every call)
+        flags = {f["name"]: f for f in introspect()["flags"]}
+        for feature in ("right", "full", "cross", "left outer join", "second join", "alias.column", "--join-where", "[inner, left, semi or anti]"):
+            self.assertIn(feature, flags["--join"]["help"])
 
 
 class Mcp(unittest.TestCase):

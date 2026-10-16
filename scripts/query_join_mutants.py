@@ -16,7 +16,8 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_join_j3b"]
+# (the quick, pinned classes first: a mutant is killed by the first test that fails, and the long ones, Q-EQ and the oracle, run only for what the pinned cases do not catch)
+TESTS = ["test_join_j3b.Pinned", "test_join_j3b.Refusals", "test_join_j3b.Reference", "test_join_j3b.Fuzz", "test_join_j3b.Equivalence", "test_join_j3b.Oracle", "test_join_j3b.Compat", "test_join_j3b.Mcp", "test_join_j3b.Surface"]
 
 NOP = "m[qarena.s_dry()] = m[qarena.s_dry()];"
 
@@ -234,7 +235,7 @@ MUTANTS = [
     ("flags: the mix of a flag is told with a position of a query", "jnflags.cho", "                if !jxsrc.queried(jxs) {\n                    flag_at = cli.value_index(parsed, table, \"join-where\");", "                if !jxsrc.queried(jxs) || true {\n                    flag_at = cli.value_index(parsed, table, \"join-where\");"),
     ("flags: the key is read from the flag in the header", "jnhead.cho", "    let on = jnflags.on_of(heap, args, parsed, jxs);", "    let on = jnflags.on_of(heap, args, parsed, \"\");"),
     ("flags: the prefix is read from the flag in the header", "jnhead.cho", "    let prefixb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_prefix(), \"join-prefix\");", "    let prefixb = jxsrc.text(heap, args, parsed, \"\", jxsrc.s_prefix(), \"join-prefix\");"),
-    ("flags: a prefix is not given in the header", "jnhead.cho", "    let given_prefix = jxsrc.has(parsed, jxs, jxsrc.s_prefix(), \"join-prefix\");", "    let given_prefix = false;"),
+    ("flags: a prefix is not given in the header", "jnhead.cho", "                    let given_prefix = jxsrc.has(parsed, jxs, jxsrc.s_prefix(), \"join-prefix\");", "                    let given_prefix = false;"),
     ("flags: the type is read from the flag in the run", "jnrun.cho", "    let wordb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_type(), \"join-type\");", "    let wordb = jxsrc.text(heap, args, parsed, \"\", jxsrc.s_type(), \"join-type\");"),
     ("flags: the condition is read from the flag in the run", "jnrun.cho", "    let jw_on = jxsrc.has(parsed, jxs, jxsrc.s_join_where(), \"join-where\");", "    let jw_on = jxsrc.has(parsed, \"\", jxsrc.s_join_where(), \"join-where\");"),
     ("flags: the text of the condition is read from the flag in the run", "jnrun.cho", "                    let jwb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_join_where(), \"join-where\");", "                    let jwb = jxsrc.text(heap, args, parsed, \"\", jxsrc.s_join_where(), \"join-where\");"),

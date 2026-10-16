@@ -48,6 +48,7 @@ def main():
     ap.add_argument("--new", required=True)
     ap.add_argument("--dir", default="")
     ap.add_argument("--json", default="")
+    ap.add_argument("--all", action="store_true", help="compare every shape with the old binary (from J3b on `main` has them all; J2 compared the inner join only)")
     a = ap.parse_args()
     d = pathlib.Path(a.dir) if a.dir else pathlib.Path(tempfile.mkdtemp(prefix="join-perrow-"))
     d.mkdir(parents=True, exist_ok=True)
@@ -80,7 +81,7 @@ def main():
     for name, both, extra in shapes:
         mk = lambda b, n, extra=extra: [b, "--root", str(d), "--join", "build-100000.csv", *extra, "--format", "csv", "--max-state-bytes", "1073741824", "probe-%d.csv" % n]
         new, *_ = slope(a.new, mk, 250_000, 1_000_000)
-        if both:
+        if both or a.all:
             old, *_ = slope(a.old, mk, 250_000, 1_000_000)
             print("%-40s %14.2f %14.2f %8.4f" % (name, old, new, new / old))
             out["cells"].append({"cell": "probe row: " + name, "old": old, "new": new, "ratio": new / old})
@@ -92,7 +93,7 @@ def main():
         extra2 = [x for x in extra]
         mk = lambda b, n, extra2=extra2: [b, "--root", str(d), "--join", "build-%d.csv" % n, *extra2, "--format", "csv", "--max-state-bytes", "1073741824", "p1.csv"]
         new, *_ = slope(a.new, mk, 100_000, 400_000)
-        if both:
+        if both or a.all:
             old, *_ = slope(a.old, mk, 100_000, 400_000)
             print("%-40s %14.2f %14.2f %8.4f" % (name, old, new, new / old))
             out["cells"].append({"cell": "build row: " + name, "old": old, "new": new, "ratio": new / old})

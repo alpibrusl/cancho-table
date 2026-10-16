@@ -18,6 +18,8 @@
 >
 > **Update 2026-10-15 (the pull request that adds section 18): slice J3 is built** (`--join-where`, the split of `--where` into probe, build and after, `--group`, `--agg`, `--sort`, `--order-by`, `--top`, `--limit`, `--from` and `--rename` over the joined row with one `--max-state-bytes` for the build and the groups or the sorted rows, the guard of an empty typed key, `--explain`), and section 18 says what it is, where it differs from this document (every narrow reading, numbered), its gates and its numbers. Where it corrects an earlier sentence the sentence says "Corrected by section 18" in place.
 >
+> **Update 2026-10-16 (the pull request that adds sections 19 and 20): section 19 is the staging table of section 11 against what `main` does, measured by running the binary; slice J3b is built** (the join in `--query`: `from 'a.csv' as a [inner|left|semi|anti] join 'b.csv' as b on a.k = b.k [and b.x > 1]`, every column written `alias.column`, translated to the flags of J1 to J3 and to nothing else), and section 20 says what it is, where it differs from this document (every narrow reading, numbered), its gates and its numbers. Where it corrects an earlier sentence the sentence says "Corrected by section 20" in place.
+>
 > References to code are to `origin/main` at `072ce15` (`file:line`). The branch that adds columns renaming
 > (`docs/or-and-columns.md` in the request) **does not exist**: there is no such file and `gh pr list` shows no open pull
 > request on 2026-10-14, so section 4 defines the minimal prefixing rule itself and says what a rename feature would replace.
@@ -133,7 +135,7 @@ qcol      = alias "." ( ident | quoted ) ;
 ```
 
 * **Every column of a join query is qualified** (`a.id`, `b."order id"`). A bare `id` is `query.syntax`: "a column of a join is written
-  alias.column". Reason: the translator knows no header (`docs/query.md` section 1: it writes flags and the existing parsers do the
+  alias.column" **(Corrected by section 20: the `as` name of a select item is the one bare name, in `order by`)**. Reason: the translator knows no header (`docs/query.md` section 1: it writes flags and the existing parsers do the
   rest); to resolve a bare name it would need both headers, which is a second plan. Qualifying is the explicit form.
 * **Aliases need `as`.** The grammar has `[ [ "as" ] alias ]` (`docs/query.md:213`); in a join query the optional `as` is required, so `from 'a' semi join` cannot be read
   as an alias called `semi`. `semi` and `anti` stay bare identifiers everywhere else, so **no query that is valid today changes**
@@ -536,8 +538,8 @@ Gram (Linux x86-64) counterparts of EQ, IB, A, ST (with `strace`) and TH are req
 | **J1** | `--join`, `--on` (text keys, no suffix), `--join-type inner`, `--join-prefix`, `join.column-collision`, csv x csv, rows out, `--max-join-rows`, the build bound with `limit.state-too-large` (no repair yet), `--threads` accepted and ignored | the semantics against the oracle (O), the defined order, the formula and the exact bound (A), the shared loops untouched (EQ, IB), the authority unchanged (AU) |
 | **J2** | `left`, `semi`, `anti`; typed keys; composite keys; USING; padding. **Built: section 17** | the null-free semantics: padded cells and typed refusals (O-shapes), `anti` as the answer to "no match" |
 | **J3** | `--where` split (probe/build/after), `--join-where`; `--group`, `--agg`, `--order-by`, `--top`, `--limit`, `--from` over joined rows with the shared budget; `--explain`. **Built: section 18** | the pushdown definition equals the unpushed one except for the key read (a test pair for each), the shared budget (A), the plan document (EXPL) |
-| **J3b** | the query form, `semi`/`anti` contextual, the `query.unsupported` features | Q-EQ, and that no query valid before changes |
-| **J4** | standard input as the probe (the generated copy of the loop, `scripts/stream.py --check`), MCP `join` and `stdin` | ST, MCP |
+| **J3b** | the query form, `semi`/`anti` contextual, the `query.unsupported` features. **Built: section 20** | Q-EQ, and that no query valid before changes |
+| **J4** | standard input as the probe (the generated copy of the loop, `scripts/stream.py --check`), MCP `join` and `stdin`. **Built, with J1 to J3: sections 16 to 19** | ST, MCP |
 | **J5** | jsonl on either side, `--join-delimiter` | the reader contract holds for a join (O with jsonl sides) |
 | **J6** | threaded probe, if S0 passes. **Corrected by section 15:** S0 passes for reading and fails for a worker's own output; J6 waits for the cancho change of 15.3, or is built as option (a) under a cap | TH |
 | **J7** | the swap repair; the build keeps only the columns the plan names | the repair is mechanical and tested; the pruned build is byte-identical (a pair of runs per plan) and measures the memory saved |

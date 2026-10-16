@@ -301,7 +301,6 @@ pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t, &x](heap: &!h Heap, args: &g Ar
         }
     }
     let prefixb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_prefix(), "join-prefix");
-    let given_prefix = jxsrc.has(parsed, jxs, jxsrc.s_prefix(), "join-prefix");
     var plen = 0;
     borrow prefixb as &pxr0 in {
         plen = buffer.size(pxr0);
@@ -312,6 +311,8 @@ pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t, &x](heap: &!h Heap, args: &g Ar
         borrow dropped as &dr in {
             borrow prefixb as &pxr in {
                 if jnfail.collisions(pnames, pends, bnames, bends, buffer.bytes(pxr), contents(dr)) > 0 {
+                    // (whether a prefix was given is looked up here and not before: a lookup of a flag reads the table up to it, and a call that collides is the rare one)
+                    let given_prefix = jxsrc.has(parsed, jxs, jxsrc.s_prefix(), "join-prefix");
                     e = jnfail.collision(heap, e, args, parsed, pnames, pends, bnames, bends, buffer.bytes(pxr), shown_b, given_prefix, contents(dr));
                     ok = false;
                 }

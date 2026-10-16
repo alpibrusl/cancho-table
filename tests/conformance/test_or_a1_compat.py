@@ -228,6 +228,9 @@ class Compat(unittest.TestCase):
                 same = old.status == new.status and normal(old, base) == normal(new, binary())
             if expr is not None and r_new != reading_a2(expr):
                 continue            # slice A2 reads it differently: test_not_a2_compat.py
+            if hint_moved(argv):
+                self.assertEqual(old.status, new.status, argv)      # slice J3b rewrote the hint of the features join and subquery: held by test_join_j3b.py
+                continue
             if r_old == r_new:
                 self.assertTrue(same, "%r: read the same by both grammars and answered differently\n main: %r\n here: %r" % (argv, old.stdout[:400], new.stdout[:400]))
             elif same:

@@ -144,6 +144,8 @@ DEMOS = {
     "retry_bad": "table --max-line-bytes 10 orders.csv",
     "query": """table --query "select customer, count(*), sum(bytes) from 'orders.csv' where bytes != '' group by customer order by sum(bytes) desc limit 2" --format csv""",
     "explain": "table --explain --threads 4 --where \"bytes:int > 100\" --group customer --agg count,sum:bytes --sort -sum:bytes --limit 2 orders.csv",
+    "query_join": """table --query "select o.id, o.customer, t.tier from 'orders.csv' as o left join 'tiers.csv' as t on o.customer = t.customer and t.tier != 'bronze' where o.bytes != '' order by o.id" --format csv""",
+    "query_join_bare": "table --query \"select id, t.tier from 'orders.csv' as o join 'tiers.csv' as t on o.customer = t.customer\"",
     "query_typo": "table --query \"select customer form 'orders.csv'\"",
     "rename": """table --where "bytes != ''" --group customer --agg count,sum:bytes --rename customer=name,sum:bytes=total --sort -total --format csv orders.csv""",
     "rename_query": """table --query "select customer as name, sum(bytes) as total from 'orders.csv' where bytes != '' group by customer order by total desc" --format csv""",
@@ -162,10 +164,10 @@ DEMOS = {
 # demos whose input is the contents of a fixture file, sent on standard input: shown as `cat FILE | ...`
 STDIN = {"stdin": "orders.csv"}
 # demos shown as the members of the JSON line that matter, since the line is long
-SUMMARY = {"float_over": ["rule", "hint", "repair", "detail"], "float_bad": ["rule", "hint", "repair", "detail"], "dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"], "query_typo": ["rule", "hint", "repair", "detail"], "query_or": ["rule", "hint", "repair", "detail"], "join_collision": ["rule", "hint", "repair"], "join_typed": ["rule", "hint", "detail"]}
+SUMMARY = {"float_over": ["rule", "hint", "repair", "detail"], "float_bad": ["rule", "hint", "repair", "detail"], "dec_bad": ["rule", "hint", "repair"], "flow_bad": ["rule", "hint", "repair"], "notint": ["rule", "hint", "detail"], "retry_bad": ["rule", "hint", "repair"], "query_typo": ["rule", "hint", "repair", "detail"], "query_join_bare": ["rule", "hint", "repair", "detail"], "query_or": ["rule", "hint", "repair", "detail"], "join_collision": ["rule", "hint", "repair"], "join_typed": ["rule", "hint", "detail"]}
 # task name -> the demos shown for it
 TASKS = {
-    "select": ["select"], "filter": ["where", "where_or"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "floatsum": ["float_sum", "float_over"], "typedkeys": ["group_text", "group_dec", "order_text", "order_dec"], "report": ["report"], "sort": ["sort"], "group": ["group"], "rename": ["rename", "rename_query"], "join": ["join", "join_collision", "join_left", "join_anti", "join_typed", "join_where", "join_group"], "query": ["query", "query_typo", "query_or"], "explain": ["explain"], "page": ["page1", "page2"],
+    "select": ["select"], "filter": ["where", "where_or"], "decimal": ["dec", "dec_bad"], "decagg": ["dec_agg", "dec_minmax"], "float": ["float", "floatagg", "float_bad"], "floatsum": ["float_sum", "float_over"], "typedkeys": ["group_text", "group_dec", "order_text", "order_dec"], "report": ["report"], "sort": ["sort"], "group": ["group"], "rename": ["rename", "rename_query"], "join": ["join", "join_collision", "join_left", "join_anti", "join_typed", "join_where", "join_group"], "query": ["query", "query_typo", "query_or", "query_join", "query_join_bare"], "explain": ["explain"], "page": ["page1", "page2"],
     "csv": ["csv"], "cores": ["cores"], "refuse": ["notint"],
 }
 QS = ["shape", "select", "group"]
