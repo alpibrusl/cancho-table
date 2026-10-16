@@ -10,6 +10,9 @@ tests. A mutant is killed when the build refuses it or a test fails.
 
 `--check` only verifies that every site still matches (no build; CI runs it). See mutlib.py. Real runs: the Mac and gram (niced, cores 0-5, one at a time).
 
+Equivalent mutant, found by the first real run and left out: the tally's `groups` set when the probe ends in abort 71 (`a[engine.k_groups()] = st[jnread.s_produced()]`, carried over from the loops this is copied from):
+nothing reads it for that abort, the refusal is made from `err_row`, `err_line`, `err_digits` and `err_cond` (test_join_j5.SharedBudget compares them with the csv probe's, and they are equal with the line removed).
+
 Not here, and why: the reading of a JSON line itself (`jrec.extract`: strictness, escapes, the flat scanner, the tape) is the reader of docs/readers.md section 12, whose mutants are scripts/jsonl_mutants.py and whose
 tests are test_jsonl*.py; here the line is given to it and its answer is what is judged. The loops of J1 to J3b (`jnread`, `jn3pass`) are not edited by this slice, and their mutants are scripts/join_mutants.py's.
 """
@@ -72,7 +75,6 @@ MUTANTS = [
     ("the groups and the sorted rows of a jsonl probe are not finished", "jnjson.cho", "        if grouping && a[engine.k_abort()] == 0 {", "        if false {"),
     ("the sorted rows of a jsonl probe count no bytes", "jnjson.cho", "                a[engine.k_err_digits()] = jn3pass.sorted_held(gr);", "                a[engine.k_err_digits()] = 0;"),
     ("the groups of a jsonl probe count no bytes", "jnjson.cho", "                a[engine.k_err_digits()] = gr.held;", "                a[engine.k_err_digits()] = 0;"),
-    ("the matches of the most fanned-out row are not kept for a jsonl probe", "jnjson.cho", "                a[engine.k_groups()] = st[jnread.s_produced()];", "                a[engine.k_groups()] = 0;"),
     # the run: which loop reads which file, and how a refusal names it (jnrun.cho, finish.cho)
     ("the header of a jsonl build is read as csv", "jnrun.cho", "    if fmt.b_jsonl {\n        // JSON lines have no header", "    if false {\n        // JSON lines have no header"),
     ("the header of a jsonl probe is read as csv", "jnrun.cho", "        if fmt.p_jsonl {\n            let (d2, h2)", "        if false {\n            let (d2, h2)"),

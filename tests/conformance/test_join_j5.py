@@ -643,6 +643,10 @@ class Refusals(unittest.TestCase):
         self.s.write("bs.csv", 'k;w\nb;"x\ny";z\n')
         r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "p.csv")
         self.assertEqual((r.status, r.first_rule(), r.error()["detail"]["path"]), (8, "parse.csv-ragged-row", "bs.csv"))
+        # ... or too few: its cells are not those of the record before it (a long row first, so that the offsets left in the cells point past the end of a short record)
+        self.s.write("bs.csv", 'k;w\nlongkeylongkeylongkey;longvaluelongvaluelongvalue\n"a\nb"\n')
+        r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "p.csv")
+        self.assertEqual((r.status, r.first_rule(), r.error()["detail"]["path"]), (8, "parse.csv-ragged-row", "bs.csv"))
         # a multi-line quoted field of such a build is one record, and it is written back whole
         self.s.write("bs.csv", 'k;w\na;"x\ny;z"\n')
         r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "--format", "csv", "p.csv")
