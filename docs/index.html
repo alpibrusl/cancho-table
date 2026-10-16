@@ -3,38 +3,39 @@
 <!--
   Hand-written, except between the paired "gen:NAME" comment lines: scripts/site.py
   writes those from the built binary and from the committed manifest (run
-  python3 scripts/site.py; CI runs it with --check). The benchmark numbers are
-  hand-copied from the docs, each next to its conditions.
+  python3 scripts/site.py; CI runs it with --check). The numbers of "Measured, not
+  promised" are hand-copied from the documents named under them, each with its
+  conditions; scripts/seo_check.py checks the page's structure, metadata and contrast.
 -->
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>table: a deterministic data primitive for AI agents (CSV)</title>
-<meta name="description" content="Query CSV and TSV with explicit semantics, bounded resources, structured refusals and verifiable capabilities. A command line for people and AI agents.">
+<title>table: exact answers from CSV, or a refusal with a repair</title>
+<meta name="description" content="A command line for people and AI agents: exact answers from CSV, TSV and JSON lines within stated limits, or a refusal with a repair you can run.">
 <link rel="canonical" href="https://alpibrusl.github.io/cancho-table/">
 <meta name="robots" content="index, follow">
 <meta property="og:site_name" content="table">
 <meta property="og:locale" content="en">
 <meta property="og:type" content="website">
-<meta property="og:title" content="table: a deterministic data primitive for AI agents (CSV)">
-<meta property="og:description" content="Query CSV and TSV with explicit semantics, bounded resources, structured refusals and verifiable capabilities. A command line for people and AI agents.">
+<meta property="og:title" content="table: exact answers from CSV, or a refusal with a repair">
+<meta property="og:description" content="A command line for people and AI agents: exact answers from CSV, TSV and JSON lines within stated limits, or a refusal with a repair you can run.">
 <meta property="og:url" content="https://alpibrusl.github.io/cancho-table/">
 <meta property="og:image" content="https://alpibrusl.github.io/cancho-table/assets/cancho-table-logo-256.png">
 <meta property="og:image:width" content="256">
 <meta property="og:image:height" content="256">
-<meta property="og:image:alt" content="The logo of table, a deterministic data primitive for AI agents">
+<meta property="og:image:alt" content="The logo of table, a command line for exact answers from CSV">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="table: a deterministic data primitive for AI agents (CSV)">
-<meta name="twitter:description" content="Query CSV and TSV with explicit semantics, bounded resources, structured refusals and verifiable capabilities. A command line for people and AI agents.">
+<meta name="twitter:title" content="table: exact answers from CSV, or a refusal with a repair">
+<meta name="twitter:description" content="A command line for people and AI agents: exact answers from CSV, TSV and JSON lines within stated limits, or a refusal with a repair you can run.">
 <meta name="twitter:image" content="https://alpibrusl.github.io/cancho-table/assets/cancho-table-logo-256.png">
-<meta name="twitter:image:alt" content="The logo of table, a deterministic data primitive for AI agents">
+<meta name="twitter:image:alt" content="The logo of table, a command line for exact answers from CSV">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "table",
   "url": "https://alpibrusl.github.io/cancho-table/",
-  "description": "Query CSV and TSV data with explicit semantics, bounded resources, structured refusals, and machine-verifiable capabilities.",
+  "description": "A command line for people and AI agents: exact answers from CSV, TSV and JSON lines within stated limits, or a refusal with a repair you can run.",
   "applicationCategory": "DeveloperApplication",
   "applicationSubCategory": "Command-line tool",
   "programmingLanguage": "cancho",
@@ -44,14 +45,13 @@
     "https://github.com/alpibrusl/cancho-table"
   ],
   "featureList": [
-    "Explicit types",
-    "Explicit operations",
-    "Bounded resource use",
-    "No implicit network access",
-    "Machine-readable errors",
-    "Repair hints",
-    "Capability introspection",
-    "The same bytes on any number of cores"
+    "Exact numbers",
+    "Bounded by rules",
+    "Same bytes on any number of cores",
+    "Refusals that carry a repair",
+    "CSV and TSV",
+    "JSON lines, in and out",
+    "Capability introspection"
   ]
 }
 </script>
@@ -61,12 +61,13 @@
 :root {
   --bg: #fbfcfc; --fg: #14181a; --muted: #55606a; --line: #dfe5e7; --surface: #ffffff; --soft: #eff4f4;
   --accent: #0b7a75; --accent-fg: #ffffff; --good: #0f7b5f; --warn: #92400e; --warn-bg: #fdf6e7; --warn-line: #e0b765; --bad: #b42d27;
+  --term-bg: #0d1117; --term-fg: #d6dde8; --term-dim: #8b95a5; --term-bad: #ff9a92; --term-good: #5fd3a6;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #0c1011; --fg: #e7ebec; --muted: #9aa8ae; --line: #212a2d; --surface: #131a1c; --soft: #172022;
-    --accent: #4fd1c5; --accent-fg: #06201e; --good: #4fd1a5; --warn: #f3c77a; --warn-bg: #1d1a12; --warn-line: #8a6a2a; --bad: #ff7b73; }
+    --accent: #4fd1c5; --accent-fg: #06201e; --good: #4fd1a5; --warn: #f3c77a; --warn-bg: #1d1a12; --warn-line: #8a6a2a; --bad: #ff7b73; --term-bg: #090d11; }
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; scroll-padding-top: 4rem; }
@@ -75,109 +76,152 @@ a { color: var(--accent); text-underline-offset: .15em; }
 .wrap { width: 100%; max-width: 68rem; margin: 0 auto; padding: 0 16px; }
 .skip { position: absolute; left: 16px; top: -4rem; background: var(--accent); color: var(--accent-fg); padding: .5rem .8rem; border-radius: 6px; z-index: 9; }
 .skip:focus { top: 8px; }
-a:focus-visible, .btn:focus-visible, pre:focus-visible, summary:focus-visible, .fitwrap:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+a:focus-visible, .btn:focus-visible, button:focus-visible, pre:focus-visible, summary:focus-visible, .fitwrap:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 
 header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 header.top .wrap { display: flex; align-items: center; gap: 1.5rem; height: 3.4rem; }
-.brand { font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; letter-spacing: -.01em; white-space: nowrap; }
+.brand { display: inline-flex; align-items: center; gap: .5rem; font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; letter-spacing: -.01em; white-space: nowrap; }
+.brand .mark { border-radius: 6px; background: #fff; }
 nav { display: flex; gap: 1.2rem; margin-left: auto; }
 nav a { color: var(--muted); text-decoration: none; font-size: .93rem; white-space: nowrap; }
 nav a:hover { color: var(--fg); }
-@media (max-width: 40rem) { nav a.opt { display: none; } nav { gap: .9rem; } }
+@media (max-width: 44rem) { nav a.opt { display: none; } nav { gap: 1rem; } }
 
-h1 { font-size: clamp(2.1rem, 6vw, 3.8rem); line-height: 1.06; letter-spacing: -.035em; margin: 0 0 1rem; font-weight: 750; overflow-wrap: break-word; }
-h2 { font-size: clamp(1.5rem, 3.4vw, 2.1rem); line-height: 1.15; letter-spacing: -.025em; margin: 0 0 .5rem; font-weight: 700; }
-h3 { font-size: 1.05rem; margin: 0 0 .25rem; }
+h1 { font-size: clamp(1.9rem, 5.4vw, 3.3rem); line-height: 1.1; letter-spacing: -.03em; margin: 0 auto 1rem; max-width: 24ch; font-weight: 750; overflow-wrap: break-word; }
+h2 { font-size: clamp(1.45rem, 3.2vw, 2rem); line-height: 1.15; letter-spacing: -.02em; margin: 0 0 .6rem; font-weight: 700; text-align: center; }
+h3 { font-size: 1.05rem; margin: 0 0 .3rem; }
 p { margin: 0 0 1rem; }
-section { padding: 4.5rem 0 0; }
-.lead { font-size: 1.2rem; color: var(--muted); max-width: 34rem; }
-.sub { color: var(--muted); max-width: 40rem; }
+section { padding: 3.5rem 0; }
+section.alt { background: var(--soft); }
+.lead { text-align: center; color: var(--muted); max-width: 40rem; margin: 0 auto 2rem; }
 code { font-family: var(--mono); font-size: .9em; background: var(--soft); padding: .1em .35em; border-radius: 5px; overflow-wrap: anywhere; }
+section.alt code { background: var(--surface); }
 
-.hero { padding: 3.5rem 0 0; display: grid; gap: 2.2rem; align-items: center; }
-.hero > *, .two > *, .cols > * { min-width: 0; }
-@media (min-width: 58rem) { .hero { grid-template-columns: 1fr 1.1fr; } }
-.badge { display: inline-flex; gap: .5rem; align-items: center; font-size: .82rem; color: var(--warn); background: var(--warn-bg); border: 1px solid var(--warn-line); padding: .22rem .7rem; border-radius: 999px; margin-bottom: 1.2rem; text-decoration: none; }
-.badge i { width: .5rem; height: .5rem; border-radius: 50%; background: var(--warn-line); display: inline-block; flex: none; }
-.cta { display: flex; flex-wrap: wrap; gap: .7rem; margin-top: 1.6rem; }
-.btn { display: inline-block; padding: .65rem 1.15rem; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid var(--accent); }
+.hero { padding: 3.2rem 16px 1.8rem; text-align: center; }
+.hero .sub { font-size: 1.18rem; color: var(--muted); max-width: 40rem; margin: 0 auto 1.6rem; }
+.cta { display: flex; gap: .8rem; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-block; padding: .65rem 1.2rem; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid var(--accent); color: var(--accent); background: var(--surface); }
+.btn:hover { background: var(--soft); }
 .btn.primary { background: var(--accent); color: var(--accent-fg); }
-.btn.ghost { color: var(--accent); }
-.btn.ghost:hover { background: var(--soft); }
+.btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+.early { font-size: .88rem; color: var(--muted); margin: 1.1rem 0 0; }
 
-.term { background: #0d1117; color: #d6dde8; border: 1px solid #262c36; border-radius: 12px; font: .82rem/1.6 var(--mono); padding: 1rem 1.1rem 1.1rem; box-shadow: 0 18px 50px -24px rgba(10, 40, 40, .55); overflow-x: auto; }
-.term .bar { display: flex; gap: .35rem; margin-bottom: .8rem; }
-.term .bar i { width: .65rem; height: .65rem; border-radius: 50%; background: #2d3440; display: block; }
-.term .c { color: #8b95a5; } .term .r { color: #ff9a92; }
-.term pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.termfig { margin: 0 auto; max-width: 52rem; padding-bottom: 1rem; }
+.term { background: var(--term-bg); color: var(--term-fg); border-radius: 12px; border: 1px solid #262c36; box-shadow: 0 18px 50px -24px rgba(10, 40, 40, .55); overflow: hidden; }
+.term .bar { display: flex; align-items: center; gap: .4rem; padding: .55rem .8rem; border-bottom: 1px solid #1f2630; font: .78rem var(--mono); color: var(--term-dim); }
+.term .bar i { width: .7rem; height: .7rem; border-radius: 50%; background: #2d3440; display: inline-block; flex: none; }
+.term .bar span { margin-left: .3rem; }
+.term .bar button { margin-left: auto; display: inline-flex; align-items: center; gap: .35rem; font: .78rem var(--mono); color: var(--term-fg); background: #1b222c; border: 1px solid #2d3440; border-radius: 6px; padding: .25rem .65rem; cursor: pointer; }
+.term .bar button:hover { background: #232c38; }
+.term .bar button svg { width: .9rem; height: .9rem; }
+.term .bar button[hidden] { display: none; }
+.screen { margin: 0; padding: 1rem 1.1rem; font: .84rem/1.6 var(--mono); overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.screen .ln { display: block; }
+.screen .ln[hidden] { display: none; }
+.screen .c, .screen .pr, .screen .r { color: var(--term-dim); }
+.screen .x { color: var(--term-bad); }
+.screen .o { color: var(--term-fg); }
+.screen .r { color: var(--term-bad); }
+.caption { text-align: center; color: var(--muted); font-size: .88rem; max-width: 46rem; margin: .8rem auto 0; }
 
-.three { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); margin-top: 3rem; }
-.three div { border-top: 3px solid var(--accent); padding-top: .8rem; }
-.three p { color: var(--muted); margin: 0; font-size: .96rem; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.2rem; min-width: 0; }
+.card h3 { margin: 0 0 .4rem; }
+.card p { margin: 0; color: var(--muted); font-size: .95rem; }
+.card .ic { width: 1.7rem; height: 1.7rem; margin-bottom: .5rem; stroke: var(--accent); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; display: block; }
+.cards.three { grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
+.card .more-link { display: inline-block; margin-top: .6rem; font-size: .88rem; }
+.card pre.code { margin: .8rem 0 0; font-size: .78rem; }
 
-.figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.2rem; min-width: 0; }
-.figure.wide { margin-top: 2rem; }
-.figure svg { display: block; width: 100%; height: auto; }
-.figure h3 { margin-bottom: .6rem; }
-.figure figcaption { color: var(--muted); font-size: .88rem; margin-top: .8rem; }
-.two { display: grid; gap: 1rem; grid-template-columns: 1fr; margin-top: 2rem; }
-@media (min-width: 52rem) { .two { grid-template-columns: 1fr 1fr; } }
-svg .t { fill: var(--fg); font: 600 13px var(--font); } svg .s { fill: var(--muted); font: 12px var(--font); }
-svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.4; } svg .hot { fill: var(--soft); stroke: var(--accent); stroke-width: 2; }
-svg .ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.diagram { max-width: 52rem; margin: 0 auto; }
+.diagram svg { width: 100%; height: auto; display: block; }
+.diagram .narrow { display: none; max-width: 22rem; margin: 0 auto; }
+@media (max-width: 44rem) { .diagram .wide { display: none; } .diagram .narrow { display: block; } }
+.diagram figcaption { color: var(--muted); font-size: .88rem; margin-top: 1rem; text-align: center; }
+svg .t { fill: var(--fg); font: 600 15px var(--font); } svg .s { fill: var(--muted); font: 13px var(--font); }
+svg .sb { fill: var(--bad); font: 13px var(--font); }
+svg .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.5; } svg .hot { fill: var(--surface); stroke: var(--accent); stroke-width: 2; }
+svg .ok { fill: var(--surface); stroke: var(--good); stroke-width: 2; } svg .bad { fill: var(--surface); stroke: var(--bad); stroke-width: 2; }
+svg .ar { stroke: var(--muted); stroke-width: 1.8; fill: none; } svg .arb { stroke: var(--bad); stroke-width: 1.8; fill: none; stroke-dasharray: 5 4; }
+svg .arbs { stroke: var(--bad); stroke-width: 1.8; fill: none; }
+svg .arg { stroke: var(--good); stroke-width: 1.8; fill: none; }
 
-.grid { display: grid; gap: 1px; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin-top: 2rem; }
-.grid div { background: var(--surface); padding: 1.1rem 1.2rem; }
-.grid p { color: var(--muted); font-size: .93rem; margin: 0; }
+.nums { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 1rem; }
+.num { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1.1rem 1.2rem; text-align: center; }
+.num b { display: block; font-size: 2.2rem; line-height: 1.15; letter-spacing: -.03em; color: var(--accent); font-weight: 750; }
+.num span { color: var(--muted); font-size: .92rem; display: block; margin-top: .3rem; }
+.num .ref { display: inline-block; margin-top: .4rem; font: 600 .75rem var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 .5rem; }
+ol.conds { max-width: 52rem; margin: 1.6rem auto 0; padding-left: 1.4rem; color: var(--muted); font-size: .9rem; }
+ol.conds li { margin: .5rem 0; }
+ol.conds li::marker { font-family: var(--mono); color: var(--fg); }
+.fine { max-width: 52rem; margin: 1.2rem auto 0; color: var(--muted); font-size: .9rem; }
 
-.stats { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); margin: 2rem 0 0; }
-.stats div { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; }
-.stats b { display: block; font: 700 1.9rem/1.1 var(--font); letter-spacing: -.03em; }
-.stats span { color: var(--muted); font-size: .88rem; }
-.note { color: var(--muted); font-size: .88rem; margin-top: .9rem; }
-
-pre.code { background: var(--soft); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; font: .84rem/1.6 var(--mono); overflow-x: auto; margin: 1.4rem 0 0; }
-.figure pre.code { margin-top: .4rem; }
+pre.code { background: var(--soft); border: 1px solid var(--line); border-radius: 12px; padding: 1rem 1.1rem; font: .84rem/1.6 var(--mono); overflow-x: auto; margin: 1.2rem 0 0; }
+section.alt pre.code, .card pre.code, .figure pre.code { background: var(--bg); }
 pre.code .c { color: var(--muted); } pre.code .r { color: var(--bad); }
-.status { margin-top: 4.5rem; background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 14px; padding: 1.3rem 1.5rem; }
-.status h2 { font-size: 1.2rem; letter-spacing: -.01em; }
-.status ul { margin: .4rem 0 0; padding-left: 1.2rem; color: var(--muted); }
-footer { margin-top: 4rem; border-top: 1px solid var(--line); padding: 1.6rem 0 2.6rem; color: var(--muted); font-size: .9rem; }
-footer .wrap { display: flex; flex-wrap: wrap; gap: .5rem 1.6rem; }
-.fitwrap { overflow-x: auto; margin-top: 1.4rem; }
+.narrowcol { max-width: 52rem; margin: 0 auto; }
+.narrowcol pre.code { margin-top: 1rem; }
+
+.two { display: grid; gap: 1rem; grid-template-columns: 1fr; margin-top: 1.4rem; }
+.two > *, .cards > *, .tasks > * { min-width: 0; }
+@media (min-width: 52rem) { .two { grid-template-columns: 1fr 1fr; } }
+.figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 1.2rem; min-width: 0; }
+.figure h3 { margin-bottom: .6rem; }
+.figure pre.code { margin-top: .4rem; }
+
+ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .5rem 0; }
+.cannot { max-width: 52rem; margin: 0 auto; }
+.cannot .note { color: var(--muted); font-size: .9rem; }
+.status { background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 14px; padding: 1rem 1.3rem; margin: 0 0 1.4rem; }
+.status p { margin: 0; color: var(--muted); font-size: .95rem; }
+.status strong { color: var(--warn); }
+
+details.more { max-width: 52rem; margin: 1.2rem auto 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .8rem 1.1rem; }
+details.more > summary { cursor: pointer; font-weight: 600; }
+table.sbs caption { caption-side: top; text-align: left; color: var(--muted); font-size: .88rem; padding: 0 0 .6rem; }
+table.sbs { min-width: 32rem; }
+table.sbs th, table.sbs td { padding: .6rem .6rem; }
+table.sbs td:last-child { white-space: nowrap; }
+@media (max-width: 40rem) {
+  table.sbs { min-width: 0; }
+  table.sbs, table.sbs thead, table.sbs tbody, table.sbs tr, table.sbs th, table.sbs td { display: block; }
+  table.sbs thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  table.sbs tr { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: .6rem .8rem; margin: 0 0 .8rem; }
+  table.fit.sbs td, table.fit.sbs tbody th { border: 0; padding: .15rem 0; text-align: left; }
+  table.fit.sbs tbody th { border-bottom: 1px solid var(--line); padding-bottom: .4rem; margin-bottom: .2rem; }
+  table.sbs tbody th { font-size: 1rem; color: var(--fg); }
+  table.sbs td:last-child { white-space: normal; }
+  table.sbs td[data-label]::before { content: attr(data-label); display: block; color: var(--muted); font-size: .78rem; margin-top: .4rem; }
+  table.sbs .v { font-size: .9rem; }
+  table.sbs caption { display: block; }
+  .sbs-wrap, .fitwrap:has(> table.sbs) { overflow-x: visible; }
+}
+table.sbs .v { display: block; font: .86rem/1.5 var(--mono); }
+table.sbs .v.same { color: var(--good); font-weight: 600; }
+table.sbs th.num, table.sbs td.num { white-space: nowrap; text-align: left; }
+.sbs-cond { margin-left: 0; }
+.sbs-exact { margin: 1.4rem 0 0; font-size: .95rem; }
+.sbs-says { max-width: 52rem; margin: .9rem 0 0; color: var(--muted); font-size: .93rem; }
+details.sbs-more { margin: 1.2rem 0 0; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .8rem 1.1rem; }
+details.sbs-more > summary { cursor: pointer; font-weight: 600; }
+details.wide { max-width: none; }
+.fitwrap { overflow-x: auto; margin-top: 1.2rem; }
 table.fit { width: 100%; border-collapse: collapse; font-size: .93rem; }
-table.fit th, table.fit td { text-align: left; padding: .7rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.fit th, table.fit td { text-align: left; padding: .6rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 table.fit thead th { color: var(--muted); font-weight: 600; font-size: .85rem; }
 table.fit tbody th { font-weight: 650; }
 table.fit td { color: var(--muted); }
-table.fit.auth tbody th { white-space: nowrap; }
-table.fit .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-table.fit.wide { min-width: 38rem; } table.fit.bench { min-width: 44rem; }
-table.fit tr.us { background: var(--soft); } table.fit tr.us td, table.fit tr.us th { color: var(--fg); }
-table.fit td.lose { color: var(--bad); font-weight: 600; } table.fit td.win { color: var(--good); font-weight: 600; }
-.cols { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); margin-top: 1.4rem; }
-.cols > div { border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem 1.3rem; background: var(--surface); }
-.cols ul { margin: .4rem 0 0; padding-left: 1.1rem; color: var(--muted); } .cols li { margin: .25rem 0; }
-.cols .no h3 { color: var(--muted); }
-details.rules { margin-top: 1.4rem; } details.rules summary { cursor: pointer; font-weight: 600; }
-@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
-h3.task { margin: 0 0 .15rem; font-size: 1.1rem; }
-.task + p { color: var(--muted); margin: 0 0 .2rem; max-width: 42rem; }
-.tasks { display: grid; gap: 1.6rem; margin-top: 2rem; grid-template-columns: minmax(0, 1fr); }
-.tasks > * { min-width: 0; }
+table.fit .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; background: none; border: 0; border-radius: 0; padding: .6rem .8rem; font-size: inherit; }
+.tasks { display: grid; gap: 1.6rem; margin-top: 1.4rem; grid-template-columns: minmax(0, 1fr); }
 .tasks pre.code { margin-top: .6rem; }
-ul.plain { color: var(--muted); padding-left: 1.2rem; } ul.plain li { margin: .35rem 0; }
-.fn { color: var(--muted); font-size: .85rem; margin-top: .8rem; }
-svg .tt { fill: var(--fg); font: 600 13px var(--font); } svg .ss { fill: var(--muted); font: 11.5px var(--font); }
-svg .bad { fill: var(--surface); stroke: var(--bad); stroke-width: 1.6; } svg .arb { stroke: var(--bad); stroke-width: 1.5; fill: none; }
-.diagram { max-width: 26rem; margin: 1.6rem auto 0; }
-ul.why { list-style: none; padding: 0; margin: 1.4rem 0 0; display: grid; gap: .8rem; }
-ul.why li { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: .8rem 1.1rem; }
-ul.why b { display: block; }
-ul.why span { color: var(--muted); font-size: .95rem; }
-.big { font-size: 1.25rem; font-weight: 650; letter-spacing: -.01em; margin: 1.2rem 0 0; }
-.brand { display: inline-flex; align-items: center; gap: .5rem; }
-.brand .mark { border-radius: 6px; background: #fff; }
+h3.task { margin: 0 0 .15rem; font-size: 1.1rem; }
+.task + p { color: var(--muted); margin: 0 0 .2rem; max-width: 46rem; }
+.sub { color: var(--muted); max-width: 46rem; }
+.note { color: var(--muted); font-size: .9rem; }
+.authrow { max-width: 52rem; margin: 2rem auto 0; }
+
+footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(--muted); font-size: .9rem; text-align: center; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 </style>
 </head>
 <body>
@@ -185,86 +229,183 @@ ul.why span { color: var(--muted); font-size: .95rem; }
 <header class="top"><div class="wrap">
   <a class="brand" href="#top"><img class="mark" src="assets/cancho-table-icon-64.png" alt="" width="28" height="28">table</a>
   <nav aria-label="Sections">
-    <a href="#flow" class="opt">A flow</a><a href="#why" class="opt">Why table</a><a href="#can" class="opt">What you can do</a><a href="#agent" class="opt">For agents</a><a href="#start">Quick start</a>
+    <a href="#how" class="opt">How it works</a><a href="#does" class="opt">What it does</a><a href="#results" class="opt">Results</a><a href="#try">Try it</a><a href="#docs" class="opt">Docs</a>
     <a href="https://github.com/alpibrusl/cancho-table">GitHub</a>
   </nav>
 </div></header>
 
-<main id="main" class="wrap">
+<main id="main">
 
-<div class="hero" id="top">
-  <div>
-    <a class="badge" href="#status"><i></i>Early · it works, it is not finished</a>
-    <h1>A deterministic data primitive for AI agents.</h1>
-    <p class="lead">Query CSV and TSV data with explicit semantics, bounded resources, structured refusals, and machine-verifiable capabilities.</p>
-    <p class="sub">Ask a CSV a question, get an exact answer: with a command line and flags, not a chat box. The same tool for a person and for an agent.</p>
-    <div class="cta"><a class="btn primary" href="#flow">See a complete flow</a><a class="btn ghost" href="#start">Quick start</a></div>
-  </div>
-<!-- gen:hero -->
-<div class="term" role="img" aria-label="One command on a small file and what it prints"><div class="bar"><i></i><i></i><i></i></div>
-<pre><span class="c">$</span> table --where "bytes != ''" --group customer --agg count,sum:bytes --sort -sum:bytes --format csv orders.csv
-customer,count,sum:bytes
-"Doe, Jane",2,2560
-Acme,1,128
-Zed,1,64</pre></div>
-<!-- /gen:hero -->
+<div class="wrap hero" id="top">
+  <h1>Exact answers from CSV and JSON lines, or a refusal that tells you how to fix the question.</h1>
+  <p class="sub"><code>table</code> is a command line for people and AI agents. Numbers you declare are exact, every limit is a rule, the same bytes come back on any number of cores, and a refusal carries the repair as a command to run.</p>
+  <div class="cta"><a class="btn primary" href="#try">Quick start</a><a class="btn" href="#flow">See a complete flow</a></div>
+  <p class="early">Early: it works and is tested, it is not finished. <a href="#cannot">What it cannot do yet</a>.</p>
 </div>
 
-<section id="flow">
-  <h2>One complete flow</h2>
-  <p class="sub">Ask, get refused with a repair, run the repair. The repair is the corrected command, and every line below is what the built program prints, on the five-line file shown under &ldquo;What you can do now&rdquo;.</p>
+<div class="wrap">
+  <figure class="termfig" id="flow">
+    <div class="term" role="group" aria-labelledby="term-title">
+      <div class="bar"><i></i><i></i><i></i><span id="term-title">one complete flow, replayed</span><button id="replay" type="button" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>replay</button></div>
 <!-- gen:flow -->
-<pre class="code" tabindex="0"><span class="c"># Ask: the customer and bytes of the orders with status 200</span>
-<span class="c">$</span> table --where "status = 200" --select Customer,bytes orders.csv
-{"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "status = 200", "--select", "customer,bytes", "orders.csv"]}]}}
-<span class="r"># exit status 3; the rule, hint, repair of the JSON line it prints</span>
-<span class="c"># The tool offered the corrected command. Run it:</span>
-<span class="c">$</span> table --where 'status = 200' --select customer,bytes orders.csv
-{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["customer","bytes"],"rows":[["Doe, Jane","512"],["Doe, Jane","2048"],["Zed","64"]],"row_count":3,"truncated":false,"next":null},"meta":{"version":"0.3.0"}}</pre>
+<pre id="screen" class="screen" tabindex="0" aria-label="The text of the flow: a command, a refusal with its repair, the repair run, and the exact answer"><span class="ln c"># Ask: the customer and bytes of the orders with status 200</span><span class="ln p"><span class="pr">$ </span><span class="t">table --where "status = 200" --select Customer,bytes orders.csv</span></span><span class="ln x">{"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "status = 200", "--select", "customer,bytes", "orders.csv"]}]}}</span><span class="ln r"># exit status 3; the rule, hint, repair of the JSON line it prints</span><span class="ln c"># The tool offered the corrected command. Run it:</span><span class="ln p"><span class="pr">$ </span><span class="t">table --where 'status = 200' --select customer,bytes orders.csv</span></span><span class="ln o">{"ok":true,"command":"table","schema":"table.v2","data":{"columns":["customer","bytes"],"rows":[["Doe, Jane","512"],["Doe, Jane","2048"],["Zed","64"]],"row_count":3,"truncated":false,"next":null},"meta":{"version":"0.3.0"}}</span></pre>
 <!-- /gen:flow -->
-</section>
+    </div>
+    <figcaption class="caption">Real output of the built program, replayed: ask, be refused with a repair, run the repair, get the exact answer. <code>scripts/site.py</code> ran these commands on the five-line file of &ldquo;What it does now&rdquo; and wrote the text, and CI fails if it differs from what the binary prints. It is a replay of that output, not a live session.</figcaption>
+  </figure>
+</div>
 
-<section id="why">
-  <h2>Why table?</h2>
-  <p class="big">Most data tools optimise for flexibility. <code>table</code> optimises for predictability.</p>
-  <ul class="why">
-<li><b>Explicit types</b><span>A column is text unless you write <code>:int</code> (an exact 64-bit integer), <code>:dec(S)</code> (an exact decimal with S fractional digits) or <code>:float</code> (the nearest double, in <code>--where</code> and in every aggregate); a cell that is not one is refused. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/filter.md">docs/filter.md</a></span></li>
-<li><b>Explicit operations</b><span>One plan from flags, resolved against the header before any row is read. No expressions, no functions. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/filter.md">docs/filter.md</a></span></li>
-<li><b>Bounded resource use</b><span>Rows, line and record size, groups, distinct values and group state each have a limit with its own rule (<a href="#limits">the limits</a>). Peak memory was about 2 MB on a 31.7 MB file (Linux) and 1.6 to 1.8 MB on a 1 GB file (Mac, one core). <a href="benchmarks.html">Benchmarks</a></span></li>
-<li><b>No implicit network access</b><span>The authority row below lists what the program can reach: no <code>net_out</code>, <code>net_in</code>, <code>ffi</code> or <code>clock</code>, and nothing written to disk. <code>cancho authority</code> derives it, and CI fails if the binary differs from the committed <a href="https://github.com/alpibrusl/cancho-table/blob/main/manifests/table.authority.json">manifest</a>. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/architecture.md">docs/architecture.md</a></span></li>
-<li><b>Machine-readable errors</b><span>One JSON line against a schema (<code>table.v2</code>). A refusal is <code>{code, rule, message, hint, repair, detail}</code>. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">docs/refusals.md</a></span></li>
-<li><b>Repair hints</b><span>A refusal says how to fix the request: a command to run, a choice of commands, or why there is none. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">docs/refusals.md</a></span></li>
-<li><b>Capability introspection</b><span><code>table introspect</code> prints the flags, limits, rules and authority; <code>table skill</code> prints a guide for an agent. <a href="#agent">Excerpts below</a></span></li>
-<li><b>The same bytes on any number of cores</b><span><code>--threads N</code> gives the one-core answer, the same refusal included. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/parallel.md">docs/parallel.md</a></span></li>
-  </ul>
-<figure class="figure diagram">
-  <svg viewBox="0 0 340 400" role="img" aria-labelledby="dg-t dg-d">
-    <title id="dg-t">How an agent uses table</title>
-    <desc id="dg-d">A user or agent reads the declared interface (introspect and skill), sends a validated command, which runs in capability-bounded execution and returns an exact result. Validation or execution can instead return a structured refusal with a rule, a hint and a repair. The repair options (retry, choose, none) lead back to the command.</desc>
-    <defs>
-      <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--muted)"/></marker>
-      <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--bad)"/></marker>
-    </defs>
-    <rect class="box" x="8" y="8" width="150" height="50" rx="9"/><text class="tt" x="83" y="30" text-anchor="middle">User or agent</text><text class="ss" x="83" y="47" text-anchor="middle">asks with flags</text>
-    <rect class="box" x="8" y="88" width="150" height="50" rx="9"/><text class="tt" x="83" y="110" text-anchor="middle">Declared interface</text><text class="ss" x="83" y="127" text-anchor="middle">introspect, skill</text>
-    <rect class="hot" x="8" y="168" width="150" height="50" rx="9"/><text class="tt" x="83" y="190" text-anchor="middle">Validated command</text><text class="ss" x="83" y="207" text-anchor="middle">checked on the header</text>
-    <rect class="box" x="8" y="248" width="150" height="50" rx="9"/><text class="tt" x="83" y="270" text-anchor="middle">Bounded execution</text><text class="ss" x="83" y="287" text-anchor="middle">limits, authority row</text>
-    <rect class="box" x="8" y="328" width="150" height="50" rx="9"/><text class="tt" x="83" y="350" text-anchor="middle">Exact result</text><text class="ss" x="83" y="367" text-anchor="middle">JSON line or CSV</text>
-    <path class="ar" d="M83 58V86" marker-end="url(#ah)"/><path class="ar" d="M83 138V166" marker-end="url(#ah)"/><path class="ar" d="M83 218V246" marker-end="url(#ah)"/><path class="ar" d="M83 298V326" marker-end="url(#ah)"/>
-    <rect class="bad" x="182" y="248" width="150" height="50" rx="9"/><text class="tt" x="257" y="270" text-anchor="middle">Structured refusal</text><text class="ss" x="257" y="287" text-anchor="middle">rule, hint, repair</text>
-    <rect class="box" x="182" y="168" width="150" height="50" rx="9"/><text class="tt" x="257" y="190" text-anchor="middle">Repair options</text><text class="ss" x="257" y="207" text-anchor="middle">retry, choose, none</text>
-    <path class="arb" d="M158 273H180" marker-end="url(#ab)"/><path class="arb" d="M158 205L180 262" marker-end="url(#ab)" stroke-dasharray="4 3"/>
-    <path class="arb" d="M257 248V220" marker-end="url(#ab)"/><path class="arb" d="M182 193H160" marker-end="url(#ab)"/>
-    <text class="ss" x="170" y="238">refused</text><text class="ss" x="166" y="160">run the repair</text>
-  </svg>
-  <figcaption>A request is checked before it runs, runs inside its limits and authority, and either answers exactly or is refused with a way back.</figcaption>
-</figure>
-</section>
+<section class="alt" id="why"><div class="wrap">
+  <h2>Trust the answer, not the chat</h2>
+  <p class="lead">Most data tools optimise for flexibility. <code>table</code> optimises for predictability.</p>
+  <div class="cards">
+    <div class="card"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/></svg><h3>Exact numbers</h3><p>Write <code>:int</code>, <code>:dec(S)</code> or <code>:float</code> and the column is read as that number. A cell with more digits than the scale is refused, never rounded; a float sum is rounded once.</p></div>
+    <div class="card"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H6v14h3M15 5h3v14h-3"/><path d="M10 12h4"/></svg><h3>Bounded by rules</h3><p>Rows, line and record size, groups, distinct values and group state each have a limit with its own rule, listed by <code>table introspect</code>. Measured memory is in the <a href="#results">results</a>.</p></div>
+    <div class="card"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg><h3>Same bytes on any number of cores</h3><p><code>--threads N</code> gives the one-core answer, a refusal included. Asking for more cores changes the time, not the output.</p></div>
+    <div class="card"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg><h3>Refusals that carry a repair</h3><p>A refusal is one JSON line with a rule, a hint and a repair: a command to run, a choice of commands, or the reason there is none.</p></div>
+  </div>
+</div></section>
 
-<section id="can">
-  <h2>What you can do now</h2>
-  <p class="sub">Every example runs on this five-line file, and the output is what the program prints.</p>
-  <pre class="code" tabindex="0"><code>id,customer,status,bytes
+<section id="cores"><div class="wrap">
+  <h2>Same file, same question, any number of cores</h2>
+  <p class="lead">One file of doubles, one question (the sum of a column), asked of <code>table</code> and of DuckDB at 1, 2, 4, 8 and 16 threads. What each one printed is below, in every run.</p>
+<!-- gen:sbs -->
+<h3>On Apple M4 Max, macOS-26.2-arm64-arm-64bit-Mach-O</h3>
+<p class="sbs-exact">The exact sum of the 2,000,000 values in this file, rounded once: <code>-287436221.60773546</code></p>
+<div class="fitwrap" tabindex="0" role="region" aria-label="On Apple M4 Max, macOS-26.2-arm64-arm-64bit-Mach-O: table and DuckDB, thread by thread"><table role="table" class="fit sbs"><caption>Sum of x over 2,000,000 rows at 1, 2, 4, 8 and 16 threads: the value each tool printed, in each of 3 runs</caption><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Threads</th><th role="columnheader" scope="col" class="num">table</th><th role="columnheader" scope="col" class="num">DuckDB <code>sum(x)</code></th><th role="columnheader" scope="col">Equal to the exact sum?</th></tr></thead><tbody role="rowgroup"><tr role="row"><th role="rowheader" scope="row">1 thread</th><td role="cell" class="num" data-label="table"><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" class="num" data-label="DuckDB sum(x), one run per line"><span class="v">-287436221.6077294</span><span class="v">-287436221.6077294</span><span class="v">-287436221.6077294</span></td><td role="cell">table: yes, 3 of 3 runs<br>DuckDB: 0 of 3 runs</td></tr><tr role="row"><th role="rowheader" scope="row">2 threads</th><td role="cell" class="num" data-label="table"><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" class="num" data-label="DuckDB sum(x), one run per line"><span class="v">-287436221.60774064</span><span class="v">-287436221.6077401</span><span class="v">-287436221.6077401</span></td><td role="cell">table: yes, 3 of 3 runs<br>DuckDB: 0 of 3 runs</td></tr><tr role="row"><th role="rowheader" scope="row">4 threads</th><td role="cell" class="num" data-label="table"><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" class="num" data-label="DuckDB sum(x), one run per line"><span class="v same">-287436221.60773546 (= exact)</span><span class="v">-287436221.60773575</span><span class="v">-287436221.6077309</span></td><td role="cell">table: yes, 3 of 3 runs<br>DuckDB: 1 of 3 runs</td></tr><tr role="row"><th role="rowheader" scope="row">8 threads</th><td role="cell" class="num" data-label="table"><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" class="num" data-label="DuckDB sum(x), one run per line"><span class="v">-287436221.60772985</span><span class="v">-287436221.60772985</span><span class="v">-287436221.60772985</span></td><td role="cell">table: yes, 3 of 3 runs<br>DuckDB: 0 of 3 runs</td></tr><tr role="row"><th role="rowheader" scope="row">16 threads</th><td role="cell" class="num" data-label="table"><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" class="num" data-label="DuckDB sum(x), one run per line"><span class="v">-287436221.60772985</span><span class="v">-287436221.60772985</span><span class="v">-287436221.60772985</span></td><td role="cell">table: yes, 3 of 3 runs<br>DuckDB: 0 of 3 runs</td></tr></tbody></table></div>
+<p class="sbs-says">In this run <code>table</code> printed the exact sum at every thread count in all 3 runs. DuckDB&rsquo;s <code>sum</code> printed 7 different values over the 15 runs; 1 of them equalled the exact sum. DuckDB values are from these runs: at 2 and 4 threads the value changed between runs.</p>
+<p class="sbs-says">Adding doubles is order-dependent, and a threaded sum adds them in an order that depends on how the work was split, so a plain double sum can give a different answer for a different number of threads. <code>table</code> adds every cell without rounding and rounds the total once. DuckDB has other ways to add, shown below.</p>
+<details class="sbs-more"><summary>DuckDB&rsquo;s <code>kahan_sum</code> and a DECIMAL sum, on the same file</summary><div class="fitwrap" tabindex="0" role="region" aria-label="On Apple M4 Max, macOS-26.2-arm64-arm-64bit-Mach-O: DuckDB kahan_sum and DECIMAL sum"><table role="table" class="fit sbs"><caption>DuckDB <code>kahan_sum(x)</code> with x as DOUBLE (also spelled <code>fsum</code>), and <code>sum(x)</code> with x read as DECIMAL(38,12)</caption><thead role="rowgroup"><tr role="row"><th role="columnheader" scope="col">Threads</th><th role="columnheader" scope="col" class="num"><code>kahan_sum</code></th><th role="columnheader" scope="col"><code>kahan_sum</code> equal to the exact sum?</th><th role="columnheader" scope="col" class="num">DECIMAL(38,12) <code>sum</code></th><th role="columnheader" scope="col">DECIMAL value the same in every run?</th></tr></thead><tbody role="rowgroup"><tr role="row"><th role="rowheader" scope="row">1 thread</th><td role="cell" class="num" data-label="kahan_sum, one run per line"><span class="v same">-287436221.60773546 (= exact)</span><span class="v same">-287436221.60773546 (= exact)</span><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" data-label="kahan_sum equal to the exact sum">3 of 3 runs</td><td role="cell" class="num" data-label="DECIMAL(38,12) sum, one run per line"><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span></td><td role="cell" data-label="DECIMAL value the same in every run">yes</td></tr><tr role="row"><th role="rowheader" scope="row">2 threads</th><td role="cell" class="num" data-label="kahan_sum, one run per line"><span class="v same">-287436221.60773546 (= exact)</span><span class="v">-287436221.6077354</span><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" data-label="kahan_sum equal to the exact sum">2 of 3 runs</td><td role="cell" class="num" data-label="DECIMAL(38,12) sum, one run per line"><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span></td><td role="cell" data-label="DECIMAL value the same in every run">yes</td></tr><tr role="row"><th role="rowheader" scope="row">4 threads</th><td role="cell" class="num" data-label="kahan_sum, one run per line"><span class="v same">-287436221.60773546 (= exact)</span><span class="v same">-287436221.60773546 (= exact)</span><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" data-label="kahan_sum equal to the exact sum">3 of 3 runs</td><td role="cell" class="num" data-label="DECIMAL(38,12) sum, one run per line"><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span></td><td role="cell" data-label="DECIMAL value the same in every run">yes</td></tr><tr role="row"><th role="rowheader" scope="row">8 threads</th><td role="cell" class="num" data-label="kahan_sum, one run per line"><span class="v same">-287436221.60773546 (= exact)</span><span class="v same">-287436221.60773546 (= exact)</span><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" data-label="kahan_sum equal to the exact sum">3 of 3 runs</td><td role="cell" class="num" data-label="DECIMAL(38,12) sum, one run per line"><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span></td><td role="cell" data-label="DECIMAL value the same in every run">yes</td></tr><tr role="row"><th role="rowheader" scope="row">16 threads</th><td role="cell" class="num" data-label="kahan_sum, one run per line"><span class="v same">-287436221.60773546 (= exact)</span><span class="v same">-287436221.60773546 (= exact)</span><span class="v same">-287436221.60773546 (= exact)</span></td><td role="cell" data-label="kahan_sum equal to the exact sum">3 of 3 runs</td><td role="cell" class="num" data-label="DECIMAL(38,12) sum, one run per line"><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span><span class="v">-287436221.607735454505</span></td><td role="cell" data-label="DECIMAL value the same in every run">yes</td></tr></tbody></table></div><p class="sbs-says">In this run <code>kahan_sum</code>, DuckDB&rsquo;s compensated sum, was equal to the exact sum in 14 of 15 runs, and printed 2 different values over the 15 runs. The DECIMAL sum printed one value, <code>-287436221.607735454505</code>, over the 5 thread counts and 3 runs. It adds the file&rsquo;s values after rounding each to 12 decimal places, so it answers a slightly different question: the exact sum of the rounded values is <code>-287436221.607735454505</code> and that is what DuckDB printed.</p></details>
+<p class="fine sbs-cond"><strong>Conditions.</strong> Apple M4 Max, macOS-26.2-arm64-arm-64bit-Mach-O, 16 cores, load average 32.27 (1 minute) at the start and 34.75 at the end. DuckDB v1.5.6 (Variegata) 069cc9f9b5; <code>table</code> at <code>db42054</code> with <code>--agg sum:x:float</code>; Python 3.14.5. DuckDB aggregates: <code>sum(x)</code> on a DOUBLE column (plain double addition), <code>kahan_sum(x)</code> on a DOUBLE column, and <code>sum(x)</code> on DECIMAL(38,12), at <code>SET threads=N</code>. File: 2,000,000 rows, 54,304,130 bytes, seed 20261015, sha256 <code>8ea33d01087afbfcd912eb7bdd31fa37d464cce80fa688f24ed12f57d1fb9209</code>, written under a temporary directory by the script. 3 runs at each thread count; every value is as printed, no timings are reported. Re-run it: <code>python3 scripts/threads_vs_duckdb.py</code> (<a href="https://github.com/alpibrusl/cancho-table/blob/main/scripts/threads_vs_duckdb.py">the script</a>, <a href="assets/threads-vs-duckdb.json">every value as JSON</a>).</p>
+<p class="fine">The benchmarks page has this on every machine it was run on, and the questions where DuckDB is ahead: <a href="benchmarks.html#floats">benchmarks, floats</a>.</p>
+<!-- /gen:sbs -->
+</div></section>
+
+<section id="how"><div class="wrap">
+  <h2>How it works</h2>
+  <p class="lead">One plan, from flags or from a <code>--query</code>, resolved against the header before any row is read. It runs inside its limits and ends in an answer or a way back.</p>
+  <figure class="diagram">
+    <svg class="wide" viewBox="0 0 760 330" role="img" aria-labelledby="dgw-t dgw-d">
+      <title id="dgw-t">How a request to table is handled</title>
+      <desc id="dgw-d">A request is checked on the header, then runs in bounded execution and returns an exact result. The check or the execution can instead return a structured refusal with a rule, a hint and a repair. The repair, drawn as a dashed line, leads back to the request.</desc>
+      <defs>
+        <marker id="ahw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--muted)"/></marker>
+        <marker id="abw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--bad)"/></marker>
+        <marker id="agw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--good)"/></marker>
+      </defs>
+      <rect class="box" x="10" y="30" width="150" height="64" rx="10"/><text class="t" x="85" y="58" text-anchor="middle">Your request</text><text class="s" x="85" y="78" text-anchor="middle">flags or --query</text>
+      <rect class="hot" x="205" y="30" width="150" height="64" rx="10"/><text class="t" x="280" y="58" text-anchor="middle">Checked</text><text class="s" x="280" y="78" text-anchor="middle">on the header</text>
+      <rect class="hot" x="400" y="30" width="150" height="64" rx="10"/><text class="t" x="475" y="58" text-anchor="middle">Bounded execution</text><text class="s" x="475" y="78" text-anchor="middle">limits, authority row</text>
+      <rect class="ok" x="595" y="30" width="155" height="64" rx="10"/><text class="t" x="672" y="58" text-anchor="middle">Exact result</text><text class="s" x="672" y="78" text-anchor="middle">JSON line or CSV</text>
+      <path class="ar" d="M160 62H203" marker-end="url(#ahw)"/><path class="ar" d="M355 62H398" marker-end="url(#ahw)"/><path class="arg" d="M550 62H593" marker-end="url(#agw)"/>
+      <rect class="bad" x="262" y="236" width="230" height="64" rx="10"/><text class="t" x="377" y="264" text-anchor="middle">Structured refusal</text><text class="s" x="377" y="284" text-anchor="middle">rule, hint, repair</text>
+      <path class="arbs" d="M280 94V150Q280 170 300 170H377V234" marker-end="url(#abw)"/><path class="arbs" d="M475 94V150Q475 170 455 170H377"/>
+      <text class="sb" x="290" y="140">refused</text><text class="sb" x="485" y="140">refused</text>
+      <path class="arb" d="M262 268H110Q85 268 85 243V98" marker-end="url(#abw)"/>
+      <text class="sb" x="182" y="258" text-anchor="middle">run the repair, ask again</text>
+    </svg>
+    <svg class="narrow" viewBox="0 0 340 400" role="img" aria-labelledby="dgn-t dgn-d">
+      <title id="dgn-t">How a request to table is handled</title>
+      <desc id="dgn-d">A request is checked on the header, then runs in bounded execution and returns an exact result. The check or the execution can instead return a structured refusal with a rule, a hint and a repair. The repair, drawn as a dashed line, leads back to the request.</desc>
+      <defs>
+        <marker id="ahn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--muted)"/></marker>
+        <marker id="abn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--bad)"/></marker>
+        <marker id="agn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="var(--good)"/></marker>
+      </defs>
+      <rect class="box" x="8" y="8" width="150" height="56" rx="9"/><text class="t" x="83" y="32" text-anchor="middle">Your request</text><text class="s" x="83" y="50" text-anchor="middle">flags or --query</text>
+      <rect class="hot" x="8" y="100" width="150" height="56" rx="9"/><text class="t" x="83" y="124" text-anchor="middle">Checked</text><text class="s" x="83" y="142" text-anchor="middle">on the header</text>
+      <rect class="hot" x="8" y="192" width="150" height="56" rx="9"/><text class="t" x="83" y="216" text-anchor="middle">Bounded execution</text><text class="s" x="83" y="234" text-anchor="middle">limits, authority row</text>
+      <rect class="ok" x="8" y="284" width="150" height="56" rx="9"/><text class="t" x="83" y="308" text-anchor="middle">Exact result</text><text class="s" x="83" y="326" text-anchor="middle">JSON line or CSV</text>
+      <path class="ar" d="M83 64V98" marker-end="url(#ahn)"/><path class="ar" d="M83 156V190" marker-end="url(#ahn)"/><path class="arg" d="M83 248V282" marker-end="url(#agn)"/>
+      <rect class="bad" x="182" y="146" width="150" height="56" rx="9"/><text class="t" x="257" y="170" text-anchor="middle">Structured refusal</text><text class="s" x="257" y="188" text-anchor="middle">rule, hint, repair</text>
+      <path class="arbs" d="M158 128H257V144" marker-end="url(#abn)"/><path class="arbs" d="M158 220H257V204" marker-end="url(#abn)"/>
+      <path class="arb" d="M257 146V36H160" marker-end="url(#abn)" transform="translate(0 0)"/>
+      <text class="sb" x="266" y="80">run the</text><text class="sb" x="266" y="97">repair</text>
+    </svg>
+    <figcaption>A request is checked before it runs, runs inside its limits and its authority, and either answers exactly or is refused with a way back. A cell that is not of its declared type is refused when it is read, with its row, line and column.</figcaption>
+  </figure>
+</div></section>
+
+<section class="alt" id="does"><div class="wrap">
+  <h2>What it reads and does now</h2>
+  <p class="lead">Every example on this page runs on one of a few small files, and the output under it is what the built program prints. What it cannot do yet is <a href="#cannot">listed below</a>.</p>
+  <div class="cards three">
+    <div class="card"><h3>CSV and TSV</h3><p>Comma, tab or semicolon. A comma inside a quoted field stays inside it, and the output is quoted again.</p>
+<!-- gen:c-csv -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --select customer,bytes --format csv orders.csv
+customer,bytes
+"Doe, Jane",512
+Acme,
+"Doe, Jane",2048
+Acme,128
+Zed,64</pre>
+<!-- /gen:c-csv -->
+      <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/select.md">docs/select.md</a></div>
+    <div class="card"><h3>JSON lines, in and out</h3><p><code>--input-format jsonl</code> reads one object per line, the columns declared with <code>--fields</code>; <code>--format jsonl</code> writes one object per row. No Parquet, no JSON array.</p>
+<!-- gen:c-jsonl -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --input-format jsonl --fields user.name,bytes --where "bytes:int &gt; 100" --format jsonl events.jsonl
+{"user.name":"Ana","bytes":"512"}
+{"user.name":"Bo","bytes":"128"}</pre>
+<!-- /gen:c-jsonl -->
+      <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a></div>
+    <div class="card"><h3>Standard input</h3><p>Name a file, or pipe one in (<code>-</code>, or no file). It is read in one pass, on one core.</p>
+<!-- gen:c-stdin -->
+<pre class="code" tabindex="0"><span class="c">$</span> cat orders.csv | table --where "status = 200" --select id,bytes --format csv -
+id,bytes
+1,512
+3,2048
+5,64</pre>
+<!-- /gen:c-stdin -->
+      <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a></div>
+    <div class="card"><h3>A small SQL</h3><p><code>--query</code> takes <code>select</code>, <code>from</code>, <code>where</code>, <code>group by</code>, <code>order by</code>, <code>limit</code> and <code>offset</code>, and means exactly the flags it is translated to.</p>
+<!-- gen:c-query -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --query "select customer, count(*), sum(bytes) from 'orders.csv' where bytes != '' group by customer order by sum(bytes) desc limit 2" --format csv
+customer,count,sum:bytes
+"Doe, Jane",2,2560
+Acme,1,128</pre>
+<!-- /gen:c-query -->
+      <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a></div>
+    <div class="card"><h3>Joins</h3><p><code>--join</code> with <code>--join-type</code> inner, left, semi or anti (slices J1 and J2 of the joins design), on up to eight pairs of columns, as text or as <code>:int</code>, <code>:dec(S)</code> or <code>:float</code>. Rows out; the joined file is held in memory.</p>
+<!-- gen:c-join -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --join tiers.csv --on customer --join-type left --select id,customer,tier --format csv orders.csv
+id,customer,tier
+1,"Doe, Jane",
+2,Acme,silver
+3,"Doe, Jane",
+4,Acme,silver
+5,Zed,bronze</pre>
+<!-- /gen:c-join -->
+      <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/joins.md">docs/joins.md</a></div>
+    <div class="card"><h3>or, not and parentheses</h3><p>In a filter and in <code>--query</code>. A level is all <code>and</code> or all <code>or</code>: a mix is refused with both readings as the repair, never guessed.</p>
+<!-- gen:c-or -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --where "(status = 404 or status = 500) and bytes != '' and bytes:int &gt; 100" --select id,status,bytes --format csv orders.csv
+id,status,bytes
+4,500,128</pre>
+<!-- /gen:c-or -->
+      <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/or-and-columns.md">docs/or-and-columns.md</a></div>
+    <div class="card"><h3>Rename the output</h3><p><code>--rename TARGET=NEW</code> gives the columns of rows or groups the labels the next step expects. A label and nothing else: not a computed column.</p>
+<!-- gen:c-rename -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --where "bytes != ''" --group customer --agg count,sum:bytes --rename customer=name,sum:bytes=total --sort -total --format csv orders.csv
+name,count,total
+"Doe, Jane",2,2560
+Acme,1,128
+Zed,1,64</pre>
+<!-- /gen:c-rename -->
+      <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/or-and-columns.md">docs/or-and-columns.md</a></div>
+    <div class="card"><h3>See the plan first</h3><p><code>--explain</code> prints, as one JSON line, what a call would do without doing it: columns, types, limits, threads and the refusals still possible. It reads the header and no row.</p>
+<!-- gen:c-explain -->
+<pre class="code" tabindex="0"><span class="c">$</span> table --explain --threads 4 --where "bytes:int &gt; 100" --group customer --agg count,sum:bytes --sort -sum:bytes --limit 2 orders.csv
+{"ok":true,"command":"table","schema":"table.v2","data":{"explain":{"source":{"kind":"file","path":"orders.csv","reader":"file","block_bytes":65536,"…
+<span class="c"># long lines cut here; the whole line is under "Every example"</span></pre>
+<!-- /gen:c-explain -->
+      <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a></div>
+    <div class="card"><h3>An MCP server</h3><p>One tool, <code>table</code>, over MCP, whose definition is generated from <code>table introspect</code> (CI runs <code>scripts/mcp.py --check</code>). A call becomes an argument list for the one binary under a fixed <code>--root</code>, with no shell.</p>
+      <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/mcp.md">docs/mcp.md</a></div>
+  </div>
+
+  <details class="more wide" id="examples"><summary>Every example, with the detail (18 tasks)</summary>
+    <p class="sub" style="margin-top:1rem">Every example runs on this five-line file (the decimal, float, join and group-key examples use a small file of their own, named where it is used), and the output is what the program prints.</p>
+    <pre class="code" tabindex="0"><code>id,customer,status,bytes
 1,"Doe, Jane",200,512
 2,Acme,404,
 3,"Doe, Jane",200,2048
@@ -330,7 +471,9 @@ min:temp,max:temp,distinct:temp
   </div>
   <div>
     <h3 class="task">Sum and average floats, exactly</h3>
-    <p><code>sum:x:float</code> and <code>mean:x:float</code> are exact: every cell is added without rounding and the total is rounded once to the nearest double (ties to even), so the answer does not depend on the order of the rows or on the number of cores. Adding the same numbers left to right in double precision gives <code>0.0</code> for group <code>a</code> and <code>0.9999999999999999</code> for group <code>h</code>. A <code>mean</code> takes no <code>@N</code> (it is a double; <code>mean:x:float@2</code> is refused). A sum beyond the largest double, about 1.8e308, is <code>agg.float-overflow</code>, which names the group; the mean of that group still exists. On a million rows DuckDB's DOUBLE sum gave a different answer at 1, 4 and 16 threads, none equal to the exact one: see the <a href="benchmarks.html#floats">benchmarks</a>.</p>
+    <p><code>sum:x:float</code> and <code>mean:x:float</code> are exact: every cell is added without rounding and the total is rounded once to the nearest double (ties to even), so the answer does not depend on the order of the rows or on the number of cores. Adding the same numbers left to right in double precision gives <code>0.0</code> for group <code>a</code> and <code>0.9999999999999999</code> for group <code>h</code>. A <code>mean</code> takes no <code>@N</code> (it is a double; <code>mean:x:float@2</code> is refused). A sum beyond the largest double, about 1.8e308, is <code>agg.float-overflow</code>, which names the group; the mean of that group still exists. <!-- gen:sbsline -->
+On a file of 2,000,000 doubles (the committed runs of scripts/threads_vs_duckdb.py) DuckDB&rsquo;s DOUBLE <code>sum</code> printed a different value for different thread counts and, for different runs of the same command (on the Mac at 2 and 4 threads; on Linux at 2, 4, 8 and 16 threads); it equalled the exact sum in 1 of 15 runs on the Mac and 0 of 15 runs on Linux. Its <code>kahan_sum</code> and a DECIMAL sum are in the <a href="benchmarks.html#sbs">side by side</a> too. An earlier measurement, on a million rows, gave a different answer at 1, 4 and 16 threads, none equal to the exact one (see the benchmarks).
+<!-- /gen:sbsline --> (<a href="benchmarks.html#floats">benchmarks</a>)</p>
 <!-- gen:t-floatsum -->
 <pre class="code" tabindex="0"><span class="c">$</span> table --group g --agg "sum:x:float,mean:x:float" --format csv drift.csv
 g,sum:x,mean:x
@@ -432,7 +575,7 @@ Zed,64</pre>
   </div>
   <div>
     <h3 class="task">Join two files</h3>
-    <p><code>--join FILE --on PROBE=BUILD</code> joins the file you name (or standard input) with a second one. The operand is the <strong>probe</strong> side and is streamed; the <code>--join</code> file is the <strong>build</strong> side and is held whole in memory, counted in <code>--max-state-bytes</code>. A key is compared as text, byte for byte (<code>007</code> is not <code>7</code>, and an empty cell matches an empty cell: there is no null). The answer is each probe row, in the probe's order, once for every build row with its key, in the build's order, followed by that row's cells. Two files that share a column name are refused as <code>join.column-collision</code>, and the refusal offers the invocation with a <code>--join-prefix</code>. This is the first slice: inner join, rows out.</p>
+    <p><code>--join FILE --on PROBE=BUILD</code> joins the file you name (or standard input) with a second one. The operand is the <strong>probe</strong> side and is streamed; the <code>--join</code> file is the <strong>build</strong> side and is held whole in memory, counted in <code>--max-state-bytes</code>. <code>--join-type</code> is <code>inner</code> (the default: each probe row, in the probe's order, once for every build row with its key, in the build's order, followed by that row's cells), <code>left</code> (the same, and a probe row with no match once, with every cell of the build row empty: there is no null), <code>semi</code> (each probe row that has a match, once, with its own cells) or <code>anti</code> (each probe row that has none, once). A key is compared as text, byte for byte (<code>007</code> is not <code>7</code>, and an empty cell matches an empty cell: there is no null), or as a number when the pair ends in a type, <code>--on id=user:int</code> (also <code>:dec(S)</code> and <code>:float</code>): then <code>007</code> is <code>7</code>, <code>-0</code> is <code>0</code>, <code>1.5</code> is <code>1.50</code>, and a cell that is not of the type, an empty one included, is refused. <code>--on a=x,b=y</code> is a key of two pairs (up to eight); <code>--on id</code> names a column both files have, and the answer shows it once. Two files that share a column name are refused as <code>join.column-collision</code>, and the refusal offers the invocation with a <code>--join-prefix</code>. A number read from a padded cell of a left join (<code>--where "tier:int &gt; 1"</code>) is refused as any empty cell is, and the refusal says <code>padded</code> (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/joins.md">docs/joins.md</a>, sections 16 and 17).</p>
 <!-- gen:t-join -->
 <pre class="code" tabindex="0"><span class="c">$</span> table --join customers.csv --on customer=name --join-prefix c_ --select id,customer,bytes,c_tier --format csv orders.csv
 id,customer,bytes,c_tier
@@ -477,7 +620,7 @@ bronze,1,64</pre>
   </div>
   <div>
     <h3 class="task">Ask in a small SQL</h3>
-    <p><code>--query</code> takes one statement of a small subset of SQL (<code>select</code>, <code>from</code>, <code>where</code> with <code>and</code>, <code>group by</code>, <code>order by</code>, <code>limit</code>, <code>offset</code>) and means exactly the flags it is translated to: one plan, the same bytes. <code>select a as b</code> gives a column of the answer another label (it is <code>--rename '#1=b'</code>). What the subset leaves out (expressions, <code>like</code>, <code>null</code>, joins) is refused with the feature named and what to write instead; a mistake is refused at its byte, with a corrected command when the correction is certain.</p>
+    <p><code>--query</code> takes one statement of a small subset of SQL (<code>select</code>, <code>from</code>, <code>where</code> with <code>and</code>, <code>group by</code>, <code>order by</code>, <code>limit</code> and <code>offset</code>) and means exactly the flags it is translated to: there is one plan, and the same question asked in flags gives the same bytes. <code>select a as b</code> gives a column of the answer another label (it is <code>--rename '#1=b'</code>). What the subset leaves out (expressions, <code>like</code>, <code>null</code>, joins) is refused with the feature named and what to write instead, and a mistake is refused at the byte where it is, with a corrected command when the correction is certain. <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a> has the grammar.</p>
 <!-- gen:t-query -->
 <pre class="code" tabindex="0"><span class="c">$</span> table --query "select customer, count(*), sum(bytes) from 'orders.csv' where bytes != '' group by customer order by sum(bytes) desc limit 2" --format csv
 customer,count,sum:bytes
@@ -493,7 +636,7 @@ Acme,1,128
   </div>
   <div>
     <h3 class="task">See the plan before it runs</h3>
-    <p><code>--explain</code> takes the flags (or the <code>--query</code>) of a call and prints, as one JSON line, what the call would do, without doing it: each column the plan names and where the header puts it, every condition, group, aggregate and order with the type it is read as, the page, the kind of work it is and the limits in force, how many threads it would use and why not more, the rules the data could still refuse it with, and notes. It reads the first 64 KiB of the file for the header and nothing after the header, so what it costs does not grow with the file; it does not read standard input at all. A plan the run would refuse before it read a row is refused with the run's own error and exit status.</p>
+    <p><code>--explain</code> takes the flags (or the <code>--query</code>) of a call and prints, as one JSON line, what the call would do, without doing it: each column the plan names and where the header puts it, every condition, group, aggregate and order with the type it is read as, the page, the kind of work it is and the limits in force, how many threads it would use and why not more, the rules the data could still refuse it with, and notes. It opens the file and reads its first 64 KiB for the header, and nothing after the header: no row is framed, counted or judged, so what it costs does not grow with the file (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a> section 15 has the measured time). It does not read standard input at all, so the columns of a plan on a pipe are not known, and the notes say so. A plan the run would refuse before it read a row (a bad flag or query, a name the header lacks, a missing file, a header past <code>--max-line-bytes</code>) is refused with the run's own error and exit status.</p>
 <!-- gen:t-explain -->
 <pre class="code" tabindex="0"><span class="c">$</span> table --explain --threads 4 --where "bytes:int &gt; 100" --group customer --agg count,sum:bytes --sort -sum:bytes --limit 2 orders.csv
 {"ok":true,"command":"table","schema":"table.v2","data":{"explain":{"source":{"kind":"file","path":"orders.csv","reader":"file","block_bytes":65536,"format":"csv","delimiter":",","size":110,"header_read":true,"columns":4,"bytes_read":110},"plan":{"form":"groups","select":[],"where":[{"column":{"ref":"bytes","position":4,"name":"bytes"},"type":"int","op":"&gt;","values":["100"]}],"group":[{"column":{"ref":"customer","position":2,"name":"customer"},"type":"text"}],"aggregates":[{"function":"count","column":null,"type":null,"scale":null},{"function":"sum","column":{"ref":"bytes","position":4,"name":"bytes"},"type":"int","scale":null}],"order_by":[],"sort":"-sum:bytes","top":null,"limit":2,"from":0},"output":{"format":"json","columns":["customer","count","sum:bytes"]},"work":{"class":"grouped single pass","reads":"all rows","bounds":{"max_rows":10000000,"max_line_bytes":1048576,"max_bytes":1048576,"max_groups":100000,"max_state_bytes":67108864},"threads":{"requested":4,"effective":1,"reason":"the file after the header is under --parallel-min-bytes"}},"refusals":{"possible":["io.read-failed","parse.csv-ragged-row","parse.csv-bad-quote","parse.csv-unterminated-quote","limit.line-too-long","limit.record-too-large","value.not-integer","value.integer-overflow","limit.output-too-large","limit.too-many-groups","limit.state-too-large"]},"notes":[]}},"meta":{"version":"0.3.0"}}</pre>
@@ -541,23 +684,12 @@ status,count
 <!-- /gen:t-refuse -->
   </div>
   </div>
-  <details class="more" id="limits"><summary>The limits, and what they default to</summary>
-<!-- gen:limits -->
-<div class="fitwrap"><table class="fit"><thead><tr><th>limit</th><th>default</th><th>ceiling</th></tr></thead><tbody><tr><th><code>--threads</code></th><td class="num">1</td><td class="num">64</td></tr><tr><th><code>--chunk-bytes</code></th><td class="num">4,194,304</td><td class="num">1,073,741,824</td></tr><tr><th><code>--parallel-min-bytes</code></th><td class="num">1,048,576</td><td class="num">1,073,741,824</td></tr><tr><th><code>--limit</code></th><td class="num">1,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-bytes</code></th><td class="num">1,048,576</td><td class="num">67,108,864</td></tr><tr><th><code>--max-groups</code></th><td class="num">100,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-distinct</code></th><td class="num">100,000</td><td class="num">10,000,000</td></tr><tr><th><code>--max-state-bytes</code></th><td class="num">67,108,864</td><td class="num">1,073,741,824</td></tr><tr><th><code>--max-sort-rows</code></th><td class="num">1,000,000</td><td class="num">20,000,000</td></tr><tr><th><code>--max-rows</code></th><td class="num">10,000,000</td><td class="num">1,000,000,000</td></tr><tr><th><code>--max-line-bytes</code></th><td class="num">1,048,576</td><td class="num">16,777,216</td></tr><tr><th><code>--max-json-nodes</code></th><td class="num">4,096</td><td class="num">1,048,576</td></tr><tr><th><code>--discover-lines</code></th><td class="num">1,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-fields</code></th><td class="num">256</td><td class="num">4,096</td></tr><tr><th><code>--max-join-rows</code></th><td class="num">10,000,000</td><td class="num">1,000,000,000</td></tr></tbody></table></div>
-<!-- /gen:limits -->
   </details>
-  <details class="more"><summary>All <!-- gen:nrules -->
-71
-<!-- /gen:nrules --> refusal rules</summary>
-<!-- gen:rules -->
-<div class="fitwrap"><table class="fit"><thead><tr><th>rule</th><th>exit</th><th>a repair?</th><th>what it refuses</th></tr></thead><tbody><tr><th><code>args.unknown-flag</code></th><td class="num">2</td><td>sometimes</td><td>a flag that is not in the tool's table</td></tr><tr><th><code>args.missing-value</code></th><td class="num">2</td><td>never</td><td>a flag that takes a value was given none</td></tr><tr><th><code>args.bad-value</code></th><td class="num">2</td><td>never</td><td>a flag's value is not of the flag's kind</td></tr><tr><th><code>args.duplicate-flag</code></th><td class="num">2</td><td>never</td><td>the same flag was given twice</td></tr><tr><th><code>args.conflict</code></th><td class="num">2</td><td>never</td><td>two flags that exclude each other were both given</td></tr><tr><th><code>args.required-flag</code></th><td class="num">2</td><td>never</td><td>a flag the tool needs was not given</td></tr><tr><th><code>args.too-many-operands</code></th><td class="num">2</td><td>never</td><td>more operands than the tool takes</td></tr><tr><th><code>path.empty</code></th><td class="num">2</td><td>never</td><td>an empty path</td></tr><tr><th><code>path.dotdot</code></th><td class="num">2</td><td>sometimes</td><td>a path with a `..` component</td></tr><tr><th><code>path.absolute</code></th><td class="num">2</td><td>always</td><td>an absolute path where one relative to --root is wanted</td></tr><tr><th><code>path.outside-root</code></th><td class="num">4</td><td>never</td><td>an absolute path that is not under --root</td></tr><tr><th><code>path.too-long</code></th><td class="num">2</td><td>never</td><td>a path longer than 4096 bytes</td></tr><tr><th><code>path.symlink</code></th><td class="num">4</td><td>never</td><td>a path that runs through a symbolic link, which the tool does not follow</td></tr><tr><th><code>io.not-found</code></th><td class="num">3</td><td>never</td><td>a named input does not exist</td></tr><tr><th><code>io.not-a-directory</code></th><td class="num">3</td><td>never</td><td>a path runs through something that is not a directory</td></tr><tr><th><code>io.is-a-directory</code></th><td class="num">2</td><td>never</td><td>a directory where a file is wanted</td></tr><tr><th><code>io.permission-denied</code></th><td class="num">4</td><td>never</td><td>the operating system refused access</td></tr><tr><th><code>io.read-failed</code></th><td class="num">1</td><td>never</td><td>the operating system failed a read</td></tr><tr><th><code>io.write-failed</code></th><td class="num">1</td><td>never</td><td>the operating system failed a write, or a write was short</td></tr><tr><th><code>limit.line-too-long</code></th><td class="num">8</td><td>sometimes</td><td>a line longer than --max-line-bytes</td></tr><tr><th><code>limit.header-too-large</code></th><td class="num">8</td><td>never</td><td>the header record holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>limit.record-too-large</code></th><td class="num">8</td><td>never</td><td>a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>limit.output-too-large</code></th><td class="num">8</td><td>never</td><td>the first row of a page is longer than --max-bytes. Hint: raise --max-bytes, up to the ceiling introspect names, or select fewer columns. Repair: none.</td></tr><tr><th><code>limit.too-many-rows</code></th><td class="num">8</td><td>never</td><td>--format csv reached --max-rows with rows left unread. Hint: raise --max-rows, up to the ceiling introspect names, or page with --limit and --from. Repair: none.</td></tr><tr><th><code>limit.too-many-sort-rows</code></th><td class="num">8</td><td>never</td><td>--order-by would hold more than --max-sort-rows rows to sort. Hint: ask for the first rows only with --top N or a smaller --limit (they are kept in bounded memory), keep fewer rows with --where, or raise --max-sort-rows, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>limit.too-many-groups</code></th><td class="num">8</td><td>never</td><td>more groups than --max-groups. Hint: raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns. Repair: none.</td></tr><tr><th><code>limit.too-many-distinct</code></th><td class="num">8</td><td>never</td><td>more distinct values than --max-distinct. Hint: raise --max-distinct, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>limit.state-too-large</code></th><td class="num">8</td><td>never</td><td>the keys and values kept for groups, the rows kept to sort, or the --join file held whole in memory (detail.holder is join-build), hold more than --max-state-bytes bytes. Hint: raise --max-state-bytes, up to the ceiling introspect names, or group by shorter values. Repair: none.</td></tr><tr><th><code>parse.csv-ragged-row</code></th><td class="num">8</td><td>never</td><td>a row has a different number of fields than the header. Hint: make every row as wide as the header, quoting fields that hold the delimiter. Repair: none.</td></tr><tr><th><code>parse.csv-bad-quote</code></th><td class="num">8</td><td>never</td><td>a closing quote is followed by something other than the delimiter or the end of the record. Hint: double a quote that is text, or put the delimiter after the closing quote. Repair: none.</td></tr><tr><th><code>parse.csv-unterminated-quote</code></th><td class="num">8</td><td>never</td><td>a quoted field is still open at the end of the input. Hint: close the quote, or double the quotes that are text. Repair: none.</td></tr><tr><th><code>select.unknown-column</code></th><td class="num">3</td><td>sometimes</td><td>a name or position in --select that is not a column of the header. Hint: pick from detail.available. Repair: choose.</td></tr><tr><th><code>select.ambiguous-column</code></th><td class="num">8</td><td>never</td><td>a name in --select that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.</td></tr><tr><th><code>column.unknown</code></th><td class="num">3</td><td>never</td><td>a name or position in --where, --group, --agg or --on that is not a column of the header (for --on, detail.input says which file). Hint: pick from detail.available. Repair: none.</td></tr><tr><th><code>column.ambiguous</code></th><td class="num">8</td><td>never</td><td>a name in --where, --group, --agg or --on that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.</td></tr><tr><th><code>where.syntax</code></th><td class="num">2</td><td>sometimes</td><td>--where is not an expression of the grammar, at the offset the detail gives (a missing ) or an unclosed group, an or or an and with nothing after it, a not before a bare condition (not a = 1), more than 8 levels of parentheses, more than 64 conditions or 1024 values). Hint: the grammar is in the help of --where: COLUMN OP VALUE joined by and. Repair: choose.</td></tr><tr><th><code>where.mixed-and-or</code></th><td class="num">2</td><td>sometimes</td><td>--where uses and and or at one level, without parentheses, at the offset the detail gives (a = 1 or b = 2 and c = 3). Hint: put parentheses round what goes first: (a = 1 or b = 2) and c = 3 is one question and a = 1 or (b = 2 and c = 3) another, and the tool does not choose between them, the repair offers both. Repair: choose.</td></tr><tr><th><code>agg.bad-spec</code></th><td class="num">2</td><td>never</td><td>an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes. Hint: --agg count,sum:bytes,max:bytes,distinct:status, a mean of an integer column needs its scale, mean:bytes@2, a decimal column is declared sum:price:dec(2). Repair: none.</td></tr><tr><th><code>sort.unknown-key</code></th><td class="num">2</td><td>never</td><td>--sort names no output column of the grouping. Hint: pick from detail.available, with a - before it to sort descending. Repair: none.</td></tr><tr><th><code>value.not-integer</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max, or a key cell of a join pair typed :int (detail.context is join and detail.input says which file), is not an exact integer (an empty cell is not one, and detail.padded says the cell was the padding of a left join). Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.</td></tr><tr><th><code>value.integer-overflow</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max, or a key cell of a join pair typed :int, does not fit 64 bits. Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.</td></tr><tr><th><code>value.not-decimal</code></th><td class="num">8</td><td>never</td><td>a cell of a :dec(S) column, or a key cell of a join pair typed :dec(S), is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that decides the row stops the ones after it: before an and put a test that is false for such a cell, before an or one that is true), or do not ask for a decimal of this column. Repair: none.</td></tr><tr><th><code>value.decimal-scale</code></th><td class="num">8</td><td>sometimes</td><td>a cell of a :dec(S) column, or a key cell of a join pair typed :dec(S), has more fractional digits than S (it is never rounded). Hint: declare a larger scale, :dec(N) with N the most fractional digits the column holds. Repair: choose.</td></tr><tr><th><code>value.decimal-too-wide</code></th><td class="num">8</td><td>never</td><td>a cell of a :dec(S) column, or a key cell of a join pair typed :dec(S), has 18 or more significant digits once scaled to S. Hint: declare a smaller scale, or compare the column as text. Repair: none.</td></tr><tr><th><code>column.type-conflict</code></th><td class="num">2</td><td>never</td><td>the plan reads one column as two numeric types: :int, :float, or :dec with two scales, in --where, --group, --agg or --order-by. Hint: give the column one type: the same :int, :float or :dec(N), in every place it is named, --where, --group, --agg and --order-by. Repair: none.</td></tr><tr><th><code>value.not-float</code></th><td class="num">8</td><td>never</td><td>a cell of a :float column, or a key cell of a join pair typed :float, is not a number: an empty cell, a space, a separator, a hex form, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that decides the row stops the ones after it: before an and put a test that is false for such a cell, before an or one that is true), or do not ask for a float of this column. Repair: none.</td></tr><tr><th><code>value.not-finite</code></th><td class="num">8</td><td>never</td><td>a cell of a :float column, or a key cell of a join pair typed :float, is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float &gt; 5). Hint: keep them out with --where first: x != 'NaN' and x:float &gt; 5 never reads the NaN cell as a number. Repair: none.</td></tr><tr><th><code>value.float-range</code></th><td class="num">8</td><td>never</td><td>a cell of a :float column, or a key cell of a join pair typed :float, is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which). Hint: keep out the rows with such a cell with --where first, or compare the column as text. Repair: none.</td></tr><tr><th><code>limit.number-too-long</code></th><td class="num">8</td><td>never</td><td>a cell of a :float column, or a key cell of a join pair typed :float, is longer than 1,100 bytes, the longest cell that can be a double. Hint: a number of this length is not a double, compare the column as text. Repair: none.</td></tr><tr><th><code>agg.float-overflow</code></th><td class="num">8</td><td>never</td><td>the exact sum of a :float column in a group is beyond the largest double, about 1.8e308 (detail.group names the group). Hint: sum fewer rows with --where, group by more columns, or sum in a smaller unit (the mean of the same group is a number: mean:COL:float). Repair: none.</td></tr><tr><th><code>query.syntax</code></th><td class="num">2</td><td>sometimes</td><td>a --query that is not a statement of the grammar, or a literal that does not fit the type its column is read as, at the byte offset the detail gives. Hint: detail.expected says what was expected at detail.offset, and the grammar is in the help of --query. Repair: choose.</td></tr><tr><th><code>query.mixed-and-or</code></th><td class="num">2</td><td>sometimes</td><td>a --query that uses and and or at one level of its where, without parentheses, at the offset the detail gives. Hint: put parentheses round what goes first: (a = 1 or b = 2) and c = 3 is one question and a = 1 or (b = 2 and c = 3) another, and the tool does not choose between them, the repair offers both. Repair: choose.</td></tr><tr><th><code>query.unsupported</code></th><td class="num">2</td><td>sometimes</td><td>a --query that uses something the language leaves out: a like, a null, an alias, an expression, a join, a typed group by column, an order the flags cannot say. Hint: detail.feature names it, and the hint says what to write instead. Repair: choose.</td></tr><tr><th><code>query.group-mismatch</code></th><td class="num">2</td><td>sometimes</td><td>a --query whose select list is not its group by columns, in the same order, then at least one aggregate, or whose order by names something the select list does not hold. Hint: a grouping selects its group by columns first, in the same order, then aggregates, and has at least one: select a, count(*) from 'f.csv' group by a. Repair: choose.</td></tr><tr><th><code>query.too-long</code></th><td class="num">2</td><td>never</td><td>a --query of more than 4096 bytes. Hint: ask the question in fewer bytes, the limit is detail.limit. Repair: none.</td></tr><tr><th><code>input.fields-required</code></th><td class="num">2</td><td>sometimes</td><td>a plan on JSON lines (--input-format jsonl) with no --fields: JSON lines have no header, so the columns are declared. Hint: --fields id,status,user.name declares them, --discover reports what the first lines hold. Repair: retry.</td></tr><tr><th><code>input.bad-fields</code></th><td class="num">2</td><td>never</td><td>--fields is not a list of paths: an empty item or segment, a backslash that escapes anything but a comma, a backslash, a # or a dot, a path of more than 8 segments, the same path twice, or more than 4096 paths (detail.item and detail.reason). Hint: paths are keys separated by dots, items are separated by commas, and a backslash escapes only a comma, a backslash, a # or a dot: --fields id,user.name,items.0.sku. Repair: none.</td></tr><tr><th><code>parse.jsonl-syntax</code></th><td class="num">8</td><td>never</td><td>a line is not strict JSON (RFC 8259): detail.code and detail.reason say what the parser met, detail.offset where in the line and detail.near the bytes around it, and detail.looks_like is json-document when the first line begins like a document that is not JSON lines. Hint: one JSON object per line, and jq -c '.[]' makes lines of an array. Repair: none.</td></tr><tr><th><code>parse.jsonl-not-object</code></th><td class="num">8</td><td>never</td><td>a line is JSON that is not an object (detail.kind). Hint: one JSON object per line, and jq -c '.[]' makes lines of an array. Repair: none.</td></tr><tr><th><code>parse.jsonl-missing-field</code></th><td class="num">8</td><td>sometimes</td><td>a declared path has no value in a line: the key or index is not there, the value is null, or a step goes through something that is not an object or an array (detail.reason). Hint: --absent empty reads such a path as the empty cell. Repair: retry.</td></tr><tr><th><code>parse.jsonl-not-scalar</code></th><td class="num">8</td><td>never</td><td>a declared path holds an object or an array (detail.kind). Hint: declare a deeper path: user.name, tags.0. Repair: none.</td></tr><tr><th><code>parse.jsonl-duplicate-key</code></th><td class="num">8</td><td>never</td><td>a key occurs twice at a step of a declared path (detail.key), which parsers read differently. Hint: make the keys of the line unique. Repair: none.</td></tr><tr><th><code>limit.json-too-many-nodes</code></th><td class="num">8</td><td>never</td><td>a line holds more JSON nodes than --max-json-nodes. Hint: raise --max-json-nodes, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>output.duplicate-column</code></th><td class="num">2</td><td>never</td><td>two columns of the answer of --format jsonl have the same name, and an object whose key occurs twice is read differently by different parsers (detail.column, and detail.first and detail.second, the 1-based places in the answer). Hint: name each column once: select it once, and each aggregate once, or rename one with --rename. Repair: none.</td></tr><tr><th><code>output.not-representable</code></th><td class="num">2</td><td>never</td><td>the name of a column of the answer of --format jsonl is not valid UTF-8, which cannot be the key of a JSON object (detail.column holds it as text_or_bytes does). Hint: write the answer as --format csv, which carries any bytes. Repair: none.</td></tr><tr><th><code>join.column-collision</code></th><td class="num">2</td><td>sometimes</td><td>a column name is in both files of a join (detail.columns, after --join-prefix), so the joined row would have it twice and nothing is renamed on the way. Hint: give the --join file's columns a prefix with --join-prefix, or select and name them by position. Repair: choose.</td></tr><tr><th><code>limit.too-many-join-rows</code></th><td class="num">8</td><td>never</td><td>a join would produce more rows than --max-join-rows (detail.matches is how many build rows the probe row's key has). Hint: if detail.matches is large the --join file repeats this key: remove the duplicates, or make the other file the --join file, otherwise raise --max-join-rows, up to the ceiling introspect names, or page with --limit. Repair: none.</td></tr><tr><th><code>rename.syntax</code></th><td class="num">2</td><td>never</td><td>an item of --rename is not TARGET=NEW: it has no equals sign, an empty target or an empty new label, or a backslash before anything but a comma, a backslash, an equals sign or a # (detail.offset is the byte of the list and detail.expected what was expected there). Hint: --rename is items TARGET=NEW separated by commas, TARGET a label of the answer or #N and NEW at least one byte, with a backslash before a comma, a backslash, an equals sign or a # that is part of a name. Repair: none.</td></tr><tr><th><code>rename.unknown-target</code></th><td class="num">3</td><td>sometimes</td><td>a label or position in --rename that is not an output column of the answer (the columns --select, --where, --group and --agg give, before any rename). Hint: pick from detail.available, or write the column as #N. Repair: choose.</td></tr><tr><th><code>rename.ambiguous-target</code></th><td class="num">8</td><td>never</td><td>a label in --rename that is the label of more than one output column (detail.columns are their places in the answer). Hint: name the column by its position, as #3 for the third column. Repair: none.</td></tr><tr><th><code>rename.repeated-target</code></th><td class="num">2</td><td>never</td><td>an output column that --rename renames twice (detail.item is the second item and detail.first the first). Hint: rename each column once. Repair: none.</td></tr></tbody></table></div>
-<!-- /gen:rules -->
-  </details>
-</section>
+</div></section>
 
-<section id="agent">
+<section id="agent"><div class="wrap">
   <h2>Built to be read by an agent</h2>
-  <p class="sub"><code>table introspect</code> and <code>table skill</code> are generated from the same tables the code parses its flags with, so they cannot disagree with the program. An agent can learn the interface, the limits, the rules and the authority from the binary itself. The protocol for acting on a refusal is in <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">docs/refusals.md</a>.</p>
+  <p class="lead">Capability introspection: <code>table introspect</code> and <code>table skill</code> are generated from the same tables the code parses its flags with, so they cannot disagree with the program. An agent can learn the interface, the limits, the rules and the authority from the binary itself. The protocol for acting on a refusal is in <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">docs/refusals.md</a>.</p>
   <div class="two">
     <div class="figure"><h3><code>table introspect</code></h3>
 <!-- gen:agentio -->
@@ -613,25 +745,39 @@ query:  table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-byte
 <!-- /gen:skill -->
     </div>
   </div>
-</section>
+  <div class="authrow" id="cancho">
+    <h3>What the program may do: an authority the compiler wrote</h3>
+    <p class="sub"><a href="https://github.com/alpibrusl/cancho">cancho</a> is a language whose compiler writes down what a program may do (<code>cancho authority</code>). For <code>table</code> that is the line below: it can read its arguments, the file (or standard input), allocate memory, start threads and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file. CI fails if the binary says otherwise. Why each label is there, and what a row cannot say: <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/architecture.md">docs/architecture.md</a>.</p>
+<!-- gen:authority -->
+<pre class="code" tabindex="0"><span class="c"># manifests/table.authority.json</span>
+table    args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write
+<span class="c"># bounded: true; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>
+<!-- /gen:authority -->
+  </div>
+</div></section>
 
-<section id="cannot">
-  <h2>What it cannot do yet</h2>
-  <ul class="plain">
-    <li><strong>Numbers are mostly built.</strong> <code>:int</code>, <code>:dec(S)</code> and <code>:float</code> work in <code>--where</code>, <code>--agg</code>, <code>--group</code> and <code>--order-by</code>. Columns of 15- to 17-digit numbers are read by an exact reader that allocates nothing on the paths a real column takes (Clinger, then Eisel-Lemire, then an exact fallback); it matched Python&rsquo;s <code>float()</code> on every cell of a differential run of over 100 million cells, and takes 29.6 ns a cell against 1,151 ns before (one Mac core, load 6.7 to 13.5). <a href="benchmarks.html#float-reader">Conditions</a>.</li>
-    <li><strong>A sort uses more cores only for a whole sort written as CSV.</strong> With <code>--order-by</code>, <code>--format csv</code> and no <code>--top</code>, <code>--limit</code> or <code>--from</code>, <code>--threads</code> above 1 sorts in parallel and gives the same bytes; pages, <code>--top</code> and JSON output run on one core. A threaded sort needs several times the memory of the sequential one. There is no sort that spills to disk.</li>
-    <li><strong>One join, and it is the first slice of it:</strong> <code>--join FILE --on PROBE=BUILD</code> is the inner join of the operand (or standard input) with a second file, on one pair of columns compared as text, byte for byte, giving rows. No left, semi or anti join, no key of several columns, no typed key, no <code>--group</code>, <code>--order-by</code> or <code>--report</code> over a join (write the join as csv and pipe it into a second call), no <code>--query</code> with a join. The <code>--join</code> file is held whole in memory, counted in <code>--max-state-bytes</code> (resident memory can be up to about three times that while it grows), and nothing spills to disk. A join is read on one core whatever <code>--threads</code> says (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/joins.md">docs/joins.md</a>).</li>
-    <li><strong>One input</strong> at a time otherwise: a file named on the command line, or standard input (<code>-</code>, or no file), read in one pass on one core, in blocks, at about the speed of a named file on one core. A producer that writes slowly is waited for until the first 512 bytes arrive; a closed descriptor 0 reads as empty; a descriptor that fails is refused with an io.* rule (docs/readers.md 11.1, 11.7).</li>
-    <li><strong>JSON lines are read</strong> (<code>--input-format jsonl</code>, columns declared with <code>--fields</code>), and written (<code>--format jsonl</code>: one object per row, keys the output columns, every value a string but the aggregates); nothing else: no Parquet, no JSON array. CSV and TSV (comma, tab or semicolon) as before. Reader design and build: <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a>, section 12.</li>
-    <li><strong><code>--query</code> is a small subset of SQL,</strong> not SQL: <code>or</code>, <code>not</code> and parentheses are there, and <code>as</code> names a column of the answer, but no expressions or functions, no <code>like</code>, no <code>null</code>, no joins, no subqueries, and a grouping sorts by one column. Each is refused as <code>query.unsupported</code>, with the feature named (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a>).</li>
-    <li><strong>No guessing.</strong> Every column is text unless you declare <code>:int</code>, <code>:dec(S)</code> or <code>:float</code>; <code>--report types</code> suggests a declaration and applies none. No computed column (a renamed one is <code>--rename customer=name</code>, a label and nothing else: the filter, the grouping and the sort by header still name the header's columns); <code>or</code>, <code>not</code> and parentheses are there in a filter.</li>
-  </ul>
-  <p class="note"><code>or</code> in a filter and the rest of joins are on the <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
-</section>
+<section class="alt" id="results"><div class="wrap">
+  <h2>Measured, not promised</h2>
+  <p class="lead">Four numbers, each copied from a measurement already published in this repository, with its machine and method under the row. They say nothing about your machine.</p>
+  <div class="nums">
+    <div class="num"><b>0.046 s</b><span>to filter 1,000,000 rows (31.7 MB) on one core; DuckDB on one core took 0.170 s</span><i class="ref">1</i></div>
+    <div class="num"><b>2.2 MB</b><span>peak memory for that filter on Linux, one core; Miller took 120 MB</span><i class="ref">2</i></div>
+    <div class="num"><b>100,367,328</b><span>float cells read, none differing from Python&rsquo;s <code>float()</code></span><i class="ref">3</i></div>
+    <div class="num"><b>29.6 ns</b><span>to read one 17-digit float cell on one core, from 1,151 ns before</span><i class="ref">4</i></div>
+  </div>
+  <ol class="conds">
+    <li><strong>Filter rows</strong> on a file of 1,000,000 rows and 31,667,311 bytes. Apple-silicon Mac with 16 cores, <code>table</code> on one core, best of five runs, output thrown away, every answer checked against a Python answer first; DuckDB 1.5.6 on one core from the same run. The published table gives no load average. Sources: <a href="https://github.com/alpibrusl/cancho-table/blob/main/README.md">README.md</a> (&ldquo;How fast&rdquo; table), <a href="benchmarks.html#mac">benchmarks, Mac</a>, <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">docs/backlog.md</a> (the table after the cell-cost round).</li>
+    <li><strong>Peak memory</strong> of the same question (<code>status=404 and bytes&gt;50000</code>) on the same file, on the Linux machine (x86-64, six cores of a shared box with other work running), <code>table</code> on one core, peak from <code>/usr/bin/time</code>; it took 0.074 s there. Miller 6.22.0 on the same question: 0.300 s and 120 MB. Sources: <a href="benchmarks.html#linux">benchmarks, Linux with Miller</a>, <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/reference.md">docs/reference.md</a>.</li>
+    <li><strong>Exactness:</strong> a differential run of the final code against Python&rsquo;s <code>float()</code> on the Mac (<code>scripts/spikes/float/differential.py</code>, seed 7): 100,367,328 cells, 0 files with a difference. On Linux (x86-64), 20,867,328 cells with the final code, also none. Sources: <a href="benchmarks.html#float-reader">benchmarks, the float reader</a>, <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/gap-float.md">docs/gap-float.md</a>.</li>
+    <li><strong>Per cell,</strong> one core, line scan included, minimum of 3, a 17-digit cell, before and after the exact float reader (pull request #32): 1,151 ns to 29.6 ns on the Mac (load average 6.7 to 13.5); on Linux 693 ns to 41.9 ns (load average 1.2 to 1.8). Sources: <a href="benchmarks.html#float-reader">benchmarks, the float reader</a>, <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/gap-float.md">docs/gap-float.md</a>.</li>
+  </ol>
+  <p class="fine"><strong>Where it is not ahead.</strong> With many distinct keys in a group-by, DuckDB is: on Linux at 6 threads (three physical cores, load average 1.1 to 1.4, minimum of 5, 1,000,000 rows) <code>table</code> takes 1.77 and 1.86 times DuckDB&rsquo;s unsorted time for a count and a sum over 1,000,000 keys. A whole sort by two keys is also behind on Linux (0.459 s against 0.385 s; 1,000,000 rows of 40 bytes, 6 threads, minimum of 5, load average 0.9 to 2.3). Every table, with the harder cases and how to rerun them, is on the <a href="benchmarks.html">benchmarks page</a>.</p>
+</div></section>
 
-<section id="start">
-  <h2>Quick start</h2>
-  <p class="sub">You need Rust, <code>git</code>, <code>clang</code> and Python 3. On a 16-core Mac with Rust installed and its dependencies already downloaded, the compiler built in 19 seconds and <code>table</code> in 3. The clones and a first-time dependency download are extra: allow a few minutes the first time.</p>
+<section id="try"><div class="wrap">
+  <h2>Try it</h2>
+  <p class="lead">You need Rust, <code>git</code>, <code>clang</code> and Python 3. The first build downloads the compiler&rsquo;s and the tool&rsquo;s dependencies, so allow a few minutes the first time.</p>
+  <div class="narrowcol">
   <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/cancho
 git clone https://github.com/alpibrusl/cancho-table &amp;&amp; cd cancho-table
 REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
@@ -667,59 +813,101 @@ Zed,1,64
 {"rule": "select.unknown-column", "hint": "pick from detail.available", "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "status = 200", "--select", "customer,bytes", "orders.csv"]}]}}
 <span class="r"># exit status 3; the rule, hint, repair of the JSON line it prints</span></pre>
 <!-- /gen:qs -->
-</section>
+  </div>
+</div></section>
 
-<section id="cancho">
-  <h2>Built in cancho, with an authority the compiler wrote</h2>
-  <p class="sub"><a href="https://github.com/alpibrusl/cancho">cancho</a> is a language whose compiler writes down what a program may do (<code>cancho authority</code>). For <code>table</code> that is the line below: it can read its arguments, the file (or standard input), allocate memory, start threads and write to the terminal. It cannot use the network, call foreign code, read the clock or write a file. CI fails if the binary says otherwise. Why each label is there, and what a row cannot say: <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/architecture.md">docs/architecture.md</a>.</p>
-<!-- gen:authority -->
-<pre class="code" tabindex="0"><span class="c"># manifests/table.authority.json</span>
-table    args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write
-<span class="c"># bounded: true; foreign symbols: none; net_out, net_in, ffi, clock: absent</span></pre>
-<!-- /gen:authority -->
-</section>
-
-<section id="fast">
-  <h2>How fast</h2>
-  <p class="sub">Supporting evidence, not the point: predictability costs little speed. A <em>core</em> is one of the independent workers inside a processor; <code>table</code> uses one by default and <code>--threads 16</code> uses sixteen. <a href="https://duckdb.org">DuckDB</a> is a full database engine and a popular, fast way to query a CSV, so it is a fair yardstick. On these four questions one core of <code>table</code> is about as fast as, or faster than, DuckDB on all sixteen. With many distinct keys in a group-by, the answer depends on which DuckDB time you compare with (see below).</p>
-  <h3 style="margin-top:1.6rem">Time to answer on the same 1,000,000-row, 32 MB CSV, in seconds (lower is better)</h3>
-  <div class="fitwrap" tabindex="0" role="region" aria-label="Time to answer on one million rows"><table class="fit bench">
-    <thead><tr><th>question</th><th class="num">table, 1 core</th><th class="num">table, 16 cores</th><th class="num">csvtk</th><th class="num">DuckDB, 1 core</th><th class="num">DuckDB, 16 cores</th></tr></thead>
-    <tbody>
-      <tr><th>filter rows</th><td class="num">0.046</td><td class="num"><b>0.0087</b></td><td class="num">0.293</td><td class="num">0.170</td><td class="num">0.075</td></tr>
-      <tr><th>count by a key</th><td class="num">0.057</td><td class="num"><b>0.0099</b></td><td class="num">0.181</td><td class="num">0.132</td><td class="num">0.065</td></tr>
-      <tr><th>sum by a key</th><td class="num">0.062</td><td class="num"><b>0.011</b></td><td class="num">0.395</td><td class="num">0.141</td><td class="num">0.067</td></tr>
-      <tr><th>pick 2 columns</th><td class="num">0.050</td><td class="num"><b>0.011</b></td><td class="num">0.188</td><td class="num">0.190</td><td class="num">0.078</td></tr>
-    </tbody>
-  </table></div>
-  <p class="fn">Apple-silicon Mac with 16 cores. The file has five columns and a key with a few distinct values. Best of five runs, output thrown away, each tool&rsquo;s answer checked against a Python answer first. csvtk 0.38.0 on one core (its filter is <code>filter</code> piped to <code>grep</code>); DuckDB 1.5.6. DuckDB&rsquo;s 16-core times for filter and pick-2-columns are from an earlier run on the same machine. Miller is not installed on the Mac: on a different machine (Linux, 6 shared cores) Miller took 0.300 s to filter, 0.438 s to count and 0.649 s to sum, against <code>table</code>&rsquo;s 0.074, 0.128 and 0.140 s there. <a href="benchmarks.html">All the tables, and how to rerun them</a>.</p>
-  <p class="note">Filtering on a decimal column (<code>price:dec(2) &gt;= 500.00</code>) costs up to about 10 percent more than on a whole-number column: 0.070 s on one Mac core for 1,000,000 rows, against 0.186 s for DuckDB on one core. Summing and averaging a decimal column by a key takes 0.085 s on one Mac core, 2.5 times faster than DuckDB; DuckDB&rsquo;s floating-point sum gave different, slightly wrong answers at one and at sixteen threads, while <code>table</code>&rsquo;s exact sum did not change. Filtering a float column with two decimals is 2.9 times faster than DuckDB&rsquo;s DOUBLE on one Mac core; a column of 17-digit numbers was the exception before the new reader, when <code>min</code> and <code>max</code> took 1.09 s against DuckDB&rsquo;s 0.208 s. Summing a float column exactly is 2.3 times faster than DuckDB&rsquo;s inexact DOUBLE sum on one Mac core (6.0 times on 16). On a column of 17-digit numbers it was 5.7 to 24 times slower until the reader was replaced (#32); with the new reader the same kind of question over a 17-digit column takes 0.112 s on one Mac thread against DuckDB&rsquo;s 0.230 s, and 0.021 s on 16 against 0.088 s (shared Mac, load average 15.9 to 25.6, minimum of 7; <a href="benchmarks.html#float-reader">conditions</a>). Grouping by a float column takes 0.181 s on one Mac core, level with DuckDB (0.167 s), and csvtk and Miller get the group count wrong. The type report is a full read: 0.273 s on one Mac core, 0.038 s on 16, against DuckDB&rsquo;s sampling <code>DESCRIBE</code> at 0.059 s (4.6 times faster than <code>table</code> on one core). <a href="benchmarks.html#report">The numbers</a>. <a href="benchmarks.html#typed">Typed keys</a>.</p>
-  <p class="note">On the Linux machine (six threads on three physical cores) the four questions go the same way: <code>table</code> on one thread is level with or ahead of DuckDB on six (filter 0.072 s against 0.104 s, pick 2 columns 0.087 s against 0.151 s, count by a key 0.094 s against 0.107 s, sum by a key 0.112 s against 0.112 s; 1,000,000 rows, 31.7 MB, minimum of 5 runs, load about 5, cores 0&ndash;5), and, in the runs that measured it, DuckDB was ahead on sorting whole files and on groupings with a million keys; the threaded sort and group-by since merged narrow that, with costs (below). <a href="benchmarks.html#linux-duckdb">The Linux numbers</a>.</p>
-  <h3 style="margin-top:1.6rem">Where it is slower, and what it costs</h3>
+<section class="alt" id="cannot"><div class="wrap">
+  <h2>What it cannot do yet</h2>
+  <div class="cannot">
+  <div class="status"><p><strong>Status: early.</strong> What is listed on this page works and is tested; what is missing is listed here. The program is built with one pinned compiler version, and that compiler is still changing.</p></div>
   <ul class="plain">
-    <li><strong>A group-by with many distinct keys, against DuckDB&rsquo;s unsorted time.</strong> On Linux at 6 threads (three physical cores, load average 1.1 to 1.4, minimum of 5, 1,000,000 rows) <code>table</code> takes 1.77 and 1.86 times DuckDB&rsquo;s unsorted time for a count and a sum over 1,000,000 keys, and 1.46 times for <code>distinct</code> over unique values; it takes 1.10 and 1.07 times at 100,000 keys (count and sum). Against DuckDB&rsquo;s time when its groups are also sorted by the key, which is what <code>table</code> returns, it is level on the million-key count and sum (1.00 and 1.01 times). On the Mac at 16 threads it is ahead of DuckDB&rsquo;s unsorted time on all five cases (0.35 to 0.52 of its time). Before the change (#35) it was 3.4 times slower than DuckDB on one Mac core on the million-key count and 9.4 times slower than DuckDB on 16. <a href="benchmarks.html#groups">Table and conditions</a>.</li>
-    <li><strong>Sorting rows.</strong> A whole sort written as CSV with <code>--threads 16</code> takes 0.064 s on a text key and 0.053 s on a whole number (1,000,000 rows of 40 bytes, Mac, load average 6.6 to 8.4, minimum of 5), against DuckDB&rsquo;s default at 0.139 s and 0.120 s. On Linux at 6 threads it is level with DuckDB on one key (0.287 s against 0.293 s) and behind it on two keys (0.459 s against 0.385 s). Pages, <code>--top</code> and JSON output still sort on one core. <a href="benchmarks.html#psort">Table and conditions</a>.</li>
-    <li><strong>Memory costs.</strong> A threaded sort peaks at 11.8 to 14.8 times the 39.55 MB file at 16 threads on the Mac (466 to 585 MB), against 4.4 to 6.2 times for the sequential sort. A threaded grouping that is then refused peaks higher than before: 325 to 471 MB at one byte short of the limit and 181 to 360 MB with <code>--max-state-bytes</code> at 2,000,000 (the million-key count, <code>B3</code>, Mac, 16 threads). <code>--max-state-bytes</code> counts accounted bytes, not resident memory. Non-group cells at 4 threads retire 0.8 to 0.9 percent more instructions on the Mac.</li>
+    <li><strong>Numbers are mostly built.</strong> <code>:int</code>, <code>:dec(S)</code> and <code>:float</code> work in <code>--where</code>, <code>--agg</code>, <code>--group</code> and <code>--order-by</code>. Columns of 15- to 17-digit numbers are read by an exact reader that allocates nothing on the paths a real column takes (Clinger, then Eisel-Lemire, then an exact fallback); it matched Python's <code>float()</code> on every cell of each differential run, the largest of 100,367,328 cells (the final code), and costs 29.6 ns a cell against 1,151 ns before (one Mac core, load average 6.7 to 13.5; <a href="benchmarks.html#float-reader">conditions</a>).</li>
+    <li><strong>A sort uses more cores only for a whole sort written as CSV.</strong> With <code>--order-by</code>, <code>--format csv</code> and no <code>--top</code>, <code>--limit</code> or <code>--from</code>, <code>--threads</code> above 1 sorts in parallel and gives the same bytes; pages, <code>--top</code> and JSON output run on one core. A threaded sort peaks at 11.8 to 14.8 times the size of a 39.55 MB file at 16 threads on the Mac, against 4.4 to 6.2 times for the sequential sort (<a href="benchmarks.html#psort">conditions</a>). There is no sort that spills to disk.</li>
+    <li><strong>One join, in two slices of it</strong> (J1 and J2 of <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/joins.md">docs/joins.md</a>): <code>--join FILE --on KEYS</code> joins the operand (or standard input) with a second file, as an <code>inner</code>, <code>left</code>, <code>semi</code> or <code>anti</code> join, on up to eight pairs of columns, each compared as text or, with a type (<code>:int</code>, <code>:dec(S)</code>, <code>:float</code>), as a number, giving rows (<code>--select</code>, <code>--where</code>, <code>--limit</code>, <code>--from</code>, <code>--format</code>). No right or full join, no <code>--group</code>, <code>--agg</code>, <code>--order-by</code> or <code>--report</code> over a join (write the join as csv and pipe it into a second call), no jsonl side, no <code>--join-where</code>, no filter that runs before the key is read (a typed key is refused at the first cell that is not of its type), no <code>--query</code> with a join. The <code>--join</code> file is held whole in memory, counted in <code>--max-state-bytes</code> (resident memory can be up to about three times that while it grows), and nothing spills to disk. A join is read on one core whatever <code>--threads</code> says.</li>
+    <li><strong>One input</strong> at a time otherwise: a file named on the command line, or standard input (<code>-</code>, or no file), read in one pass on one core, in blocks, at about the speed of a named file on one core. A producer that writes slowly is waited for until the first 512 bytes arrive; a closed descriptor 0 reads as empty; a descriptor that fails is refused with an io.* rule (docs/readers.md 11.1, 11.7). (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a>, section "R1 as built").</li>
+    <li><strong>JSON lines are read, nothing else is.</strong> <code>--input-format jsonl</code> (or <code>ndjson</code>) reads one JSON object per line, from a file or from standard input, with the columns declared by <code>--fields</code> (paths such as <code>user.name</code> or <code>items.0.sku</code>; <code>--discover</code> reports what the first lines hold). A number is the cell its exact text is, never through a double. A line that is not strict JSON, not an object, a declared path with no value, an object or an array in a cell, and a key twice are tagged refusals (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a> section 12). <code>--format jsonl</code> writes the answer back as JSON lines (one object per row, keys the output columns, every value a string but the aggregates and the group keys that have a type (<code>--group NAME:int</code>, <code>NAME:dec(S)</code>, <code>NAME:float</code>), which are numbers; <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a> section 13). No Parquet, no JSON array or pretty-printed document (use <code>jq -c '.[]'</code>). CSV and TSV (comma, tab or semicolon) as before.</li>
+    <li>**<code>--query</code> is a small subset of SQL**, not SQL: <code>or</code>, <code>not</code> and parentheses are there (a level is all <code>and</code> or all <code>or</code>: <code>a = 1 or b = 2 and c = 3</code> is refused as <code>query.mixed-and-or</code>, with both readings as the repair; <code>not a = 1</code>, <code>not (...)</code>, <code>a not in (1, 2)</code>, <code>a not contains 'x'</code>), and <code>as</code> names a column of the answer, but no expressions or functions, no <code>like</code>, no <code>null</code>, no joins, no subqueries, and a grouping sorts by one column. Each is refused as <code>query.unsupported</code>, with the feature named (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a>).</li>
+    <li><strong>No guessing.</strong> Every column is text unless you declare <code>:int</code>, <code>:dec(S)</code> or <code>:float</code>; <code>--report types</code> suggests a declaration and applies none. No computed column (a renamed one is <code>--rename customer=name</code>, a label and nothing else: the filter, the grouping and the sort by header still name the header's columns); <code>or</code>, <code>not</code> and parentheses are there in a filter (a mix of <code>and</code> and <code>or</code> at one level is refused with both readings, never guessed; a typed cell is read only when its condition is reached, so <code>c = '' or c:int &gt; 5</code> keeps the empty cells and <code>c:int &gt; 5 or c = ''</code> refuses the first one).</li>
   </ul>
-</section>
+  <p class="note">The rest of joins is on the <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>
+  </div>
+  <details class="more" id="limits"><summary>The limits, and what they default to</summary>
+<!-- gen:limits -->
+<div class="fitwrap"><table class="fit"><thead><tr><th>limit</th><th>default</th><th>ceiling</th></tr></thead><tbody><tr><th><code>--threads</code></th><td class="num">1</td><td class="num">64</td></tr><tr><th><code>--chunk-bytes</code></th><td class="num">4,194,304</td><td class="num">1,073,741,824</td></tr><tr><th><code>--parallel-min-bytes</code></th><td class="num">1,048,576</td><td class="num">1,073,741,824</td></tr><tr><th><code>--limit</code></th><td class="num">1,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-bytes</code></th><td class="num">1,048,576</td><td class="num">67,108,864</td></tr><tr><th><code>--max-groups</code></th><td class="num">100,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-distinct</code></th><td class="num">100,000</td><td class="num">10,000,000</td></tr><tr><th><code>--max-state-bytes</code></th><td class="num">67,108,864</td><td class="num">1,073,741,824</td></tr><tr><th><code>--max-sort-rows</code></th><td class="num">1,000,000</td><td class="num">20,000,000</td></tr><tr><th><code>--max-rows</code></th><td class="num">10,000,000</td><td class="num">1,000,000,000</td></tr><tr><th><code>--max-line-bytes</code></th><td class="num">1,048,576</td><td class="num">16,777,216</td></tr><tr><th><code>--max-json-nodes</code></th><td class="num">4,096</td><td class="num">1,048,576</td></tr><tr><th><code>--discover-lines</code></th><td class="num">1,000</td><td class="num">1,000,000</td></tr><tr><th><code>--max-fields</code></th><td class="num">256</td><td class="num">4,096</td></tr><tr><th><code>--max-join-rows</code></th><td class="num">10,000,000</td><td class="num">1,000,000,000</td></tr></tbody></table></div>
+<!-- /gen:limits -->
+  </details>
+  <details class="more"><summary>All <!-- gen:nrules -->
+71
+<!-- /gen:nrules --> refusal rules</summary>
+<!-- gen:rules -->
+<div class="fitwrap"><table class="fit"><thead><tr><th>rule</th><th>exit</th><th>a repair?</th><th>what it refuses</th></tr></thead><tbody><tr><th><code>args.unknown-flag</code></th><td class="num">2</td><td>sometimes</td><td>a flag that is not in the tool's table</td></tr><tr><th><code>args.missing-value</code></th><td class="num">2</td><td>never</td><td>a flag that takes a value was given none</td></tr><tr><th><code>args.bad-value</code></th><td class="num">2</td><td>never</td><td>a flag's value is not of the flag's kind</td></tr><tr><th><code>args.duplicate-flag</code></th><td class="num">2</td><td>never</td><td>the same flag was given twice</td></tr><tr><th><code>args.conflict</code></th><td class="num">2</td><td>never</td><td>two flags that exclude each other were both given</td></tr><tr><th><code>args.required-flag</code></th><td class="num">2</td><td>never</td><td>a flag the tool needs was not given</td></tr><tr><th><code>args.too-many-operands</code></th><td class="num">2</td><td>never</td><td>more operands than the tool takes</td></tr><tr><th><code>path.empty</code></th><td class="num">2</td><td>never</td><td>an empty path</td></tr><tr><th><code>path.dotdot</code></th><td class="num">2</td><td>sometimes</td><td>a path with a `..` component</td></tr><tr><th><code>path.absolute</code></th><td class="num">2</td><td>always</td><td>an absolute path where one relative to --root is wanted</td></tr><tr><th><code>path.outside-root</code></th><td class="num">4</td><td>never</td><td>an absolute path that is not under --root</td></tr><tr><th><code>path.too-long</code></th><td class="num">2</td><td>never</td><td>a path longer than 4096 bytes</td></tr><tr><th><code>path.symlink</code></th><td class="num">4</td><td>never</td><td>a path that runs through a symbolic link, which the tool does not follow</td></tr><tr><th><code>io.not-found</code></th><td class="num">3</td><td>never</td><td>a named input does not exist</td></tr><tr><th><code>io.not-a-directory</code></th><td class="num">3</td><td>never</td><td>a path runs through something that is not a directory</td></tr><tr><th><code>io.is-a-directory</code></th><td class="num">2</td><td>never</td><td>a directory where a file is wanted</td></tr><tr><th><code>io.permission-denied</code></th><td class="num">4</td><td>never</td><td>the operating system refused access</td></tr><tr><th><code>io.read-failed</code></th><td class="num">1</td><td>never</td><td>the operating system failed a read</td></tr><tr><th><code>io.write-failed</code></th><td class="num">1</td><td>never</td><td>the operating system failed a write, or a write was short</td></tr><tr><th><code>limit.line-too-long</code></th><td class="num">8</td><td>sometimes</td><td>a line longer than --max-line-bytes</td></tr><tr><th><code>limit.header-too-large</code></th><td class="num">8</td><td>never</td><td>the header record holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>limit.record-too-large</code></th><td class="num">8</td><td>never</td><td>a record read for --select, --where, --order-by or --group holds more than --max-line-bytes bytes. Hint: raise --max-line-bytes, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>limit.output-too-large</code></th><td class="num">8</td><td>never</td><td>the first row of a page is longer than --max-bytes. Hint: raise --max-bytes, up to the ceiling introspect names, or select fewer columns. Repair: none.</td></tr><tr><th><code>limit.too-many-rows</code></th><td class="num">8</td><td>never</td><td>--format csv reached --max-rows with rows left unread. Hint: raise --max-rows, up to the ceiling introspect names, or page with --limit and --from. Repair: none.</td></tr><tr><th><code>limit.too-many-sort-rows</code></th><td class="num">8</td><td>never</td><td>--order-by would hold more than --max-sort-rows rows to sort. Hint: ask for the first rows only with --top N or a smaller --limit (they are kept in bounded memory), keep fewer rows with --where, or raise --max-sort-rows, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>limit.too-many-groups</code></th><td class="num">8</td><td>never</td><td>more groups than --max-groups. Hint: raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns. Repair: none.</td></tr><tr><th><code>limit.too-many-distinct</code></th><td class="num">8</td><td>never</td><td>more distinct values than --max-distinct. Hint: raise --max-distinct, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>limit.state-too-large</code></th><td class="num">8</td><td>never</td><td>the keys and values kept for groups, the rows kept to sort, or the --join file held whole in memory (detail.holder is join-build), hold more than --max-state-bytes bytes. Hint: raise --max-state-bytes, up to the ceiling introspect names, or group by shorter values. Repair: none.</td></tr><tr><th><code>parse.csv-ragged-row</code></th><td class="num">8</td><td>never</td><td>a row has a different number of fields than the header. Hint: make every row as wide as the header, quoting fields that hold the delimiter. Repair: none.</td></tr><tr><th><code>parse.csv-bad-quote</code></th><td class="num">8</td><td>never</td><td>a closing quote is followed by something other than the delimiter or the end of the record. Hint: double a quote that is text, or put the delimiter after the closing quote. Repair: none.</td></tr><tr><th><code>parse.csv-unterminated-quote</code></th><td class="num">8</td><td>never</td><td>a quoted field is still open at the end of the input. Hint: close the quote, or double the quotes that are text. Repair: none.</td></tr><tr><th><code>select.unknown-column</code></th><td class="num">3</td><td>sometimes</td><td>a name or position in --select that is not a column of the header. Hint: pick from detail.available. Repair: choose.</td></tr><tr><th><code>select.ambiguous-column</code></th><td class="num">8</td><td>never</td><td>a name in --select that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.</td></tr><tr><th><code>column.unknown</code></th><td class="num">3</td><td>never</td><td>a name or position in --where, --group, --agg or --on that is not a column of the header (for --on, detail.input says which file). Hint: pick from detail.available. Repair: none.</td></tr><tr><th><code>column.ambiguous</code></th><td class="num">8</td><td>never</td><td>a name in --where, --group, --agg or --on that is the name of more than one column. Hint: name it by position, as #3 for the third column. Repair: none.</td></tr><tr><th><code>where.syntax</code></th><td class="num">2</td><td>sometimes</td><td>--where is not an expression of the grammar, at the offset the detail gives (a missing ) or an unclosed group, an or or an and with nothing after it, a not before a bare condition (not a = 1), more than 8 levels of parentheses, more than 64 conditions or 1024 values). Hint: the grammar is in the help of --where: COLUMN OP VALUE joined by and. Repair: choose.</td></tr><tr><th><code>where.mixed-and-or</code></th><td class="num">2</td><td>sometimes</td><td>--where uses and and or at one level, without parentheses, at the offset the detail gives (a = 1 or b = 2 and c = 3). Hint: put parentheses round what goes first: (a = 1 or b = 2) and c = 3 is one question and a = 1 or (b = 2 and c = 3) another, and the tool does not choose between them, the repair offers both. Repair: choose.</td></tr><tr><th><code>agg.bad-spec</code></th><td class="num">2</td><td>never</td><td>an item of --agg that is not count, sum:COL, min:COL, max:COL, mean:COL or distinct:COL, or whose :int, :dec(S) or @N is not one it takes. Hint: --agg count,sum:bytes,max:bytes,distinct:status, a mean of an integer column needs its scale, mean:bytes@2, a decimal column is declared sum:price:dec(2). Repair: none.</td></tr><tr><th><code>sort.unknown-key</code></th><td class="num">2</td><td>never</td><td>--sort names no output column of the grouping. Hint: pick from detail.available, with a - before it to sort descending. Repair: none.</td></tr><tr><th><code>value.not-integer</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max, or a key cell of a join pair typed :int (detail.context is join and detail.input says which file), is not an exact integer (an empty cell is not one, and detail.padded says the cell was the padding of a left join). Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.</td></tr><tr><th><code>value.integer-overflow</code></th><td class="num">8</td><td>never</td><td>a cell of an :int column or of sum, min or max, or a key cell of a join pair typed :int, does not fit 64 bits. Hint: keep out the rows with such a cell with --where, or do not ask for an integer of this column (a cell with a point is a decimal: declare the column :dec(N)). Repair: none.</td></tr><tr><th><code>value.not-decimal</code></th><td class="num">8</td><td>never</td><td>a cell of a :dec(S) column, or a key cell of a join pair typed :dec(S), is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that decides the row stops the ones after it: before an and put a test that is false for such a cell, before an or one that is true), or do not ask for a decimal of this column. Repair: none.</td></tr><tr><th><code>value.decimal-scale</code></th><td class="num">8</td><td>sometimes</td><td>a cell of a :dec(S) column, or a key cell of a join pair typed :dec(S), has more fractional digits than S (it is never rounded). Hint: declare a larger scale, :dec(N) with N the most fractional digits the column holds. Repair: choose.</td></tr><tr><th><code>value.decimal-too-wide</code></th><td class="num">8</td><td>never</td><td>a cell of a :dec(S) column, or a key cell of a join pair typed :dec(S), has 18 or more significant digits once scaled to S. Hint: declare a smaller scale, or compare the column as text. Repair: none.</td></tr><tr><th><code>column.type-conflict</code></th><td class="num">2</td><td>never</td><td>the plan reads one column as two numeric types: :int, :float, or :dec with two scales, in --where, --group, --agg or --order-by. Hint: give the column one type: the same :int, :float or :dec(N), in every place it is named, --where, --group, --agg and --order-by. Repair: none.</td></tr><tr><th><code>value.not-float</code></th><td class="num">8</td><td>never</td><td>a cell of a :float column, or a key cell of a join pair typed :float, is not a number: an empty cell, a space, a separator, a hex form, a sign or a point alone. Hint: keep out the rows with such a cell with --where first (a condition that decides the row stops the ones after it: before an and put a test that is false for such a cell, before an or one that is true), or do not ask for a float of this column. Repair: none.</td></tr><tr><th><code>value.not-finite</code></th><td class="num">8</td><td>never</td><td>a cell of a :float column, or a key cell of a join pair typed :float, is inf or nan (the repair is a condition that is false first: x != 'NaN' and x:float &gt; 5). Hint: keep them out with --where first: x != 'NaN' and x:float &gt; 5 never reads the NaN cell as a number. Repair: none.</td></tr><tr><th><code>value.float-range</code></th><td class="num">8</td><td>never</td><td>a cell of a :float column, or a key cell of a join pair typed :float, is outside the range of a double, or a non-zero number that would read as zero (detail.direction says which). Hint: keep out the rows with such a cell with --where first, or compare the column as text. Repair: none.</td></tr><tr><th><code>limit.number-too-long</code></th><td class="num">8</td><td>never</td><td>a cell of a :float column, or a key cell of a join pair typed :float, is longer than 1,100 bytes, the longest cell that can be a double. Hint: a number of this length is not a double, compare the column as text. Repair: none.</td></tr><tr><th><code>agg.float-overflow</code></th><td class="num">8</td><td>never</td><td>the exact sum of a :float column in a group is beyond the largest double, about 1.8e308 (detail.group names the group). Hint: sum fewer rows with --where, group by more columns, or sum in a smaller unit (the mean of the same group is a number: mean:COL:float). Repair: none.</td></tr><tr><th><code>query.syntax</code></th><td class="num">2</td><td>sometimes</td><td>a --query that is not a statement of the grammar, or a literal that does not fit the type its column is read as, at the byte offset the detail gives. Hint: detail.expected says what was expected at detail.offset, and the grammar is in the help of --query. Repair: choose.</td></tr><tr><th><code>query.mixed-and-or</code></th><td class="num">2</td><td>sometimes</td><td>a --query that uses and and or at one level of its where, without parentheses, at the offset the detail gives. Hint: put parentheses round what goes first: (a = 1 or b = 2) and c = 3 is one question and a = 1 or (b = 2 and c = 3) another, and the tool does not choose between them, the repair offers both. Repair: choose.</td></tr><tr><th><code>query.unsupported</code></th><td class="num">2</td><td>sometimes</td><td>a --query that uses something the language leaves out: a like, a null, an alias, an expression, a join, a typed group by column, an order the flags cannot say. Hint: detail.feature names it, and the hint says what to write instead. Repair: choose.</td></tr><tr><th><code>query.group-mismatch</code></th><td class="num">2</td><td>sometimes</td><td>a --query whose select list is not its group by columns, in the same order, then at least one aggregate, or whose order by names something the select list does not hold. Hint: a grouping selects its group by columns first, in the same order, then aggregates, and has at least one: select a, count(*) from 'f.csv' group by a. Repair: choose.</td></tr><tr><th><code>query.too-long</code></th><td class="num">2</td><td>never</td><td>a --query of more than 4096 bytes. Hint: ask the question in fewer bytes, the limit is detail.limit. Repair: none.</td></tr><tr><th><code>input.fields-required</code></th><td class="num">2</td><td>sometimes</td><td>a plan on JSON lines (--input-format jsonl) with no --fields: JSON lines have no header, so the columns are declared. Hint: --fields id,status,user.name declares them, --discover reports what the first lines hold. Repair: retry.</td></tr><tr><th><code>input.bad-fields</code></th><td class="num">2</td><td>never</td><td>--fields is not a list of paths: an empty item or segment, a backslash that escapes anything but a comma, a backslash, a # or a dot, a path of more than 8 segments, the same path twice, or more than 4096 paths (detail.item and detail.reason). Hint: paths are keys separated by dots, items are separated by commas, and a backslash escapes only a comma, a backslash, a # or a dot: --fields id,user.name,items.0.sku. Repair: none.</td></tr><tr><th><code>parse.jsonl-syntax</code></th><td class="num">8</td><td>never</td><td>a line is not strict JSON (RFC 8259): detail.code and detail.reason say what the parser met, detail.offset where in the line and detail.near the bytes around it, and detail.looks_like is json-document when the first line begins like a document that is not JSON lines. Hint: one JSON object per line, and jq -c '.[]' makes lines of an array. Repair: none.</td></tr><tr><th><code>parse.jsonl-not-object</code></th><td class="num">8</td><td>never</td><td>a line is JSON that is not an object (detail.kind). Hint: one JSON object per line, and jq -c '.[]' makes lines of an array. Repair: none.</td></tr><tr><th><code>parse.jsonl-missing-field</code></th><td class="num">8</td><td>sometimes</td><td>a declared path has no value in a line: the key or index is not there, the value is null, or a step goes through something that is not an object or an array (detail.reason). Hint: --absent empty reads such a path as the empty cell. Repair: retry.</td></tr><tr><th><code>parse.jsonl-not-scalar</code></th><td class="num">8</td><td>never</td><td>a declared path holds an object or an array (detail.kind). Hint: declare a deeper path: user.name, tags.0. Repair: none.</td></tr><tr><th><code>parse.jsonl-duplicate-key</code></th><td class="num">8</td><td>never</td><td>a key occurs twice at a step of a declared path (detail.key), which parsers read differently. Hint: make the keys of the line unique. Repair: none.</td></tr><tr><th><code>limit.json-too-many-nodes</code></th><td class="num">8</td><td>never</td><td>a line holds more JSON nodes than --max-json-nodes. Hint: raise --max-json-nodes, up to the ceiling introspect names. Repair: none.</td></tr><tr><th><code>output.duplicate-column</code></th><td class="num">2</td><td>never</td><td>two columns of the answer of --format jsonl have the same name, and an object whose key occurs twice is read differently by different parsers (detail.column, and detail.first and detail.second, the 1-based places in the answer). Hint: name each column once: select it once, and each aggregate once, or rename one with --rename. Repair: none.</td></tr><tr><th><code>output.not-representable</code></th><td class="num">2</td><td>never</td><td>the name of a column of the answer of --format jsonl is not valid UTF-8, which cannot be the key of a JSON object (detail.column holds it as text_or_bytes does). Hint: write the answer as --format csv, which carries any bytes. Repair: none.</td></tr><tr><th><code>join.column-collision</code></th><td class="num">2</td><td>sometimes</td><td>a column name is in both files of a join (detail.columns, after --join-prefix), so the joined row would have it twice and nothing is renamed on the way. Hint: give the --join file's columns a prefix with --join-prefix, or select and name them by position. Repair: choose.</td></tr><tr><th><code>limit.too-many-join-rows</code></th><td class="num">8</td><td>never</td><td>a join would produce more rows than --max-join-rows (detail.matches is how many build rows the probe row's key has). Hint: if detail.matches is large the --join file repeats this key: remove the duplicates, or make the other file the --join file, otherwise raise --max-join-rows, up to the ceiling introspect names, or page with --limit. Repair: none.</td></tr><tr><th><code>rename.syntax</code></th><td class="num">2</td><td>never</td><td>an item of --rename is not TARGET=NEW: it has no equals sign, an empty target or an empty new label, or a backslash before anything but a comma, a backslash, an equals sign or a # (detail.offset is the byte of the list and detail.expected what was expected there). Hint: --rename is items TARGET=NEW separated by commas, TARGET a label of the answer or #N and NEW at least one byte, with a backslash before a comma, a backslash, an equals sign or a # that is part of a name. Repair: none.</td></tr><tr><th><code>rename.unknown-target</code></th><td class="num">3</td><td>sometimes</td><td>a label or position in --rename that is not an output column of the answer (the columns --select, --where, --group and --agg give, before any rename). Hint: pick from detail.available, or write the column as #N. Repair: choose.</td></tr><tr><th><code>rename.ambiguous-target</code></th><td class="num">8</td><td>never</td><td>a label in --rename that is the label of more than one output column (detail.columns are their places in the answer). Hint: name the column by its position, as #3 for the third column. Repair: none.</td></tr><tr><th><code>rename.repeated-target</code></th><td class="num">2</td><td>never</td><td>an output column that --rename renames twice (detail.item is the second item and detail.first the first). Hint: rename each column once. Repair: none.</td></tr></tbody></table></div>
+<!-- /gen:rules -->
+  </details>
+</div></section>
 
-<aside class="status" id="status">
-  <h2>Status: early</h2>
-  <ul>
-    <li>What is listed above works and is tested. The list of what is missing is above too.</li>
-    <li>The speed numbers are for one file shape on two machines, plus a set of harder cases on <a href="benchmarks.html">the benchmarks page</a>, where it loses some.</li>
-    <li>The program is built with one pinned compiler version, and that compiler is still changing.</li>
-  </ul>
-</aside>
+<section id="docs"><div class="wrap">
+  <h2>Go deeper</h2>
+  <div class="cards">
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/reference.md">Reference</a></h3><p>The long description of every flag and of the layout of the repository.</p></div>
+    <div class="card"><h3><a href="benchmarks.html">Benchmarks</a></h3><p>Every table with its conditions, the harder cases where <code>table</code> loses, and how to rerun them.</p></div>
+    <div class="card"><h3>Joins and queries</h3><p>The design and the notes of the build: <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/joins.md">docs/joins.md</a> and <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a>.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">Agent guide</a></h3><p>How an agent acts on each kind of refusal; <code>table skill</code> prints the guide the program carries.</p></div>
+    <div class="card"><h3><a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/architecture.md">Architecture</a></h3><p>The pieces, and the capability model: what the authority row says and why each label is there.</p></div>
+  </div>
+</div></section>
 
 </main>
 
-<footer><div class="wrap">
-  <a href="https://github.com/alpibrusl/cancho-table">Repository</a><a href="benchmarks.html">Benchmarks</a>
-  <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/refusals.md">Refusals</a><a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/architecture.md">Architecture</a>
-  <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/select.md">Select</a><a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/filter.md">Filter and group</a>
-  <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/parallel.md">Threads</a><a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">Backlog</a>
-  <span>Built on <a href="https://github.com/alpibrusl/cancho">cancho</a> · EUPL-1.2</span>
-</div></footer>
+<footer><div class="wrap">table &middot; <a href="https://github.com/alpibrusl/cancho-table/blob/main/LICENSE">EUPL-1.2</a> &middot; written in <a href="https://github.com/alpibrusl/cancho">cancho</a></div></footer>
+
+<script>
+(function () {
+  var pre = document.getElementById("screen");
+  var btn = document.getElementById("replay");
+  if (!pre || !btn) { return; }
+  var lines = [].slice.call(pre.querySelectorAll(".ln"));
+  var typed = lines.map(function (l) { var t = l.querySelector(".t"); return t ? t.textContent : null; });
+  var reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var timers = [];
+  function stop() { timers.forEach(clearTimeout); timers = []; }
+  function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
+  function showAll() {
+    stop();
+    lines.forEach(function (l, i) { l.hidden = false; if (typed[i] !== null) { l.querySelector(".t").textContent = typed[i]; } });
+    pre.removeAttribute("aria-busy");
+  }
+  function play() {
+    showAll();
+    pre.style.minHeight = "";
+    pre.style.minHeight = pre.offsetHeight + "px";
+    lines.forEach(function (l) { l.hidden = true; });
+    pre.setAttribute("aria-busy", "true");
+    var i = 0;
+    (function step() {
+      if (i >= lines.length) { pre.removeAttribute("aria-busy"); return; }
+      var l = lines[i], full = typed[i];
+      i++;
+      l.hidden = false;
+      if (full === null) { later(step, l.classList.contains("r") ? 900 : 300); return; }
+      var t = l.querySelector(".t"), n = 0;
+      t.textContent = "";
+      (function type() {
+        n += 3;
+        t.textContent = full.slice(0, n);
+        if (n < full.length) { later(type, 16); } else { later(step, 550); }
+      })();
+    })();
+  }
+  btn.hidden = false;
+  btn.addEventListener("click", function () { if (reduce) { showAll(); } else { play(); } });
+  if (reduce) { btn.hidden = true; return; }
+  if ("IntersectionObserver" in window) {
+    var seen = false;
+    new IntersectionObserver(function (es, o) {
+      if (!seen && es[0].isIntersecting) { seen = true; o.disconnect(); play(); }
+    }, { threshold: 0.6 }).observe(pre);
+  }
+})();
+</script>
 </body>
 </html>

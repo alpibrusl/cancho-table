@@ -7,7 +7,11 @@ For docs/index.html and docs/benchmarks.html: exactly one <title> of 50 to 60
 characters, one meta description of at most 160, one canonical link on the site's
 base address, a lang attribute, a viewport, Open Graph and Twitter card tags, one
 <h1>, headings that never skip a level, every <img> with an alt attribute, JSON-LD
-that parses, no <script src> at all. And: every URL in docs/sitemap.xml is a file
+that parses and states only what the page says (its name, licence, language and every
+feature name occur in the visible text), no <script src> at all, a <main>, ids that are
+unique and links to #ids that exist, and, for docs/index.html, the text of the replayed
+terminal in the page itself (it must read without the script) and the colour pairs of its
+two themes at a contrast of at least 4.5. And: every URL in docs/sitemap.xml is a file
 of docs/, and docs/robots.txt names the sitemap. Exit 1 on the first failure list.
 """
 import json
@@ -30,9 +34,22 @@ class P(HTMLParser):
         self.lang = None
         self.scripts_src = 0
         self.svg = 0
+        self.ids, self.hrefs, self.text = [], [], []
+        self._skip = 0
+        self.screen = 0
+        self.screen_depth = 0
+        self.screen_text = ""
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
+        if a.get("id"):
+            self.ids.append(a["id"])
+        if tag == "a" and (a.get("href") or "").startswith("#"):
+            self.hrefs.append(a["href"][1:])
+        if tag in ("script", "style"):
+            self._skip += 1
+        if a.get("id") == "screen":
+            self.screen = 1
         if tag == "svg":
             self.svg += 1
         if tag == "title" and self.svg:
@@ -58,12 +75,20 @@ class P(HTMLParser):
             self.heads.append(int(tag[1]))
 
     def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self._skip -= 1
+        if tag == "pre" and self.screen:
+            self.screen = 0
         if tag == "svg":
             self.svg -= 1
         if tag in ("script", "title"):
             self._in = None
 
     def handle_data(self, d):
+        if not self._skip:
+            self.text.append(d)
+        if self.screen:
+            self.screen_text += d
         if self._in == "title":
             self.title += d
         elif self._in == "ld":
@@ -103,7 +128,47 @@ def check(name, url, errs):
             errs.append("%s: JSON-LD does not parse: %s" % (name, exc))
             continue
         need(doc.get("url") == url, "JSON-LD url is the canonical")
+        visible = re.sub(r"\s+", " ", " ".join(p.text)).lower()
+        for key in ("name", "license", "programmingLanguage"):
+            need(str(doc.get(key, "")).lower() in visible, "JSON-LD %s %r is not in the visible text" % (key, doc.get(key)))
+        for feature in doc.get("featureList", []):
+            need(feature.lower() in visible, "JSON-LD feature %r is not in the visible text" % feature)
+    need(len(p.tags) and "main" in p.tags, "a <main> landmark")
+    need(len(p.ids) == len(set(p.ids)), "duplicate ids")
+    for h in p.hrefs:
+        need(h in p.ids, "a link to #%s, which is not an id of the page" % h)
+    if name == "index.html":
+        need("exit status" in p.screen_text and "table --where" in p.screen_text, "the replayed terminal has no text without the script")
     return p
+
+
+def lum(hexs):
+    c = [int(hexs[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    c = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+
+
+def ratio(a, b):
+    x, y = sorted((lum(a), lum(b)), reverse=True)
+    return (x + 0.05) / (y + 0.05)
+
+
+# (foreground, background) token pairs that the page puts text on; the terminal's colours are fixed in both themes
+PAIRS = [("fg", "bg"), ("muted", "bg"), ("muted", "surface"), ("muted", "soft"), ("fg", "soft"), ("accent", "bg"), ("accent", "soft"),
+         ("accent", "surface"), ("accent-fg", "accent"), ("bad", "surface"), ("bad", "bg"), ("good", "surface"), ("warn", "warn-bg"), ("muted", "warn-bg"),
+         ("term-fg", "term-bg"), ("term-dim", "term-bg"), ("term-bad", "term-bg")]
+
+
+def contrast(errs):
+    css = (ROOT / "docs" / "index.html").read_text().split("<style>", 1)[1].split("</style>", 1)[0]
+    light = dict(re.findall(r"--([a-z-]+):\s*(#[0-9a-fA-F]{6})", css.split("@media", 1)[0]))
+    dark = dict(light)
+    dark.update(re.findall(r"--([a-z-]+):\s*(#[0-9a-fA-F]{6})", css.split("prefers-color-scheme: dark", 1)[1].split("}", 1)[0]))
+    for name, theme in (("light", light), ("dark", dark)):
+        for fg, bg in PAIRS:
+            r = ratio(theme[fg], theme[bg])
+            if r < 4.5:
+                errs.append("index.html: %s theme: --%s on --%s is %.2f, want 4.5" % (name, fg, bg, r))
 
 
 def main():
@@ -114,6 +179,7 @@ def main():
         titles.add(p.title)
     if len(titles) != len(PAGES):
         errs.append("titles are not unique")
+    contrast(errs)
     sm = (ROOT / "docs" / "sitemap.xml").read_text()
     for loc in re.findall(r"<loc>([^<]+)</loc>", sm):
         if not loc.startswith(BASE):
