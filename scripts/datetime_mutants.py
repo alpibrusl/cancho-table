@@ -164,7 +164,7 @@ MUTANTS = [
     ("a date suffix after a quoted name is not read", "dtparse.cho", "    if at + 5 <= len(src) && bytes.equal(src[at..at + 5], \":date\") {", "    if at + 5 <= len(src) && bytes.equal(src[at..at + 5], \":dat3\") {"),
     ("a date is read by the reader of decimals", "agg.cho", "fn read_typed[&d](data: &d [byte], kind: int) -> [] (int, int) {\n    if kind >= 22 {", "fn read_typed[&d](data: &d [byte], kind: int) -> [] (int, int) {\n    if kind >= 25 {"),
     ("a date sort key is read by the reader of decimals", "sorter.cho", "    if kind >= 22 {\n        // :date, :timestamp, :datetime", "    if kind >= 25 {\n        // :date, :timestamp, :datetime"),
-    ("a date aggregate takes the fast way of the hot loop", "engine.cho", "query.agg_at(tree, k, 0) == 4 || query.agg_at(tree, k, 2) >= 22 {", "query.agg_at(tree, k, 0) == 4 {"),
+    ("a date aggregate takes the fast way of the hot loop", "query.cho", "    if kind >= 22 {\n        // a date type (docs/datetime.md): counted", "    if kind >= 122 {\n        // a date type (docs/datetime.md): counted"),
     ("a date is read as a datetime by an aggregate", "agg.cho", "    if dk != 0 && !escaped_at(item, e - dl) {\n        return (dl, dk);", "    if dk != 0 && !escaped_at(item, e - dl) {\n        return (dl, 24);"),
     ("a sum of dates is read", "agg.cho", "                } else if function == 1 && kind >= 22 {", "                } else if function == 1 && kind >= 25 {"),
     ("an escaped colon ends an aggregate's column in a suffix", "agg.cho", "    if dk != 0 && !escaped_at(item, e - dl) {", "    if dk != 0 {"),

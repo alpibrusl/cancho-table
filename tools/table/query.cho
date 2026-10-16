@@ -184,7 +184,7 @@ pub fn set_reporting[&h](heap: &!h Heap, q: Query) -> [heap] Query {
     return add_order(heap, Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: aggs, meta: meta, gkinds: g, sort: sort, flow: flow, rename: rename, jx: jx }, 0, 0);
 }
 
-// How many `--group` columns are typed (the first element of `gkinds`).
+// How many `--group` columns are typed (the first element of `gkinds`), and one for each aggregate of a date type.
 pub fn typed_groups[&q](q: &q Query) -> [] int {
     return vec.get(q.gkinds, 0);
 }
@@ -404,7 +404,15 @@ pub fn add_agg[&h](heap: &!h Heap, q: Query, function: int, name: int, kind: int
     a = vec.push(heap, a, name);
     a = vec.push(heap, a, kind);
     a = vec.push(heap, a, mean);
-    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: a, meta: meta, gkinds: gkinds, sort: sort, flow: flow, rename: rename, jx: jx };
+    var g = gkinds;
+    if kind >= 22 {
+        // a date type (docs/datetime.md): counted with the typed group columns, so that `agg.start` makes the rows take `agg.add` and never `add_fast`, whose cells are read by `parse_typed` (the hot
+        // loop's, whose text a new case would change: section 11)
+        borrow mut g as &!gw in {
+            vec.set(gw, 0, vec.get(gw, 0) + 1);
+        }
+    }
+    return Query { names: names, nends: nends, nkinds: nkinds, conds: conds, lits: lits, ltext: ltext, aggs: a, meta: meta, gkinds: g, sort: sort, flow: flow, rename: rename, jx: jx };
 }
 
 pub fn cond_at[&q](q: &q Query, k: int, field: int) -> [] int {

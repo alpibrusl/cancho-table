@@ -201,7 +201,9 @@
     "extra",
     "extra_of",
     "failed",
+    "fast_date",
     "fast_ok",
+    "fast_time",
     "feature",
     "field",
     "field",
@@ -507,6 +509,7 @@
     "qualified",
     "queried",
     "query_place",
+    "read_typed",
     "reason_of",
     "reason_of",
     "reason_text",
@@ -724,7 +727,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 309,
+  "folded_operators": 310,
   "folded_calls": 0,
-  "functions": 1199
+  "functions": 1202
 }
