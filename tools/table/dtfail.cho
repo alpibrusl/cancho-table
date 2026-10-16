@@ -13,6 +13,7 @@ import std.buffer;
 import std.bytes;
 import std.json;
 import std.vec;
+import dtbucket;
 import dtparse;
 import query;
 import spec;
@@ -149,11 +150,13 @@ fn escaped_at[&d](data: &d [byte], p: int) -> [] bool {
     return n % 2 == 1;
 }
 
-// `text` (the value of `--group`, `--order-by` or `--agg`) with the type `from` that ends an item written as `to`; the number of items changed. An item ends at a comma that is not
-// escaped (a date type takes no `@N`, so nothing follows its suffix).
-fn swap_types[&h, &t](heap: &!h Heap, text: &t [byte], from: int, to: int) -> [heap] (buffer.Buffer, int) {
+// `text` (the value of `--group`, `--order-by` or `--agg`) with the type `from` that ends an item written as `to`; the number of items changed, and the number of items of `--group`
+// whose unit (`ts:timestamp@hour`) the new type has not (a :date has no hour or day): those are left as they were, and the repair is then not offered. An item ends at a comma that is
+// not escaped (a date type takes no `@N`, so nothing follows its suffix but a unit).
+fn swap_types[&h, &t](heap: &!h Heap, text: &t [byte], from: int, to: int) -> [heap] (buffer.Buffer, int, int) {
     var out = buffer.empty(heap, len(text) + 8);
     var changed = 0;
+    var blocked = 0;
     let n = len(text);
     var start = 0;
     var more = true;
@@ -171,7 +174,19 @@ fn swap_types[&h, &t](heap: &!h Heap, text: &t [byte], from: int, to: int) -> [h
         }
         // the item is text[start..j]
         let (dl, dk) = dtparse.suffix_in(text[start..j], 0);
-        if dk == from && !escaped_at(text, j - dl) {
+        let (bat, bdl, bdk) = dtbucket.find_at(text[start..j]);
+        if bat >= 0 && bdk == from {
+            let unit = dtbucket.unit_code(text[start + bat + 1..j]);
+            if to == 22 && unit <= 2 {
+                out = buffer.append(heap, out, text[start..j]);
+                blocked = blocked + 1;
+            } else {
+                out = buffer.append(heap, out, text[start..start + bat - bdl]);
+                out = buffer.append(heap, out, suffix_text(to));
+                out = buffer.append(heap, out, text[start + bat..j]);
+                changed = changed + 1;
+            }
+        } else if dk == from && !escaped_at(text, j - dl) {
             out = buffer.append(heap, out, text[start..j - dl]);
             out = buffer.append(heap, out, suffix_text(to));
             changed = changed + 1;
@@ -185,7 +200,7 @@ fn swap_types[&h, &t](heap: &!h Heap, text: &t [byte], from: int, to: int) -> [h
             more = false;
         }
     }
-    return (out, changed);
+    return (out, changed, blocked);
 }
 
 fn suffix_text(kind: int) -> [] &static [byte] {
@@ -233,16 +248,16 @@ fn rewritable[&q, &n](tree: &q query.Query, from: int, name: &n [byte]) -> [] bo
 }
 
 // One flag's value rewritten, as the argument that holds it (`--flag=value` when the value is not an argument of its own): (the argument, how many items changed).
-fn flag_argument[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, flag: &static [byte], from: int, to: int) -> [heap, args] (buffer.Buffer, int, int) {
+fn flag_argument[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, flag: &static [byte], from: int, to: int) -> [heap, args] (buffer.Buffer, int, int, int) {
     let table = spec.flag_table();
     let at = cli.value_index(parsed, table, flag);
     if at < 0 {
-        return (buffer.empty(heap, 1), 0 - 1, 0);
+        return (buffer.empty(heap, 1), 0 - 1, 0, 0);
     }
     let given = cli.text(args, parsed, table, flag);
-    let (fixed, changed) = swap_types(heap, given, from, to);
+    let (fixed, changed, blocked) = swap_types(heap, given, from, to);
     if cli.value_is_whole(parsed, table, flag) {
-        return (fixed, at, changed);
+        return (fixed, at, changed, blocked);
     }
     var joined = buffer.append(heap, buffer.empty(heap, len(given) + 16), "--");
     joined = buffer.append(heap, joined, flag);
@@ -251,7 +266,7 @@ fn flag_argument[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
         joined = buffer.append(heap, joined, buffer.bytes(fr));
     }
     buffer.drop(heap, fixed);
-    return (joined, at, changed);
+    return (joined, at, changed, blocked);
 }
 
 // The repair: the invocation with the flags that name the type written with the type the cell shows, or no repair. Answers the writer.
@@ -261,10 +276,10 @@ fn repair[&h, &g, &p, &q, &n, &k](heap: &!h Heap, w: json.Writer, args: &g Args,
     if to == 0 || from == 0 || !context_ok || cli.has(parsed, table, "query") || !rewritable(tree, from, name) {
         return fail.repair_none(heap, w, none_reason(reason));
     }
-    let (g_arg, g_at, g_n) = flag_argument(heap, args, parsed, "group", from, to);
-    let (a_arg, a_at, a_n) = flag_argument(heap, args, parsed, "agg", from, to);
-    let (o_arg, o_at, o_n) = flag_argument(heap, args, parsed, "order-by", from, to);
-    if g_n + a_n + o_n == 0 {
+    let (g_arg, g_at, g_n, g_blocked) = flag_argument(heap, args, parsed, "group", from, to);
+    let (a_arg, a_at, a_n, a_blocked) = flag_argument(heap, args, parsed, "agg", from, to);
+    let (o_arg, o_at, o_n, o_blocked) = flag_argument(heap, args, parsed, "order-by", from, to);
+    if g_n + a_n + o_n == 0 || g_blocked + a_blocked + o_blocked > 0 {
         buffer.drop(heap, g_arg);
         buffer.drop(heap, a_arg);
         buffer.drop(heap, o_arg);
@@ -300,6 +315,15 @@ fn repair[&h, &g, &p, &q, &n, &k](heap: &!h Heap, w: json.Writer, args: &g Args,
 
 // ---- the refusal of a bad --agg item ----------------------------------------------------------------------------------------
 
+// The item of `--agg` `given` that is not an aggregate: `parsed` (what `agg.parse_aggs` answered: -1 when it read the whole list) or, when it read every item, the first one that has a bucket
+// after a date type (`min:ts:timestamp@day`: a bucket belongs to a group key, dtbucket.cho).
+pub fn agg_bad[&g](given: &g [byte], parsed: int) -> [] int {
+    if parsed == 0 - 1 {
+        return dtbucket.agg_item(given);
+    }
+    return parsed;
+}
+
 // The hint of `agg.bad-spec` for item `bad` of `--agg` `given`: the usual one, or, for the sum or the mean of a date type, what the types are for. A sum of instants has no unit.
 pub fn agg_hint[&g](given: &g [byte], bad: int) -> [] &static [byte] {
     let n = len(given);
@@ -333,6 +357,9 @@ pub fn agg_hint[&g](given: &g [byte], bad: int) -> [] &static [byte] {
         }
     }
     let item = given[found_start..found_end];
+    if dtbucket.agg_bucket(item) {
+        return dtbucket.agg_hint();
+    }
     var e = len(item);
     var k = e;
     while k > 0 && int_of(item[k - 1]) >= '0' && int_of(item[k - 1]) <= '9' {

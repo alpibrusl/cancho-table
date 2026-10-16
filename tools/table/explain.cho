@@ -12,6 +12,7 @@ module explain;
 import std.buffer;
 import std.bytes;
 import std.vec;
+import dtbucket;
 import dtfail;
 import dtparse;
 import explainor;
@@ -617,6 +618,11 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
         o = put_column(heap, o, tree, ns + nw + k, resolved, cols, names, ends);
         o = buffer.append(heap, o, ",\"type\":");
         o = put_type(heap, o, query.gkind_at(tree, k));
+        if query.gunit_at(tree, k) != 0 {
+            o = buffer.append(heap, o, ",\"bucket\":\"");
+            o = buffer.append(heap, o, dtbucket.unit_text(query.gunit_at(tree, k)));
+            o = buffer.push(heap, o, byte_of(34));
+        }
         o = buffer.push(heap, o, byte_of('}'));
         k = k + 1;
     }

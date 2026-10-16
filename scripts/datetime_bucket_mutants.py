@@ -93,9 +93,10 @@ MUTANTS = [
     ("a unit is read as a type that has none", "agg.cho", "        if kind >= 256 {\n            return dtbucket.read(data, kind);\n        }\n", "        if kind >= 512 {\n            return dtbucket.read(data, kind);\n        }\n"),
     ("a key with a unit is read without it", "agg.cho", "            return dtbucket.read(data, kind);", "            return dtparse.parse(data, kind % 256);"),
     # ---- --agg
-    ("a bucket in --agg is accepted (read as a column name)", "dtbucket.cho", "        if at >= 0 && index_of_byte(item[0..at - dl], byte_of(':')) > 0 {\n            return index;", "        if at >= 99 && index_of_byte(item[0..at - dl], byte_of(':')) > 0 {\n            return index;"),
+    ("the scale of a mean is a unit", "dtbucket.cho", "    if n < 1 || n > 2 {\n        return false;\n    }", "    if n < 1 || n > 0 {\n        return false;\n    }"),
+    ("a bucket in --agg is accepted (read as a column name)", "dtbucket.cho", "        if agg_bucket(given[start..j]) {\n            return index;", "        if false {\n            return index;"),
     ("a bucket in --agg is found only when the list was not read", "dtfail.cho", "    if parsed == 0 - 1 {\n        return dtbucket.agg_item(given);", "    if parsed == 0 - 3 {\n        return dtbucket.agg_item(given);"),
-    ("the hint of a bucket in --agg is the usual one", "dtfail.cho", "    if bat >= 0 && index_of_byte(item[0..bat - bdl], byte_of(':')) > 0 {\n        return dtbucket.agg_hint();", "    if false {\n        return dtbucket.agg_hint();"),
+    ("the hint of a bucket in --agg is the usual one", "dtfail.cho", "    if dtbucket.agg_bucket(item) {\n        return dtbucket.agg_hint();", "    if false {\n        return dtbucket.agg_hint();"),
     ("the hint of a bucket in --agg does not name the flag", "dtbucket.cho", "a bucket belongs to a group key, not to an aggregate: --group ts:timestamp@day --agg", "a bucket belongs to a group key, not to an aggregate: --agg"),
     # ---- the repair (dtfail.cho)
     ("a repair loses the unit", "dtfail.cho", "                out = buffer.append(heap, out, text[start + bat..j]);\n", ""),

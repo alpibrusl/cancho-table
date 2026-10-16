@@ -203,7 +203,7 @@ MUTANTS = [
     ("a repair is offered while a condition has literals of the old type", "dtfail.cho", "        if query.cond_at(tree, k, 1) == from && (bytes.equal(query.name_at(tree, query.cond_at(tree, k, 3)), name) || query.position_of(query.name_at(tree, query.cond_at(tree, k, 3))) >= 0) {\n            return false;", "        if false {\n            return false;"),
     ("a repair is offered while a condition called by position has literals of the old type", "dtfail.cho", "|| query.position_of(query.name_at(tree, query.cond_at(tree, k, 3))) >= 0) {", ") {"),
     ("a repair rewrites the type of another column", "dtfail.cho", "        if query.agg_at(tree, k, 0) != 0 && query.agg_at(tree, k, 2) == from && !bytes.equal(query.name_at(tree, query.agg_at(tree, k, 1)), name) {\n            return false;", "        if false {\n            return false;"),
-    ("a repair rewrites a column whose name ends in an escaped colon and a type", "dtfail.cho", "        if dk == from && !escaped_at(text, j - dl) {", "        if dk == from {"),
+    ("a repair rewrites a column whose name ends in an escaped colon and a type", "dtfail.cho", "        } else if dk == from && !escaped_at(text, j - dl) {", "        } else if dk == from {"),
     # ---- the literals' repair (dtrepair.cho)
     ("the repair of < is the next day", "dtrepair.cho", "    if op == 5 || op == 2 {", "    if op == 5 {"),
     ("the repair of > is the day itself", "dtrepair.cho", "            if op == 4 {\n                out = buffer.append(heap, out, \" >= '\");", "            if op == 44 {\n                out = buffer.append(heap, out, \" >= '\");"),

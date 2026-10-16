@@ -10,6 +10,7 @@ import std.buffer;
 import std.bytes;
 import std.vec;
 import agg;
+import dtbucket;
 import plan;
 import query;
 import toolbox.fail;
@@ -24,11 +25,16 @@ pub fn problem[&h](heap: &!h Heap, e: fail.Errors, rule: &static [byte], message
 
 // A comma-separated list whose items may end in a type (`:int`, `:dec(S)`, `:float`; `agg.bare_tail`): what is left of each item, the items joined by
 // commas again, and the type of each in order; and the number of the first item whose scale is not 0 to 18, or -1. With `unescape` an escaped colon
-// (`\:`) is written as a colon, as `--agg` does (`--group` lists), and without it every backslash stays (the list is parsed again by `--order-by`).
-fn split_types[&h, &g](heap: &!h Heap, given: &g [byte], unescape: bool) -> [heap] (buffer.Buffer, vec.Vec[int], int) {
+// (`\:`) is written as a colon, as `--agg` does (`--group` lists), and without it every backslash stays (the list is parsed again by `--order-by`). A `--group` list (`unescape`)
+// also reads `@UNIT` after a date type (`dtbucket.find_at`): the unit goes above the type, `kind + 256 * unit`; the first item whose unit is refused is answered as its
+// bounds in `given` and the class of the refusal (the last three results, 0 when every unit is built).
+fn split_types[&h, &g](heap: &!h Heap, given: &g [byte], unescape: bool) -> [heap] (buffer.Buffer, vec.Vec[int], int, int, int, int) {
     var cleaned = buffer.empty(heap, len(given) + 1);
     var kinds = vec.empty(heap, 8, 0);
     var bad = -1;
+    var bu_class = 0;
+    var bu_start = 0;
+    var bu_end = 0;
     let n = len(given);
     var start = 0;
     var index = 0;
@@ -46,8 +52,32 @@ fn split_types[&h, &g](heap: &!h Heap, given: &g [byte], unescape: bool) -> [hea
             j = n;
         }
         let item = given[start..j];
-        let (e, kind0) = agg.bare_tail(item);
-        var kind = kind0;
+        var e = len(item);
+        var kind = 0;
+        var bat = 0 - 1;
+        var bdl = 0;
+        var bdk = 0;
+        if unescape {
+            let (a2, l2, k2) = dtbucket.find_at(item);
+            bat = a2;
+            bdl = l2;
+            bdk = k2;
+        }
+        if bat >= 0 {
+            e = bat - bdl;
+            let class = dtbucket.unit_class(item[bat + 1..len(item)], bdk);
+            if class == 0 {
+                kind = bdk + 256 * dtbucket.unit_code(item[bat + 1..len(item)]);
+            } else if bu_class == 0 {
+                bu_class = class;
+                bu_start = start;
+                bu_end = j;
+            }
+        } else {
+            let (e2, kind0) = agg.bare_tail(item);
+            e = e2;
+            kind = kind0;
+        }
         if kind == 99 {
             if bad < 0 {
                 bad = index;
@@ -80,7 +110,7 @@ fn split_types[&h, &g](heap: &!h Heap, given: &g [byte], unescape: bool) -> [hea
         }
         index = index + 1;
     }
-    return (cleaned, kinds, bad);
+    return (cleaned, kinds, bad, bu_start, bu_end, bu_class);
 }
 
 // A list of names read with `plan.parse`, in the plan: slot 0 for --select,
@@ -91,13 +121,19 @@ pub fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, g
     var typed = vec.empty(heap, 4, 0);
     var cleaned = buffer.empty(heap, len(given) + 1);
     var bad_item = -1;
+    var bu_class = 0;
+    var bu_start = 0;
+    var bu_end = 0;
     if slot == 2 {
-        let (c2, t2, b2) = split_types(heap, given, true);
+        let (c2, t2, b2, s2, e2, k2) = split_types(heap, given, true);
         buffer.drop(heap, cleaned);
         vec.drop(heap, typed);
         cleaned = c2;
         typed = t2;
         bad_item = b2;
+        bu_start = s2;
+        bu_end = e2;
+        bu_class = k2;
     } else {
         cleaned = buffer.append(heap, cleaned, given);
     }
@@ -127,6 +163,11 @@ pub fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, g
     }
     if bad_item >= 0 && listed {
         e = problem(heap, e, "args.bad-value", "a :dec(N) takes N from 0 to 18", "--group 'price:dec(2)'", flag);
+    }
+    if bu_class > 0 && listed {
+        // `--group ts:timestamp@week`: the unit is not one the type has (dtbucket.cho)
+        let (at, dl, dk) = dtbucket.find_at(given[bu_start..bu_end]);
+        e = dtbucket.refusal(heap, e, flag, given[bu_start..bu_end], given[bu_start + at + 1..bu_end], bu_class);
     }
     var q = tree;
     if listed {
@@ -165,7 +206,7 @@ pub fn add_names[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, g
 pub fn add_order_keys[&h, &g](heap: &!h Heap, tree: query.Query, errs: fail.Errors, given: &g [byte]) -> [heap] (query.Query, fail.Errors) {
     var e = errs;
     // the types first (`-bytes:int`, `price:dec(2)`, `x:float`): what is left of each key is `[-]NAME`, its type goes to its flags (2 x the type)
-    let (stripped, key_types, bad_scale) = split_types(heap, given, false);
+    let (stripped, key_types, bad_scale, bs, be, bc) = split_types(heap, given, false);
     var cleaned = buffer.empty(heap, len(given) + 1);
     var flags = vec.empty(heap, 4, 0);
     var n = 0;

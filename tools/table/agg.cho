@@ -4,15 +4,10 @@ module agg;
 
 // `--group` and `--agg`: rows counted and summed into groups, in bounded memory.
 //
-// A group is the tuple of its group columns' values, kept as bytes: for each
-// column a 4-byte little-endian length and the value (a quoted field's doubled
-// quotes undone). The key is the key of a `std.map`; the group's number is its
-// entry number, so the order of insertion is the order of the numbers; the
-// *output* order is not that: it is `--sort`, and ties and the default are the
-// keys compared field by field, each bytewise (`bytes.compare`), a shorter
-// value first. That order depends on the values only, not on where in the
-// file a group first appeared, so it is the same for the same rows in any
-// order.
+// A group is the tuple of its group columns' values, kept as bytes: for each column a 4-byte little-endian length and the value (a quoted field's doubled quotes undone). The
+// key is the key of a `std.map`; the group's number is its entry number, so the order of insertion is the order of the numbers; the *output* order is not that: it is
+// `--sort`, and ties and the default are the keys compared field by field, each bytewise (`bytes.compare`), a shorter value first. That order depends on the values only, not
+// on where in the file a group first appeared, so it is the same for the same rows in any order.
 //
 // Each group has `1 + 2 * aggregates` integers: its row count, then one per
 // aggregate: the sum, the minimum, the maximum, or the number of distinct
@@ -40,6 +35,7 @@ import facc;
 import flt;
 import plan;
 import cellnum;
+import dtbucket;
 import dtparse;
 import query;
 import toolbox.text;
@@ -202,10 +198,12 @@ fn put_cell[&h, &d](heap: &!h Heap, out: buffer.Buffer, scratch: buffer.Buffer, 
     return (o, scr);
 }
 
-// `query.parse_typed`, or `dtparse.parse` for a date type (22 :date, 23 :timestamp, 24 :datetime: a status of 14 and more, dtparse.cho). `parse_typed` itself is not touched: it is read by the
-// aggregates of the hot loop (`add_fast`), which a plan with a date type never takes (`engine.fast_ok`).
+// `query.parse_typed`, or `dtparse.parse` for a date type (22 :date, 23 :timestamp, 24 :datetime: a status of 14 and more), or `dtbucket.read` for a group key with a unit (kind + 256 * unit): `parse_typed` is not touched.
 fn read_typed[&d](data: &d [byte], kind: int) -> [] (int, int) {
     if kind >= 22 {
+        if kind >= 256 {
+            return dtbucket.read(data, kind);
+        }
         return dtparse.parse(data, kind);
     }
     return query.parse_typed(data, kind);
@@ -285,7 +283,7 @@ pub fn add[&h, &q, &c, &d, &e](heap: &!h Heap, g: Groups, tree: &q query.Query, 
         var j = 0;
         while j < ng && key_bad == 0 {
             let column = cols[base + j];
-            let gk = query.gkind_at(tree, j);
+            let gk = query.gkind_raw_at(tree, j);
             if gk != 0 {
                 // a typed group column: the key is the value, as its 8 order-preserving bytes (`1.5` and `1.50` are one group)
                 let (v, bad, s4) = typed_cell(heap, scr, record, cells[3 * column], cells[3 * column + 1], cells[3 * column + 2], gk);

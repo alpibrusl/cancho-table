@@ -348,7 +348,7 @@ class P:
                 e = self.expr()
                 if e[1] is not None:
                     raise QueryError("unsupported", at, feature="cast-in-group",
-                                     hint="the grammar groups by the text of a column; a grouping by value is the flag --group x:int, x:dec(N) or x:float; a period of a date, a timestamp or a datetime is --group ts:timestamp@day (or @hour, @month, @year)")
+                                     hint="the grammar groups by the text of a column; a grouping by value is the flag --group x:int, x:dec(N) or x:float")
                 q["group"].append(e[0])
                 if not self.eat_sym(","):
                     break
