@@ -10,25 +10,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>table: exact answers from CSV, or a refusal with a repair</title>
+<title>table: exact answers from CSV, TSV, JSON lines, or a repair</title>
 <meta name="description" content="A command line for people and AI agents: exact answers from CSV, TSV and JSON lines within stated limits, or a refusal with a repair you can run.">
 <link rel="canonical" href="https://alpibrusl.github.io/cancho-table/">
 <meta name="robots" content="index, follow">
 <meta property="og:site_name" content="table">
 <meta property="og:locale" content="en">
 <meta property="og:type" content="website">
-<meta property="og:title" content="table: exact answers from CSV, or a refusal with a repair">
+<meta property="og:title" content="table: exact answers from CSV, TSV, JSON lines, or a repair">
 <meta property="og:description" content="A command line for people and AI agents: exact answers from CSV, TSV and JSON lines within stated limits, or a refusal with a repair you can run.">
 <meta property="og:url" content="https://alpibrusl.github.io/cancho-table/">
 <meta property="og:image" content="https://alpibrusl.github.io/cancho-table/assets/cancho-table-logo-256.png">
 <meta property="og:image:width" content="256">
 <meta property="og:image:height" content="256">
-<meta property="og:image:alt" content="The logo of table, a command line for exact answers from CSV">
+<meta property="og:image:alt" content="The logo of table, a command line for exact answers from CSV, TSV and JSON lines">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="table: exact answers from CSV, or a refusal with a repair">
+<meta name="twitter:title" content="table: exact answers from CSV, TSV, JSON lines, or a repair">
 <meta name="twitter:description" content="A command line for people and AI agents: exact answers from CSV, TSV and JSON lines within stated limits, or a refusal with a repair you can run.">
 <meta name="twitter:image" content="https://alpibrusl.github.io/cancho-table/assets/cancho-table-logo-256.png">
-<meta name="twitter:image:alt" content="The logo of table, a command line for exact answers from CSV">
+<meta name="twitter:image:alt" content="The logo of table, a command line for exact answers from CSV, TSV and JSON lines">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -44,6 +44,15 @@
   "sameAs": [
     "https://github.com/alpibrusl/cancho-table"
   ],
+  "video": {
+    "@type": "VideoObject",
+    "name": "table in a terminal",
+    "description": "Nine short scenes: a question answered exactly, a refusal with its repair, exact decimals, a plan, JSON lines, a join, a query, the same bytes on 1 and 4 cores, and a pipe.",
+    "thumbnailUrl": "https://alpibrusl.github.io/cancho-table/assets/demo/table-demo-poster.png",
+    "contentUrl": "https://alpibrusl.github.io/cancho-table/assets/demo/table-demo.mp4",
+    "uploadDate": "2026-10-15",
+    "duration": "PT2M5S"
+  },
   "featureList": [
     "Exact numbers",
     "Bounded by rules",
@@ -132,6 +141,13 @@ section.alt code { background: var(--surface); }
 .cards.three { grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); }
 .card .more-link { display: inline-block; margin-top: .6rem; font-size: .88rem; }
 .card pre.code { margin: .8rem 0 0; font-size: .78rem; }
+
+.videofig { margin: 0 auto; max-width: 52rem; }
+.videofig video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: var(--term-bg); border: 1px solid #262c36; border-radius: 12px; }
+.videofig video:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.transcript .scene { margin: 1.2rem 0 0; color: var(--muted); font-size: .93rem; }
+.transcript .scene strong { color: var(--fg); }
+.transcript pre.code { margin-top: .4rem; font-size: .8rem; }
 
 .diagram { max-width: 52rem; margin: 0 auto; }
 .diagram svg { width: 100%; height: auto; display: block; }
@@ -239,7 +255,7 @@ footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(-
 <div class="wrap hero" id="top">
   <h1>Exact answers from CSV and JSON lines, or a refusal that tells you how to fix the question.</h1>
   <p class="sub"><code>table</code> is a command line for people and AI agents. Numbers you declare are exact, every limit is a rule, the same bytes come back on any number of cores, and a refusal carries the repair as a command to run.</p>
-  <div class="cta"><a class="btn primary" href="#try">Quick start</a><a class="btn" href="#flow">See a complete flow</a></div>
+  <div class="cta"><a class="btn primary" href="#try">Quick start</a><a class="btn" href="#flow">See a complete flow</a><a class="btn" href="#watch">Watch it run</a></div>
   <p class="early">Early: it works and is tested, it is not finished. <a href="#cannot">What it cannot do yet</a>.</p>
 </div>
 
@@ -326,6 +342,134 @@ footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(-
   </figure>
 </div></section>
 
+<section id="watch"><div class="wrap">
+  <h2>Watch it run</h2>
+  <p class="lead"><strong>table in a terminal:</strong> nine short scenes: a question answered exactly, a refusal with its repair, exact decimals, a plan, JSON lines, a join, a query, the same bytes on 1 and 4 cores, and a pipe.</p>
+  <figure class="videofig">
+    <video controls preload="none" playsinline poster="assets/demo/table-demo-poster.png" width="1280" height="720" aria-describedby="demo-caption">
+      <source src="assets/demo/table-demo.mp4" type="video/mp4">
+      <source src="assets/demo/table-demo.webm" type="video/webm">
+      <p>This browser cannot play the video. Download it as <a href="assets/demo/table-demo.mp4">MP4</a> or <a href="assets/demo/table-demo.webm">WEBM</a>, or read the transcript below.</p>
+    </video>
+    <figcaption class="caption" id="demo-caption">About <!-- gen:demofacts -->
+2 min 5 s, no sound, and it does not play by itself. The typing is simulated (each character is written with a small delay) and the output is real: every command was run for real with the program built from commit <a href="https://github.com/alpibrusl/cancho-table/commit/0a1b7dc614e401e4c2e91ef7a17c84a70a2c740a"><code>0a1b7dc</code></a>, on small files the script writes, on 15 October 2026 (UTC), and nothing was edited afterwards. The recording, the script and the golden transcript are in <a href="https://github.com/alpibrusl/cancho-table/tree/main/scripts/demo">scripts/demo</a>.
+<!-- /gen:demofacts --></figcaption>
+  </figure>
+  <details class="more" id="transcript"><summary>Transcript: every command and what it printed</summary>
+<!-- gen:demo -->
+<div class="transcript">
+<p class="scene"><strong>1. question:</strong> one question, one exact answer: who sent the most bytes?</p>
+<pre class="code" tabindex="0" aria-label="Scene 1: question"><span class="c">$</span> cat orders.csv
+id,customer,status,bytes
+1,"Doe, Jane",200,512
+2,Acme,404,
+3,"Doe, Jane",200,2048
+4,Acme,500,128
+5,Zed,200,64
+<span class="c">[exit 0]</span>
+
+<span class="c">$</span> table --where "bytes != ''" --group customer --agg count,sum:bytes \
+  --sort -sum:bytes --format csv orders.csv
+customer,count,sum:bytes
+"Doe, Jane",2,2560
+Acme,1,128
+Zed,1,64
+<span class="c">[exit 0]</span></pre>
+<p class="scene"><strong>2. refusal:</strong> a wrong column name is refused (exit 3); printed: rule, hint, repair</p>
+<pre class="code" tabindex="0" aria-label="Scene 2: refusal"><span class="c">$</span> table --where "status = 200" --select Customer,bytes orders.csv \
+  | jq -r '.error | .rule, .hint, (.repair.options[0].argv | join(" "))'
+select.unknown-column
+pick from detail.available
+table --where status = 200 --select customer,bytes orders.csv
+<span class="c">[exit 3]</span>
+
+<span class="c">$</span> table --where "status = 200" --select customer,bytes \
+  --format csv orders.csv
+customer,bytes
+"Doe, Jane",512
+"Doe, Jane",2048
+Zed,64
+<span class="c">[exit 0]</span></pre>
+<p class="scene"><strong>3. decimals:</strong> exact decimals: 0.1 + 0.2 + 0.3 as dec(2), then as plain doubles</p>
+<pre class="code" tabindex="0" aria-label="Scene 3: decimals"><span class="c">$</span> cat prices.csv
+item,price
+tea,0.1
+cup,0.2
+book,0.3
+<span class="c">[exit 0]</span>
+
+<span class="c">$</span> table --agg "sum:price:dec(2)" --format csv prices.csv
+sum:price
+0.60
+<span class="c">[exit 0]</span>
+
+<span class="c">$</span> python3 -c "print(0.1 + 0.2 + 0.3)"
+0.6000000000000001
+<span class="c">[exit 0]</span></pre>
+<p class="scene"><strong>4. explain:</strong> --explain: the plan, not the run; here only the size and bytes read (the file is larger than the one 64 KiB block read for the header)</p>
+<pre class="code" tabindex="0" aria-label="Scene 4: explain"><span class="c">$</span> table --explain --group customer --agg count,sum:bytes sales.csv \
+  | jq -c '.data.explain | {size: .source.size, read: .source.bytes_read}'
+{"size":129967,"read":65536}
+<span class="c">[exit 0]</span></pre>
+<p class="scene"><strong>5. jsonl:</strong> JSON lines in and out: --fields names the columns</p>
+<pre class="code" tabindex="0" aria-label="Scene 5: jsonl"><span class="c">$</span> cat events.jsonl
+{"user":{"name":"ana"},"action":"login","ms":120}
+{"user":{"name":"bo"},"action":"view","ms":45}
+{"user":{"name":"ana"},"action":"view","ms":80}
+<span class="c">[exit 0]</span>
+
+<span class="c">$</span> table --input-format jsonl --fields user.name,action,ms \
+  --where "ms:int &gt; 50" --format jsonl events.jsonl
+{"user.name":"ana","action":"login","ms":"120"}
+{"user.name":"ana","action":"view","ms":"80"}
+<span class="c">[exit 0]</span></pre>
+<p class="scene"><strong>6. join:</strong> a join: which orders have no customer on file? (anti join)</p>
+<pre class="code" tabindex="0" aria-label="Scene 6: join"><span class="c">$</span> cat customers.csv
+name,tier
+Acme,silver
+Zed,bronze
+<span class="c">[exit 0]</span>
+
+<span class="c">$</span> table --join customers.csv --on customer=name --join-type anti \
+  --select id,customer --format csv orders.csv
+id,customer
+1,"Doe, Jane"
+3,"Doe, Jane"
+<span class="c">[exit 0]</span></pre>
+<p class="scene"><strong>7. query:</strong> the same question in a small SQL: --query means exactly the flags</p>
+<pre class="code" tabindex="0" aria-label="Scene 7: query"><span class="c">$</span> table --query "select customer, sum(bytes) from 'orders.csv' \
+  where bytes != '' group by customer order by sum(bytes) desc" \
+  --format csv
+customer,sum:bytes
+"Doe, Jane",2560
+Acme,128
+Zed,64
+<span class="c">[exit 0]</span></pre>
+<p class="scene"><strong>8. threads:</strong> the same bytes on 1 core and on 4: the hash of each answer (6000 rows; the size threshold is lowered so that 4 threads run)</p>
+<pre class="code" tabindex="0" aria-label="Scene 8: threads"><span class="c">$</span> table --threads 1 --parallel-min-bytes 0 --chunk-bytes 16384 \
+  --group customer --agg count,sum:bytes --format csv sales.csv \
+  | shasum -a 256
+b4d8817428d3f010d08d413c7626ace6637576d16a75d33eb70d65722eb9bff5  -
+<span class="c">[exit 0]</span>
+
+<span class="c">$</span> table --threads 4 --parallel-min-bytes 0 --chunk-bytes 16384 \
+  --group customer --agg count,sum:bytes --format csv sales.csv \
+  | shasum -a 256
+b4d8817428d3f010d08d413c7626ace6637576d16a75d33eb70d65722eb9bff5  -
+<span class="c">[exit 0]</span></pre>
+<p class="scene"><strong>9. pipe:</strong> and it reads a pipe</p>
+<pre class="code" tabindex="0" aria-label="Scene 9: pipe"><span class="c">$</span> cat orders.csv \
+  | table --where "status = 200" --select id,customer --format csv
+id,customer
+1,"Doe, Jane"
+3,"Doe, Jane"
+5,Zed
+<span class="c">[exit 0]</span></pre>
+</div>
+<!-- /gen:demo -->
+  </details>
+</div></section>
+
 <section class="alt" id="does"><div class="wrap">
   <h2>What it reads and does now</h2>
   <p class="lead">Every example on this page runs on one of a few small files, and the output under it is what the built program prints. What it cannot do yet is <a href="#cannot">listed below</a>.</p>
@@ -365,7 +509,7 @@ customer,count,sum:bytes
 Acme,1,128</pre>
 <!-- /gen:c-query -->
       <a class="more-link" href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a></div>
-    <div class="card"><h3>Joins</h3><p><code>--join</code> with <code>--join-type</code> inner, left, semi or anti (slices J1 and J2 of the joins design), on up to eight pairs of columns, as text or as <code>:int</code>, <code>:dec(S)</code> or <code>:float</code>. Rows out; the joined file is held in memory.</p>
+    <div class="card"><h3>Joins</h3><p><code>--join</code> with <code>--join-type</code> inner, left, semi or anti (slices J1 to J3 of the joins design), on up to eight pairs of columns, as text or as <code>:int</code>, <code>:dec(S)</code> or <code>:float</code>. Rows, sorted rows or groups out (<code>--join-where</code>, <code>--group</code>, <code>--agg</code>, <code>--sort</code>, <code>--top</code>); the joined file is held in memory, counted in <code>--max-state-bytes</code> with the groups.</p>
 <!-- gen:c-join -->
 <pre class="code" tabindex="0"><span class="c">$</span> table --join tiers.csv --on customer --join-type left --select id,customer,tier --format csv orders.csv
 id,customer,tier
@@ -575,7 +719,7 @@ Zed,64</pre>
   </div>
   <div>
     <h3 class="task">Join two files</h3>
-    <p><code>--join FILE --on PROBE=BUILD</code> joins the file you name (or standard input) with a second one. The operand is the <strong>probe</strong> side and is streamed; the <code>--join</code> file is the <strong>build</strong> side and is held whole in memory, counted in <code>--max-state-bytes</code>. <code>--join-type</code> is <code>inner</code> (the default: each probe row, in the probe's order, once for every build row with its key, in the build's order, followed by that row's cells), <code>left</code> (the same, and a probe row with no match once, with every cell of the build row empty: there is no null), <code>semi</code> (each probe row that has a match, once, with its own cells) or <code>anti</code> (each probe row that has none, once). A key is compared as text, byte for byte (<code>007</code> is not <code>7</code>, and an empty cell matches an empty cell: there is no null), or as a number when the pair ends in a type, <code>--on id=user:int</code> (also <code>:dec(S)</code> and <code>:float</code>): then <code>007</code> is <code>7</code>, <code>-0</code> is <code>0</code>, <code>1.5</code> is <code>1.50</code>, and a cell that is not of the type, an empty one included, is refused. <code>--on a=x,b=y</code> is a key of two pairs (up to eight); <code>--on id</code> names a column both files have, and the answer shows it once. Two files that share a column name are refused as <code>join.column-collision</code>, and the refusal offers the invocation with a <code>--join-prefix</code>. A number read from a padded cell of a left join (<code>--where "tier:int &gt; 1"</code>) is refused as any empty cell is, and the refusal says <code>padded</code> (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/joins.md">docs/joins.md</a>, sections 16 and 17).</p>
+    <p><code>--join FILE --on PROBE=BUILD</code> joins the file you name (or standard input) with a second one. The operand is the <strong>probe</strong> side and is streamed; the <code>--join</code> file is the <strong>build</strong> side and is held whole in memory, counted in <code>--max-state-bytes</code>. <code>--join-type</code> is <code>inner</code> (the default: each probe row, in the probe's order, once for every build row with its key, in the build's order, followed by that row's cells), <code>left</code> (the same, and a probe row with no match once, with every cell of the build row empty: there is no null), <code>semi</code> (each probe row that has a match, once, with its own cells) or <code>anti</code> (each probe row that has none, once). A key is compared as text, byte for byte (<code>007</code> is not <code>7</code>, and an empty cell matches an empty cell: there is no null), or as a number when the pair ends in a type, <code>--on id=user:int</code> (also <code>:dec(S)</code> and <code>:float</code>): then <code>007</code> is <code>7</code>, <code>-0</code> is <code>0</code>, <code>1.5</code> is <code>1.50</code>, and a cell that is not of the type, an empty one included, is refused. <code>--on a=x,b=y</code> is a key of two pairs (up to eight); <code>--on id</code> names a column both files have, and the answer shows it once. Two files that share a column name are refused as <code>join.column-collision</code>, and the refusal offers the invocation with a <code>--join-prefix</code>. A number read from a padded cell of a left join (<code>--where "tier:int &gt; 1"</code>) is refused as any empty cell is, and the refusal says <code>padded</code>. <code>--group</code>, <code>--agg</code>, <code>--sort</code>, <code>--order-by</code>, <code>--top</code>, <code>--limit</code>, <code>--from</code> and <code>--rename</code> take the joined row as they take a file's, and the groups or the sorted rows share <code>--max-state-bytes</code> with the <code>--join</code> file, which is held first (a group that does not fit in what the build leaves is <code>limit.state-too-large</code> with <code>detail.holder</code> <code>groups</code> and <code>detail.build_bytes</code>). <code>--join-where EXPR</code> is a <code>--where</code> over the <code>--join</code> file's own columns, applied to its rows before they are held: the <code>ON</code> of a SQL join, so that a left join keeps its probe row, padded, where the same condition in <code>--where</code> drops it. And the leading run of text conditions in <code>--where</code> (no type, none after the first typed one) is applied before the join, to the probe row before its key is read, and for an inner join to the build row before it is held, so <code>--where "bytes != '' and bytes:int &gt; 100"</code> guards a typed key as it guards a typed column; <code>--explain</code> says which conditions went where (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/joins.md">docs/joins.md</a>, sections 16 to 18).</p>
 <!-- gen:t-join -->
 <pre class="code" tabindex="0"><span class="c">$</span> table --join customers.csv --on customer=name --join-prefix c_ --select id,customer,bytes,c_tier --format csv orders.csv
 id,customer,bytes,c_tier
@@ -823,10 +967,10 @@ Zed,1,64
   <ul class="plain">
     <li><strong>Numbers are mostly built.</strong> <code>:int</code>, <code>:dec(S)</code> and <code>:float</code> work in <code>--where</code>, <code>--agg</code>, <code>--group</code> and <code>--order-by</code>. Columns of 15- to 17-digit numbers are read by an exact reader that allocates nothing on the paths a real column takes (Clinger, then Eisel-Lemire, then an exact fallback); it matched Python's <code>float()</code> on every cell of each differential run, the largest of 100,367,328 cells (the final code), and costs 29.6 ns a cell against 1,151 ns before (one Mac core, load average 6.7 to 13.5; <a href="benchmarks.html#float-reader">conditions</a>).</li>
     <li><strong>A sort uses more cores only for a whole sort written as CSV.</strong> With <code>--order-by</code>, <code>--format csv</code> and no <code>--top</code>, <code>--limit</code> or <code>--from</code>, <code>--threads</code> above 1 sorts in parallel and gives the same bytes; pages, <code>--top</code> and JSON output run on one core. A threaded sort peaks at 11.8 to 14.8 times the size of a 39.55 MB file at 16 threads on the Mac, against 4.4 to 6.2 times for the sequential sort (<a href="benchmarks.html#psort">conditions</a>). There is no sort that spills to disk.</li>
-    <li><strong>One join, in two slices of it</strong> (J1 and J2 of <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/joins.md">docs/joins.md</a>): <code>--join FILE --on KEYS</code> joins the operand (or standard input) with a second file, as an <code>inner</code>, <code>left</code>, <code>semi</code> or <code>anti</code> join, on up to eight pairs of columns, each compared as text or, with a type (<code>:int</code>, <code>:dec(S)</code>, <code>:float</code>), as a number, giving rows (<code>--select</code>, <code>--where</code>, <code>--limit</code>, <code>--from</code>, <code>--format</code>). No right or full join, no <code>--group</code>, <code>--agg</code>, <code>--order-by</code> or <code>--report</code> over a join (write the join as csv and pipe it into a second call), no jsonl side, no <code>--join-where</code>, no filter that runs before the key is read (a typed key is refused at the first cell that is not of its type), no <code>--query</code> with a join. The <code>--join</code> file is held whole in memory, counted in <code>--max-state-bytes</code> (resident memory can be up to about three times that while it grows), and nothing spills to disk. A join is read on one core whatever <code>--threads</code> says.</li>
+    <li>One join, in three slices of it** (J1 to J3 of <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/joins.md">docs/joins.md</a>): <code>--join FILE --on KEYS</code> joins the operand (or standard input) with a second file, as an <code>inner</code>, <code>left</code>, <code>semi</code> or <code>anti</code> join, on up to eight pairs of columns, each compared as text or, with a type (<code>:int</code>, <code>:dec(S)</code>, <code>:float</code>), as a number, giving rows, sorted rows or groups (<code>--select</code>, <code>--where</code>, <code>--join-where</code>, <code>--group</code>, <code>--agg</code>, <code>--sort</code>, <code>--order-by</code>, <code>--top</code>, <code>--limit</code>, <code>--from</code>, <code>--rename</code>, <code>--format</code>). No right or full join, no <code>--report</code> over a join (write the join as csv and pipe it into a second call), no jsonl side, no <code>--query</code> with a join. The <code>--join</code> file is held whole in memory, counted in <code>--max-state-bytes</code> together with the groups or the sorted rows (resident memory can be up to about three times that while it grows), and nothing spills to disk. A join is read on one core whatever <code>--threads</code> says.</li>
     <li><strong>One input</strong> at a time otherwise: a file named on the command line, or standard input (<code>-</code>, or no file), read in one pass on one core, in blocks, at about the speed of a named file on one core. A producer that writes slowly is waited for until the first 512 bytes arrive; a closed descriptor 0 reads as empty; a descriptor that fails is refused with an io.* rule (docs/readers.md 11.1, 11.7). (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a>, section "R1 as built").</li>
     <li><strong>JSON lines are read, nothing else is.</strong> <code>--input-format jsonl</code> (or <code>ndjson</code>) reads one JSON object per line, from a file or from standard input, with the columns declared by <code>--fields</code> (paths such as <code>user.name</code> or <code>items.0.sku</code>; <code>--discover</code> reports what the first lines hold). A number is the cell its exact text is, never through a double. A line that is not strict JSON, not an object, a declared path with no value, an object or an array in a cell, and a key twice are tagged refusals (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a> section 12). <code>--format jsonl</code> writes the answer back as JSON lines (one object per row, keys the output columns, every value a string but the aggregates and the group keys that have a type (<code>--group NAME:int</code>, <code>NAME:dec(S)</code>, <code>NAME:float</code>), which are numbers; <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/readers.md">docs/readers.md</a> section 13). No Parquet, no JSON array or pretty-printed document (use <code>jq -c '.[]'</code>). CSV and TSV (comma, tab or semicolon) as before.</li>
-    <li>**<code>--query</code> is a small subset of SQL**, not SQL: <code>or</code>, <code>not</code> and parentheses are there (a level is all <code>and</code> or all <code>or</code>: <code>a = 1 or b = 2 and c = 3</code> is refused as <code>query.mixed-and-or</code>, with both readings as the repair; <code>not a = 1</code>, <code>not (...)</code>, <code>a not in (1, 2)</code>, <code>a not contains 'x'</code>), and <code>as</code> names a column of the answer, but no expressions or functions, no <code>like</code>, no <code>null</code>, no joins, no subqueries, and a grouping sorts by one column. Each is refused as <code>query.unsupported</code>, with the feature named (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a>).</li>
+    <li><strong><code>--query</code> is a small subset of SQL</strong>, not SQL: <code>or</code>, <code>not</code> and parentheses are there (a level is all <code>and</code> or all <code>or</code>: <code>a = 1 or b = 2 and c = 3</code> is refused as <code>query.mixed-and-or</code>, with both readings as the repair; <code>not a = 1</code>, <code>not (...)</code>, <code>a not in (1, 2)</code>, <code>a not contains 'x'</code>), and <code>as</code> names a column of the answer, but no expressions or functions, no <code>like</code>, no <code>null</code>, no joins, no subqueries, and a grouping sorts by one column. Each is refused as <code>query.unsupported</code>, with the feature named (<a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/query.md">docs/query.md</a>).</li>
     <li><strong>No guessing.</strong> Every column is text unless you declare <code>:int</code>, <code>:dec(S)</code> or <code>:float</code>; <code>--report types</code> suggests a declaration and applies none. No computed column (a renamed one is <code>--rename customer=name</code>, a label and nothing else: the filter, the grouping and the sort by header still name the header's columns); <code>or</code>, <code>not</code> and parentheses are there in a filter (a mix of <code>and</code> and <code>or</code> at one level is refused with both readings, never guessed; a typed cell is read only when its condition is reached, so <code>c = '' or c:int &gt; 5</code> keeps the empty cells and <code>c:int &gt; 5 or c = ''</code> refuses the first one).</li>
   </ul>
   <p class="note">The rest of joins is on the <a href="https://github.com/alpibrusl/cancho-table/blob/main/docs/backlog.md">backlog</a>, in rough order. Nothing there is promised.</p>

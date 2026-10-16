@@ -114,6 +114,12 @@ jobs:
         working-directory: table
         run: python3 scripts/site.py --check
 
+      # Title and description lengths, the JSON-LD against the visible text, the demo video's
+      # files, size budget, length and date, links, contrast (standard library only).
+      - name: The project pages keep their structure and what their metadata states
+        run: python3 scripts/seo_check.py
+        working-directory: table
+
       # No csvtk here: this only keeps the script working. The numbers in the
       # README are from a machine that has it.
       - name: The benchmark script runs

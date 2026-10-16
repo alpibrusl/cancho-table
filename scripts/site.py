@@ -34,6 +34,11 @@ cites, next to its conditions). What is generated:
                                           for net, ffi and clock)
     limits        index.html              the limits `table introspect` lists
     rules         index.html              the rules `table introspect` lists
+    demofacts     index.html              the sentence under the video: its length (from the MP4), the commit and the day it
+                                          was recorded (from the cast's header)
+    demo          index.html              the transcript under the video: the scenes' captions and the commands and output of
+                                          scripts/demo/expected.txt (the file that tests/conformance/test_demo.py holds equal
+                                          to what the build prints), so the text cannot drift from the video
     sbsline       README.md, index.html   the sentence about DuckDB's DOUBLE sum in the float paragraphs, from the same JSON
     sbs           index.html, benchmarks.html   the side-by-side of `table` and DuckDB at 1 to 16
                                           threads, written from docs/assets/threads-vs-duckdb.json
@@ -553,6 +558,70 @@ def sbs_line(md):
     return text.replace("&rsquo;", "'") if md else text
 
 
+DEMO = ROOT / "scripts" / "demo"
+DEMO_DIR = ROOT / "docs" / "assets" / "demo"
+
+
+def mp4_seconds(path):
+    """The length of an MP4 from its movie header (the 'mvhd' box), with the standard library."""
+    data = Path(path).read_bytes()
+    i = data.find(b"mvhd")
+    if i < 0:
+        raise Drift("%s has no mvhd box" % path)
+    version = data[i + 4]
+    if version == 1:
+        scale, dur = int.from_bytes(data[i + 24:i + 28], "big"), int.from_bytes(data[i + 28:i + 36], "big")
+    else:
+        scale, dur = int.from_bytes(data[i + 16:i + 20], "big"), int.from_bytes(data[i + 20:i + 24], "big")
+    return dur / scale
+
+
+def cast_header():
+    return json.loads((DEMO_DIR / "table-demo.cast").read_text().split("\n", 1)[0])
+
+
+def demo_facts(_ctx=None):
+    import datetime
+    head = cast_header()
+    commit = head["env"]["TABLE_COMMIT"]
+    when = datetime.datetime.fromtimestamp(head["timestamp"], datetime.timezone.utc)
+    secs = round(mp4_seconds(DEMO_DIR / "table-demo.mp4"))
+    return ('%d min %d s, no sound, and it does not play by itself. The typing is simulated (each character is written with a small delay) and the output is real: '
+            'every command was run for real with the program built from commit <a href="https://github.com/alpibrusl/cancho-table/commit/%s"><code>%s</code></a>, '
+            'on small files the script writes, on %d %s %d (UTC), and nothing was edited afterwards. The recording, the script and the golden transcript '
+            'are in <a href="https://github.com/alpibrusl/cancho-table/tree/main/scripts/demo">scripts/demo</a>.'
+            % (secs // 60, secs % 60, commit, commit[:7], when.day, when.strftime("%B"), when.year))
+
+
+def demo_transcript(_ctx=None):
+    """Each scene of the storyboard: its caption, then its commands with the output and status of expected.txt."""
+    sys.path.insert(0, str(DEMO))
+    import storyboard
+    text = (DEMO / "expected.txt").read_text()
+    at = 0
+    blocks = []
+    for scene, caption, cmds in storyboard.SCENES:
+        shown = []
+        for c in cmds:
+            head = "$ %s\n" % c["cmd"]
+            if not text.startswith(head, at):
+                raise Drift("scripts/demo/expected.txt does not follow the storyboard at %r" % c["cmd"])
+            end = text.index("\n[exit ", at + len(head) - 1) + 1
+            out = text[at + len(head):end]
+            tail = text.index("]\n", end) + 2
+            status = text[end:tail - 1]
+            at = tail + (1 if text.startswith("\n", tail) else 0)
+            lines = ['<span class="c">$</span> ' + e(c["cmd"].split("\n", 1)[0])] + [e(l) for l in c["cmd"].split("\n")[1:]]
+            body = "\n".join(lines) + "\n" + e(out) + '<span class="c">%s</span>' % e(status)
+            shown.append(body)
+        blocks.append('<p class="scene"><strong>%d. %s:</strong> %s</p>\n<pre class="code" tabindex="0" aria-label="Scene %d: %s">%s</pre>'
+                      % (len(blocks) + 1, e(scene), e(" ".join(caption)), len(blocks) + 1, e(scene), "\n\n".join(shown)))
+    if at != len(text):
+        raise Drift("scripts/demo/expected.txt has text after the storyboard's last command")
+    return '<div class="transcript">\n' + "\n".join(blocks) + "\n</div>"
+
+
+
 REGIONS = {
     "README.md": dict({"t-" + t: (lambda c, t=t: md_block(task_items(c, t))) for t in TASKS},
                       flow=lambda c: md_block(flow_items(c)), qs=lambda c: md_block(qs_items(c)),
@@ -561,7 +630,7 @@ REGIONS = {
                             flow=lambda c: term_pre(flow_items(c)), qs=lambda c: html_pre(qs_items(c)),
                             **{"c-" + n: (lambda c, n=n: card(c, n)) for n in CARDS},
                             agentio=agentio, skill=skill, authority=authority, limits=limits,
-                            rules=rules_html, nrules=nrules, sbs=sbs_index, sbsline=lambda c: sbs_line(False)),
+                            rules=rules_html, nrules=nrules, demofacts=demo_facts, demo=demo_transcript, sbs=sbs_index, sbsline=lambda c: sbs_line(False)),
     "docs/benchmarks.html": {"sbs": sbs_bench},
     "docs/refusals.md": {"exit-codes": exit_codes, "rules": rules_md, "examples": examples},
 }

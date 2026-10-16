@@ -11,7 +11,10 @@ that parses and states only what the page says (its name, licence, language and 
 feature name occur in the visible text), no <script src> at all, a <main>, ids that are
 unique and links to #ids that exist, and, for docs/index.html, the text of the replayed
 terminal in the page itself (it must read without the script) and the colour pairs of its
-two themes at a contrast of at least 4.5. And: every URL in docs/sitemap.xml is a file
+two themes at a contrast of at least 4.5. A VideoObject in the JSON-LD must state only what the page shows:
+its name and description are in the visible text, its files exist and are inside the size budget and are
+the ones the <video> offers, its duration is the MP4's, its date and the commit are the cast's and are in
+the caption, and the <video> has controls, preload=none and no autoplay. And: every URL in docs/sitemap.xml is a file
 of docs/, and docs/robots.txt names the sitemap. Exit 1 on the first failure list.
 """
 import json
@@ -133,6 +136,13 @@ def check(name, url, errs):
             need(str(doc.get(key, "")).lower() in visible, "JSON-LD %s %r is not in the visible text" % (key, doc.get(key)))
         for feature in doc.get("featureList", []):
             need(feature.lower() in visible, "JSON-LD feature %r is not in the visible text" % feature)
+    for blob in p.ld:
+        try:
+            video = json.loads(blob).get("video")
+        except ValueError:
+            continue
+        if video:
+            check_video(name, video, p, errs)
     need(len(p.tags) and "main" in p.tags, "a <main> landmark")
     need(len(p.ids) == len(set(p.ids)), "duplicate ids")
     for h in p.hrefs:
@@ -140,6 +150,67 @@ def check(name, url, errs):
     if name == "index.html":
         need("exit status" in p.screen_text and "table --where" in p.screen_text, "the replayed terminal has no text without the script")
     return p
+
+
+# The budget of the media the page offers (bytes); the page loads none of them before the visitor plays (preload="none"), but the poster
+MEDIA_BUDGET = {"table-demo.mp4": 1_000_000, "table-demo.webm": 1_500_000, "table-demo-poster.png": 300_000, "table-demo.gif": 1_200_000}
+
+
+def mp4_seconds(path):
+    """The length of an MP4 from its 'mvhd' box."""
+    data = path.read_bytes()
+    i = data.find(b"mvhd")
+    if i < 0:
+        return None
+    if data[i + 4] == 1:
+        return int.from_bytes(data[i + 28:i + 36], "big") / int.from_bytes(data[i + 24:i + 28], "big")
+    return int.from_bytes(data[i + 20:i + 24], "big") / int.from_bytes(data[i + 16:i + 20], "big")
+
+
+def iso_duration(seconds):
+    s = round(seconds)
+    return "PT%dM%dS" % (s // 60, s % 60)
+
+
+def check_video(name, video, p, errs):
+    """The VideoObject states only what the page shows: its name and description are in the visible text, its files exist, are inside the budget and
+    are the ones the <video> element offers, its length is the MP4's and its date is the day the cast says (and the caption)."""
+    import datetime
+    def need(ok, msg):
+        if not ok:
+            errs.append("%s: video: %s" % (name, msg))
+    visible = re.sub(r"\s+", " ", " ".join(p.text)).lower()
+    need(video.get("@type") == "VideoObject", "@type is VideoObject")
+    for key in ("name", "description"):
+        need(bool(video.get(key)) and re.sub(r"\s+", " ", video[key]).lower() in visible, "JSON-LD video %s is not in the visible text" % key)
+    for key in ("thumbnailUrl", "contentUrl"):
+        url = video.get(key, "")
+        need(url.startswith(BASE), "%s is not on the base address" % key)
+        f = ROOT / "docs" / url[len(BASE):]
+        need(f.is_file(), "%s: no file %s" % (key, f.relative_to(ROOT) if f.is_relative_to(ROOT) else f))
+        if f.is_file():
+            budget = MEDIA_BUDGET.get(f.name)
+            need(budget is not None and f.stat().st_size <= budget, "%s is %d bytes, over its budget %s" % (f.name, f.stat().st_size, budget))
+    page = (ROOT / "docs" / name).read_text()
+    for key, attr in (("thumbnailUrl", 'poster="'), ("contentUrl", 'src="')):
+        rel = video.get(key, "")[len(BASE):]
+        need(attr + rel + '"' in page, "the <video> does not offer %s" % rel)
+    for f in ("table-demo.mp4", "table-demo.webm"):
+        fp = ROOT / "docs" / "assets" / "demo" / f
+        need(fp.is_file() and fp.stat().st_size <= MEDIA_BUDGET[f] and ('src="assets/demo/%s"' % f) in page, "%s is missing, over budget or not a <source>" % f)
+    mp4 = ROOT / "docs" / "assets" / "demo" / "table-demo.mp4"
+    if mp4.is_file():
+        secs = mp4_seconds(mp4)
+        need(secs is not None and video.get("duration") == iso_duration(secs), "duration %r is not the MP4's (%s s)" % (video.get("duration"), secs))
+        need("%d min %d s" % divmod(round(secs), 60) in " ".join(p.text), "the caption does not state the length")
+    cast = ROOT / "docs" / "assets" / "demo" / "table-demo.cast"
+    if cast.is_file():
+        head = json.loads(cast.read_text().split("\n", 1)[0])
+        day = datetime.datetime.fromtimestamp(head["timestamp"], datetime.timezone.utc)
+        need(video.get("uploadDate") == day.strftime("%Y-%m-%d"), "uploadDate %r is not the day of the cast (%s)" % (video.get("uploadDate"), day.date()))
+        need("%d %s %d" % (day.day, day.strftime("%B"), day.year) in " ".join(p.text), "the caption does not state the day of the recording")
+        need(head["env"]["TABLE_COMMIT"][:7] in " ".join(p.text), "the caption does not state the commit of the recording")
+    need("<video controls" in page and "autoplay" not in page and 'preload="none"' in page, "the <video> must have controls, preload=none and no autoplay")
 
 
 def lum(hexs):
