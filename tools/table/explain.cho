@@ -12,6 +12,8 @@ module explain;
 import std.buffer;
 import std.bytes;
 import std.vec;
+import dtfail;
+import dtparse;
 import explainor;
 import finish;
 import frame;
@@ -148,7 +150,7 @@ pub fn read_head[&h, &f](heap: &!h Heap, file: &!f File, cap: int, delim: int, m
 
 // ---- the document ----------------------------------------------------------------------------------------------------------
 
-// A type code of the plan (query.cho): 0 text, 1 :int, 2 + S :dec(S), 21 :float.
+// A type code of the plan (query.cho): 0 text, 1 :int, 2 + S :dec(S), 21 :float, 22 date, 23 timestamp, 24 datetime.
 fn put_type[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buffer {
     var b = o;
     if t == 0 {
@@ -157,6 +159,10 @@ fn put_type[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buffe
         b = buffer.append(heap, b, "\"int\"");
     } else if t == 21 {
         b = buffer.append(heap, b, "\"float\"");
+    } else if t >= 22 {
+        b = buffer.push(heap, b, byte_of(34));
+        b = buffer.append(heap, b, dtparse.type_text(t));
+        b = buffer.push(heap, b, byte_of(34));
     } else {
         b = buffer.append(heap, b, "\"dec(");
         b = buffer.push_nat(heap, b, t - 2);
@@ -422,6 +428,7 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
     var has_dec = false;
     var has_float = false;
     var float_sum = false;
+    var dts = 0;
     var distinct = false;
     var typed = 0;
     var k = 0;
@@ -431,6 +438,8 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             has_int = true;
         } else if t == 21 {
             has_float = true;
+        } else if t >= 22 {
+            dts = dts | 1 << t - 22;
         } else if t >= 2 {
             has_dec = true;
         }
@@ -454,6 +463,8 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
                 if f == 1 {
                     float_sum = true;
                 }
+            } else if t >= 22 {
+                dts = dts | 1 << t - 22;
             } else if t >= 2 {
                 has_dec = true;
             }
@@ -470,6 +481,8 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             has_int = true;
         } else if t == 21 {
             has_float = true;
+        } else if t >= 22 {
+            dts = dts | 1 << t - 22;
         } else if t >= 2 {
             has_dec = true;
         }
@@ -485,6 +498,8 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             has_int = true;
         } else if t == 21 {
             has_float = true;
+        } else if t >= 22 {
+            dts = dts | 1 << t - 22;
         } else if t >= 2 {
             has_dec = true;
         }
@@ -799,6 +814,9 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
     }
     if float_sum {
         o = rule(heap, o, "agg.float-overflow");
+    }
+    if dts != 0 {
+        o = dtfail.possible(heap, o, dts);
     }
     if as_csv || ordering || joining {
         o = rule(heap, o, "limit.too-many-rows");

@@ -46,6 +46,13 @@ LOCAL = {
     "value.float-range": (8, "never", "double"),
     "limit.number-too-long": (8, "never", "1,100"),
     "agg.float-overflow": (8, "never", "largest double"),
+    "value.not-date": (8, "sometimes", "a :date column"),
+    "value.not-timestamp": (8, "sometimes", "leap second"),
+    "value.timestamp-precision": (8, "never", "microsecond"),
+    "value.timestamp-range": (8, "never", "9999-12-31T23:59:59.999999Z"),
+    "value.timezone-missing": (8, "sometimes", "-00:00"),
+    "value.timestamp-offset-present": (8, "sometimes", "wall-clock"),
+    "value.timezone-unsupported": (8, "never", "zone name"),
     "query.syntax": (2, "sometimes", "byte offset"),
     "query.mixed-and-or": (2, "sometimes", "parentheses"),
     "query.unsupported": (2, "sometimes", "leaves out"),
@@ -116,6 +123,12 @@ class Rules(unittest.TestCase):
         s.write("long.csv", "a\n" + "1" * 1101 + "\n")
         s.write("wide18.csv", "a\n99999999999999999.99\n")
         s.write("dup.csv", "a,a\n1,2\n")
+        s.write("dt_time.csv", "a\n2026-01-02T01:00:00Z\n")
+        s.write("dt_dateonly.csv", "a\n2026-01-02\n")
+        s.write("dt_precision.csv", "a\n2026-01-02T01:00:00.1234567Z\n")
+        s.write("dt_range.csv", "a\n0001-01-01T00:00:00+01:00\n")
+        s.write("dt_nooffset.csv", "a\n2026-01-02T01:00:00\n")
+        s.write("dt_zone.csv", "a\n2026-01-02T01:00:00 Europe/Madrid\n")
         s.write("ragged.csv", "a,b\n1,2\n3\n")
         s.write("quote.csv", 'a,b\n"x"y,1\n')
         s.write("open.csv", 'a,b\n1,"x\n')
@@ -181,6 +194,13 @@ class Rules(unittest.TestCase):
             ("value.float-range", root + ["--where", "a:float > 0", "ovf.csv"], None),
             ("limit.number-too-long", root + ["--where", "a:float > 0", "long.csv"], None),
             ("agg.float-overflow", root + ["--agg", "sum:a:float", "ovfsum.csv"], None),
+            ("value.not-date", root + ["--group", "a:date", "dt_time.csv"], None),
+            ("value.not-timestamp", root + ["--agg", "min:a:datetime", "dt_dateonly.csv"], None),
+            ("value.timestamp-precision", root + ["--agg", "min:a:timestamp", "dt_precision.csv"], None),
+            ("value.timestamp-range", root + ["--agg", "min:a:timestamp", "dt_range.csv"], None),
+            ("value.timezone-missing", root + ["--group", "a:timestamp", "dt_nooffset.csv"], None),
+            ("value.timestamp-offset-present", root + ["--group", "a:datetime", "dt_time.csv"], None),
+            ("value.timezone-unsupported", root + ["--group", "a:timestamp", "dt_zone.csv"], None),
             ("query.syntax", root + ["--query", "selct a from 'ok.csv'"], None),
             ("query.unsupported", root + ["--query", "select a from 'ok.csv' where b like '%x%'"], None),
             ("query.mixed-and-or", root + ["--query", "select a from 'ok.csv' where a = 1 or b = 2 and a = 3"], None),

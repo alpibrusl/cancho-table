@@ -55,7 +55,7 @@ status,count,sum:bytes
   its row and column, never a coercion or a float); **`COLUMN:dec(S)` compares as an exact
   decimal of at most `S` fractional digits** (never rounded: more digits is a refusal, as is
   a cell that is not a decimal; `1.5` and `1.50` are one value, `docs/numbers.md`); **`COLUMN:float` compares the nearest doubles** (no `inf`, no `nan`,
-  no negative zero; `min`, `max`, `distinct`, `count` and the exact `sum` and `mean` of a float column too); conditions stop at the first that decides the level they are in (false in an `and`, true in an `or`),
+  no negative zero; `min`, `max`, `distinct`, `count` and the exact `sum` and `mean` of a float column too); **`COLUMN:date`, `COLUMN:timestamp` and `COLUMN:datetime` compare days, instants and wall-clock times** (a strict subset of RFC 3339 with a real calendar, microseconds, no zone database: `2026-01-02T01:00:00+02:00` and `2026-01-01T23:00:00Z` are one instant, `2026-02-30` is a refusal, `docs/datetime.md`); conditions stop at the first that decides the level they are in (false in an `and`, true in an `or`),
   so `x != '' and x:int > 5` and `x = '' or x:int > 5` guard an empty cell; `or` and parentheses group them (a level is all `and` or all `or`, a mix is `where.mixed-and-or`). A malformed expression is
   `where.syntax` with the byte offset of the error. It composes with `--select` and
   paging, and is applied before grouping;
@@ -105,7 +105,7 @@ status,count,sum:bytes
   (section 5) plans. **Not built:** `describe` (per-column count, distinct, min and max; `--report types`
   counts what the cells are and nothing else), `or`, expressions and functions in `--where` (the design
   excludes them from v1). The same plan as one `--query` string is built (a small subset of SQL, `docs/query.md`). There is no type inference
-  (a column is text unless `:int`, `:dec(S)` or `:float` says otherwise; `--report types` only suggests a
+  (a column is text unless `:int`, `:dec(S)`, `:float`, `:date`, `:timestamp` or `:datetime` says otherwise; `--report types` only suggests a
   declaration), no NDJSON output, no JSON lines, no join, no way to rename or compute a column. `mean`,
   exact decimals and floats, a sort by several keys and `--report types` are built (`docs/numbers.md`,
   `docs/sort.md`).

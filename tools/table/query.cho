@@ -15,7 +15,7 @@ module query;
 // refers to a name by its index in that list.
 //
 // `conds` has 7 integers per condition:
-//     kind (0 compare, 1 contains, 2 in), type (0 text, 1 :int, 2 + S for :dec(S): docs/numbers.md),
+//     kind (0 compare, 1 contains, 2 in), type (0 text, 1 :int, 2 + S for :dec(S): docs/numbers.md, 21 :float, 22 :date, 23 :timestamp, 24 :datetime: docs/datetime.md),
 //     op (0 =, 1 !=, 2 <, 3 <=, 4 >, 5 >=), name (index into names),
 //     first literal and how many (into `lits`), offset (in the expression).
 // `lits` has 4 per literal: where its bytes begin and end in `ltext`, its
@@ -31,6 +31,7 @@ import std.buffer;
 import std.bytes;
 import std.vec;
 import cellnum;
+import dtparse;
 import flt;
 
 pub res struct Query {
@@ -42,7 +43,7 @@ pub res struct Query {
     ltext: buffer.Buffer,
     aggs: vec.Vec[int],
     meta: vec.Vec[int],
-    // the type of each `--group` column, in order: 0 text, 1 :int, 2 + S :dec(S), 21 :float (docs/numbers.md 4.5)
+    // the type of each `--group` column, in order: 0 text, 1 :int, 2 + S :dec(S), 21 :float (docs/numbers.md 4.5), 22 :date, 23 :timestamp, 24 :datetime
     gkinds: vec.Vec[int],
     // the label `--sort` names (empty when there is none): an output column of the grouping, resolved when the groups are finished
     sort: buffer.Buffer,
@@ -261,13 +262,17 @@ pub fn int_max() -> [] int {
     return 9223372036854775807;
 }
 
-// `data` as a cell of the numeric type `kind` (1 :int, 2 + S :dec(S), 21 :float), for an aggregate: (value, status), 0 it is, 4 not an integer,
+// `data` as a cell of the type `kind` (1 :int, 2 + S :dec(S), 21 :float, 22 :date, 23 :timestamp, 24 :datetime), for an aggregate: (value, status), 0 it is, 4 not an integer,
 // 5 an integer past 64 bits, 6 not a decimal, 7 a decimal with more fractional digits than the scale, 8 one that is too wide (and, for a float,
-// the 9 to 13 of `flt.parse_float`; a float's value is its key, an `int` that orders as the doubles do).
+// the 9 to 13 of `flt.parse_float`; a float's value is its key, an `int` that orders as the doubles do; for a date type 14 and more, `dtparse.cho`).
 pub fn parse_typed[&d](data: &d [byte], kind: int) -> [] (int, int) {
     if kind == 21 {
         // :float (flt.cho): the key of the double, statuses 9 not a number, 10 inf or nan, 11 past the range, 12 rounds to zero, 13 too long
         return flt.parse_float(data);
+    }
+    if kind >= 22 {
+        // :date, :timestamp, :datetime (dtparse.cho): the value, or a status of 14 and more
+        return dtparse.parse(data, kind);
     }
     if kind >= 2 {
         let (v, bad) = cellnum.parse_dec(data, kind - 2);

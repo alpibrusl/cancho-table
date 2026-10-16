@@ -130,11 +130,20 @@ pub fn group_row[&h, &g, &q, &t, &s](heap: &!h Heap, out: buffer.Buffer, groups:
         o = buffer.append(heap, o, tmpl[from..to]);
         from = to;
         if m < ng {
-            if query.gkind_at(tree, m) != 0 {
+            if query.gkind_at(tree, m) >= 22 {
+                // a date, a timestamp, a datetime is text in JSON, not a number (docs/datetime.md section 8)
+                o = buffer.push(heap, o, byte_of(34));
+                o = agg.put_key(heap, o, groups, tree, x, m);
+                o = buffer.push(heap, o, byte_of(34));
+            } else if query.gkind_at(tree, m) != 0 {
                 o = agg.put_key(heap, o, groups, tree, x, m);
             } else {
                 o = text.append_json(heap, o, agg.key_field(groups, x, m));
             }
+        } else if query.agg_at(tree, m - ng, 2) >= 22 && (query.agg_at(tree, m - ng, 0) == 2 || query.agg_at(tree, m - ng, 0) == 3) {
+            o = buffer.push(heap, o, byte_of(34));
+            o = agg.put_value(heap, o, groups, tree, x, m - ng);
+            o = buffer.push(heap, o, byte_of(34));
         } else {
             o = agg.put_value(heap, o, groups, tree, x, m - ng);
         }

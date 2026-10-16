@@ -1,0 +1,157 @@
+edition 5;
+
+module dtrepair;
+
+// The repair of `where.syntax` for a date written where a timestamp is read (docs/datetime.md section 4.2): `ts:timestamp >= '2026-01-02'` is refused, because the day's boundary is the user's
+// statement and not the tool's, and the repair is that statement written out, as a whole invocation: the day is the instants `2026-01-02T00:00:00Z` (midnight UTC) and `2026-01-03T00:00:00Z`.
+// For `>=` and `<` the boundary is the first one and the literal alone is replaced, wherever the condition is; the other operators need the column written again, so they are only
+// offered when `--where` is that one condition: `=` is `COLUMN >= first and COLUMN < next`, `!=` is `(COLUMN < first or COLUMN >= next)`, `>` is `COLUMN >= next` and `<=` is
+// `COLUMN < next`. A day with no next one (9999-12-31) has no repair for the operators that need it. The result is read again by the grammar before it is offered.
+
+import std.buffer;
+import std.bytes;
+import dtparse;
+import expr;
+import orparse;
+import query;
+
+fn day_start[&h](heap: &!h Heap, out: buffer.Buffer, days: int) -> [heap] buffer.Buffer {
+    return dtparse.put(heap, out, days * 86400000000, 23);
+}
+
+// The operator that ends just before `at` (skipping spaces back): 0 =, 1 !=, 2 <, 3 <=, 4 >, 5 >=, -1 none; and where it begins.
+fn operator_before[&g](given: &g [byte], at: int) -> [] (int, int) {
+    var p = at;
+    while p > 0 && int_of(given[p - 1]) == ' ' {
+        p = p - 1;
+    }
+    if p == 0 {
+        return (0 - 1, 0);
+    }
+    let c = int_of(given[p - 1]);
+    if c == '=' {
+        if p >= 2 && int_of(given[p - 2]) == '!' {
+            return (1, p - 2);
+        }
+        if p >= 2 && int_of(given[p - 2]) == '<' {
+            return (3, p - 2);
+        }
+        if p >= 2 && int_of(given[p - 2]) == '>' {
+            return (5, p - 2);
+        }
+        return (0, p - 1);
+    }
+    if c == '<' {
+        return (2, p - 1);
+    }
+    if c == '>' {
+        return (4, p - 1);
+    }
+    return (0 - 1, p);
+}
+
+// The expression `given` with the date literal at `at` (the condition's column read as a timestamp) written as the instants that bound the day: (the expression, true), or (empty, false).
+pub fn day_bounds[&h, &g](heap: &!h Heap, given: &g [byte], at: int) -> [heap] (buffer.Buffer, bool) {
+    let none = buffer.empty(heap, 1);
+    let (op, op_at) = operator_before(given, at);
+    if op < 0 {
+        return (none, false);
+    }
+    let (word, after, quoted, status, e1, e2) = expr.read_word(heap, buffer.empty(heap, 16), given, at);
+    var days = 0;
+    var ok = false;
+    if status == 0 {
+        borrow word as &wr in {
+            let (v, bad) = dtparse.parse(buffer.bytes(wr), 22);
+            days = v;
+            ok = bad == 0;
+        }
+    }
+    buffer.drop(heap, word);
+    if !ok {
+        return (none, false);
+    }
+    var out = buffer.empty(heap, len(given) + 64);
+    if op == 5 || op == 2 {
+        out = buffer.append(heap, out, given[0..at]);
+        out = buffer.push(heap, out, byte_of(39));
+        out = day_start(heap, out, days);
+        out = buffer.push(heap, out, byte_of(39));
+        out = buffer.append(heap, out, given[after..len(given)]);
+    } else {
+        // the column is everything before the operator, and the literal is the end of the expression
+        let first = expr.skip_space(given, 0);
+        var last = op_at;
+        while last > first && int_of(given[last - 1]) == ' ' {
+            last = last - 1;
+        }
+        if expr.skip_space(given, after) < len(given) || last <= first || days >= 2932896 || !one_word(given[first..last]) {
+            buffer.drop(heap, out);
+            return (none, false);
+        }
+        let column = given[first..last];
+        if op == 0 {
+            out = both(heap, out, column, days, ">=", " and ", "<");
+        } else if op == 1 {
+            out = buffer.push(heap, out, byte_of('('));
+            out = both(heap, out, column, days, "<", " or ", ">=");
+            out = buffer.push(heap, out, byte_of(')'));
+        } else {
+            // > is "at or after the next day", <= is "before the next day"
+            out = buffer.append(heap, out, column);
+            if op == 4 {
+                out = buffer.append(heap, out, " >= '");
+            } else {
+                out = buffer.append(heap, out, " < '");
+            }
+            out = day_start(heap, out, days + 1);
+            out = buffer.push(heap, out, byte_of(39));
+        }
+    }
+    // offered only whole: the grammar must take what was written
+    var what = 1;
+    borrow out as &orr in {
+        let (p4, w4, a4) = orparse.parse(heap, query.empty(heap), buffer.bytes(orr));
+        query.drop(heap, p4);
+        what = w4;
+    }
+    if what != 0 {
+        buffer.drop(heap, out);
+        return (none, false);
+    }
+    buffer.drop(heap, none);
+    return (out, true);
+}
+
+// Whether `column` is one word: no space or parenthesis outside single quotes (a name in quotes may hold them).
+fn one_word[&c](column: &c [byte]) -> [] bool {
+    var quoted = false;
+    var i = 0;
+    while i < len(column) {
+        let c = int_of(column[i]);
+        if c == 39 {
+            quoted = !quoted;
+        } else if !quoted && (c == ' ' || c == '(' || c == ')' || c == 9 || c == 10 || c == 13) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// `COLUMN first-op 'day' joiner COLUMN second-op 'next day'`.
+fn both[&h, &c](heap: &!h Heap, out: buffer.Buffer, column: &c [byte], days: int, first_op: &static [byte], joiner: &static [byte], second_op: &static [byte]) -> [heap] buffer.Buffer {
+    var o = buffer.append(heap, out, column);
+    o = buffer.push(heap, o, byte_of(' '));
+    o = buffer.append(heap, o, first_op);
+    o = buffer.append(heap, o, " '");
+    o = day_start(heap, o, days);
+    o = buffer.push(heap, o, byte_of(39));
+    o = buffer.append(heap, o, joiner);
+    o = buffer.append(heap, o, column);
+    o = buffer.push(heap, o, byte_of(' '));
+    o = buffer.append(heap, o, second_op);
+    o = buffer.append(heap, o, " '");
+    o = day_start(heap, o, days + 1);
+    return buffer.push(heap, o, byte_of(39));
+}
