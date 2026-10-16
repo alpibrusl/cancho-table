@@ -543,6 +543,20 @@ class Surface(unittest.TestCase):
         r = self.go("--where", "'d':datex = '2026-01-02'")
         self.assertEqual(r.first_rule(), "where.syntax", "a suffix is a suffix only at the end of a word")
 
+    def test_a_date_type_in_a_join_key_is_refused_with_a_tag(self):
+        """T1 does not extend joins (T3 does): a pair typed by a date type is args.bad-value, and --query's cast is query.syntax."""
+        s = Scratch()
+        try:
+            s.write("a.csv", "k,d\na,2026-01-02\n")
+            s.write("b.csv", "k,x\na,1\n")
+            for t in ("date", "timestamp", "datetime"):
+                r = run("--root", s.dir, "--join", "b.csv", "--on", "k=k:" + t, "a.csv")
+                self.assertEqual((r.first_rule(), r.status), ("args.bad-value", 2), t)
+            r = run("--root", s.dir, "--query", "select cast(d as date) from 'a.csv'")
+            self.assertEqual((r.first_rule(), r.status), ("query.syntax", 2))
+        finally:
+            s.cleanup()
+
     def test_output_forms(self):
         r = self.go("--group", "ts:timestamp", "--agg", "count,min:ts:timestamp", "--format", "jsonl")
         self.assertEqual([json.loads(l) for l in r.stdout.decode().splitlines()], [{"ts": "2026-01-01T23:00:00Z", "count": 2, "min:ts": "2026-01-01T23:00:00Z"}])
