@@ -395,6 +395,19 @@ class SharedBudget(unittest.TestCase):
                     self.assertEqual(da[key], db[key], key)
                 self.assertEqual(db["path"], "pj.jsonl")
 
+    def test_the_bound_on_the_rows_of_a_join_has_the_same_facts_for_a_jsonl_probe(self):
+        # a build whose two keys repeat, so that a probe row has several matches
+        J.write_csv(str(self.s.dir / "bf.csv"), [b"id", b"w"], [[b"k%d" % (i % 2), b"w%d" % i] for i in range(7)])
+        for plan in (["--max-join-rows", "5"], ["--max-join-rows", "1"], ["--max-join-rows", "13", "--group", "g"]):
+            with self.subTest(plan):
+                a = run("--root", self.s.dir, "--join", "bf.csv", "--on", "k=id", *plan, "p.csv")
+                b = run("--root", self.s.dir, "--join", "bf.csv", "--on", "k=id", "--input-format", "jsonl", "--fields", "k,g,v", "--join-input-format", "csv", *plan, "pj.jsonl")
+                self.assertEqual((a.first_rule(), b.first_rule()), ("limit.too-many-join-rows", "limit.too-many-join-rows"))
+                da, db = a.error()["detail"], b.error()["detail"]
+                self.assertEqual({k: v for k, v in da.items() if k not in ("path", "probe_line")}, {k: v for k, v in db.items() if k not in ("path", "probe_line")})
+                self.assertEqual((da["probe_line"], db["probe_line"]), (da["probe_row"] + 1, db["probe_row"]), "the csv probe has a header line, the jsonl one has none")
+                self.assertGreater(da["matches"], 0)
+
     def test_the_guard_of_an_empty_typed_key_works_for_a_jsonl_probe(self):
         self.s.write("pk.jsonl", '{"k":1,"v":"a"}\n{"v":"b"}\n{"k":2,"v":"c"}\n')
         self.s.write("bi.csv", "id,w\n1,x\n2,y\n")
@@ -626,6 +639,10 @@ class Refusals(unittest.TestCase):
         self.s.write("bs.csv", 'k;w\na;"x"y\n')
         r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "p.csv")
         self.assertEqual((r.first_rule(), r.error()["detail"]["path"]), ("parse.csv-bad-quote", "bs.csv"))
+        # a record over lines that has too many fields is ragged as well
+        self.s.write("bs.csv", 'k;w\nb;"x\ny";z\n')
+        r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "p.csv")
+        self.assertEqual((r.status, r.first_rule(), r.error()["detail"]["path"]), (8, "parse.csv-ragged-row", "bs.csv"))
         # a multi-line quoted field of such a build is one record, and it is written back whole
         self.s.write("bs.csv", 'k;w\na;"x\ny;z"\n')
         r = run("--root", self.s.dir, "--join", "bs.csv", "--join-delimiter", ";", "--on", "k", "--format", "csv", "p.csv")
