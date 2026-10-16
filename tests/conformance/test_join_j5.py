@@ -519,7 +519,8 @@ class Refusals(unittest.TestCase):
 
     def test_every_refusal_of_the_reader_for_the_probe(self):
         good = '{"k":"a","v":"1"}\n'
-        self.detail(self.probe(good + '{"k":"b","v"\n'), "parse.jsonl-syntax", "pj2.jsonl", 2, 2)
+        d = self.detail(self.probe(good + '{"k":"b","v"\n'), "parse.jsonl-syntax", "pj2.jsonl", 2, 2)
+        self.assertEqual((d["offset"], d["near"]), (12, '{"k":"b","v"'))
         self.detail(self.probe(good + '"just a string"\n'), "parse.jsonl-not-object", "pj2.jsonl", 2, 2)
         self.detail(self.probe(good + '{"k":"b"}\n'), "parse.jsonl-missing-field", "pj2.jsonl", 2, 2, "v")
         self.detail(self.probe(good + '{"k":"b","v":{}}\n'), "parse.jsonl-not-scalar", "pj2.jsonl", 2, 2, "v")
@@ -540,6 +541,12 @@ class Refusals(unittest.TestCase):
         self.assertNotIn("looks_like", r.error()["detail"])
         r = self.probe('{"k":"a","v":"1"}\n[\n')
         self.assertNotIn("looks_like", r.error()["detail"])
+        # (the rows before it joined nothing: the count of joined rows is not what says the line is the first)
+        r = self.probe('{"k":"zz","v":"1"}\n[\n')
+        self.assertEqual(r.first_rule(), "parse.jsonl-syntax")
+        self.assertNotIn("looks_like", r.error()["detail"])
+        r = self.probe('[\n')
+        self.assertEqual(r.error()["detail"].get("looks_like"), "json-document")
 
     def test_the_build_is_read_before_the_probe(self):
         self.s.write("pbad.jsonl", '{"k":"a",\n')
@@ -566,6 +573,13 @@ class Refusals(unittest.TestCase):
         self.assertEqual(r.error()["detail"]["path"], "b.jsonl")
         r = self.build('{"k":"a","w":"x"}\n', extra=["--max-json-nodes", "2"])
         self.assertEqual(r.first_rule(), "limit.json-too-many-nodes")
+
+    def test_a_carriage_return_is_not_part_of_a_line(self):
+        # a syntax error at the end of a CRLF line is at the offset it is at in an LF line, and the bytes near it do not hold the CR
+        for eol in (b"\n", b"\r\n"):
+            r = self.build(b'{"k":"a","w":"x"}' + eol + b'{"k":"b","w":' + eol)
+            d = self.detail(r, "parse.jsonl-syntax", "b.jsonl", 2, 2)
+            self.assertEqual((d["offset"], d["near"]), (13, '{"k":"b","w":'), eol)
 
     def test_the_row_bound_is_exact_for_the_build_and_the_probe(self):
         five = "".join('{"k":"a%d","w":"x"}\n' % i for i in range(5))
@@ -699,7 +713,10 @@ class Flags(unittest.TestCase):
             (["--join", "b.csv", "--join-delimiter", "x", "p.csv"], "args.bad-value"),
             (["--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w", "--absent", "nope", "p.csv"], "args.bad-value"),
             (["--join", "b.csv", "--absent", "empty", "p.csv"], "args.conflict"),
+            (["--join", "b.csv", "--join-input-format", "csv", "--input-format", "jsonl", "--fields", "k,,v", "pj.jsonl"], "input.bad-fields"),
             (["--join", "b.csv", "--max-json-nodes", "9", "p.csv"], "args.conflict"),
+            (["--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w", "--max-json-nodes", "0", "p.csv"], "args.bad-value"),
+            (["--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w", "--max-json-nodes", "1048577", "p.csv"], "args.bad-value"),
             (["--join", "b.csv", "--fields", "k,v", "p.csv"], "args.conflict"),
             (["--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,w", "--fields", "k,v", "p.csv"], "args.conflict"),
             (["--join", "b.csv", "--input-format", "jsonl", "--join-input-format", "csv", "pj.jsonl"], "input.fields-required"),
@@ -955,7 +972,10 @@ class Explain(unittest.TestCase):
     def test_a_build_delimiter(self):
         r = self.ex("--join", "bs.csv", "--join-delimiter", ";", "p.csv")
         self.assertEqual(r.data()["explain"]["join"]["build_reader"], {"format": "csv", "delimiter": ";"})
-        r = self.ex("--join", "bs.csv", "--join-delimiter", ";", "--delimiter", ";", "--select", "k", "p.csv")
+        # the same delimiter said again is the probe's reader, and the document has no member for it
+        self.s.write("ps.csv", "k;v\na;1\n")
+        r = self.ex("--join", "bs.csv", "--join-delimiter", ";", "--delimiter", ";", "ps.csv")
+        self.assertEqual(r.status, 0, r.stdout[:300])
         self.assertNotIn(b"build_reader", r.stdout)
 
     def test_a_tab_delimiter_is_said_as_a_tab(self):
