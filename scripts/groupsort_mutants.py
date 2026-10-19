@@ -33,15 +33,12 @@ MUTANTS = [
     # the next field
     ("the next field starts without its length", "gsort.cho", "                at = posf + 4 + length_at(gmap.key_at(index, order[a]), posf);", "                at = posf + length_at(gmap.key_at(index, order[a]), posf);"),
     ("the next field starts inside the length", "gsort.cho", "                at = posf + 4 + length_at(gmap.key_at(index, order[a]), posf);", "                at = posf + 3 + length_at(gmap.key_at(index, order[a]), posf);"),
-    ("the field's number does not advance", "gsort.cho", "                jj = j + 1;", "                jj = j;"),
     ("the last field is not the last", "gsort.cho", "            } else if j + 1 < fields {", "            } else if j + 2 < fields {"),
     ("the second field is not sorted", "gsort.cho", "            } else if j + 1 < fields {", "            } else if j + 1 < 1 {"),
-    ("the field of a run is taken from its last group", "gsort.cho", "length_at(gmap.key_at(index, order[a]), posf);", "length_at(gmap.key_at(index, order[b - 1]), posf);"),
     # the chain of pending runs
     ("a pending run forgets where it ends", "gsort.cho", "                word[a] = b;\n", "                word[a] = hi;\n"),
     ("a pending run keeps the parent's field, not its own", "gsort.cho", "                word[a + 1] = at;", "                word[a + 1] = posf;"),
     ("a pending run keeps the parent's offset", "gsort.cho", "                word2[a] = go;", "                word2[a] = off;"),
-    ("a pending run keeps the parent's field number", "gsort.cho", "                word2[a + 1] = jj;", "                word2[a + 1] = j;"),
     ("a pending run does not point at the one before it", "gsort.cho", "                spare[a] = top;", "                spare[a] = head;"),
     ("a pending run is not pushed", "gsort.cho", "                top = a;", "                top = top;"),
     ("a run of a field that begins at 0 is not pending", "gsort.cho", "            if at >= 0 {", "            if at > 0 {"),
@@ -52,11 +49,19 @@ MUTANTS = [
     ("a popped run is of the wrong field number", "gsort.cho", "            let j = word2[lo + 1];", "            let j = word2[lo];"),
     ("the first run is not sorted when there are two groups", "gsort.cho", "    if fields >= 1 && n > 1 {", "    if fields >= 1 && n > 2 {"),
     ("no group column is sorted", "gsort.cho", "    if fields >= 1 && n > 1 {", "    if fields >= 2 && n > 1 {"),
-    ("the short run is not sorted", "gsort.cho", "    if hi - lo <= 32 {\n        insertion(word, order, lo, hi);", "    if hi - lo <= 1 {\n        insertion(word, order, lo, hi);"),
     ("the insertion sort moves the order and not the chunks", "gsort.cho", "            w[j] = w[j - 1];\n            o[j] = o[j - 1];", "            w[j] = w[j - 1];\n            o[j] = o[j];"),
 ]
 
 # Not here, and why: mutants that change nothing a test can see (the answer is the same; only the time, or nothing, differs).
+#  - survivors of the run of 2026-10-19 (4 of 32, each proved equivalent, so removed from the list; the other 28 were killed, by the tests named in the log of that run):
+#      * the field's number does not advance (`jj = j`), and a pending run keeps its parent's field number (`word2[a + 1] = j`): the number only guards `j + 1 < fields`, a
+#        run of equal chunks that ended in a field and has no field after it is a run of equal keys, and the keys of a map are unique, so the guard is never false
+#        where it is asked; it is kept so that no key can send the sort past its last field. (A test cannot make two equal keys; `fields` lower than the key's fields is
+#        the mutant "the last field is not the last", which is killed.)
+#      * the field of a run is read from its last group's key (`order[b - 1]` for `order[a]`): the groups of a run have equal chunks, and a chunk that ends the field
+#        holds its length, so every group of the run has the same field length and `posf + 4 + length` is the same;
+#      * the insertion sort is used for no run (`hi - lo <= 1` for `<= 32`): the radix sort gives the same order, equal chunks stay together and are ordered by the next
+#        chunk; only the time differs.
 #  - the threshold of the insertion sort (32 for 31 or 33), a `>=` for the `>` in it, a digit of the radix that is scattered when every group shares it (`!= n` for
 #    `!= n + 1`): a run is sorted either way, and equal chunks stay together; ties between equal chunks are settled by the next chunk, so their order here is never seen;
 #  - `rem > 6` for `rem >= 6` or `rem > 7` in `word_at`, and a window that moves 5 bytes, not 6 (`off + 5`): a field that ends exactly at the chunk's end then goes on

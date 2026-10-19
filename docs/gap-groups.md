@@ -58,11 +58,11 @@ Left to right the changes are added; the last three columns are the final build 
 | B4 | 1.402 | 1.074 | 0.954 | 0.314 | 0.271 | 0.640 | 0.935 | 0.358 |
 | I1 | 0.226 | 0.222 | 0.154 | 0.154 | 0.153 | 0.154 | 0.154 | 0.157 |
 
-1. **Radix order of the keys** (`agg.sort_keys`). A key is cut into chunks of six bytes of its current field; a chunk is one integer whose
+1. **Radix order of the keys** (`agg.sort_keys`, which is `gsort.sort_keys` since section 9). A key is cut into chunks of six bytes of its current field; a chunk is one integer whose
    order is the bytes' order, with a low byte that says whether the field ends in it (0 to 5), ends exactly at its end (6) or goes on (7), so
    a shorter field sorts first and equal chunks that go on are exactly the groups that share everything so far. The groups are sorted by
    chunk with a least-significant-digit radix sort over the seven bytes (a byte every group shares is skipped, which is what makes
-   `key0000001`... cost two passes, not seven); each run of equal chunks is sorted again at the next chunk, a key that ends in the chunk
+   `key0000001`... cost two passes, not seven); each run of equal chunks is sorted again at the next chunk (a pending run on a chain, not a call: section 9), a key that ends in the chunk
    going on at the next field. It orders exactly as `compare_keys` (bytewise per field, a shorter value first), which `--sort` by an
    aggregate and the typed keys still use through `sort_into`. B3 loses 0.37 s (47%); taken out of the final build it costs 0.34 s. Storing the first chunk in the table when
    the key is put, so that the first pass does not gather the keys, was built and measured: no gain (the runs of equal first chunks are
@@ -403,3 +403,42 @@ cancho build scripts/spikes/groups/kway.cho --std -o kway && ./kway heap 1000000
 
 `cells.py` times with `wait4` (wall, CPU, peak RSS), interleaves the contenders in a rotating order and takes the minimum; a run that fails is excluded from the minimum and counted. `prof.sh` samples with
 `sample`. The Linux box is shared: numbers there are from a quiet minute and vary by a quarter between minutes; the Mac was at a load of 1.6 to 2.2.
+
+## 9. The depth of the key order does not depend on the keys (issue #79)
+
+**The defect.** `table --group a --agg count --format csv one.csv` died with SIGSEGV (exit 139, no JSON, no rule tag) when two group keys shared a prefix of about 210 KiB or more
+under an 8 MiB stack. Nothing was refused, so it broke the rule that no input reaches a panic.
+
+**The cause, confirmed.** Section 2's radix order sorted each run of equal six-byte chunks by calling itself on the run at the next chunk (`agg.sort_run`, `off + 6`), one frame for every
+six shared bytes. Measured (Linux x86-64 cloud container, `ulimit -s` 8192 KiB, `main` at 86fd652, the issue's file: two keys sharing 400 KiB): gdb stops at the fault with the stack pointer at
+the end of the stack, 34,787 frames deep, the 34,784 innermost frames `agg.sort_run` (8 MiB over 34,784 frames is 241 bytes a frame). The same file with `ulimit -s 16384`, `65536` and
+`unlimited` gives the answer. `--sort` (`sort_into`, a bottom-up merge sort that compares whole keys in a loop) has no such recursion: `--group ... --sort -sum:v --top 2` on keys sharing 500 KiB answers on `main`'s binary
+(tests/conformance/test_group_deep.py, `test_sort_and_top_after_the_group`). `--order-by` sorts rows, not groups (`args.conflict` with `--group`); the issue measured it on the 400 KiB file with exit 0, and it was not run again here.
+Narrow readings: (a) the threshold is the stack, not the key: with `ulimit -s unlimited` the sequential runs of the issue pass, but `--threads 4 --chunk-bytes 65536 --parallel-min-bytes 1` on keys sharing 64 KiB
+still faulted, so the sort of the partitioned read runs on a stack that `ulimit -s` does not enlarge (an inference from that one measurement; the thread stack's size was not read); (b) the depth is the shared bytes over six plus the number of
+group columns, so more columns share the same budget; (c) every self-recursive function of `tools/table` was listed (`context_of`, `jdisc.kinds`/`walk`, `orparse.level` and four more, `par.fan`, `fan2`, `psort.fan_part`,
+`qparse.unit`, `qrepair.within`): none of them recurses on the bytes of a group key; only `--where` and `--query` nested 1,000, 20,000 and 60,000 parentheses deep were run (exit 2, refused), the others were read, not run.
+
+**The fix.** `tools/table/gsort.cho` is the radix order (moved from `agg.cho` with its helpers, which gets 154 lines shorter (2,167 to 2,013); `agg.sort_keys` is a call of `gsort.sort_keys`). A run of equal chunks that has to be sorted at the next
+chunk or the next field is not a call: it is a *pending run* on a chain. The runs found in one pass are disjoint ranges of `order`, and a range is sorted only inside itself, so a pending run's five numbers (where it ends, the field's
+start, the offset in the field, the field's number, the run pending before it) are kept in the slots of `word`, `word2` and `spare` at its first two places, which nothing touches until the run is sorted. The sort takes no memory of its own and no
+frame a chunk. The output is the same bytes: the runs are visited in another order (last pushed first), and the order inside a run does not depend on which run was sorted before.
+A run of one pass never has fewer than two groups, so two slots exist; the keys of a map are unique, so the guard `j + 1 < fields` is never false where a run is pending, and stays so that no key can send the sort past its last field.
+
+**Evidence** (the machine: the container above, four shared cores, load average 0.6 to 1.2 at the time of the last measurements; counts of instructions do not depend on load).
+
+| claim | measured |
+|---|---|
+| the gate fails on `main` (86fd652) | tests/conformance/test_group_deep.py, 25 tests: 166 subtests fail, all of them with signal 11 (the issue's rows that crashed, two group columns from 256 KiB, `--threads` 1, 4 and 16, standard input, JSON lines, a typed key, a join, the sweep from 256 KiB, the line ceiling, the 256 KiB stack) |
+| the gate passes on this change | the same 25 tests: OK in 15.7 s (the fuzz: 250 random tables, also run by `main`'s binary, the same bytes) |
+| the largest input | prefixes of 16 MiB - 64 bytes (two keys sharing all but their last bytes, the line ceiling): 33 of 36 runs answer the reference's bytes (1, 2, 3, 5, 6 and 7 group columns; `--threads` 1, 4 and 16; file, `-`, bare standard input; csv and JSON lines); the other 3 (7 columns, JSON lines) are `limit.line-too-long`, status 8: the line is 16,777,231 bytes, the key names add to it |
+| beyond | a line past `--max-line-bytes` is `limit.line-too-long` (3 MiB prefix at the default 1 MiB), keys past `--max-state-bytes` are `limit.state-too-large`, a first row past `--max-bytes` is `limit.output-too-large`, groups past `--max-groups` are `limit.too-many-groups`; no new rule tag, no refusal added |
+| the stack | the same answer for 2 keys sharing 2 MiB in 2 columns under `ulimit -s 256` |
+| instructions, the existing cells | `scripts/join_callgrind.py --old main --new build/table --all`, 38 cells: worst ratio 1.00001 (`join inner, --group b_name`), bound 1.01: PASS |
+| the group sort, random keys | `key%07d` in column `a` (and `a,b`), 20,000 and 60,000 rows, callgrind, per-row difference: 3,115.7 to 3,120.6 instructions a row (1.0016) for `a`, 3,434.3 to 3,439.4 (1.0015) for `a,b`: about 5 more per row |
+| the group sort, a long shared prefix | 3,000 shared bytes + 6 digits, 500 and 1,500 rows, `--max-line-bytes 100000`: 171,308 before, 171,313 after, instructions a row (1.00003), reading the 3 KB line included |
+| the corpus | `scripts/corpus.py`: 166 plans, md5 `fccb01b66dd7518d74611219a6c5aa29` for `main`'s binary and for this one |
+| the mutants | `scripts/groupsort_mutants.py`: 32 mutants of `gsort.cho`; 28 killed, 4 survivors proved equivalent in the script's comment (the field's number is only a guard while map keys are unique, twice; the field of a run is read from its first or its last group alike; the insertion sort or the radix sort for a short run gives one order) and removed; `scripts/group_mutants.py`'s mutant of the sort is re-pointed at `gsort.cho` and killed |
+
+**Not run.** The Mac. Peak resident memory before and after (no new memory is taken, from the code; not measured). A clock time of any kind (the four cores are shared). An input with keys past the ceilings of the tool (they are refused
+before the sort). Other stack limits than 8 MiB and 256 KiB. The thread stack's size.

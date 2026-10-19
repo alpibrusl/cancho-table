@@ -33,7 +33,7 @@ MUTANTS = [
     ("the cache believes a hit on the lengths only", "agg.cho", "                if length_at(key, p) != n || !bytes.equal(key[p + 4..p + 4 + n], record[first..first + n]) {", "                if length_at(key, p) != n {"),
     ("the key `add` builds stops at four columns", "agg.cho", "        while j < ng && key_bad == 0 {", "        while j < ng && j < 4 && key_bad == 0 {"),
     ("the key the fast path needs room for is a byte short a column", "agg.cho", "        need = need + 4 + last - first;", "        need = need + 3 + last - first;"),
-    ("the keys are sorted by their first four fields", "agg.cho", "            } else if j + 1 < fields {", "            } else if j + 1 < fields && j < 3 {"),
+    ("the keys are sorted by their first four fields", "gsort.cho", "            } else if j + 1 < fields {", "            } else if j + 1 < fields && j < 3 {"),
     ("two keys are equal when their first four fields are", "agg.cho", "fn compare_keys[&a, &b](x: &a [byte], y: &b [byte], fields: int) -> [] int {\n    var px = 0;\n    var py = 0;\n    var j = 0;\n    while j < fields {",
      "fn compare_keys[&a, &b](x: &a [byte], y: &b [byte], fields: int) -> [] int {\n    var px = 0;\n    var py = 0;\n    var j = 0;\n    while j < fields && j < 4 {"),
     ("the group of a JSON-lines row stops at four columns", "jout.cho", "        if m < ng {\n            if query.gkind_at(tree, m) != 0 {", "        if m < ng && m < 4 {\n            if query.gkind_at(tree, m) != 0 {"),
