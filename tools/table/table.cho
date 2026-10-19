@@ -76,6 +76,7 @@ import qpath;
 import orparse;
 import qrefuse;
 import relfail;
+import reportflags;
 import qtrans;
 import query;
 import reader;
@@ -394,7 +395,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                     cols = fcols;
                                     sel = fsel;
                                     cells = fcells;
-                                    head = finish.report_head(heap, query.reporting(tree), fhead);
+                                    head = finish.report_head(heap, query.report_kind(tree), fhead);
                                     labels = flabels;
                                     lends = flends;
                                     picked = fpicked;
@@ -426,7 +427,7 @@ fn read_file[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, arg
                                         going = false;
                                     }
                                     if as_csv && fabort == 0 {
-                                        rows = finish.start_output(heap, rows, finish.report_lead(heap, query.reporting(tree), flead, delim));
+                                        rows = finish.start_output(heap, rows, finish.report_lead(heap, query.report_kind(tree), flead, delim));
                                     } else {
                                         buffer.drop(heap, flead);
                                     }
@@ -940,7 +941,7 @@ fn read_stream[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
                                     cols = fcols;
                                     sel = fsel;
                                     cells = fcells;
-                                    head = finish.report_head(heap, query.reporting(tree), fhead);
+                                    head = finish.report_head(heap, query.report_kind(tree), fhead);
                                     labels = flabels;
                                     lends = flends;
                                     picked = fpicked;
@@ -972,7 +973,7 @@ fn read_stream[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
                                         going = false;
                                     }
                                     if as_csv && fabort == 0 {
-                                        rows = finish.start_output(heap, rows, finish.report_lead(heap, query.reporting(tree), flead, delim));
+                                        rows = finish.start_output(heap, rows, finish.report_lead(heap, query.report_kind(tree), flead, delim));
                                     } else {
                                         buffer.drop(heap, flead);
                                     }
@@ -1445,15 +1446,7 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7, &s8, &s9](he
         e = flags.problem(heap, e, "args.conflict", "--order-by sorts rows, and with --group or --agg the rows are counted into groups: order those with --sort and --top", "drop --order-by", "--order-by --group --agg");
     }
     if has_report {
-        if !bytes.equal(inp.report_text, "types") {
-            e = flags.problem(heap, e, "args.bad-value", "--report is types: the only report there is", "--report types", "--report");
-        }
-        if jsonl_out {
-            e = flags.problem(heap, e, "args.conflict", "--report types is a table of its own, with the counts and the suggestions as strings: write it as --format json or csv", "--format csv", "--report --format");
-        }
-        if grouped || has_order || inp.has_sort || inp.has_top {
-            e = flags.problem(heap, e, "args.conflict", "--report types describes the columns of the whole table: it is not a grouping, a sort or a cut of rows", "drop --group, --agg, --order-by, --sort or --top", "--report --group --agg --order-by --sort --top");
-        }
+        e = reportflags.check(heap, e, inp.report_text, jsonl_out, grouped || has_order || inp.has_sort || inp.has_top);
     }
     if inp.has_rows && (has_select || has_where || grouped || has_order || has_report) {
         e = flags.problem(heap, e, "args.conflict", "--rows is every row and every column, with no condition, selection, grouping or order", "drop --rows, or drop the flags that say more", "--rows --select --where --group --agg --order-by --report");
@@ -1462,7 +1455,7 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7, &s8, &s9](he
         e = flags.problem(heap, e, "args.required-flag", "--sort orders groups and --top cuts groups or sorted rows, so they need --group, --agg or --order-by", "--group NAMES", "--sort --top --group");
     }
     if inp.has_rename {
-        e = relfail.check(heap, e, rename_t, mode == 0, has_report, inp.has_query);
+        e = relfail.check(heap, e, rename_t, mode == 0, reportflags.shown_kind(has_report, inp.report_text), inp.has_query);
     }
     // The plan.
     var tree = query.empty(heap);
@@ -1566,7 +1559,7 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7, &s8, &s9](he
         }
     }
     if has_report {
-        tree = query.set_reporting(heap, tree);
+        tree = query.set_reporting(heap, tree, reportflags.kind_of(inp.report_text));
     }
     if has_order && !grouped && !has_report {
         let (t2, e2) = flags.add_order_keys(heap, tree, e, order_t);

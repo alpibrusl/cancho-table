@@ -28,7 +28,7 @@ RESERVED = set(CLAUSE_WORDS + OPERATOR_WORDS)     # a bare identifier may not be
 FUTURE = {"join", "inner", "left", "right", "full", "cross", "on", "using", "having", "union", "intersect", "except", "like", "ilike", "between",
           "is", "not", "or", "case", "when", "then", "else", "end", "null", "true", "false", "distinct", "over", "with", "all", "any", "exists"}
 AGG_FUNCS = ["count", "sum", "min", "max", "mean"]  # reserved only before "("; `count(distinct x)` has the word distinct inside
-TYPES = ["int", "dec", "float"]                     # only after `as` or `::`
+TYPES = ["int", "dec", "float", "date", "datetime", "timestamp"]                     # only after `as` or `::`
 SOURCE_WORDS = ["stdin"]                            # `from stdin`; a file is `from 'name'`
 
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -335,7 +335,7 @@ class P:
 
     def typ(self):
         w = self.word()
-        if w == "int" or w == "float":
+        if w in ("int", "float", "date", "datetime", "timestamp"):
             self.k += 1
             return (w, None)
         if w == "dec":
@@ -346,7 +346,7 @@ class P:
                 raise QueryError("syntax", t[2], expected="a scale from 0 to 18")
             self.expect_sym(")", ")")
             return ("dec", int(t[1]))
-        raise QueryError("syntax", self.peek()[2], expected="a type: int, dec(N) or float")
+        raise QueryError("syntax", self.peek()[2], expected="a type: int, dec(N), float, date, datetime or timestamp")
 
     # expr := column [ "::" type ] | cast ( column as type )
     def expr(self, what=WHAT_COLUMN):
@@ -786,7 +786,7 @@ def agg_name(c):
 def type_suffix(ty):
     if ty is None:
         return ""
-    return {"int": ":int", "float": ":float"}.get(ty[0]) or ":dec(%d)" % ty[1]
+    return {"int": ":int", "float": ":float", "date": ":date", "datetime": ":datetime", "timestamp": ":timestamp"}.get(ty[0]) or ":dec(%d)" % ty[1]
 
 
 def where_word(c):

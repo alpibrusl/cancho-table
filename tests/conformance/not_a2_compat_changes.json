@@ -22926,22 +22926,6 @@
 "reading"
 ],
 [
-"query-c87f18274ebb",
-"query",
-"select a from 't.csv' where (not not (f::)loat not between 1 and 2)) or \"not\" >= 'it''s' or not (not \"or\" >= 'x' and not \"a b\" != 'it''s') or not (not t <> 'x' or not (\"not\" is not null and i::int not = 1 and \"not\" NOT IN ('x') and (a >= 'it''s'))) foo",
-[
-"syntax",
-29,
-"a column (a name that is a keyword is written \"like this\")"
-],
-[
-"syntax",
-41,
-"a type: int, dec(N) or float"
-],
-"reading"
-],
-[
 "query-55d1905096cc",
 "query",
 "select a from 't.csv' where not c not in (1, 'it''s')",
@@ -23729,22 +23713,6 @@
 "syntax",
 70,
 "in or contains after not"
-],
-"reading"
-],
-[
-"query-69210be9b85a",
-"query",
-"select a from 't.csv' where not (not f::flo(t is not null and i::int in (-2, -2, 07) and b in ('y', 'y')) or f::float in (07, -2, -2) or d::dec(2) = \"or\" or cast(i as int) not like 'x';",
-[
-"syntax",
-28,
-"a column (a name that is a keyword is written \"like this\")"
-],
-[
-"syntax",
-40,
-"a type: int, dec(N) or float"
 ],
 "reading"
 ],
@@ -26972,22 +26940,6 @@
 "unsupported",
 94,
 "between"
-],
-"reading"
-],
-[
-"query-c212c1c47978",
-"query",
-"select a from 't.csv' where not f::float NOT IN (1) or cast(i as in or ) = 5 and a = 1",
-[
-"syntax",
-28,
-"a column (a name that is a keyword is written \"like this\")"
-],
-[
-"syntax",
-65,
-"a type: int, dec(N) or float"
 ],
 "reading"
 ],
@@ -33900,6 +33852,6 @@
 "reading"
 ]
 ],
-"count":2171,
-"same":3414
+"count":2168,
+"same":3417
 }

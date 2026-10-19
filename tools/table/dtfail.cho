@@ -49,7 +49,7 @@ pub fn possible[&h](heap: &!h Heap, o: buffer.Buffer, dts: int) -> [heap] buffer
     return b;
 }
 
-fn message_of(reason: int) -> [] &static [byte] {
+pub fn message_of(reason: int) -> [] &static [byte] {
     if reason <= 5 {
         return "a cell of a :date column is not a date: YYYY-MM-DD, a year from 0001, a month from 01 to 12 and a day the month has, nothing else (detail.reason says which part is wrong)";
     }
@@ -74,7 +74,7 @@ fn message_of(reason: int) -> [] &static [byte] {
     return "a cell of a :timestamp or :datetime column ends in a zone name or a bracketed suffix: this tool has no zone database";
 }
 
-fn hint_of(reason: int) -> [] &static [byte] {
+pub fn hint_of(reason: int) -> [] &static [byte] {
     if reason <= 5 {
         return "keep out the rows with such a cell with --where first (a condition that decides the row stops the ones after it: before an and put a test that is false for such a cell, before an or one that is true), or read the column as what its cells are: a cell with a time is a :timestamp or a :datetime";
     }
@@ -96,7 +96,7 @@ fn hint_of(reason: int) -> [] &static [byte] {
     return "write the cell with its numeric offset (Z, +hh:mm or -hh:mm), or compare the column as text";
 }
 
-fn none_reason(reason: int) -> [] &static [byte] {
+pub fn none_reason(reason: int) -> [] &static [byte] {
     if reason == 17 {
         return "the finest unit is the microsecond, and a longer fraction is not rounded or cut: which digits to drop is not known";
     }

@@ -155,7 +155,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
             vec.drop(heap, lends);
             cols = fcols;
             sel = fsel;
-            head = finish.report_head(heap, query.reporting(tree), fhead);
+            head = finish.report_head(heap, query.report_kind(tree), fhead);
             labels = flabels;
             lends = flends;
             picked = fpicked;
@@ -187,7 +187,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
                 going = false;
             }
             if as_csv && fabort == 0 {
-                rows = finish.start_output(heap, rows, finish.report_lead(heap, query.reporting(tree), flead, delim));
+                rows = finish.start_output(heap, rows, finish.report_lead(heap, query.report_kind(tree), flead, delim));
             } else {
                 buffer.drop(heap, flead);
             }

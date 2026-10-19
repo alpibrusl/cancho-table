@@ -36,12 +36,14 @@ fn expected(what: int) -> [] &static [byte] {
 
 // The checks of the flag itself: it names the columns of an answer, so there must be one (not the shape, not `--report types`), and its text must be a list. `query` is a rename a query's `as`
 // made, which is whole and conflicts with nothing.
-pub fn check[&h, &t](heap: &!h Heap, errs: fail.Errors, list: &t [byte], shape: bool, reporting: bool, from_query: bool) -> [heap] fail.Errors {
+pub fn check[&h, &t](heap: &!h Heap, errs: fail.Errors, list: &t [byte], shape: bool, reporting: int, from_query: bool) -> [heap] fail.Errors {
     var e = errs;
     if from_query {
         return e;
     }
-    if reporting {
+    if reporting == 2 {
+        e = flags.problem(heap, e, "args.conflict", "--rename names the columns of an answer, and --report dates is a table of its own whose columns are fixed", "drop --rename, or drop --report", "--rename --report");
+    } else if reporting != 0 {
         e = flags.problem(heap, e, "args.conflict", "--rename names the columns of an answer, and --report types is a table of its own whose columns are fixed", "drop --rename, or drop --report", "--rename --report");
     } else if shape {
         e = flags.problem(heap, e, "args.conflict", "--rename names the columns of an answer, and with no --select, --where, --group or --agg there is no answer but the shape", "add --select, --where or --group to ask for rows or groups", "--rename --select --where --group --agg");

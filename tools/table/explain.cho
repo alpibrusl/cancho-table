@@ -718,7 +718,11 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
     }
     // the work
     o = buffer.append(heap, o, "},\"work\":{\"class\":\"");
-    o = buffer.append(heap, o, class_text(class));
+    if class == 1 && query.report_kind(tree) == 2 {
+        o = buffer.append(heap, o, "date report");
+    } else {
+        o = buffer.append(heap, o, class_text(class));
+    }
     o = buffer.append(heap, o, "\",\"reads\":\"");
     o = buffer.append(heap, o, reads);
     o = buffer.append(heap, o, "\",");
@@ -1051,9 +1055,9 @@ pub fn conclude[&h, &g, &p, &s, &j](heap: &!h Heap, args: &g Args, parsed: &p cl
         refused = fail.count(er) > 0;
     }
     if !refused {
-        var reporting = false;
+        var reporting = 0;
         borrow tree0 as &tq in {
-            reporting = query.reporting(tq);
+            reporting = query.report_kind(tq);
         }
         var shown_head = fhead;
         if mode != 0 && got {

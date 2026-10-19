@@ -1,0 +1,365 @@
+edition 5;
+
+module reportdt;
+
+// `--report dates` (docs/datetime.md section 20): what each column holds as a date, a timestamp or a datetime, counted, and the declaration that would read it: a suggestion, never a coercion.
+// It is the read of `--report types` (report.cho) with other counters: the same plan, the same threads' merge, the same pages, the counters kept in the groups' place.
+//
+// Every cell of the columns asked for is classified once: **empty** (no bytes, or a quoted pair of quotes), **date** (`:date` reads it), **timestamp** (`:timestamp` reads it: it has an offset),
+// **datetime** (`:datetime` reads it: it has none) or **other** (anything else, a cell that is no real date among them). The three grammars exclude one another (a date has ten bytes, a
+// timestamp an offset, a datetime none), so a cell is at most one. The counters of a column, in order: cells, empty, date, timestamp, datetime, other, widest (bytes), then (row, line) of the first
+// empty cell, of the first cell that `:date` would refuse (a non-empty cell that is not a date), that `:timestamp` would, that `:datetime` would, of the first other cell, then that cell's length
+// and its first 64 bytes, 7 to an integer. The suggestion is `:date`, `:timestamp` or `:datetime` when every non-empty cell is of that one, else `none` (a column of dates and timestamps has no
+// one declaration; a column with no non-empty cell has none).
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import agg;
+import dtparse;
+import query;
+import toolbox.text;
+import writer;
+
+// Counters in a column's row.
+pub fn width() -> [] int {
+    return 28;
+}
+
+// The class of a cell: 0 empty, 1 date, 2 timestamp, 3 datetime, 4 other. A date has ten bytes and a timestamp or a datetime at least nineteen, so a cell of another length is not tried.
+fn classify[&d](data: &d [byte]) -> [] int {
+    if len(data) == 0 {
+        return 0;
+    }
+    if len(data) == 10 {
+        let (v, bad) = dtparse.parse(data, 22);
+        if bad == 0 {
+            return 1;
+        }
+        return 4;
+    }
+    if len(data) >= 19 {
+        let (v, bad) = dtparse.parse(data, 23);
+        if bad == 0 {
+            return 2;
+        }
+        let (w, bad2) = dtparse.parse(data, 24);
+        if bad2 == 0 {
+            return 3;
+        }
+    }
+    return 4;
+}
+
+fn get[&g](g: &g agg.Groups, at: int) -> [] int {
+    return vec.get(g.acc, at);
+}
+
+fn put[&g](g: &!g agg.Groups, at: int, v: int) -> [] int {
+    vec.set(g.acc, at, v);
+    return 0;
+}
+
+fn first[&g](g: &!g agg.Groups, at: int, row: int, line: int) -> [] int {
+    if get(g, at) == 0 {
+        put(g, at, row);
+        put(g, at + 1, line);
+    }
+    return 0;
+}
+
+// Count one cell into the counters at `base`. `row` and `line` place it.
+fn account[&g, &d](g: &!g agg.Groups, base: int, data: &d [byte], row: int, line: int) -> [] int {
+    let class = classify(data);
+    put(g, base, get(g, base) + 1);
+    if len(data) > get(g, base + 6) {
+        put(g, base + 6, len(data));
+    }
+    if class == 0 {
+        put(g, base + 1, get(g, base + 1) + 1);
+        first(g, base + 7, row, line);
+        return 0;
+    }
+    put(g, base + 1 + class, get(g, base + 1 + class) + 1);
+    if class != 1 {
+        first(g, base + 9, row, line);
+    }
+    if class != 2 {
+        first(g, base + 11, row, line);
+    }
+    if class != 3 {
+        first(g, base + 13, row, line);
+    }
+    if class == 4 && get(g, base + 15) == 0 {
+        put(g, base + 15, row);
+        put(g, base + 16, line);
+        put(g, base + 17, len(data));
+        var i = 0;
+        while i < len(data) && i < 64 {
+            let slot = base + 18 + i / 7;
+            put(g, slot, get(g, slot) + (int_of(data[i]) << 8 * (i % 7)));
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+// One more row into the counters of `held` (see `report.row`, which this is for `--report dates`). Answers the groups, the scratch, and 0, or 1 when the counters would pass `max_state`.
+pub fn row[&h, &q, &c, &d, &e](heap: &!h Heap, held: agg.Groups, scratch: buffer.Buffer, tree: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], ncols: int, rows: int, line: int, max_state: int) -> [heap] (agg.Groups, buffer.Buffer, int) {
+    var g = held;
+    var scr = scratch;
+    var size = 0;
+    borrow g as &gr in {
+        size = vec.size(gr.acc);
+    }
+    if size == 0 {
+        if 8 * width() * ncols > max_state {
+            return (g, scr, 1);
+        }
+        g = agg.extend(heap, g, width() * ncols);
+    }
+    let ns = query.count_of(tree, 0);
+    var m = 0;
+    while m < ncols {
+        var column = m;
+        if ns > 0 {
+            column = cols[m];
+        }
+        let first_byte = cells[3 * column];
+        let last_byte = cells[3 * column + 1];
+        if cells[3 * column + 2] == 1 && index_of_byte(record[first_byte..last_byte], byte_of(34)) >= 0 {
+            borrow mut scr as &!sw in {
+                buffer.clear(sw);
+            }
+            scr = query.unquote(heap, scr, record[first_byte..last_byte]);
+            borrow scr as &sr in {
+                borrow mut g as &!gw in {
+                    account(gw, m * width(), buffer.bytes(sr), rows, line);
+                }
+            }
+        } else {
+            borrow mut g as &!gw in {
+                account(gw, m * width(), record[first_byte..last_byte], rows, line);
+            }
+        }
+        m = m + 1;
+    }
+    return (g, scr, 0);
+}
+
+// ---- the threads' merge ---------------------------------------------------------------------------------------------------------
+
+// The counters as bytes: the number of columns, then the counters, i64 each. Answers the bytes used, or -1 when they do not fit.
+pub fn serialize[&g, &o](g: &g agg.Groups, out: &!o [byte]) -> [] int {
+    let n = vec.size(g.acc);
+    if 8 + 8 * n > len(out) {
+        return 0 - 1;
+    }
+    agg.put_i64(out, 0, n / width());
+    var i = 0;
+    while i < n {
+        agg.put_i64(out, 8 + 8 * i, vec.get(g.acc, i));
+        i = i + 1;
+    }
+    return 8 + 8 * n;
+}
+
+// Add a range's counters into `held`: the counts add, the widest combines, and the first cell of a class is the earlier range's when it has one (else the range's, its row and line offset by
+// the records and the lines before the range). Answers the groups and 0, or the groups untouched and 1 when the counters would pass `max_state`.
+pub fn merge[&h, &b](heap: &!h Heap, held: agg.Groups, blob: &b [byte], rows_before: int, lines_before: int, max_state: int) -> [heap] (agg.Groups, int) {
+    let ncols = agg.get_i64(blob, 0);
+    if ncols == 0 {
+        return (held, 0);
+    }
+    var g = held;
+    var size = 0;
+    borrow g as &gr in {
+        size = vec.size(gr.acc);
+    }
+    if size == 0 {
+        if 8 * width() * ncols > max_state {
+            return (g, 1);
+        }
+        g = agg.extend(heap, g, width() * ncols);
+    }
+    var m = 0;
+    while m < ncols {
+        let base = m * width();
+        let from = 8 + 8 * base;
+        borrow mut g as &!gw in {
+            var c = 0;
+            while c < 6 {
+                put(gw, base + c, get(gw, base + c) + agg.get_i64(blob, from + 8 * c));
+                c = c + 1;
+            }
+            let widest = agg.get_i64(blob, from + 8 * 6);
+            if widest > get(gw, base + 6) {
+                put(gw, base + 6, widest);
+            }
+            // the firsts: (row, line) pairs at 7, 9, 11, 13, 15, and the other cell's length and bytes after the last
+            var f = 7;
+            while f <= 15 {
+                let their_row = agg.get_i64(blob, from + 8 * f);
+                if their_row > 0 && get(gw, base + f) == 0 {
+                    put(gw, base + f, their_row + rows_before);
+                    put(gw, base + f + 1, agg.get_i64(blob, from + 8 * (f + 1)) + lines_before);
+                    if f == 15 {
+                        c = 17;
+                        while c < 28 {
+                            put(gw, base + c, agg.get_i64(blob, from + 8 * c));
+                            c = c + 1;
+                        }
+                    }
+                }
+                f = f + 2;
+            }
+        }
+        m = m + 1;
+    }
+    return (g, 0);
+}
+
+// ---- the answer -----------------------------------------------------------------------------------------------------------------
+
+pub fn names() -> [] &static [byte] {
+    return "name|cells|empty|date|timestamp|datetime|other|widest|suggest|first_empty_row|first_empty_line|first_not_date_row|first_not_date_line|first_not_timestamp_row|first_not_timestamp_line|first_not_datetime_row|first_not_datetime_line|first_other_row|first_other_line|first_other_cell|first_other_cell_truncated";
+}
+
+pub fn head_json[&h](heap: &!h Heap) -> [heap] buffer.Buffer {
+    var o = buffer.push(heap, buffer.empty(heap, 256), byte_of('['));
+    let all = names();
+    var start = 0;
+    var i = 0;
+    while i <= len(all) {
+        if i == len(all) || int_of(all[i]) == '|' {
+            if start > 0 {
+                o = buffer.push(heap, o, byte_of(','));
+            }
+            o = text.append_json(heap, o, all[start..i]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return buffer.push(heap, o, byte_of(']'));
+}
+
+pub fn head_csv[&h](heap: &!h Heap, delim: int) -> [heap] buffer.Buffer {
+    var o = buffer.empty(heap, 256);
+    let all = names();
+    var start = 0;
+    var i = 0;
+    while i <= len(all) {
+        if i == len(all) || int_of(all[i]) == '|' {
+            if start > 0 {
+                o = buffer.push(heap, o, byte_of(delim));
+            }
+            o = buffer.append(heap, o, all[start..i]);
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return o;
+}
+
+fn put_number[&h](heap: &!h Heap, out: buffer.Buffer, v: int, as_csv: bool) -> [heap] buffer.Buffer {
+    var o = out;
+    if !as_csv {
+        o = buffer.push(heap, o, byte_of(34));
+    }
+    o = buffer.push_nat(heap, o, v);
+    if !as_csv {
+        o = buffer.push(heap, o, byte_of(34));
+    }
+    return o;
+}
+
+fn put_first[&h](heap: &!h Heap, out: buffer.Buffer, v: int, as_csv: bool) -> [heap] buffer.Buffer {
+    if v == 0 {
+        if as_csv {
+            return out;
+        }
+        return buffer.append(heap, out, "\"\"");
+    }
+    return put_number(heap, out, v, as_csv);
+}
+
+fn sep[&h](heap: &!h Heap, out: buffer.Buffer, as_csv: bool, delim: int) -> [heap] buffer.Buffer {
+    if as_csv {
+        return buffer.push(heap, out, byte_of(delim));
+    }
+    return buffer.push(heap, out, byte_of(','));
+}
+
+fn field[&h, &d](heap: &!h Heap, out: buffer.Buffer, data: &d [byte], as_csv: bool, delim: int) -> [heap] buffer.Buffer {
+    if as_csv {
+        return writer.csv_value(heap, out, data, delim);
+    }
+    return text.append_json(heap, out, data);
+}
+
+// The suggestion of the column at `base`: `:date`, `:timestamp`, `:datetime` or `none`.
+fn suggestion[&g](g: &g agg.Groups, base: int) -> [] &static [byte] {
+    let nonempty = get(g, base) - get(g, base + 1);
+    if nonempty > 0 {
+        if get(g, base + 2) == nonempty {
+            return ":date";
+        }
+        if get(g, base + 3) == nonempty {
+            return ":timestamp";
+        }
+        if get(g, base + 4) == nonempty {
+            return ":datetime";
+        }
+    }
+    return "none";
+}
+
+// One row of the report, for report column `m` named `name`, into `out`: a json array of strings, or a csv line (without its newline).
+pub fn put_row[&h, &g, &n](heap: &!h Heap, out: buffer.Buffer, g: &g agg.Groups, m: int, name: &n [byte], as_csv: bool, delim: int) -> [heap] buffer.Buffer {
+    let base = m * width();
+    var o = out;
+    if !as_csv {
+        o = buffer.push(heap, o, byte_of('['));
+    }
+    o = field(heap, o, name, as_csv, delim);
+    var c = 0;
+    // cells, empty, date, timestamp, datetime, other, widest
+    while c < 7 {
+        o = sep(heap, o, as_csv, delim);
+        o = put_number(heap, o, get(g, base + c), as_csv);
+        c = c + 1;
+    }
+    o = sep(heap, o, as_csv, delim);
+    o = field(heap, o, suggestion(g, base), as_csv, delim);
+    // the rows and lines of the first empty, not-date, not-timestamp, not-datetime and other cells
+    c = 7;
+    while c < 17 {
+        o = sep(heap, o, as_csv, delim);
+        o = put_first(heap, o, get(g, base + c), as_csv);
+        c = c + 1;
+    }
+    var tmp = buffer.empty(heap, 64);
+    let n = get(g, base + 17);
+    var i = 0;
+    while i < n && i < 64 {
+        tmp = buffer.push(heap, tmp, byte_of(get(g, base + 18 + i / 7) >> 8 * (i % 7) & 255));
+        i = i + 1;
+    }
+    o = sep(heap, o, as_csv, delim);
+    borrow tmp as &tr in {
+        o = field(heap, o, buffer.bytes(tr), as_csv, delim);
+    }
+    buffer.drop(heap, tmp);
+    o = sep(heap, o, as_csv, delim);
+    if get(g, base + 15) == 0 {
+        o = field(heap, o, "", as_csv, delim);
+    } else if n > 64 {
+        o = field(heap, o, "true", as_csv, delim);
+    } else {
+        o = field(heap, o, "false", as_csv, delim);
+    }
+    if !as_csv {
+        o = buffer.push(heap, o, byte_of(']'));
+    }
+    return o;
+}

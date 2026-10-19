@@ -417,6 +417,18 @@ fn type_code[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
         step(m);
         return 21;
     }
+    if is_word(q, m, 0, "date") {
+        step(m);
+        return 22;
+    }
+    if is_word(q, m, 0, "timestamp") {
+        step(m);
+        return 23;
+    }
+    if is_word(q, m, 0, "datetime") {
+        step(m);
+        return 24;
+    }
     if is_word(q, m, 0, "dec") {
         step(m);
         if expect_sym(m, qlex.y_open(), 17) != 0 {

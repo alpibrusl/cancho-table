@@ -36,7 +36,7 @@ MUTANTS = [
     ("a refusal of the plan is missed", E, "                abort_now = mr.fabort;", "                abort_now = abort_now;"),
     ("the unknown name is not told", E, "                bad = mr.fbad;", "                bad = 0;"),
     ("the line of the refusal is lost", E, "abort_line: abort_line, long_length: long_length, emitted: 0", "abort_line: 0, long_length: long_length, emitted: 0"),
-    ("a refused plan is explained", E, "    if !refused {\n        var reporting = false;", "    if true {\n        var reporting = false;"),
+    ("a refused plan is explained", E, "    if !refused {\n        var reporting = 0;", "    if true {\n        var reporting = 0;"),
     ("the sort label of the flag is not given to the frame", E, '    var flagged = "";\n    if cli.has(parsed, table, "sort") {\n        flagged = cli.text(args, parsed, table, "sort");\n    }\n    var made', '    var flagged = "";\n    var made'),
     # the plan
     ("a type is written one scale off", E, "        b = buffer.push_nat(heap, b, t - 2);", "        b = buffer.push_nat(heap, b, t - 1);"),

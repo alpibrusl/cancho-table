@@ -253,6 +253,10 @@ def sqlite_answer(names, rows, picks, aliases, where=None, order_cols=None, grou
 
 # ---- the cases whose reading slice B1 moved ----------------------------------------------------------------------------------------------------
 
+T3_TYPES = "a type: int, dec(N), float, date, datetime or timestamp"
+OLD_TYPES = "a type: int, dec(N) or float"
+
+
 def reading_of(text, module):
     try:
         module.translate(text)
@@ -262,7 +266,10 @@ def reading_of(text, module):
             return ("mixed", e.offset)
         if e.kind == "too-long":
             return ("too-long",)
-        return (e.kind, e.offset, e.expected if e.kind in ("syntax", "group-mismatch") else e.feature)
+        expected = e.expected
+        if expected == T3_TYPES:
+            expected = OLD_TYPES      # slice T3 only added words to the list of types (docs/datetime.md section 20): the readings of the earlier slices are compared with the old text
+        return (e.kind, e.offset, expected if e.kind in ("syntax", "group-mismatch") else e.feature)
 
 
 def b1_changed(text):
@@ -276,9 +283,9 @@ def b1_changed(text):
 
 def j3b_hint_moved(text):
     """Whether the query is refused today as `query.unsupported` for the feature `join` or `subquery`: slice J3b (docs/joins.md section 20) changed the hint of those two, which said there were no joins,
-    and nothing else of the answer; or for `cast-in-group`, whose hint slice T2 (docs/datetime.md section 19) extended with the flag of a period (`--group ts:timestamp@day`), and nothing else. The goldens of the
+    and nothing else of the answer; or for a `syntax` refusal that expects a type (slice T3, docs/datetime.md section 20, added `date`, `datetime` and `timestamp` to the list its text gives), or for `cast-in-group`, whose hint slice T2 (docs/datetime.md section 19) extended with the flag of a period (`--group ts:timestamp@day`), and nothing else. The goldens of the
     earlier slices hold every other case to main's bytes; for these they hold the status and the rule, and test_join_j3b.py (the first two) and test_datetime_t2.py (the third) hold the rest."""
     import query_ref
     lat = text.encode("utf-8").decode("latin-1")
     r = reading_of(lat, query_ref)
-    return len(r) == 3 and r[0] == "unsupported" and r[2] in ("join", "subquery", "cast-in-group")
+    return len(r) == 3 and (r[0] == "unsupported" and r[2] in ("join", "subquery", "cast-in-group") or r[0] == "syntax" and r[2] == OLD_TYPES)

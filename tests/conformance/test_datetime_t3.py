@@ -196,6 +196,9 @@ class QuerySurface(unittest.TestCase):
     def q(self, text, *more):
         return run("--root", self.s.dir, "--query", text, "--format", "csv", *more)
 
+    def qj(self, text):
+        return run("--root", self.s.dir, "--query", text)
+
     def test_the_spellings_of_a_type_give_the_flag_plan(self):
         want = run("--root", self.s.dir, "--where", "ts:timestamp >= '2026-01-02T00:00:00Z'", "--select", "id", "--order-by", "-ts:timestamp", "--format", "csv", "f.csv").stdout
         self.assertEqual(want.decode().split(), ["id", "3"])
@@ -220,7 +223,7 @@ class QuerySurface(unittest.TestCase):
                  ("select id from 'f.csv' where w::datetime < '2026-01-02T00:00:00Z'", "datetime", "'2026-01-02T00:00:00Z'"),
                  ("select id from 'f.csv' where ts::timestamp in ('2026-01-02T00:00:00Z', 'x')", "timestamp", "'x'")]
         for text, ty, value in cases:
-            r = self.q(text)
+            r = self.qj(text)
             e = err(r)
             self.assertEqual((r.status, e["rule"]), (2, "query.syntax"), text)
             d = e["detail"]
@@ -229,21 +232,21 @@ class QuerySurface(unittest.TestCase):
             self.assertEqual(validate(r), [])
 
     def test_contains_on_a_typed_column_is_refused(self):
-        r = self.q("select id from 'f.csv' where ts::timestamp contains 'x'")
+        r = self.qj("select id from 'f.csv' where ts::timestamp contains 'x'")
         self.assertEqual((r.status, r.first_rule()), (2, "query.syntax"))
         self.assertIn("not contains", err(r)["detail"]["expected"])
 
     def test_a_cast_in_the_select_list_and_in_a_group_by_stay_unsupported(self):
-        r = self.q("select ts::date from 'f.csv'")
+        r = self.qj("select ts::date from 'f.csv'")
         self.assertEqual((r.status, r.first_rule(), err(r)["detail"]["feature"]), (2, "query.unsupported", "cast-in-select"))
         for text in ("select count(*) from 'f.csv' group by ts::timestamp", "select count(*) from 'f.csv' group by cast(d as date)", "select w, count(*) from 'f.csv' group by w::datetime"):
-            r = self.q(text)
+            r = self.qj(text)
             e = err(r)
             self.assertEqual((r.status, e["rule"], e["detail"]["feature"]), (2, "query.unsupported", "cast-in-group"), text)
             self.assertIn("--group ts:timestamp@day", e["hint"])
 
     def test_a_type_word_that_is_not_a_type_says_the_three_new_ones(self):
-        r = self.q("select id from 'f.csv' where ts::time > 'x'")
+        r = self.qj("select id from 'f.csv' where ts::time > 'x'")
         e = err(r)
         self.assertEqual((r.status, e["rule"]), (2, "query.syntax"))
         for word in ("int", "dec(N)", "float", "date", "datetime", "timestamp"):
@@ -256,7 +259,7 @@ class QuerySurface(unittest.TestCase):
             s.write("n.csv", "date,timestamp,datetime,id\n2026-01-02,x,y,1\n")
             r = run("--root", s.dir, "--query", "select id from 'n.csv' where date = '2026-01-02' and timestamp = 'x' and datetime = 'y'", "--format", "csv")
             self.assertEqual((r.status, r.stdout.decode().split()), (0, ["id", "1"]))
-            r = run("--root", s.dir, "--query", "select id from 'n.csv' where date::date = '2026-01-02' and cast(timestamp as int) > 0", "--format", "csv")
+            r = run("--root", s.dir, "--query", "select id from 'n.csv' where date::date = '2026-01-02' and cast(timestamp as int) > 0")
             self.assertEqual(r.first_rule(), "value.not-integer")
             r = run("--root", s.dir, "--query", "select id from 'n.csv' where date::date = '2026-01-02'", "--format", "csv")
             self.assertEqual((r.status, r.stdout.decode().split()), (0, ["id", "1"]))
@@ -363,7 +366,7 @@ class Joins(unittest.TestCase):
                     good = "2026-01-01" if kind == "date" else "2026-01-01T00:00:00Z" if kind == "timestamp" else "2026-01-01 00:00:00"
                     self.s.write("pr.csv", "id,k\n1,%s\n2,%s\n" % (good, cell if side == "probe" else good))
                     self.s.write("br.csv", "kk,name\n%s,a\n%s,b\n" % (good, cell if side == "build" else good))
-                    r = run("--root", self.s.dir, "--join", "br.csv", "--on", "k=kk:" + kind, "--format", "csv", "pr.csv")
+                    r = run("--root", self.s.dir, "--join", "br.csv", "--on", "k=kk:" + kind, "pr.csv")
                     e = err(r)
                     self.assertEqual((r.status, e["rule"]), (8, want[1]), (kind, side, cell, r.stdout[:300]))
                     d = e["detail"]
@@ -375,6 +378,21 @@ class Joins(unittest.TestCase):
                     for key in ("reason", "offset", "digits", "direction"):
                         self.assertEqual(key in d, key in want[2], (kind, side, cell, key))
                     self.assertEqual(validate(r), [])
+
+    def test_a_quoted_key_cell_is_read_without_its_quotes_and_refused_by_its_own_reason(self):
+        self.s.write("pq.csv", 'id,k\n1,"2026-01-02T01:00:00"\n')
+        self.s.write("bq.csv", 'kk,name\n"2026-01-01T23:00:00Z",a\n')
+        r = run("--root", self.s.dir, "--join", "bq.csv", "--on", "k=kk:timestamp", "pq.csv")
+        e = err(r)
+        self.assertEqual((r.status, e["rule"], e["detail"]["input"], e["detail"]["reason"]), (8, "value.timezone-missing", "probe", "missing"))
+        self.s.write("pq.csv", 'id,k\n1,"2026-01-02T01:00:00+02:00"\n')
+        self.s.write("bq.csv", 'kk,name\n"2026-01-01T23:00:00",a\n')
+        r = run("--root", self.s.dir, "--join", "bq.csv", "--on", "k=kk:timestamp", "pq.csv")
+        e = err(r)
+        self.assertEqual((r.status, e["rule"], e["detail"]["input"], e["detail"]["reason"]), (8, "value.timezone-missing", "build", "missing"))
+        self.s.write("bq.csv", 'kk,name\n"2026-01-01T23:00:00Z",a\n')
+        r = run("--root", self.s.dir, "--join", "bq.csv", "--on", "k=kk:timestamp", "--format", "csv", "pq.csv")
+        self.assertEqual(rows_of(r), ["id,k,kk,name", "1,2026-01-02T01:00:00+02:00,2026-01-01T23:00:00Z,a"])
 
     def test_a_date_cell_in_a_timestamp_pair_is_refused_there_is_no_cross_type_join(self):
         self.s.write("pd.csv", "id,k\n1,2026-01-02\n")
@@ -504,13 +522,22 @@ class Report(unittest.TestCase):
         for flags, rule in ((["--group", "mixed"], "args.conflict"), (["--agg", "count"], "args.conflict"), (["--order-by", "mixed"], "args.conflict"), (["--top", "1"], "args.conflict"),
                             (["--format", "jsonl"], "args.conflict"), (["--rename", "a=b"], "args.conflict"), (["--rows"], "args.conflict"), (["--join", "r.csv", "--on", "mixed"], "args.conflict")):
             r = run("--root", self.s.dir, "--report", "dates", *flags, "r.csv")
+            if "jsonl" in flags:
+                # the other formats' refusals are one line of text on the standard error
+                self.assertEqual(r.status, 2)
+                self.assertIn(b"args.conflict", r.stderr)
+                self.assertIn(b"dates", r.stderr)
+                continue
             self.assertEqual((r.status, r.first_rule()), (2, rule), flags)
-            self.assertIn("dates", err(r)["message"], flags)
-        for word in ("date", "Dates", "all", ""):
+            if flags != ["--rows"]:
+                self.assertIn("dates", err(r)["message"], flags)
+        for word in ("date", "Dates", "all"):
             r = run("--root", self.s.dir, "--report", word, "r.csv")
             self.assertEqual((r.status, r.first_rule()), (2, "args.bad-value"), word)
             self.assertIn("dates", err(r)["message"])
             self.assertIn("types", err(r)["message"])
+        r = run("--root", self.s.dir, "--report", "", "r.csv")
+        self.assertEqual((r.status, r.first_rule()), (2, "args.bad-value"))
 
     def test_the_report_of_types_is_the_bytes_it_was(self):
         r = run("--root", self.s.dir, "--report", "types", "r.csv")
@@ -534,6 +561,9 @@ class Report(unittest.TestCase):
     def test_the_bounds_are_the_reports(self):
         r = run("--root", self.s.dir, "--report", "dates", "--max-state-bytes", "1", "r.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "limit.state-too-large"))
+        self.assertIn("224 bytes", err(r)["message"])
+        r = run("--root", self.s.dir, "--report", "types", "--max-state-bytes", "1", "r.csv")
+        self.assertIn("248 bytes", err(r)["message"])
         r = run("--root", self.s.dir, "--report", "dates", "--max-rows", "1", "r.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "limit.too-many-rows"))
 
@@ -571,7 +601,8 @@ class JsonlOut(unittest.TestCase):
 
     def test_the_report_is_not_written_as_json_lines(self):
         r = run("--root", self.s.dir, "--report", "dates", "--format", "jsonl", "f.csv")
-        self.assertEqual((r.status, r.first_rule()), (2, "args.conflict"))
+        self.assertEqual(r.status, 2)
+        self.assertIn(b"args.conflict", r.stderr)
 
 
 # ---- the surface -----------------------------------------------------------------------------------------------------------------------

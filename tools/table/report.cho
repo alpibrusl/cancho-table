@@ -29,6 +29,7 @@ import agg;
 import flt;
 import cellnum;
 import query;
+import reportdt;
 import toolbox.text;
 import writer;
 
@@ -503,4 +504,48 @@ pub fn put_object[&h, &g, &n](heap: &!h Heap, out: buffer.Buffer, g: &g agg.Grou
     }
     buffer.drop(heap, page);
     return buffer.push(heap, o, byte_of('}'));
+}
+
+// ---- the report that was asked for (1 types, 2 dates): the functions of the threads' merge and of the answer, by `kind` (`query.report_kind`) ------------------------------------
+
+pub fn width_of(kind: int) -> [] int {
+    if kind == 2 {
+        return reportdt.width();
+    }
+    return width();
+}
+
+pub fn serialize_of[&g, &o](kind: int, g: &g agg.Groups, out: &!o [byte]) -> [] int {
+    if kind == 2 {
+        return reportdt.serialize(g, out);
+    }
+    return serialize(g, out);
+}
+
+pub fn merge_of[&h, &b](heap: &!h Heap, kind: int, held: agg.Groups, blob: &b [byte], rows_before: int, lines_before: int, max_state: int) -> [heap] (agg.Groups, int) {
+    if kind == 2 {
+        return reportdt.merge(heap, held, blob, rows_before, lines_before, max_state);
+    }
+    return merge(heap, held, blob, rows_before, lines_before, max_state);
+}
+
+pub fn head_json_of[&h](heap: &!h Heap, kind: int) -> [heap] buffer.Buffer {
+    if kind == 2 {
+        return reportdt.head_json(heap);
+    }
+    return head_json(heap);
+}
+
+pub fn head_csv_of[&h](heap: &!h Heap, kind: int, delim: int) -> [heap] buffer.Buffer {
+    if kind == 2 {
+        return reportdt.head_csv(heap, delim);
+    }
+    return head_csv(heap, delim);
+}
+
+pub fn put_row_of[&h, &g, &n](heap: &!h Heap, kind: int, out: buffer.Buffer, g: &g agg.Groups, m: int, name: &n [byte], as_csv: bool, delim: int) -> [heap] buffer.Buffer {
+    if kind == 2 {
+        return reportdt.put_row(heap, out, g, m, name, as_csv, delim);
+    }
+    return put_row(heap, out, g, m, name, as_csv, delim);
 }

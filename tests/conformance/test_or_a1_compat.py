@@ -107,7 +107,10 @@ def tool_query(text, doc):
         d = e["detail"]
         if kind == "syntax" and "column" in d:
             return ("literal",)             # the engine's literal checks, mapped back to the query: not the grammar's
-        return (kind, d["offset"], d.get("expected", d.get("feature")))
+        what = d.get("expected", d.get("feature"))
+        if what == rename_b1.T3_TYPES:
+            what = rename_b1.OLD_TYPES      # slice T3 added three words to the list of types: the frozen references of the earlier slices have the old text (rename_b1.reading_of)
+        return (kind, d["offset"], what)
     return ("ok",)
 
 

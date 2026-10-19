@@ -53,7 +53,7 @@ pub fn expected(code: int) -> [] &static [byte] {
         return "a typed column is compared with = != < <= > >= or in, not contains";
     }
     if code == 16 {
-        return "a type: int, dec(N) or float";
+        return "a type: int, dec(N), float, date, datetime or timestamp";
     }
     if code == 17 {
         return "( and the scale of dec(N)";
@@ -405,6 +405,15 @@ pub fn type_name(t: int) -> [] &static [byte] {
     }
     if t == 20 {
         return "dec(18)";
+    }
+    if t == 22 {
+        return "date";
+    }
+    if t == 23 {
+        return "timestamp";
+    }
+    if t == 24 {
+        return "datetime";
     }
     return "text";
 }

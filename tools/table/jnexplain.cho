@@ -10,6 +10,7 @@ module jnexplain;
 import std.buffer;
 import std.bytes;
 import std.vec;
+import dtparse;
 import explain;
 import finish;
 import frame;
@@ -122,6 +123,11 @@ fn type_name[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buff
     }
     if t == 21 {
         return buffer.append(heap, o, "\"float\"");
+    }
+    if t >= 22 {
+        var d = buffer.push(heap, o, byte_of(34));
+        d = buffer.append(heap, d, dtparse.type_text(t));
+        return buffer.push(heap, d, byte_of(34));
     }
     var out = buffer.append(heap, o, "\"dec(");
     out = buffer.push_nat(heap, out, t - 2);

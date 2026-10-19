@@ -1,0 +1,56 @@
+edition 5;
+
+module reportflags;
+
+// The flags `--report` does not go with (docs/datetime.md section 20): the two reports, `types` (docs/numbers.md 5.2) and `dates`, are tables of their own. Moved out of `table.cho`, with the
+// refusals of `--report types` word for word as they were, and the same refusals for `--report dates` in its own words.
+
+import std.bytes;
+import flags;
+import toolbox.fail;
+
+// Which report a word names: 1 `types`, 2 `dates`, 0 neither.
+pub fn kind_of[&w](word: &w [byte]) -> [] int {
+    if bytes.equal(word, "types") {
+        return 1;
+    }
+    if bytes.equal(word, "dates") {
+        return 2;
+    }
+    return 0;
+}
+
+// 0 when there is no `--report`, else 2 for `dates` and 1 for any other word (a refusal that names the report names `types` unless the word is `dates`).
+pub fn shown_kind[&w](has: bool, word: &w [byte]) -> [] int {
+    if !has {
+        return 0;
+    }
+    if kind_of(word) == 2 {
+        return 2;
+    }
+    return 1;
+}
+
+// The refusals of `--report WORD` with `--format jsonl`, a grouping, a sort or a cut of rows; added to `errs`.
+pub fn check[&h, &w](heap: &!h Heap, errs: fail.Errors, word: &w [byte], jsonl_out: bool, shaped: bool) -> [heap] fail.Errors {
+    var e = errs;
+    let kind = kind_of(word);
+    if kind == 0 {
+        e = flags.problem(heap, e, "args.bad-value", "--report is types or dates: the two reports there are", "--report types, or --report dates for the columns that hold dates, timestamps or datetimes", "--report");
+    }
+    if jsonl_out {
+        if kind == 2 {
+            e = flags.problem(heap, e, "args.conflict", "--report dates is a table of its own, with the counts and the suggestions as strings: write it as --format json or csv", "--format csv", "--report --format");
+        } else {
+            e = flags.problem(heap, e, "args.conflict", "--report types is a table of its own, with the counts and the suggestions as strings: write it as --format json or csv", "--format csv", "--report --format");
+        }
+    }
+    if shaped {
+        if kind == 2 {
+            e = flags.problem(heap, e, "args.conflict", "--report dates describes the columns of the whole table: it is not a grouping, a sort or a cut of rows", "drop --group, --agg, --order-by, --sort or --top", "--report --group --agg --order-by --sort --top");
+        } else {
+            e = flags.problem(heap, e, "args.conflict", "--report types describes the columns of the whole table: it is not a grouping, a sort or a cut of rows", "drop --group, --agg, --order-by, --sort or --top", "--report --group --agg --order-by --sort --top");
+        }
+    }
+    return e;
+}

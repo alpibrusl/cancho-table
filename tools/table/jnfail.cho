@@ -11,6 +11,7 @@ import std.buffer;
 import std.bytes;
 import std.json;
 import std.vec;
+import dtjoin;
 import finish;
 import jnguard;
 import toolbox.cli;
@@ -245,6 +246,10 @@ pub fn too_many_rows[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], l
 // (counted from 1), the column by the name its own header gives it, the row and line of its own file and the cell. `status` is the answer of `query.parse_typed`: 4 not an integer, 5 past 64 bits,
 // 6 not a decimal, 7 more fractional digits than the scale, 8 too wide, 9 not a float, 10 inf or nan, 11 past the range, 12 rounds to zero, 13 too long. An empty cell is not of any type.
 pub fn typed_key[&h, &g, &p, &s, &n, &v, &a, &b](heap: &!h Heap, e: fail.Errors, status: int, input: &static [byte], shown: &s [byte], column: &n [byte], row: int, line: int, value: &v [byte], pair: int, scale: int, digits: int, args: &g Args, parsed: &p cli.Parsed, gnames: &a buffer.Buffer, gends: &b vec.Vec[int], gcol: int) -> [heap, args] fail.Errors {
+    if status >= 14 {
+        // a :date, :timestamp or :datetime key cell: the rules of the date types (dtjoin.cho)
+        return dtjoin.key_refusal(heap, e, status, input, shown, column, row, line, value, pair);
+    }
     var rule = "value.not-integer";
     var what = "a key cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)";
     if status == 5 {

@@ -25,6 +25,7 @@ import std.buffer;
 import std.bytes;
 import std.vec;
 import bulk;
+import dtjoin;
 import engine;
 import explain;
 import finish;
@@ -165,9 +166,12 @@ pub fn hold_row[&h, &d, &c, &k](heap: &!h Heap, t: jtab.JTab, scratch: buffer.Bu
 
 // A typed key cell of the build that is not of its type, noted in the tally (abort 72): the answer of `hold_row` is `answer`, the record `record` and its cells `cells`.
 pub fn note_typed[&h, &d, &c, &k, &a](heap: &!h Heap, kept: buffer.Buffer, record: &d [byte], cells: &c [int], keys: &k [int], answer: int, side: int, row: int, line: int, a: &!a [int]) -> [heap] buffer.Buffer {
-    let status = (answer - 16) % 16;
+    var status = (answer - 16) % 16;
     let which = (answer - 16) / 16;
     let column = keys[3 * which + side];
+    if status == 15 {
+        status = dtjoin.status_of(heap, record, cells[3 * column], cells[3 * column + 1], cells[3 * column + 2], keys[3 * which + 2]);
+    }
     a[engine.k_abort()] = 72;
     a[engine.k_abort_line()] = line;
     a[engine.k_err_fn()] = status;

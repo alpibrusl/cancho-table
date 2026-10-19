@@ -187,7 +187,7 @@ fn work[&r](w: &!r Job) -> [heap, file_read] int {
                     if ordering {
                         n = psort.make_run(w.heap, gr, contents(cw), contents(w.sel), contents(w.par)[scan.p_picked()], contents(w.par)[scan.p_delim()], contents(w.par)[j_columns()], o[header_bytes()..len(o)]);
                     } else if query.reporting(w.tree) {
-                        n = report.serialize(gr, o[header_bytes()..len(o)]);
+                        n = report.serialize_of(query.report_kind(w.tree), gr, o[header_bytes()..len(o)]);
                     } else if contents(w.par)[j_parts()] > 0 {
                         let np = contents(w.par)[j_parts()];
                         var scratch_w = box_slice(w.heap, 2 * agg.groups(gr) + 6 * np + 8, 0);
@@ -579,7 +579,7 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                         } else if mode == 2 && fits {
                             var refused = 0;
                             if query.reporting(tree) {
-                                let (g2, r2) = report.merge(heap, groups2, sl[at + header_bytes()..at + header_bytes() + payload_len], before, lines_before, pp[scan.p_max_state()]);
+                                let (g2, r2) = report.merge_of(heap, query.report_kind(tree), groups2, sl[at + header_bytes()..at + header_bytes() + payload_len], before, lines_before, pp[scan.p_max_state()]);
                                 groups2 = g2;
                                 refused = r2;
                             } else {
