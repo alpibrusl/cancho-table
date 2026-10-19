@@ -589,15 +589,16 @@ fn order_row[&h, &q, &c, &d, &e, &a](heap: &!h Heap, held: agg.Groups, escr: buf
     // (`--where` was asked of the row by `group_fast` before the rows came here.)
     if query.reporting(tree) {
         // `--report types`: the row is classified into the counters (report.cho); the counters are the groups' place
+        let rows_now = a[k_records()];
         if query.report_kind(tree) == 2 {
-            let (g2, s2, st) = reportdt.row(heap, held, escr, tree, cols, record, cells, report.columns_of(tree, a[k_columns()]), a[k_records()], opened, max_state);
+            let (g2, s2, st) = reportdt.row(heap, held, escr, tree, cols, record, cells, report.columns_of(tree, a[k_columns()]), rows_now, opened, max_state);
             if st != 0 {
                 a[k_stop()] = 1;
                 a[k_abort()] = 44;
             }
             return (g2, s2, kept);
         }
-        let (g2, s2, st) = report.row(heap, held, escr, tree, cols, record, cells, report.columns_of(tree, a[k_columns()]), a[k_records()], opened, max_state);
+        let (g2, s2, st) = report.row(heap, held, escr, tree, cols, record, cells, report.columns_of(tree, a[k_columns()]), rows_now, opened, max_state);
         if st != 0 {
             a[k_stop()] = 1;
             a[k_abort()] = 43;
