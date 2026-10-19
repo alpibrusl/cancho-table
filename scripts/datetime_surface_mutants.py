@@ -61,7 +61,7 @@ MUTANTS = [
     ("the threads' first line is not offset by the lines before", "reportdt.cho", "agg.get_i64(blob, from + 8 * (f + 1)) + lines_before);", "agg.get_i64(blob, from + 8 * (f + 1)));"),
     ("the threads' counts of the last class are not added", "reportdt.cho", "            while c < 6 {\n                put(gw, base + c, get(gw, base + c) + agg.get_i64(blob, from + 8 * c));", "            while c < 5 {\n                put(gw, base + c, get(gw, base + c) + agg.get_i64(blob, from + 8 * c));"),
     # ---- the dispatch, the header, the flags
-    ("a dates report reads its rows as types", "report.cho", "    if query.report_kind(tree) == 2 {\n        return reportdt.row(", "    if query.report_kind(tree) == 3 {\n        return reportdt.row("),
+    ("a dates report reads its rows as types", "engine.cho", "        if query.report_kind(tree) == 2 {\n            let (g2, s2, st) = reportdt.row(", "        if query.report_kind(tree) == 3 {\n            let (g2, s2, st) = reportdt.row("),
     ("the counters of a dates report have the width of the types", "report.cho", "    if kind == 2 {\n        return reportdt.width();", "    if kind == 3 {\n        return reportdt.width();"),
     ("a dates report has the header of the types", "report.cho", "    if kind == 2 {\n        return reportdt.head_json(heap);", "    if kind == 3 {\n        return reportdt.head_json(heap);"),
     ("a dates report is merged as the types", "report.cho", "    if kind == 2 {\n        return reportdt.merge(", "    if kind == 3 {\n        return reportdt.merge("),

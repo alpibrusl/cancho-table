@@ -70,8 +70,8 @@ MUTANTS = [
     # the plan and the engine
     ("the report is not told from a sort", "query.cho", "    return vec.get(q.gkinds, 1) != 0;", "    return false;"),
     ("a report row is held as a sort row", "engine.cho", "    if query.reporting(tree) {\n        // `--report types`", "    if false {\n        // `--report types`"),
-    ("a report's refusal has the code of a bound of the groups", "engine.cho", '            a[k_abort()] = 43 + query.report_kind(tree) - 1;', '            a[k_abort()] = 15;'),
-    ("a report counts the wrong row", "engine.cho", "report.columns_of(tree, a[k_columns()]), a[k_records()], opened, max_state);", "report.columns_of(tree, a[k_columns()]), a[k_records()] + 1, opened, max_state);"),
+    ("a report's refusal has the code of a bound of the groups", "engine.cho", '            a[k_abort()] = 43;', '            a[k_abort()] = 15;'),
+    ("a report counts the wrong row", "engine.cho", "let (g2, s2, st) = report.row(heap, held, escr, tree, cols, record, cells, report.columns_of(tree, a[k_columns()]), a[k_records()], opened, max_state);", "let (g2, s2, st) = report.row(heap, held, escr, tree, cols, record, cells, report.columns_of(tree, a[k_columns()]), a[k_records()] + 1, opened, max_state);"),
     ("the worker's counters are not sent", "par.cho", "                    } else if query.reporting(w.tree) {\n                        n = report.serialize", "                    } else if false {\n                        n = report.serialize"),
     ("the parent merges them as groups", "par.cho", "                            if query.reporting(tree) {\n                                let (g2, r2) = report.merge", "                            if false {\n                                let (g2, r2) = report.merge"),
     ("the merge's offsets are the next range's", "par.cho", "sl[at + header_bytes()..at + header_bytes() + payload_len], before, lines_before, pp[scan.p_max_state()]);", "sl[at + header_bytes()..at + header_bytes() + payload_len], before + r, lines_before, pp[scan.p_max_state()]);"),
