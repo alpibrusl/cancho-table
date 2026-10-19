@@ -549,9 +549,9 @@ class Surface(unittest.TestCase):
         s = Scratch()
         try:
             s.write("a.csv", "k,d\na,2026-01-02\n")
-            s.write("b.csv", "k,x\na,1\n")
+            s.write("b.csv", "kk,x\na,1\n")
             for t, rule in (("date", "value.not-date"), ("timestamp", "value.not-timestamp"), ("datetime", "value.not-timestamp")):
-                r = run("--root", s.dir, "--join", "b.csv", "--on", "k=k:" + t, "a.csv")
+                r = run("--root", s.dir, "--join", "b.csv", "--on", "k=kk:" + t, "a.csv")
                 self.assertEqual((r.status, r.first_rule()), (8, rule), t)
                 self.assertEqual(r.error()["detail"]["context"], "join", t)
             r = run("--root", s.dir, "--query", "select cast(d as date) from 'a.csv'")
