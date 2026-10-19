@@ -179,6 +179,20 @@ class Accounting(unittest.TestCase):
                 r = run(*a)
                 e = r.error()
                 self.assertEqual((e["rule"], e["detail"]["held"], e["detail"]["rows_held"]), ("limit.state-too-large", n - costs[-1], len(recs) - 1), (sel, n, costs))
+            # the same with a --join-where (the build pass of J3), which reads the column it filters before the row is held
+            for sel, cols in (("id,a", {1}), ("id,c", {3})):
+                keys, costs = set(), []
+                for r in recs:
+                    if R7.raw_fields(r)[2][0] == R7.raw_fields(r)[2][1]:
+                        pass
+                    key = R7.raw_key(r, 0)
+                    costs.append(R7.raw_pruned_len(r, cols) + 16 + (0 if key in keys else len(key) + 60))
+                    keys.add(key)
+                n = sum(costs)
+                a = ["--root", s.dir, "--join", "b.csv", "--on", "k", "--join-where", "b != 'zzz'", "--select", sel, "--max-state-bytes", n, "p.csv"]
+                self.assertEqual(run(*a).status, 0, (sel, n, "jw"))
+                a[-2] = n - 1
+                self.assertEqual(run(*a).status, 8, (sel, n, "jw"))
             r = run("--root", s.dir, "--join", "b.csv", "--on", "k", "--select", "id,c", "p.csv")
             self.assertEqual(r.data()["rows"], [["1", "s"], ["1", "d"], ["2", "u,v"], ["2", "z"], ["3", "c"]])
         finally:
@@ -321,6 +335,25 @@ class Identity(unittest.TestCase):
             self.assertEqual(r.data()["rows"], [["1"], ["1"], ["2"], ["3"]])
         finally:
             s.cleanup()
+
+    def test_awkward_keys_in_every_kind_of_pruned_build(self):
+        # keys that need quotes (a comma, a quote, a semicolon, a line break) are held unquoted in the table of keys and written quoted in the record of a JSON-lines or foreign build: the probe finds them
+        rng = random.Random(41)
+        odd = ["a,b", 'say "hi"', "two\nlines", "x;y", "k1", "k2", ""]
+        case = R7.wide_case(rng, "odd", keys=odd, extras=4)
+        for pside, bside in ((("csv", ","), ("jsonl", ",")), (("jsonl", ","), ("jsonl", ",")), (("csv", ","), ("csv", ";")), (("csv", ";"), ("csv", ";")), (("csv", ","), ("csv", ","))):
+            sc = Scene(case, pside, bside)
+            try:
+                probe = (sc.d / R7.pname(pside)).read_bytes()
+                for plan in ({"jtype": "inner", "pairs": case.pairs, "select": ["pk", "w1x"]}, {"jtype": "left", "pairs": case.pairs, "select": ["pk", "bg"]},
+                             {"jtype": "inner", "pairs": case.pairs, "group": [("bg", "text")], "aggs": [("count", None)]},
+                             {"jtype": "inner", "pairs": [(0, 0, None, False), (1, 1, None, False)], "select": ["pk", "w2x"]}):
+                    case2 = R3.Case(case.name, case.P, case.B, plan["pairs"], "")
+                    tag = "%s/%s %r" % (pside, bside, describe(plan))
+                    with self.subTest(tag):
+                        self.one(sc.d, case2, plan, tag, probe, pside, bside)
+            finally:
+                sc.cleanup()
 
     def test_a_one_column_build_and_an_empty_one(self):
         s = Scratch()

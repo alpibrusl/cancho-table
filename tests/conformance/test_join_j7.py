@@ -100,6 +100,7 @@ def scenes(seed=7):
         ("a semicolon probe, JSON-lines build", lambda: (R7.wide_case(rng, "sj"), SEMI, ("jsonl", ","))),
         ("a build with a delimiter of its own", lambda: (R7.wide_case(rng, "bd"), ("csv", ","), SEMI)),
         ("a probe with a delimiter of its own", lambda: (R7.wide_case(rng, "pd"), SEMI, ("csv", ","))),
+        ("keys in other columns than the first", lambda: (R7.wide_case(rng, "kc", pk_at=2, bk_at=1), ("csv", ","), ("csv", ","))),
     ]
 
 
@@ -443,6 +444,33 @@ class NotOffered(unittest.TestCase):
             self.assertGreater(os.path.getsize(sc.d / "p.csv"), os.path.getsize(sc.d / "b.csv"))
             plan = {"jtype": "inner", "pairs": case.pairs}
             self.assertIn("smaller", reason_of(self, sc.run(plan, bound=100)))
+        finally:
+            sc.cleanup()
+
+    def test_a_probe_that_cannot_be_held_as_a_build_is_not_exchanged(self):
+        case, sc = self.base()
+        try:
+            plan = {"jtype": "inner", "pairs": case.pairs}
+            a_b, a_p = R7.bounds(plan, case)
+            good = (sc.d / "p.csv").read_text()
+            # a row of the wrong width, and a cell that is not of its type
+            (sc.d / "p.csv").write_text(good + "k1,x\n")
+            self.assertIn("cannot be held", reason_of(self, sc.run(plan, bound=a_p)))
+            (sc.d / "p.csv").write_text(good)
+            argv = sc.argv(plan, bound=a_p)
+            argv[argv.index("--on") + 1] = "pv=bv:int"
+            head, _, rest = good.partition("\n")
+            (sc.d / "p.csv").write_text(head + "\nk1,x,zz,t1\n" + rest)
+            self.assertIn("cannot be held", reason_of(self, run(*argv)))
+        finally:
+            sc.cleanup()
+
+    def test_a_header_with_an_empty_name_cannot_be_kept_in_order_by_name(self):
+        case, sc = self.base()
+        try:
+            (sc.d / "p.csv").write_text(",pg,pv,pt\nk1,a,b,c\nk2,d,e,f\n")
+            r = run("--root", sc.d, "--join", "b.csv", "--on", "#1=bk", "--max-state-bytes", "300", "p.csv")
+            self.assertIn("is empty, so", reason_of(self, r))
         finally:
             sc.cleanup()
 

@@ -92,18 +92,18 @@ def build_total(rows, cols, kinds, keep=None, delim=","):
 # ---- cases: a small probe and a wide, large build ---------------------------------------------------------------------------------------------------------------
 
 
-def wide_case(rng, name, np_rows=24, nb_rows=140, extras=6, keys=None, pairs=None, prefix="", using=False, same=False, shared_key=False, width=12):
+def wide_case(rng, name, np_rows=24, nb_rows=140, extras=6, keys=None, pairs=None, prefix="", using=False, same=False, shared_key=False, width=12, pk_at=0, bk_at=0):
     """A Case whose build is wider and longer than its probe: the build's names are bk bg bv bt then `extras` text columns w0x.., the probe's pk pg pv pt (the same names for both with `same`; only the key's with `shared_key`). The role of a name is its last letter (g, t, v, k; x for the extras)."""
     keys = keys or R3.KDOM
     pn = ["k", "g", "v", "t"] if same else ["k", "pg", "pv", "pt"] if shared_key else ["pk", "pg", "pv", "pt"]
     bn = ["k", "g", "v", "t"] if same else ["k", "bg", "bv", "bt"] if shared_key else ["bk", "bg", "bv", "bt"]
     extra_names = ["w%dx" % i for i in range(extras)]
-    P = (pn, R3._rows(rng, np_rows, keys, 0))
-    brows = R3._rows(rng, nb_rows, keys, 0)
+    P = (R3._names(pn, pk_at), R3._rows(rng, np_rows, keys, pk_at))
+    brows = R3._rows(rng, nb_rows, keys, bk_at)
     for r in brows:
         r.extend(["".join(rng.choice("abcdefghij") for _ in range(width)) for _ in range(extras)])
-    B = (bn + extra_names, brows)
-    return R3.Case(name, P, B, pairs or [(0, 0, None, False)], prefix, using)
+    B = (R3._names(bn, bk_at) + extra_names, brows)
+    return R3.Case(name, P, B, pairs or [(pk_at, bk_at, None, False)], prefix, using)
 
 
 def write_scene(d, case, pside=("csv", ","), bside=("csv", ","), rng=None, popts=None, bopts=None):
