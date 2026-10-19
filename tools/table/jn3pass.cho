@@ -20,6 +20,7 @@ import bulk;
 import engine;
 import finish;
 import jnkey;
+import jnprune;
 import jnread;
 import jnwhere;
 import jtab;
@@ -69,7 +70,7 @@ pub fn sorted_held[&s](g: &s agg.Groups) -> [] int {
 // The build phase of a join with the filters of J3 (a copy of `jnread.build_pass`, which is not changed): every data record of the build file whole, then `--join-where` and the build-side conditions of the leading
 // run of `--where`, then held. Answers the reader, the table, what was counted (abort 70: the first row that did not fit; 4, 7, 1 and 2 as a file's) and the
 // bytes of the file consumed when it stopped. A ragged row is counted and not held; `most` rows read and another there is `capped`.
-pub fn build_pass3[&h, &f, &k, &w, &j, &q, &c, &l](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab.JTab, nb: int, keys: &k [int], pairs: int, simple: bool, keys_only: bool, delim: int, cap: int, most: int, limit: int, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &c [int], bcols: &l [int], push_b: bool) -> [heap, file_read] (lines.Lines, jtab.JTab, finish.Counts, int, buffer.Buffer) {
+pub fn build_pass3[&h, &f, &k, &w, &j, &q, &c, &l, &m](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab.JTab, nb: int, keys: &k [int], pairs: int, simple: bool, keys_only: bool, delim: int, cap: int, most: int, limit: int, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &c [int], bcols: &l [int], push_b: bool, mask: &m [int]) -> [heap, file_read] (lines.Lines, jtab.JTab, finish.Counts, int, buffer.Buffer) {
     var r = r0;
     var jt = jt0;
     var rec = buffer.empty(heap, 256);
@@ -79,6 +80,7 @@ pub fn build_pass3[&h, &f, &k, &w, &j, &q, &c, &l](heap: &!h Heap, r0: lines.Lin
     var escr = buffer.empty(heap, 16);
     // J1's build (one pair of text, the rows held) has a hold of its own, `hold_text`
     let bfast = simple && !keys_only;
+    let prune = mask[nb] == 1;
     let bkey = keys[1];
     var tally = box_slice(heap, engine.k_size(), 0);
     var cellbox = box_slice(heap, 3 * (nb + 1), 0);
@@ -152,6 +154,12 @@ pub fn build_pass3[&h, &f, &k, &w, &j, &q, &c, &l](heap: &!h Heap, r0: lines.Lin
                                         a[engine.k_err_fn()] = 0 - 4;
                                         going = false;
                                     }
+                                } else if prune {
+                                    let (t2, k2, b2, answer2) = jnprune.hold_row(heap, jt, kscr, kbuf, line, cells, keys, pairs, simple, limit, mask, delim);
+                                    jt = t2;
+                                    kscr = k2;
+                                    kbuf = b2;
+                                    answer = answer2;
                                 } else if bfast {
                                     let (t2, k2, ok) = jnread.hold_text(heap, jt, kscr, line, cells, bkey, limit);
                                     jt = t2;
@@ -220,6 +228,12 @@ pub fn build_pass3[&h, &f, &k, &w, &j, &q, &c, &l](heap: &!h Heap, r0: lines.Lin
                                                 a[engine.k_err_fn()] = 0 - 4;
                                                 going = false;
                                             }
+                                        } else if prune {
+                                            let (t2, k2, b2, answer2) = jnprune.hold_row(heap, jt, kscr, kbuf, record, cells, keys, pairs, simple, limit, mask, delim);
+                                            jt = t2;
+                                            kscr = k2;
+                                            kbuf = b2;
+                                            answer = answer2;
                                         } else if bfast {
                                             let (t2, k2, ok) = jnread.hold_text(heap, jt, kscr, record, cells, bkey, limit);
                                             jt = t2;

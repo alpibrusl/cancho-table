@@ -1,0 +1,102 @@
+edition 5;
+
+module jnprune;
+
+// The build that keeps only the columns the plan names (docs/joins.md sections 6.2, 11 and 22).
+//
+// A COLUMN IS NAMED when the answer shows it (`--select`, or every column of the joined row when the plan selects nothing), or when `--where`, `--group`, `--agg`, `--order-by` read it (the names of the
+// plan, `cols`). `--join-where` is read before a row is held, and a key is held beside the record, in the table of keys, so neither names a column; a column a shared-name key (USING) leaves out of
+// the joined row is named by nothing.
+//
+// THE HELD RECORD of a build row is the record of the `--join` file with the cells of the columns the plan does not name left empty and every delimiter kept (`jtab.add_pruned`): the cells keep their places, so the
+// probe cuts the held record with the reader it always used and the joined row is the one the whole record would give, wherever the plan looks. The accounted bytes are the formula of section 6.2 over the
+// records held (a record, and 16, for each row), so a build that names fewer columns holds, and counts, fewer bytes; a record is never longer than the whole one, so a build accepted before is accepted now.
+//
+// THE MASK is one integer for each column of the `--join` file (1 when named) and one more, the last, which is 1 when some column is not named, that is when pruning does anything. A semi or anti join holds the
+// keys alone and has nothing to prune.
+
+import std.buffer;
+import jnkey;
+import jtab;
+import query;
+
+// The mask of a join of `np` probe columns and `nb` build columns, for the plan whose names `cols` map to columns of the joined row (`names` of them) and whose answer shows the first `picked` entries of
+// `sel` (0 when the plan groups): `kmap` has, for the k-th build column the joined row shows, the column of the `--join` file.
+pub fn mask_of[&h, &c, &s, &k](heap: &!h Heap, names: int, cols: &c [int], sel: &s [int], picked: int, np: int, nb: int, kmap: &k [int]) -> [heap] Box[[int]] {
+    var mask = box_slice(heap, nb + 1, 0);
+    borrow mut mask as &!mw in {
+        let m = contents(mw);
+        var i = 0;
+        while i < names {
+            if cols[i] >= np {
+                m[kmap[cols[i] - np]] = 1;
+            }
+            i = i + 1;
+        }
+        i = 0;
+        while i < picked {
+            if sel[i] >= np {
+                m[kmap[sel[i] - np]] = 1;
+            }
+            i = i + 1;
+        }
+        var unnamed = 0;
+        i = 0;
+        while i < nb {
+            if m[i] == 0 {
+                unnamed = 1;
+            }
+            i = i + 1;
+        }
+        m[nb] = unnamed;
+    }
+    return mask;
+}
+
+// Hold build row `record` (whose cells are `cells`) under its key as its pruned record: `jnread.hold_row` with the record `jtab.add_pruned` makes. The key is read from the whole record, as it always was.
+// 0 when it is held, 1 when it does not fit within `limit` accounted bytes, and 16 + 16 * (the pair) + (the status of the read) when a typed key cell is not of its type.
+pub fn hold_row[&h, &d, &c, &k, &m](heap: &!h Heap, t: jtab.JTab, scratch: buffer.Buffer, kbuf: buffer.Buffer, record: &d [byte], cells: &c [int], keys: &k [int], pairs: int, simple: bool, limit: int, mask: &m [int], delim: int) -> [heap] (jtab.JTab, buffer.Buffer, buffer.Buffer, int) {
+    if simple {
+        let key = keys[1];
+        let first = cells[3 * key];
+        let last = cells[3 * key + 1];
+        if cells[3 * key + 2] == 0 {
+            let (t2, ok) = jtab.add_pruned(heap, t, record[first..last], record, cells, mask, delim, limit);
+            if ok {
+                return (t2, scratch, kbuf, 0);
+            }
+            return (t2, scratch, kbuf, 1);
+        }
+        var s = scratch;
+        borrow mut s as &!sw in {
+            buffer.clear(sw);
+        }
+        s = query.unquote(heap, s, record[first..last]);
+        var t3 = t;
+        var ok2 = true;
+        borrow s as &sr in {
+            let (t4, ok3) = jtab.add_pruned(heap, t3, buffer.bytes(sr), record, cells, mask, delim, limit);
+            t3 = t4;
+            ok2 = ok3;
+        }
+        if ok2 {
+            return (t3, s, kbuf, 0);
+        }
+        return (t3, s, kbuf, 1);
+    }
+    let (kb, sc, status, which) = jnkey.make(heap, kbuf, scratch, record, cells, keys, pairs, 1);
+    if status != 0 {
+        return (t, sc, kb, 16 + 16 * which + status);
+    }
+    var t5 = t;
+    var ok4 = true;
+    borrow kb as &kr in {
+        let (t6, ok5) = jtab.add_pruned(heap, t5, buffer.bytes(kr), record, cells, mask, delim, limit);
+        t5 = t6;
+        ok4 = ok5;
+    }
+    if ok4 {
+        return (t5, sc, kb, 0);
+    }
+    return (t5, sc, kb, 1);
+}

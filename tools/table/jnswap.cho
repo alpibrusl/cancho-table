@@ -1,0 +1,562 @@
+edition 5;
+
+module jnswap;
+
+// The swap repair of the build that passes `--max-state-bytes` (docs/joins.md sections 6.3, 9 and 22): the same call with the two files exchanged, offered as the one option of a `choose` repair of
+// `limit.state-too-large` when it gives the same rows, and `--explain`'s `join.build_state.swap`.
+//
+// WHEN THE EXCHANGE GIVES THE SAME ROWS (`code_of`, 0 when it does): an inner join (a left, semi or anti join means something else with the files exchanged); the probe is a file and is smaller on disk than the
+// `--join` file; the call is not a `--query` (its text is not rewritten); no `--join-prefix` (it names the build file's columns, which would then be the other file's); no `--join-where` (it filters the build file);
+// no column named by position (the positions move); no typed shared-name key (it shows the probe's spelling of the key); the answer is not a page of rows (`--limit`, `--top`, `--from`: the order of the rows
+// changes, and so does which rows a page holds; the default page of `--format json` is a cap and not a window, and a grouping lists its groups by key, so neither is one); the columns can be kept in order by
+// name (no name twice, none empty) when the call has to say them; and a csv answer keeps its delimiter.
+//
+// THE CALL EXCHANGED (`exchanged`): the operand and the `--join` file change places; each pair of `--on` is read the other way (its type goes with it); the reader flags of the two files (`--delimiter`,
+// `--input-format`, `--fields` and the `--join-` ones) are taken off and put back, the build's for the probe and the probe's for the build, so that each file is read as it was; and a plan that selects nothing and does not group
+// is given `--select` with the joined header of the original, so that the columns keep their order. Everything else is the call's own arguments, as they were.
+//
+// THE OTHER FILE MUST FIT: the exchange is offered only when the probe file, held as the build side with the columns the exchanged plan names, fits within the same `--max-state-bytes` (the caller reads it with
+// the build pass of the run; `jnswap` makes the pieces): an offer that the next run refuses for the same bound would be a repair that does not repair. `--where`'s pushdown is not applied in that check, so it can
+// only err towards offering nothing.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import jnflags;
+import jnfmt;
+import query;
+import spec;
+import toolbox.cli;
+
+pub struct Facts {
+    jtype: int,
+    stdin: bool,
+    psize: int,
+    bsize: int,
+    queried: bool,
+    prefixed: bool,
+    join_where: bool,
+    positions: bool,
+    typed_using: bool,
+    paged: bool,
+    dup: bool,
+    dchange: bool,
+}
+
+// 0 when the exchange gives the same rows, else the reason: 1 not an inner join, 2 standard input (or an operand that starts with a dash), 3 a `--query`, 4 the probe is not smaller (or a size is unknown),
+// 5 `--join-prefix`, 6 `--join-where`, 7 a position, 8 a typed shared-name key, 9 a page, 10 a name twice or none, 11 the delimiter of a csv answer would change.
+pub fn code_of(f: Facts) -> [] int {
+    if f.jtype != 0 {
+        return 1;
+    }
+    if f.stdin {
+        return 2;
+    }
+    if f.queried {
+        return 3;
+    }
+    if f.psize < 0 || f.bsize < 0 || f.psize >= f.bsize {
+        return 4;
+    }
+    if f.prefixed {
+        return 5;
+    }
+    if f.join_where {
+        return 6;
+    }
+    if f.positions {
+        return 7;
+    }
+    if f.typed_using {
+        return 8;
+    }
+    if f.paged {
+        return 9;
+    }
+    if f.dup {
+        return 10;
+    }
+    if f.dchange {
+        return 11;
+    }
+    return 0;
+}
+
+// The words of a code.
+pub fn reason_of(code: int, jtype: int) -> [] &static [byte] {
+    if code == 0 {
+        return "inner join and the probe file is smaller on disk";
+    }
+    if code == 1 {
+        if jtype == 1 {
+            return "a left join means something different with the two files exchanged: only an inner join gives the same rows either way";
+        }
+        if jtype == 2 {
+            return "a semi join means something different with the two files exchanged: only an inner join gives the same rows either way";
+        }
+        return "an anti join means something different with the two files exchanged: only an inner join gives the same rows either way";
+    }
+    if code == 2 {
+        return "the probe is standard input (or an operand written like a flag), which cannot be held as the build side";
+    }
+    if code == 3 {
+        return "the join is written in a --query, whose text the repair does not rewrite";
+    }
+    if code == 4 {
+        return "the probe file is not smaller on disk than the --join file (or a size is not known)";
+    }
+    if code == 5 {
+        return "--join-prefix names the --join file's columns, and the exchange would give the prefix to the other file's";
+    }
+    if code == 6 {
+        return "--join-where filters the --join file before it is held, and the exchange would make that file the probe";
+    }
+    if code == 7 {
+        return "the plan names a column by position (#N), and the exchange moves the positions";
+    }
+    if code == 8 {
+        return "a typed shared-name key shows the probe file's spelling of the key, which the exchange would change";
+    }
+    if code == 9 {
+        return "the answer is a page of rows (--limit, --top or --from) and the exchange changes the order of the rows, so which rows the page holds";
+    }
+    if code == 10 {
+        return "a column name is twice in the joined header, or is empty, so the columns cannot be kept in order by name";
+    }
+    return "the answer is written with the delimiter of FILE, and the exchange would give it the --join file's";
+}
+
+// What `limit.state-too-large` says about the exchange: the one option's arguments (each ended by a zero byte) when it is offered, else why not.
+pub res struct Offer {
+    offered: bool,
+    reason: buffer.Buffer,
+    argv: buffer.Buffer,
+}
+
+pub fn no_offer[&h, &r](heap: &!h Heap, reason: &r [byte]) -> [heap] Offer {
+    return Offer { offered: false, reason: buffer.append(heap, buffer.empty(heap, len(reason) + 1), reason), argv: buffer.empty(heap, 1) };
+}
+
+pub fn drop_offer[&h](heap: &!h Heap, o: Offer) -> [heap] int {
+    let Offer { offered, reason, argv } = o;
+    buffer.drop(heap, reason);
+    buffer.drop(heap, argv);
+    return 0;
+}
+
+// The facts the plan and the flags give, that do not depend on the files' sizes: whether the plan names a column by position (`tree`'s names).
+pub fn has_positions[&q](tree: &q query.Query) -> [] bool {
+    var i = 0;
+    while i < vec.size(tree.nkinds) {
+        if vec.get(tree.nkinds, i) >= 0 {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Whether the answer is a page of rows: rows (not a grouping) with `--limit`, `--top` or `--from` given.
+pub fn is_paged[&p](parsed: &p cli.Parsed, mode: int) -> [] bool {
+    let table = spec.flag_table();
+    if mode != 1 {
+        return false;
+    }
+    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "top") || cli.has(parsed, table, "from");
+}
+
+// Whether the joined header can be said by name: no name twice, none empty, at most 4096 (what `--select` names). Only a call that selects nothing and does not group has to say it.
+pub fn header_dup[&n, &e](names: &n buffer.Buffer, ends: &e vec.Vec[int]) -> [] bool {
+    let count = vec.size(ends);
+    if count > 4096 {
+        return true;
+    }
+    var i = 0;
+    var from = 0;
+    while i < count {
+        let to = vec.get(ends, i);
+        if to == from {
+            return true;
+        }
+        var j = i + 1;
+        var start = to;
+        while j < count {
+            let stop = vec.get(ends, j);
+            if bytes.equal(buffer.bytes(names)[from..to], buffer.bytes(names)[start..stop]) {
+                return true;
+            }
+            start = stop;
+            j = j + 1;
+        }
+        from = to;
+        i = i + 1;
+    }
+    return false;
+}
+
+// What `--on` says of a shared-name key: whether some shared-name pair is typed, and for each pair 1 when it is a shared-name pair.
+pub fn on_facts[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte]) -> [heap, args] (bool, Box[[int]]) {
+    let on = jnflags.on_of(heap, args, parsed, jxs);
+    var typed = false;
+    var using = box_slice(heap, 9, 0);
+    borrow on as &onr in {
+        borrow mut using as &!uw in {
+            var j = 0;
+            while j < onr.pairs && j < 8 {
+                if vec.get(onr.using, j) == 1 {
+                    contents(uw)[j] = 1;
+                    if vec.get(onr.types, j) != 0 {
+                        typed = true;
+                    }
+                }
+                j = j + 1;
+            }
+        }
+    }
+    jnflags.drop_on(heap, on);
+    return (typed, using);
+}
+
+// The keys of the exchanged call: for each pair, the column of the `--join` file where the probe's was, and the other way (the layout of `jnhead.United.keys`).
+pub fn swap_keys[&h, &k](heap: &!h Heap, keys: &k [int], pairs: int) -> [heap] Box[[int]] {
+    var out = box_slice(heap, 3 * pairs + 3, 0);
+    borrow mut out as &!ow in {
+        let o = contents(ow);
+        var j = 0;
+        while j < pairs {
+            o[3 * j] = keys[3 * j + 1];
+            o[3 * j + 1] = keys[3 * j];
+            o[3 * j + 2] = keys[3 * j + 2];
+            j = j + 1;
+        }
+    }
+    return out;
+}
+
+// The mask of the exchanged call's build, which is FILE: one entry for each of its `np` columns, 1 for those the plan names (`cols` maps the plan's names, `sel` the first `picked` columns the answer shows, to
+// columns of the joined row of the call as written, whose first `np` are FILE's), and the last, 1 when some column is not named. A column that a shared-name pair (`using`) holds is the key of the exchanged
+// call's build and is left out of its joined row, so the plan does not name it.
+pub fn mask_probe[&h, &c, &s, &k, &u](heap: &!h Heap, names: int, cols: &c [int], sel: &s [int], picked: int, np: int, keys: &k [int], using: &u [int], pairs: int) -> [heap] Box[[int]] {
+    var mask = box_slice(heap, np + 1, 0);
+    borrow mut mask as &!mw in {
+        let m = contents(mw);
+        var i = 0;
+        while i < names {
+            if cols[i] < np {
+                m[cols[i]] = 1;
+            }
+            i = i + 1;
+        }
+        i = 0;
+        while i < picked {
+            if sel[i] < np {
+                m[sel[i]] = 1;
+            }
+            i = i + 1;
+        }
+        var j = 0;
+        while j < pairs {
+            if using[j] == 1 {
+                m[keys[3 * j]] = 0;
+            }
+            j = j + 1;
+        }
+        var unnamed = 0;
+        i = 0;
+        while i < np {
+            if m[i] == 0 {
+                unnamed = 1;
+            }
+            i = i + 1;
+        }
+        m[np] = unnamed;
+    }
+    return mask;
+}
+
+// A name as `--select` and `--on` write it: a comma, a backslash and a leading `#` escaped, and (`eq`, for `--on`) a `=`.
+fn put_name[&h, &d](heap: &!h Heap, out: buffer.Buffer, name: &d [byte], eq: bool) -> [heap] buffer.Buffer {
+    var o = out;
+    var i = 0;
+    while i < len(name) {
+        let c = int_of(name[i]);
+        if c == ',' || c == '\\' || c == '#' && i == 0 || eq && c == '=' {
+            o = buffer.push(heap, o, byte_of('\\'));
+        }
+        o = buffer.push(heap, o, name[i]);
+        i = i + 1;
+    }
+    return o;
+}
+
+// The type of a pair as `--on` writes it after the pair (`jnflags.parse_on` reads it): nothing for text.
+fn put_type[&h](heap: &!h Heap, out: buffer.Buffer, t: int) -> [heap] buffer.Buffer {
+    var o = out;
+    if t == 1 {
+        o = buffer.append(heap, o, ":int");
+    } else if t >= 2 && t <= 20 {
+        o = buffer.append(heap, o, ":dec(");
+        o = buffer.push_nat(heap, o, t - 2);
+        o = buffer.push(heap, o, byte_of(')'));
+    } else if t == 21 {
+        o = buffer.append(heap, o, ":float");
+    } else if t == 22 {
+        o = buffer.append(heap, o, ":date");
+    } else if t == 23 {
+        o = buffer.append(heap, o, ":timestamp");
+    } else if t == 24 {
+        o = buffer.append(heap, o, ":datetime");
+    }
+    return o;
+}
+
+fn put_key_name[&h, &o](heap: &!h Heap, out: buffer.Buffer, on: &o jnflags.On, i: int) -> [heap] buffer.Buffer {
+    let kind = vec.get(on.kinds, i);
+    if kind >= 0 {
+        var b = buffer.push(heap, out, byte_of('#'));
+        return buffer.push_nat(heap, b, kind);
+    }
+    return put_name(heap, out, jnflags.name_at(on, i), true);
+}
+
+// `--on` with each pair read the other way: `LEFT=RIGHT:T` is `RIGHT=LEFT:T`, and a shared-name pair is as it was.
+pub fn on_exchanged[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte]) -> [heap, args] buffer.Buffer {
+    let on = jnflags.on_of(heap, args, parsed, jxs);
+    var out = buffer.empty(heap, 64);
+    borrow on as &onr in {
+        var j = 0;
+        while j < onr.pairs {
+            if j > 0 {
+                out = buffer.push(heap, out, byte_of(','));
+            }
+            if vec.get(onr.using, j) == 1 {
+                out = put_name(heap, out, jnflags.name_at(onr, 2 * j), true);
+            } else {
+                out = put_key_name(heap, out, onr, 2 * j + 1);
+                out = buffer.push(heap, out, byte_of('='));
+                out = put_key_name(heap, out, onr, 2 * j);
+            }
+            out = put_type(heap, out, vec.get(onr.types, j));
+            j = j + 1;
+        }
+    }
+    jnflags.drop_on(heap, on);
+    return out;
+}
+
+// The joined header as a `--select` list.
+fn select_list[&h, &n, &e](heap: &!h Heap, names: &n buffer.Buffer, ends: &e vec.Vec[int]) -> [heap] buffer.Buffer {
+    var out = buffer.empty(heap, buffer.size(names) + 16);
+    var i = 0;
+    var from = 0;
+    while i < vec.size(ends) {
+        let to = vec.get(ends, i);
+        if i > 0 {
+            out = buffer.push(heap, out, byte_of(','));
+        }
+        out = put_name(heap, out, buffer.bytes(names)[from..to], false);
+        from = to;
+        i = i + 1;
+    }
+    return out;
+}
+
+fn delimiter_word[&h](heap: &!h Heap, out: buffer.Buffer, d: int) -> [heap] buffer.Buffer {
+    if d == 9 {
+        return buffer.append(heap, out, "tab");
+    }
+    return buffer.push(heap, out, byte_of(d));
+}
+
+// One argument added at the end of the call: `--name`, then its value.
+fn put_flag[&h, &v](heap: &!h Heap, extra: buffer.Buffer, name: &static [byte], value: &v [byte]) -> [heap] buffer.Buffer {
+    var e = buffer.append(heap, extra, name);
+    e = buffer.push(heap, e, byte_of(0));
+    e = buffer.append(heap, e, value);
+    return buffer.push(heap, e, byte_of(0));
+}
+
+// What the call does with argument `i`: 0 keeps it, 1 drops it, 2 puts `rep[from[i]..to[i]]` in its place.
+fn drop_flag[&p, &k](parsed: &p cli.Parsed, name: &static [byte], kind: &!k [int]) -> [] int {
+    let table = spec.flag_table();
+    if !cli.has(parsed, table, name) {
+        return 0;
+    }
+    let at = cli.value_index(parsed, table, name);
+    if at < 0 {
+        return 0;
+    }
+    kind[at] = 1;
+    if cli.value_is_whole(parsed, table, name) && at > 0 {
+        kind[at - 1] = 1;
+    }
+    return 1;
+}
+
+// The arguments of the call exchanged, each ended by a zero byte, and whether the call could be written: the operand and the `--join` file in each other's place, `--on` read the other way, the reader flags of the
+// two files exchanged (see the head of this file), and `--select` with the joined header `jnames`/`jends` when `say_header`. `fmt` is the formats of the call, `delim` the probe's delimiter byte and `bdelim` the build's.
+pub fn exchanged[&h, &g, &p, &x, &n, &e](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], fmt: jnfmt.Fmt, delim: int, bdelim: int, jnames: &n buffer.Buffer, jends: &e vec.Vec[int], say_header: bool) -> [heap, args] (buffer.Buffer, bool) {
+    let table = spec.flag_table();
+    let count = arg_count(args);
+    var out = buffer.empty(heap, 256);
+    if cli.operand_count(parsed) != 1 {
+        return (out, false);
+    }
+    let oi = cli.operand_index(parsed, 0);
+    let ji = cli.value_index(parsed, table, "join");
+    let oni = cli.value_index(parsed, table, "on");
+    if oi < 0 || ji < 0 || oni < 0 || oi >= count || ji >= count || oni >= count {
+        return (out, false);
+    }
+    var kind = box_slice(heap, count + 1, 0);
+    var rep = buffer.empty(heap, 128);
+    var from = box_slice(heap, count + 1, 0);
+    var to = box_slice(heap, count + 1, 0);
+    var extra = buffer.empty(heap, 128);
+    borrow mut kind as &!kw in {
+        let kd = contents(kw);
+        // the reader flags of the two files are taken off, and put back below the other way round
+        drop_flag(parsed, "input-format", kd);
+        drop_flag(parsed, "fields", kd);
+        drop_flag(parsed, "delimiter", kd);
+        drop_flag(parsed, "join-input-format", kd);
+        drop_flag(parsed, "join-fields", kd);
+        drop_flag(parsed, "join-delimiter", kd);
+    }
+    let whole_join = cli.value_is_whole(parsed, table, "join");
+    let whole_on = cli.value_is_whole(parsed, table, "on");
+    let ok = len(arg(args, oi)) > 0 && int_of(arg(args, oi)[0]) != '-';
+    // the replacements: the operand's place gets the --join file, the --join file's the operand, --on's its pairs the other way
+    var o0 = 0;
+    var o1 = 0;
+    var j1 = 0;
+    var n1 = 0;
+    let swapped_on = on_exchanged(heap, args, parsed, jxs);
+    rep = buffer.append(heap, rep, cli.text(args, parsed, table, "join"));
+    borrow rep as &rr in {
+        o1 = buffer.size(rr);
+    }
+    j1 = o1;
+    if !whole_join {
+        rep = buffer.append(heap, rep, "--join=");
+    }
+    rep = buffer.append(heap, rep, arg(args, oi));
+    borrow rep as &rr2 in {
+        j1 = buffer.size(rr2);
+    }
+    var o2 = j1;
+    if !whole_on {
+        rep = buffer.append(heap, rep, "--on=");
+    }
+    borrow swapped_on as &sr in {
+        rep = buffer.append(heap, rep, buffer.bytes(sr));
+    }
+    borrow rep as &rr3 in {
+        n1 = buffer.size(rr3);
+    }
+    var jstart = o1;
+    borrow mut kind as &!kw2 in {
+        borrow mut from as &!fw in {
+            borrow mut to as &!tw in {
+                contents(kw2)[oi] = 2;
+                contents(fw)[oi] = o0;
+                contents(tw)[oi] = o1;
+                contents(kw2)[ji] = 2;
+                contents(fw)[ji] = jstart;
+                contents(tw)[ji] = j1;
+                contents(kw2)[oni] = 2;
+                contents(fw)[oni] = o2;
+                contents(tw)[oni] = n1;
+            }
+        }
+    }
+    // the reader flags: the probe is read as the --join file was, and the --join file as the probe was
+    let nj = fmt.b_jsonl;
+    var nd = delim;
+    if !fmt.b_jsonl {
+        nd = bdelim;
+    }
+    let mj = fmt.p_jsonl;
+    if nj {
+        extra = put_flag(heap, extra, "--input-format", "jsonl");
+        extra = put_flag(heap, extra, "--fields", fmt.b_fields);
+    }
+    if nd != 44 || cli.has(parsed, table, "delimiter") {
+        var w = buffer.empty(heap, 4);
+        w = delimiter_word(heap, w, nd);
+        borrow w as &wr in {
+            extra = put_flag(heap, extra, "--delimiter", buffer.bytes(wr));
+        }
+        buffer.drop(heap, w);
+    }
+    if mj != nj {
+        if mj {
+            extra = put_flag(heap, extra, "--join-input-format", "jsonl");
+        } else {
+            extra = put_flag(heap, extra, "--join-input-format", "csv");
+        }
+    }
+    if mj && (!nj || !bytes.equal(fmt.p_fields, fmt.b_fields)) {
+        extra = put_flag(heap, extra, "--join-fields", fmt.p_fields);
+    }
+    if !mj && delim != nd {
+        var w2 = buffer.empty(heap, 4);
+        w2 = delimiter_word(heap, w2, delim);
+        borrow w2 as &wr2 in {
+            extra = put_flag(heap, extra, "--join-delimiter", buffer.bytes(wr2));
+        }
+        buffer.drop(heap, w2);
+    }
+    if say_header {
+        let list = select_list(heap, jnames, jends);
+        borrow list as &lr in {
+            extra = put_flag(heap, extra, "--select", buffer.bytes(lr));
+        }
+        buffer.drop(heap, list);
+    }
+    // the call
+    borrow kind as &kr in {
+        borrow from as &fr2 in {
+            borrow to as &tr2 in {
+                var i = 0;
+                while i < count {
+                    let k = contents(kr)[i];
+                    if k == 2 {
+                        borrow rep as &rr in {
+                            out = buffer.append(heap, out, buffer.bytes(rr)[contents(fr2)[i]..contents(tr2)[i]]);
+                        }
+                        out = buffer.push(heap, out, byte_of(0));
+                    } else if k == 0 {
+                        out = buffer.append(heap, out, arg(args, i));
+                        out = buffer.push(heap, out, byte_of(0));
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+    borrow extra as &er in {
+        out = buffer.append(heap, out, buffer.bytes(er));
+    }
+    unbox_slice(heap, kind);
+    unbox_slice(heap, from);
+    unbox_slice(heap, to);
+    buffer.drop(heap, rep);
+    buffer.drop(heap, extra);
+    buffer.drop(heap, swapped_on);
+    return (out, ok);
+}
+
+// The size of an open file, or -1.
+pub fn size_of[&f](file: &!f File) -> [file_read] int {
+    var size = 0 - 1;
+    match file_size(file) {
+        Done::Ok(n) => {
+            size = n;
+        }
+        Done::Failed(reason) => {
+            size = 0 - 1;
+        }
+    }
+    return size;
+}

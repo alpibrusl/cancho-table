@@ -23,7 +23,9 @@ import jnfail;
 import jnfmt;
 import jnhead;
 import jnjson;
+import jnprune;
 import jnread;
+import jnswap;
 import jnwhere;
 import jxsrc;
 import jtab;
@@ -64,6 +66,22 @@ fn typed_refusal[&h, &g, &p, &k, &v, &s, &n, &d, &a, &b](heap: &!h Heap, args: &
     }
     let name = buffer.bytes(names)[from..vec.get(ends, c.err_col)];
     return jnfail.typed_key(heap, e, c.err_fn, input, shown, name, c.err_row, c.err_line, buffer.bytes(value), c.err_cond + 1, keys[3 * c.err_cond + 2] - 2, c.err_digits, args, parsed, gnames, gends, c.err_col);
+}
+
+// Whether the probe file, read as the build side of the exchanged call, fits within `limit` accounted bytes (docs/joins.md section 22): the build pass of the run over the file with the keys the other way
+// round and the columns the exchanged plan names (`mask`), no `--where` pushdown and no `--join-where`. Answers the reader (spent) and what was counted: `abort` 0 and no ragged row and not capped is a
+// build that fits, 70 is the bound, anything else a file that cannot be held as a build. `nd` is the delimiter of the exchanged call's answer and `delim` the file's own.
+fn fits_as_build[&h, &f, &k, &w, &j, &q, &c, &l, &x, &z](heap: &!h Heap, r0: lines.Lines, file: &!f File, np: int, keys: &k [int], pairs: int, simple: bool, nd: int, delim: int, p_jsonl: bool, pdecl: &x jnjson.Decl, cap: int, most: int, limit: int, jwt: &w query.Query, jwcols: &j [int], tree: &q query.Query, cls: &c [int], bcols: &l [int], mask: &z [int]) -> [heap, file_read] (lines.Lines, finish.Counts) {
+    if p_jsonl || nd != delim {
+        let (r2, jt2, bc, consumed2, bk2) = jnjson.build_passj(heap, r0, file, jtab.empty(heap), np, keys, pairs, simple, false, nd, delim, p_jsonl, pdecl, cap, most, limit, jwt, jwcols, false, tree, cls, bcols, false, mask);
+        jtab.drop(heap, jt2);
+        buffer.drop(heap, bk2);
+        return (r2, bc);
+    }
+    let (r3, jt3, bc3, consumed3, bk3) = jnread.build_pass(heap, r0, file, jtab.empty(heap), np, keys, pairs, simple, false, delim, cap, most, limit, mask);
+    jtab.drop(heap, jt3);
+    buffer.drop(heap, bk3);
+    return (r3, bc3);
 }
 
 // Everything once both files are open: `bfile` is the build, `pfile` the probe (or the empty file that stands in for standard input). Answers as `read_file` does.
@@ -278,6 +296,18 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
             push_b = contents(clr)[nw + 1] > 0;
         }
     }
+    // the columns of the `--join` file that the plan names (docs/joins.md section 22): the build holds only those
+    var pmask = box_slice(heap, nb + 1, 0);
+    if go && jtype <= 1 {
+        unbox_slice(heap, pmask);
+        borrow cols as &kr in {
+            borrow sel as &sr in {
+                borrow kmap as &kmr in {
+                    pmask = jnprune.mask_of(heap, query.name_count(tree), contents(kr), contents(sr), picked, np, nb, contents(kmr));
+                }
+            }
+        }
+    }
     var bcounts = jnread.nothing();
     var consumed = 0;
     if go {
@@ -291,7 +321,27 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
                         borrow jwcols as &jcr in {
                             borrow jwtree as &jq in {
                                 borrow bdecl as &bdr in {
-                                    let (rb2, jt2, bc, consumed2, bk2) = jnjson.build_passj(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, bdelim, fmt.b_jsonl, bdr, cap, most, max_state, jq, contents(jcr), jw_on, tree, contents(clr), contents(bcr), push_b);
+                                    borrow pmask as &pmr in {
+                                        let (rb2, jt2, bc, consumed2, bk2) = jnjson.build_passj(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, bdelim, fmt.b_jsonl, bdr, cap, most, max_state, jq, contents(jcr), jw_on, tree, contents(clr), contents(bcr), push_b, contents(pmr));
+                                        rb = rb2;
+                                        jt = jt2;
+                                        buffer.drop(heap, bkept);
+                                        bkept = bk2;
+                                        bcounts = bc;
+                                        consumed = consumed2;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if jw_on || push_b {
+                borrow cls as &clr in {
+                    borrow bcols as &bcr in {
+                        borrow jwcols as &jcr in {
+                            borrow jwtree as &jq in {
+                                borrow pmask as &pmr in {
+                                    let (rb2, jt2, bc, consumed2, bk2) = jn3pass.build_pass3(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, cap, most, max_state, jq, contents(jcr), jw_on, tree, contents(clr), contents(bcr), push_b, contents(pmr));
                                     rb = rb2;
                                     jt = jt2;
                                     buffer.drop(heap, bkept);
@@ -303,30 +353,16 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
                         }
                     }
                 }
-            } else if jw_on || push_b {
-                borrow cls as &clr in {
-                    borrow bcols as &bcr in {
-                        borrow jwcols as &jcr in {
-                            borrow jwtree as &jq in {
-                                let (rb2, jt2, bc, consumed2, bk2) = jn3pass.build_pass3(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, cap, most, max_state, jq, contents(jcr), jw_on, tree, contents(clr), contents(bcr), push_b);
-                                rb = rb2;
-                                jt = jt2;
-                                buffer.drop(heap, bkept);
-                                bkept = bk2;
-                                bcounts = bc;
-                                consumed = consumed2;
-                            }
-                        }
-                    }
-                }
             } else {
-                let (rb2, jt2, bc, consumed2, bk2) = jnread.build_pass(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, cap, most, max_state);
-                rb = rb2;
-                jt = jt2;
-                buffer.drop(heap, bkept);
-                bkept = bk2;
-                bcounts = bc;
-                consumed = consumed2;
+                borrow pmask as &pmr in {
+                    let (rb2, jt2, bc, consumed2, bk2) = jnread.build_pass(heap, rb, bfile, jt, nb, contents(kr1), pairs, simple, jtype >= 2, delim, cap, most, max_state, contents(pmr));
+                    rb = rb2;
+                    jt = jt2;
+                    buffer.drop(heap, bkept);
+                    bkept = bk2;
+                    bcounts = bc;
+                    consumed = consumed2;
+                }
             }
         }
         let bc = bcounts;
@@ -350,7 +386,102 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
                     size = 0 - 1;
                 }
             }
-            e = jnfail.build_too_large(heap, e, shown_b, max_state, held, rows_held, bc.records, bc.abort_line, consumed, size);
+            // the repair: the call with the two files exchanged, when it gives the same rows and the other file fits (docs/joins.md section 22)
+            let (typed_using, usingv) = jnswap.on_facts(heap, args, parsed, jxs);
+            var psize = 0 - 1;
+            if !stdin {
+                psize = jnswap.size_of(pfile);
+            }
+            var prefixed = false;
+            if jxsrc.has(parsed, jxs, jxsrc.s_prefix(), "join-prefix") {
+                let pxb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_prefix(), "join-prefix");
+                borrow pxb as &pxr in {
+                    prefixed = buffer.size(pxr) > 0;
+                }
+                buffer.drop(heap, pxb);
+            }
+            var say_header = false;
+            var dup = false;
+            if mode == 1 && query.count_of(tree, 0) == 0 {
+                say_header = true;
+                borrow jnames as &nr3 in {
+                    borrow jends as &er3 in {
+                        dup = jnswap.header_dup(nr3, er3);
+                    }
+                }
+            }
+            let facts = jnswap.Facts { jtype: jtype, stdin: stdin, psize: psize, bsize: size, queried: jxsrc.queried(jxs), prefixed: prefixed, join_where: jw_on, positions: jnswap.has_positions(tree), typed_using: typed_using, paged: jnswap.is_paged(parsed, mode), dup: dup, dchange: as_csv && !fmt.b_jsonl && bdelim != delim };
+            let why = jnswap.code_of(facts);
+            var offer = jnswap.no_offer(heap, jnswap.reason_of(why, jtype));
+            if why == 0 {
+                var nd = delim;
+                if !fmt.b_jsonl {
+                    nd = bdelim;
+                }
+                borrow keys as &ky3 in {
+                    var keys2 = jnswap.swap_keys(heap, contents(ky3), pairs);
+                    var mask2 = box_slice(heap, 1, 0);
+                    borrow cols as &kc3 in {
+                        borrow sel as &sc3 in {
+                            borrow usingv as &uv3 in {
+                                unbox_slice(heap, mask2);
+                                mask2 = jnswap.mask_probe(heap, query.name_count(tree), contents(kc3), contents(sc3), picked, np, contents(ky3), contents(uv3), pairs);
+                            }
+                        }
+                    }
+                    var fit = jnread.nothing();
+                    borrow keys2 as &k2r in {
+                        borrow mask2 as &m2r in {
+                            borrow cls as &clr3 in {
+                                borrow bcols as &bcr3 in {
+                                    borrow jwcols as &jcr3 in {
+                                        borrow jwtree as &jq3 in {
+                                            borrow pdecl as &pdr3 in {
+                                                let (rp3, fc) = fits_as_build(heap, rp, pfile, np, contents(k2r), pairs, simple, nd, delim, fmt.p_jsonl, pdr3, cap, most, max_state, jq3, contents(jcr3), tree, contents(clr3), contents(bcr3), contents(m2r));
+                                                rp = rp3;
+                                                fit = fc;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    unbox_slice(heap, keys2);
+                    unbox_slice(heap, mask2);
+                    jnswap.drop_offer(heap, offer);
+                    if fit.abort == 70 {
+                        var why2 = buffer.append(heap, buffer.empty(heap, 160), "the probe file does not fit within --max-state-bytes either, as the build side: it passes the bound at its row ");
+                        why2 = buffer.push_nat(heap, why2, fit.records);
+                        borrow why2 as &w2r in {
+                            offer = jnswap.no_offer(heap, buffer.bytes(w2r));
+                        }
+                        buffer.drop(heap, why2);
+                    } else if fit.abort != 0 || fit.ragged > 0 || fit.capped {
+                        offer = jnswap.no_offer(heap, "the probe file cannot be held as the build side of the exchanged call: its read is refused (a row of the wrong width, more rows than --max-rows, a key cell that is not of its type, or a line the reader refuses)");
+                    } else {
+                        var said = jnswap.no_offer(heap, "the exchanged call could not be written");
+                        borrow jnames as &nr4 in {
+                            borrow jends as &er4 in {
+                                let (tokens, wrote) = jnswap.exchanged(heap, args, parsed, jxs, fmt, delim, bdelim, nr4, er4, say_header);
+                                jnswap.drop_offer(heap, said);
+                                if wrote {
+                                    said = jnswap.Offer { offered: true, reason: buffer.empty(heap, 1), argv: tokens };
+                                } else {
+                                    buffer.drop(heap, tokens);
+                                    said = jnswap.no_offer(heap, "the operand cannot be put in the --join file's place (the call has no single operand, or it is written like a flag)");
+                                }
+                            }
+                        }
+                        offer = said;
+                    }
+                }
+            }
+            borrow offer as &ofr in {
+                e = jnfail.build_too_large(heap, e, shown_b, max_state, held, rows_held, bc.records, bc.abort_line, consumed, size, ofr);
+            }
+            jnswap.drop_offer(heap, offer);
+            unbox_slice(heap, usingv);
             go = false;
         } else if bc.abort == 72 {
             borrow keys as &kr2 in {
@@ -570,6 +701,7 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
     unbox_slice(heap, jwcols);
     unbox_slice(heap, cls);
     unbox_slice(heap, bcols);
+    unbox_slice(heap, pmask);
     vec.drop(heap, units);
     unbox_slice(heap, cols);
     unbox_slice(heap, sel);

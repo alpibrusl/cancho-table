@@ -16,6 +16,7 @@ import finish;
 import frame;
 import jnfail;
 import jnflags;
+import jnswap;
 import jnfmt;
 import jnhead;
 import jnjson;
@@ -135,7 +136,7 @@ fn type_name[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buff
 }
 
 // The text of the `join` member. `jtype`: 0 inner, 1 left, 2 semi, 3 anti.
-fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte], reader_json: &y [byte], bjsonl: bool) -> [heap, args] buffer.Buffer {
+fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte], reader_json: &y [byte], bjsonl: bool, swap_json: &z [byte]) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let on = jnflags.on_of(heap, args, parsed, jxs);
     let budget = cli.nat(args, parsed, table, "max-state-bytes");
@@ -252,7 +253,7 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y](heap: &!h Heap, args: &g Arg
     if jtype >= 2 {
         o = buffer.append(heap, o, ",\"counted\":\"key bytes + 44 for each distinct key (a semi or anti join holds the keys only; a key is 8 bytes for a typed pair and 4 bytes of length more for each pair of several): not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\"");
     } else {
-        o = buffer.append(heap, o, ",\"counted\":\"record bytes + 16 for each row held, key bytes + 60 for each distinct key (a key is 8 bytes for a typed pair and 4 bytes of length more for each pair of several): not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\"");
+        o = buffer.append(heap, o, ",\"counted\":\"held record bytes + 16 for each row held (a record keeps the cells of the columns the plan names and holds the others empty), key bytes + 60 for each distinct key (a key is 8 bytes for a typed pair and 4 bytes of length more for each pair of several): not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\"");
     }
     o = buffer.append(heap, o, ",\"shared_with\":");
     if len(shared) == 0 {
@@ -260,7 +261,9 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y](heap: &!h Heap, args: &g Arg
     } else {
         o = text.append_json(heap, o, shared);
     }
-    o = buffer.append(heap, o, ",\"swap\":{\"offered\":false,\"reason\":\"the swap repair arrives with a later slice\"}},\"where\":");
+    o = buffer.append(heap, o, ",\"swap\":");
+    o = buffer.append(heap, o, swap_json);
+    o = buffer.append(heap, o, "},\"where\":");
     o = buffer.append(heap, o, where_json);
     o = buffer.append(heap, o, ",\"join_where\":");
     o = buffer.append(heap, o, jw_json);
@@ -586,6 +589,41 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
             reader_json = buffer.append(heap, reader_json, "\"}");
         }
     }
+    // the exchange of the two files (docs/joins.md section 22): said from what is known before any row is read; the refusal also reads the other file. The document of a join does not depend on how the join was
+    // spelled (flags or `--query`, gate X1), so it does not say that the refusal of a `--query` cannot write the exchanged call (it does not rewrite a query's text)
+    let (typed_using, usingv) = jnswap.on_facts(heap, args, parsed, jxs);
+    unbox_slice(heap, usingv);
+    var prefixed = false;
+    if jxsrc.has(parsed, jxs, jxsrc.s_prefix(), "join-prefix") {
+        let pxb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_prefix(), "join-prefix");
+        borrow pxb as &pxr in {
+            prefixed = buffer.size(pxr) > 0;
+        }
+        buffer.drop(heap, pxb);
+    }
+    var dup = false;
+    var positions = false;
+    borrow tree0 as &t0 in {
+        positions = jnswap.has_positions(t0);
+        if known && mode == 1 && query.count_of(t0, 0) == 0 {
+            borrow jnames as &nr5 in {
+                borrow jends as &er5 in {
+                    dup = jnswap.header_dup(nr5, er5);
+                }
+            }
+        }
+    }
+    let swap_facts = jnswap.Facts { jtype: jtype, stdin: stdin, psize: psize, bsize: bsize, queried: false, prefixed: prefixed, join_where: jw_on, positions: positions, typed_using: typed_using, paged: jnswap.is_paged(parsed, mode), dup: dup, dchange: as_csv && !fmt.b_jsonl && bdelim != delim };
+    let swap_code = jnswap.code_of(swap_facts);
+    var swap_json = buffer.append(heap, buffer.empty(heap, 160), "{\"offered\":");
+    if swap_code == 0 {
+        swap_json = buffer.append(heap, swap_json, "true");
+    } else {
+        swap_json = buffer.append(heap, swap_json, "false");
+    }
+    swap_json = buffer.append(heap, swap_json, ",\"reason\":");
+    swap_json = text.append_json(heap, swap_json, jnswap.reason_of(swap_code, jtype));
+    swap_json = buffer.push(heap, swap_json, byte_of('}'));
     var doc = buffer.empty(heap, 1);
     borrow shown_b_copy as &sb in {
         buffer.drop(heap, doc);
@@ -593,13 +631,16 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
             borrow where_json as &wjr in {
                 borrow jw_json as &jjr in {
                     borrow reader_json as &rjr in {
-                        doc = join_doc(heap, args, parsed, jxs, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, known, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared, buffer.bytes(rjr), fmt.b_jsonl);
+                        borrow swap_json as &sjr in {
+                            doc = join_doc(heap, args, parsed, jxs, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, known, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared, buffer.bytes(rjr), fmt.b_jsonl, buffer.bytes(sjr));
+                        }
                     }
                 }
             }
         }
     }
     buffer.drop(heap, reader_json);
+    buffer.drop(heap, swap_json);
     buffer.drop(heap, where_json);
     buffer.drop(heap, jw_json);
     unbox_slice(heap, keys);
