@@ -28,7 +28,7 @@ LOCAL = {
     "limit.too-many-sort-rows": (8, "never", "--max-sort-rows"),
     "limit.too-many-groups": (8, "never", "--max-groups"),
     "limit.too-many-distinct": (8, "never", "--max-distinct"),
-    "limit.state-too-large": (8, "never", "--max-state-bytes"),
+    "limit.state-too-large": (8, "sometimes", "--max-state-bytes"),
     "column.unknown": (3, "never", "--where, --group, --agg or --on"),
     "column.ambiguous": (8, "never", "more than one column"),
     "where.syntax": (2, "sometimes", "offset"),

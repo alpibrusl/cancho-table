@@ -195,6 +195,38 @@ def rec_len(row):
     return len(",".join(row))
 
 
+def used_names(plan, jheader):
+    """The names of the joined header that the plan reads or shows (docs/joins.md section 22): `--select`'s, or every column when the plan selects nothing and does not group; the names of the whole `--where`
+    (the conditions of the leading run are evaluated again on the joined row), `--group`, `--agg` and `--order-by`. `--join-where` is not there: it reads the build row before it is held."""
+    used = set()
+    if plan.get("where") is not None:
+        used |= {leaf_["column"] for leaf_ in leaves(plan["where"])}
+    if plan.get("group") is not None or plan.get("aggs") is not None:
+        used |= {name for name, _ in (plan.get("group") or [])}
+        used |= {name for fn, name in (plan.get("aggs") or []) if fn != "count"}
+    else:
+        used |= set(plan.get("select") or jheader)
+    if plan.get("order") is not None:
+        used |= {name for name, _, _ in plan["order"]}
+    return used
+
+
+def named_build_columns(plan, ph, bh):
+    """The columns of the build's header (indexes) that the plan names: the build columns the joined row shows, whose joined name is used."""
+    jheader, keep, np_ = joined_layout(plan, ph, bh)
+    used = used_names(plan, jheader)
+    return {j for j in keep if plan.get("prefix", "") + bh[j] in used}
+
+
+def _held_len(row, trace):
+    """The bytes of the build record held for `row` (J7, docs/joins.md section 22): the record with the cells of the columns the plan does not name left empty (`trace["keep"]`, indexes into the
+    build's header; None holds the whole record)."""
+    keep = trace.get("keep")
+    if keep is None:
+        return rec_len(row)
+    return rec_len([c if j in keep else "" for j, c in enumerate(row)])
+
+
 def execute(plan, P, B, trace=None):
     """('ok', labels, rows) or raises Refused. `P` and `B` are (header, rows) of str cells. The page is already cut (`from`, `limit`, `top`).
     `trace`, a dict, is filled with the accounted bytes of docs/joins.md section 6.2 and 6.3, each as the list of the costs in the order they were incurred: `build` (what each held
@@ -205,6 +237,8 @@ def execute(plan, P, B, trace=None):
     jt = plan["jtype"]
     pairs = plan["pairs"]
     pks, bks, kinds = [p[0] for p in pairs], [p[1] for p in pairs], [p[2] for p in pairs]
+    if trace is not None and "keep" not in trace:
+        trace["keep"] = named_build_columns(plan, ph, bh)
     jheader, keep, np_ = joined_layout(plan, ph, bh)
     where = plan.get("where")
     jw = plan.get("jw")
@@ -232,7 +266,7 @@ def execute(plan, P, B, trace=None):
         if trace is not None:
             cost = 0
             if jt in ("inner", "left"):
-                cost = rec_len(row) + 16
+                cost = _held_len(row, trace) + 16
             if k not in index:
                 cost += len(R.key_bytes(to_bytes(row), bks, kinds)) + (60 if jt in ("inner", "left") else 44)
             trace.setdefault("build", []).append(cost)
@@ -254,7 +288,7 @@ def execute(plan, P, B, trace=None):
         ms = index.get(k, [])
         rows = []
         if jt in ("inner", "left"):
-            rows = [(list(prow) + [b[j] for j in keep], False, rec_len(prow) + (1 + rec_len([b[j] for j in keep]) if keep else 0)) for b in ms]
+            rows = [(list(prow) + [b[j] for j in keep], False, rec_len(prow) + 1 + _held_len(b, trace or {})) for b in ms]
             if not ms and jt == "left":
                 rows = [(list(prow) + [""] * len(keep), True, rec_len(prow) + len(keep))]
         elif (jt == "semi") == bool(ms):

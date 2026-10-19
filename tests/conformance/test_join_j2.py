@@ -632,17 +632,19 @@ class Accounting(unittest.TestCase):
         f = self.exact("d.csv", [(0, 0, None, False)], "inner")
         self.assertGreater(f["held"], 5000 * 50)
 
-    def test_using_holds_the_whole_record(self):
-        # the dropped column is left out of the answer, not out of the table: the formula is the same as without USING (docs/joins.md 17)
+    def test_using_does_not_hold_the_column_it_leaves_out(self):
+        # the column of a shared-name key is left out of the answer, and (J7, docs/joins.md section 22) out of the table too: the record held has its cell empty, so the count is the whole record's less the bytes of
+        # that cell in every row. (J2 held the whole record, and this test said so; a build accepted then is accepted now.)
         rows = [[b"k%d" % (i % 90), b"v%d" % i, b"w"] for i in range(2000)]
         self.file("u.csv", [b"a", b"b", b"c"], rows)
         f1 = self.exact("u.csv", [(0, 0, None, False)], "inner")
-        path = str(self.s.dir / "u.csv")
+        saved = sum(len(r[0]) for r in rows)
         on = "a"
-        r = run("--root", self.s.dir, "--join", "u.csv", "--on", on, "--join-prefix", "r_", "--where", "a = zzz", "--max-state-bytes", f1["held"] - 1, "p.csv")
+        r = run("--root", self.s.dir, "--join", "u.csv", "--on", on, "--join-prefix", "r_", "--where", "a = zzz", "--max-state-bytes", f1["held"] - saved - 1, "p.csv")
         self.assertEqual(r.first_rule(), "limit.state-too-large")
-        ok = run("--root", self.s.dir, "--join", "u.csv", "--on", on, "--join-prefix", "r_", "--where", "a = zzz", "--max-state-bytes", f1["held"], "p.csv")
-        self.assertEqual(ok.status, 0)
+        for bound in (f1["held"] - saved, f1["held"]):
+            ok = run("--root", self.s.dir, "--join", "u.csv", "--on", on, "--join-prefix", "r_", "--where", "a = zzz", "--max-state-bytes", bound, "p.csv")
+            self.assertEqual(ok.status, 0, bound)
 
     def test_the_bound_is_the_same_when_the_join_is_empty_or_tiny(self):
         self.file("e.csv", [b"a", b"b", b"c"], [])
