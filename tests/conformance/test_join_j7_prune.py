@@ -183,8 +183,6 @@ class Accounting(unittest.TestCase):
             for sel, cols in (("id,a", {1}), ("id,c", {3})):
                 keys, costs = set(), []
                 for r in recs:
-                    if R7.raw_fields(r)[2][0] == R7.raw_fields(r)[2][1]:
-                        pass
                     key = R7.raw_key(r, 0)
                     costs.append(R7.raw_pruned_len(r, cols) + 16 + (0 if key in keys else len(key) + 60))
                     keys.add(key)
@@ -195,6 +193,36 @@ class Accounting(unittest.TestCase):
                 self.assertEqual(run(*a).status, 8, (sel, n, "jw"))
             r = run("--root", s.dir, "--join", "b.csv", "--on", "k", "--select", "id,c", "p.csv")
             self.assertEqual(r.data()["rows"], [["1", "s"], ["1", "d"], ["2", "u,v"], ["2", "z"], ["3", "c"]])
+        finally:
+            s.cleanup()
+
+    def test_records_of_several_lines_are_pruned_under_a_composite_or_a_typed_key(self):
+        # the key is not one text cell, so the record is held by the general hold; whatever a key costs, the bytes a pruned plan saves are the cells it leaves out: the smallest bound that holds the build, by
+        # bisection, falls by exactly the cells of the records that the plan does not name (a multi-line record among them)
+        recs = [b'a,1,"multi\nline",t', b'b,2,x,"u,v"', b'"c,c",3,"",d', b'a,4,"q""r",s']
+        s = Scratch()
+        try:
+            s.write("b.csv", b"bk,bn,bb,bc\n" + b"\n".join(recs) + b"\n")
+            s.write("p.csv", b"id,pk,pn\n1,a,1\n2,b,2\n")
+
+            def least(on, sel):
+                lo, hi = 0, 4096
+                while lo < hi:
+                    mid = (lo + hi) // 2
+                    r = run("--root", s.dir, "--join", "b.csv", "--on", on, "--select", sel, "--max-state-bytes", mid, "p.csv")
+                    self.assertIn(r.status, (0, 8), (on, sel, mid))
+                    if r.status == 0:
+                        hi = mid
+                    else:
+                        lo = mid + 1
+                return lo
+
+            for on in ("pk=bk,pn=bn:int", "pk=bk,pn=bn"):
+                whole = least(on, "id,bk,bn,bb,bc")
+                for sel, cols in (("id,bb", {2}), ("id,bc", {3}), ("id,bb,bc", {0, 1, 2, 3})):
+                    saved = sum(R7.raw_pruned_len(r, {0, 1, 2, 3}) - R7.raw_pruned_len(r, cols) for r in recs)
+                    self.assertEqual(saved > 0, sel != "id,bb,bc")  # (a plan that leaves out only keys is not pruned)
+                    self.assertEqual(whole - least(on, sel), saved, (on, sel))
         finally:
             s.cleanup()
 

@@ -16,6 +16,13 @@ Not here (equivalent mutants, each argued):
   a delimiter between every two), so the held bytes, the count and the answer are the same; only the work differs.
 * `append_pruned` and `add_pruned` agree on what is kept by the same mask, so a defect in one alone shows as a wrong answer or wrong count; a mutant that makes BOTH keep every column is a build that
   does not prune: it is the memory test's, not the answer's (`M` below kills it).
+* "the delimiters after the last run are not held" and "two delimiters after the last run are held as one" (`jtab.add_pruned`): the delimiters that follow the last named column of a held record end
+  cells that no named column reads (a column after the last run is, by the definition of a run, not named), the probe cuts the cells it needs from the front of the record, and the accounted bytes are
+  computed from the mask (`mask[3]`), not from the buffer, so neither the answer, the count nor a refusal can differ. They are kept so that the held record has the shape of the whole one (section 22.2
+  says "every delimiter kept"); what they cost is counted (the mutant that counts them one short is killed).
+* "the refusal does not look at the delimiter of a csv answer" (`dchange: false` in the refusal): the delimiter of the answer can change only for a csv answer, and a csv refusal is written to standard
+  error as a line with no repair at all (the repair is in the JSON refusal alone), so what the facts say for this case is read by nobody; the same rule is tested through `--explain`, which
+  does say it (`test_a_csv_answer_would_be_written_with_the_other_files_delimiter`).
 """
 import sys
 

@@ -376,6 +376,33 @@ class NotOffered(unittest.TestCase):
         finally:
             sc.cleanup()
 
+    def test_an_empty_prefix_names_nothing_and_the_exchange_is_offered(self):
+        sc = Scratch()
+        try:
+            sc.write("b.csv", "k,v\n" + "".join("k%d,%s\n" % (i, "v" * 30) for i in range(60)))
+            sc.write("p.csv", "pk\nk1\nk2\n")
+            a = ["--root", sc.dir, "--join", "b.csv", "--on", "pk=k", "--join-prefix", "", "--format", "json", "--max-state-bytes", "500", "p.csv"]
+            r = run(*a)
+            self.assertEqual(refused(r)["repair"]["kind"], "choose")
+            argv = refused(r)["repair"]["options"][0]["argv"]
+            self.assertEqual(argv[argv.index("--join") + 1], "p.csv")
+            self.assertEqual(run(*argv[1:]).status, 0)
+        finally:
+            sc.cleanup()
+
+    def test_a_position_in_on_stays_a_position_in_the_exchanged_call(self):
+        sc = Scratch()
+        try:
+            sc.write("b.csv", "k,v\n" + "".join("k%d,%s\n" % (i, "v" * 30) for i in range(60)))
+            sc.write("p.csv", "x,pk\n1,k1\n2,k2\n")
+            a = ["--root", sc.dir, "--join", "b.csv", "--on", "#2=#1", "--format", "json", "--max-state-bytes", "500", "p.csv"]
+            argv = refused(run(*a))["repair"]["options"][0]["argv"]
+            self.assertEqual(argv[argv.index("--on") + 1], "#1=#2")
+            r = run(*argv[1:])
+            self.assertEqual((r.status, r.data()["row_count"]), (0, 2), r.stdout[:300])
+        finally:
+            sc.cleanup()
+
     def test_a_prefix_names_the_build_columns(self):
         case = R7.wide_case(random.Random(9), "pre", same=True, prefix="r_")
         sc = Scene(case)
@@ -462,6 +489,39 @@ class NotOffered(unittest.TestCase):
             head, _, rest = good.partition("\n")
             (sc.d / "p.csv").write_text(head + "\nk1,x,zz,t1\n" + rest)
             self.assertIn("cannot be held", reason_of(self, run(*argv)))
+        finally:
+            sc.cleanup()
+
+    def test_a_probe_whose_size_is_not_known_is_not_exchanged(self):
+        # a named pipe has no size on disk: whether it is the smaller file cannot be said, and reading it to find out would use it up
+        import threading
+        sc = Scratch()
+        try:
+            sc.write("b.csv", "k,v\n" + "".join("k%d,%s\n" % (i, "v" * 30) for i in range(60)))
+            os.mkfifo(str(sc.dir / "p.fifo"))
+
+            def feed():
+                with open(str(sc.dir / "p.fifo"), "wb") as f:
+                    f.write(b"pk\nk1\n")
+
+            t = threading.Thread(target=feed, daemon=True)
+            t.start()
+            r = run("--root", sc.dir, "--join", "b.csv", "--on", "pk=k", "--max-state-bytes", "500", "--format", "json", "p.fifo")
+            self.assertIn("size is not known", reason_of(self, r))
+            t.join(10)
+        finally:
+            sc.cleanup()
+
+    def test_a_probe_with_more_rows_than_max_rows_is_not_exchanged(self):
+        # few wide rows are the build, many narrow ones the probe: the build is within --max-rows and passes the bound; the probe, as the build of the exchanged call, would pass --max-rows
+        sc = Scratch()
+        try:
+            sc.write("b.csv", "k,v\n" + "".join("k%d,%s\n" % (i, "v" * 400) for i in range(3)))
+            sc.write("p.csv", "pk\n" + "".join("k%d\n" % i for i in range(12)))
+            a = ["--root", sc.dir, "--join", "b.csv", "--on", "pk=k", "--format", "json", "--max-rows", "5", "p.csv"]
+            self.assertIn("cannot be held", reason_of(self, run(*a, "--max-state-bytes", "1000")))
+            a[a.index("--max-rows") + 1] = "50"
+            self.assertEqual(refused(run(*a, "--max-state-bytes", "1000"))["repair"]["kind"], "choose")
         finally:
             sc.cleanup()
 
