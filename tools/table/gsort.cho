@@ -1,0 +1,196 @@
+edition 5;
+
+module gsort;
+
+// The default order of the groups' keys, by radix (spike gap-groups; docs/gap-groups.md section 2, and section 9 for the depth): a chunk of six bytes of the key's
+// current field as one number whose integer order is the bytes' order (the low byte says how many bytes the field has left: 0 to 5 it ends in this chunk, 6 it ends
+// exactly at the chunk's end, 7 it goes on), the groups sorted by chunk with a least-significant-digit radix sort (a digit that every group shares is skipped), and
+// the runs of equal chunks, which share everything so far, sorted again at the next chunk. A key that ends in the chunk goes on at the next field. Equal keys cannot
+// be (the keys of a map are unique).
+//
+// "Sorted again" is not a call of the sort on the run: a key that shares n bytes with another is n / 6 chunks deep, and a call a chunk (issue #79) used the stack
+// up at about 210 KiB of shared prefix (34,787 frames, measured). A run waits as a *pending run* instead, and the runs of one pass are disjoint ranges of `order`, so
+// a pending run's five numbers (where it ends, the field's start, the offset in the field, the field's number, the run pending before it) are kept in the slots of
+// `word`, `word2` and `spare` at the run's first two places, which nothing touches until the run itself is sorted (a run is sorted only in its own range of every
+// array). The stack is a chain through those slots: it takes no memory of its own, and no depth of keys can use the machine's stack up.
+
+import gmap;
+
+fn length_at[&k](key: &k [byte], at: int) -> [] int {
+    return int_of(key[at]) | int_of(key[at + 1]) << 8 | int_of(key[at + 2]) << 16 | int_of(key[at + 3]) << 24;
+}
+
+fn word_at[&k](key: &k [byte], posf: int, off: int) -> [] int {
+    let rem = length_at(key, posf) - off;
+    var take = rem;
+    var code = rem;
+    if rem > 6 {
+        take = 6;
+        code = 7;
+    }
+    let b = posf + 4 + off;
+    var w = 0;
+    var i = 0;
+    while i < 6 {
+        w = w * 256;
+        if i < take {
+            w = w + int_of(key[b + i]);
+        }
+        i = i + 1;
+    }
+    return w * 256 + code;
+}
+
+fn insertion[&a, &b](w: &!a [int], o: &!b [int], lo: int, hi: int) -> [] int {
+    var i = lo + 1;
+    while i < hi {
+        let x = w[i];
+        let y = o[i];
+        var j = i;
+        while j > lo && w[j - 1] > x {
+            w[j] = w[j - 1];
+            o[j] = o[j - 1];
+            j = j - 1;
+        }
+        w[j] = x;
+        o[j] = y;
+        i = i + 1;
+    }
+    return 0;
+}
+
+// One pass: the elements of `sw`/`so` in [lo, hi) go to `dw`/`do_` by digit `p`, the starts of the digit's buckets being in `hist`.
+fn scatter[&a, &b, &c, &d, &e](sw: &a [int], so: &b [int], dw: &!c [int], dobj: &!d [int], hist: &!e [int], lo: int, hi: int, p: int) -> [] int {
+    let base = p * 256;
+    let shift = 8 * p;
+    var i = lo;
+    while i < hi {
+        let x = sw[i];
+        let at = base + (x >> shift & 255);
+        let to = hist[at];
+        hist[at] = to + 1;
+        dw[to] = x;
+        dobj[to] = so[i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+fn radix[&a, &b, &c, &d, &e](w: &!a [int], o: &!b [int], w2: &!c [int], o2: &!d [int], hist: &!e [int], lo: int, hi: int) -> [] int {
+    var z = 0;
+    while z < 1792 {
+        hist[z] = 0;
+        z = z + 1;
+    }
+    var i = lo;
+    while i < hi {
+        let x = w[i];
+        hist[x & 255] = hist[x & 255] + 1;
+        hist[256 + (x >> 8 & 255)] = hist[256 + (x >> 8 & 255)] + 1;
+        hist[512 + (x >> 16 & 255)] = hist[512 + (x >> 16 & 255)] + 1;
+        hist[768 + (x >> 24 & 255)] = hist[768 + (x >> 24 & 255)] + 1;
+        hist[1024 + (x >> 32 & 255)] = hist[1024 + (x >> 32 & 255)] + 1;
+        hist[1280 + (x >> 40 & 255)] = hist[1280 + (x >> 40 & 255)] + 1;
+        hist[1536 + (x >> 48 & 255)] = hist[1536 + (x >> 48 & 255)] + 1;
+        i = i + 1;
+    }
+    let first = w[lo];
+    let n = hi - lo;
+    var in_w = true;
+    var p = 0;
+    while p < 7 {
+        if hist[p * 256 + (first >> 8 * p & 255)] != n {
+            var sum = lo;
+            var d = 0;
+            while d < 256 {
+                let c = hist[p * 256 + d];
+                hist[p * 256 + d] = sum;
+                sum = sum + c;
+                d = d + 1;
+            }
+            if in_w {
+                scatter(w, o, w2, o2, hist, lo, hi, p);
+            } else {
+                scatter(w2, o2, w, o, hist, lo, hi, p);
+            }
+            in_w = !in_w;
+        }
+        p = p + 1;
+    }
+    if !in_w {
+        i = lo;
+        while i < hi {
+            w[i] = w2[i];
+            o[i] = o2[i];
+            i = i + 1;
+        }
+    }
+    return 0;
+}
+
+// The run [lo, hi) of `order` (at least two groups, equal so far), sorted by its next chunk, and each run of equal chunks in it that goes on made pending: pushed on
+// the chain whose head is `head`, whose new head is the answer.
+fn sort_level[&t, &o, &s, &w, &x, &h](index: &t gmap.Tab, order: &!o [int], spare: &!s [int], word: &!w [int], word2: &!x [int], hist: &!h [int], lo: int, hi: int, posf: int, off: int, j: int, fields: int, head: int) -> [] int {
+    var i = lo;
+    while i < hi {
+        word[i] = word_at(gmap.key_at(index, order[i]), posf, off);
+        i = i + 1;
+    }
+    if hi - lo <= 32 {
+        insertion(word, order, lo, hi);
+    } else {
+        radix(word, order, word2, spare, hist, lo, hi);
+    }
+    var top = head;
+    var a = lo;
+    while a < hi {
+        var b = a + 1;
+        while b < hi && word[b] == word[a] {
+            b = b + 1;
+        }
+        if b - a > 1 {
+            var at = 0 - 1;
+            var go = 0;
+            var jj = j;
+            if word[a] & 255 == 7 {
+                at = posf;
+                go = off + 6;
+            } else if j + 1 < fields {
+                at = posf + 4 + length_at(gmap.key_at(index, order[a]), posf);
+                jj = j + 1;
+            }
+            if at >= 0 {
+                word[a] = b;
+                word[a + 1] = at;
+                word2[a] = go;
+                word2[a + 1] = jj;
+                spare[a] = top;
+                top = a;
+            }
+        }
+        a = b;
+    }
+    return top;
+}
+
+// `order[0..n]` as the groups' numbers in key order: `word` and `word2` are n integers each, `spare` n, `hist` 1792.
+pub fn sort_keys[&t, &o, &s, &w, &x, &h](index: &t gmap.Tab, order: &!o [int], spare: &!s [int], word: &!w [int], word2: &!x [int], hist: &!h [int], fields: int) -> [] int {
+    let n = gmap.size(index);
+    var i = 0;
+    while i < n {
+        order[i] = i;
+        i = i + 1;
+    }
+    if fields >= 1 && n > 1 {
+        var head = sort_level(index, order, spare, word, word2, hist, 0, n, 0, 0, 0, fields, 0 - 1);
+        while head >= 0 {
+            let lo = head;
+            let hi = word[lo];
+            let posf = word[lo + 1];
+            let off = word2[lo];
+            let j = word2[lo + 1];
+            head = sort_level(index, order, spare, word, word2, hist, lo, hi, posf, off, j, fields, spare[lo]);
+        }
+    }
+    return 0;
+}
