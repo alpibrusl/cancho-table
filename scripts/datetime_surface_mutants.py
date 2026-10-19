@@ -10,6 +10,10 @@ date tests of T1. A mutant is killed when a test fails or the build refuses it. 
 Grouped: the type words of the query and what the translator writes for them, the type words of a join pair and the key of a typed pair, the refusal of a key cell (its context, its input, its pair, its
 reason, the re-reading of the cell that the 4-bit answer of a read asks for), the explain, the classes of a cell of the report, its counters, its suggestion, its merge across threads, its header, its
 dispatch, its flags and its bounds. No mutant is equivalent unless a comment says so.
+
+Equivalent: "a quoted key cell is read again with its quotes" (`dtjoin.status_of` reading the cell with its doubled quotes undone or not). The cell reaches that function only when it holds a doubled
+quote, and no position of the grammar of a date type accepts a quote: the first fault of such a cell is at or before its first quote in both readings (same reason, same offset), or the tail is a
+bracketed suffix (`Z["a""b"]`), which is `value.timezone-unsupported` whatever it holds. The mutant is kept in the list for its site (`--check`).
 """
 import os
 import sys

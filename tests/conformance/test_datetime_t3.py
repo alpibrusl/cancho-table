@@ -564,6 +564,11 @@ class Report(unittest.TestCase):
         self.assertIn("224 bytes", err(r)["message"])
         r = run("--root", self.s.dir, "--report", "types", "--max-state-bytes", "1", "r.csv")
         self.assertIn("248 bytes", err(r)["message"])
+        # two columns and no row: 448 bytes of counters for dates, 496 for types
+        r = run("--report", "dates", "--max-state-bytes", "460", stdin=b"a,b\n")
+        self.assertEqual(r.status, 0, r.stdout[:200])
+        r = run("--report", "types", "--max-state-bytes", "460", stdin=b"a,b\n")
+        self.assertEqual((r.status, r.first_rule()), (8, "limit.state-too-large"))
         r = run("--root", self.s.dir, "--report", "dates", "--max-rows", "1", "r.csv")
         self.assertEqual((r.status, r.first_rule()), (8, "limit.too-many-rows"))
 
