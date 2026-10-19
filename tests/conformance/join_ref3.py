@@ -297,7 +297,7 @@ def execute(plan, P, B, trace=None):
         ms = index.get(k, [])
         rows = []
         if jt in ("inner", "left"):
-            rows = [(list(prow) + [b[j] for j in keep], False, rec_len(prow) + 1 + _held_len(b, trace or {})) for b in ms]
+            rows = [(list(prow) + [b[j] for j in keep], False, rec_len(prow) + (1 + rec_len([b[j] if (trace or {}).get("keep") is None or j in trace["keep"] else "" for j in keep]) if keep else 0)) for b in ms]
             if not ms and jt == "left":
                 rows = [(list(prow) + [""] * len(keep), True, rec_len(prow) + len(keep))]
         elif (jt == "semi") == bool(ms):
