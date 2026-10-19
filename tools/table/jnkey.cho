@@ -9,9 +9,10 @@ module jnkey;
 //   several pairs     each component preceded by 4 bytes of its length (little endian), as the group key of `agg.add` is, so that (ab, c) and (a, bc) are two keys
 //
 // A typed cell that is not of its type has no key: the status is the one `query.parse_typed` answers (4 and 5 for :int, 6 to 8 for :dec(S), 9 to 13 for :float) and the pair it was.
-// `keys` has three integers for each pair: the column of the probe, the column of the build, and the type (0 text, 1 :int, 2 + S :dec(S), 21 :float).
+// `keys` has three integers for each pair: the column of the probe, the column of the build, and the type (0 text, 1 :int, 2 + S :dec(S), 21 :float, 22 :date, 23 :timestamp, 24 :datetime: the value is days or microseconds, so two spellings of one instant are one key).
 
 import std.buffer;
+import dtparse;
 import query;
 
 fn put_length[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.Buffer {
@@ -19,6 +20,14 @@ fn put_length[&h](heap: &!h Heap, out: buffer.Buffer, n: int) -> [heap] buffer.B
     o = buffer.push(heap, o, byte_of(n >> 8 & 255));
     o = buffer.push(heap, o, byte_of(n >> 16 & 255));
     return buffer.push(heap, o, byte_of(n >> 24 & 255));
+}
+
+// A typed cell as its value, and the status that says why it is not one: `dtparse.parse` for :date, :timestamp and :datetime (kinds 22 to 24, statuses of 14 and more), else `query.parse_typed`.
+fn read[&d](data: &d [byte], kind: int) -> [] (int, int) {
+    if kind >= 22 {
+        return dtparse.parse(data, kind);
+    }
+    return query.parse_typed(data, kind);
 }
 
 // The 8 bytes of a scaled value as a key: the value plus 2^63, big endian.
@@ -72,7 +81,7 @@ pub fn make[&h, &d, &c, &k](heap: &!h Heap, out: buffer.Buffer, scratch: buffer.
             var v = 0;
             var bad = 0;
             if quoted == 0 {
-                let (x, y) = query.parse_typed(record[first..last], kind);
+                let (x, y) = read(record[first..last], kind);
                 v = x;
                 bad = y;
             } else {
@@ -81,13 +90,18 @@ pub fn make[&h, &d, &c, &k](heap: &!h Heap, out: buffer.Buffer, scratch: buffer.
                 }
                 scr = query.unquote(heap, scr, record[first..last]);
                 borrow scr as &sr in {
-                    let (x, y) = query.parse_typed(buffer.bytes(sr), kind);
+                    let (x, y) = read(buffer.bytes(sr), kind);
                     v = x;
                     bad = y;
                 }
             }
             if bad != 0 {
+                // a status of a date type (14 and more, with the byte of the fault in it) does not fit the answer of a read, which holds the status in 4 bits: 15 says "read the cell again"
+                // (`jnread.note_typed`, which asks `dtjoin.status_of`)
                 status = bad;
+                if bad >= 14 {
+                    status = 15;
+                }
                 which = j;
             } else {
                 if pairs > 1 {

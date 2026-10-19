@@ -246,6 +246,12 @@ fn put_type[&h](heap: &!h Heap, out: buffer.Buffer, t: int) -> [heap] buffer.Buf
         o = buffer.append(heap, o, ":int");
     } else if t == 21 {
         o = buffer.append(heap, o, ":float");
+    } else if t == 22 {
+        o = buffer.append(heap, o, ":date");
+    } else if t == 23 {
+        o = buffer.append(heap, o, ":timestamp");
+    } else if t == 24 {
+        o = buffer.append(heap, o, ":datetime");
     } else if t >= 2 {
         o = buffer.append(heap, o, ":dec(");
         o = buffer.push_nat(heap, o, t - 2);

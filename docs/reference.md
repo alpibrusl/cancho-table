@@ -61,7 +61,7 @@ status,count,sum:bytes
   paging, and is applied before grouping;
 * **group and aggregate**: `--group NAMES --agg count,sum:COL,min:COL,max:COL,mean:COL@N,distinct:COL
   [--sort [-]COLUMN] [--top N]`, as json (`table.v2` rows plus `group_count`) or csv. A key that is a `:date`, `:timestamp` or `:datetime` may be a period:
-  `--group ts:timestamp@day` (units `hour`, `day`, `month`, `year`; `docs/datetime.md` section 19): the key is the first value of the period, in the type.
+  `--group ts:timestamp@day` (units `hour`, `day`, `month`, `year`; `docs/datetime.md` section 19). `--report dates` describes the date columns as `--report types` describes the numbers, and `--on k=kk:timestamp` joins on instants (section 20): the key is the first value of the period, in the type.
   Sums, minima and maxima are exact integers, or exact decimals written at their scale
   (`sum:price:dec(2)`, `mean:price:dec(2)@4`: exact, rounded half to even, `docs/numbers.md` N2); a sum is a pair of integers, never wraps
   and is printed in full past 64 bits (`docs/numbers.md` N0p). Groups come out in key order (bytewise, field by

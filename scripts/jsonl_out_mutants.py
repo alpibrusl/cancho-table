@@ -68,7 +68,7 @@ MUTANTS = [
     ("the threads' answer keeps the mark", "par.cho", "        r = jout.drop_mark(heap, r);", "        r = r;"),
     ("the groups keep the mark", "finish.cho", "        pending = jout.drop_mark(heap, pending);", "        pending = pending;"),
     ("a row does not drop the mark", "engine.cho", "    var pending = jout.drop_mark(heap, rows);", "    var pending = rows;"),
-    ("the type report is accepted as JSON lines", "table.cho", '        if jsonl_out {\n            e = flags.problem(heap, e, "args.conflict", "--report types is a table', '        if false {\n            e = flags.problem(heap, e, "args.conflict", "--report types is a table'),
+    ("the type report is accepted as JSON lines", "reportflags.cho", '    if jsonl_out {\n        if kind == 2 {', '    if false {\n        if kind == 2 {'),
     ("a sorted run is written with the keys of csv", "psort.cho", "        jsonl_budget = -1;", "        jsonl_budget = 0;"),
     ("a thread is not told the budget of JSON lines", "par.cho", "        if budget < 0 {\n            u[scan.p_budget()] = budget;\n        }", ""),
     ("a row is not keyed", "engine.cho", "    if keyed == 0 {", "    if keyed == 7 {"),

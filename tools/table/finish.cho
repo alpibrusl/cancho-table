@@ -250,18 +250,18 @@ pub fn finish_groups[&h, &i, &g, &q, &z, &a](heap: &!h Heap, io: &!i Io, rows: b
 
 // `--report types` answers with its own columns, whatever the frame made of the selection: the frame's json header, or the report's (functions of their own: this
 // code inside the read function made the compiler spend more on every row of every one-thread read).
-pub fn report_head[&h](heap: &!h Heap, reporting: bool, head: buffer.Buffer) -> [heap] buffer.Buffer {
-    if reporting {
+pub fn report_head[&h](heap: &!h Heap, kind: int, head: buffer.Buffer) -> [heap] buffer.Buffer {
+    if kind != 0 {
         buffer.drop(heap, head);
-        return report.head_json(heap);
+        return report.head_json_of(heap, kind);
     }
     return head;
 }
 
-pub fn report_lead[&h](heap: &!h Heap, reporting: bool, lead: buffer.Buffer, delim: int) -> [heap] buffer.Buffer {
-    if reporting {
+pub fn report_lead[&h](heap: &!h Heap, kind: int, lead: buffer.Buffer, delim: int) -> [heap] buffer.Buffer {
+    if kind != 0 {
         buffer.drop(heap, lead);
-        return report.head_csv(heap, delim);
+        return report.head_csv_of(heap, kind, delim);
     }
     return lead;
 }
@@ -269,6 +269,7 @@ pub fn report_lead[&h](heap: &!h Heap, reporting: bool, lead: buffer.Buffer, del
 // The report's rows (report.cho), one for each column asked for, the page `--from` and `--limit` ask for, as csv written out or as json rows kept.
 pub fn finish_report[&h, &i, &q, &n, &e, &c, &a](heap: &!h Heap, io: &!i Io, rows: buffer.Buffer, scratch: buffer.Buffer, held: agg.Groups, tree: &q query.Query, names: &n buffer.Buffer, hends: &e vec.Vec[int], cols: &c [int], max_state: int, as_csv: bool, delim: int, from: int, limit: int, budget: int, a: &!a [int]) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, agg.Groups) {
     let ncols = report.columns_of(tree, a[engine.k_columns()]);
+    let rk = query.report_kind(tree);
     var groups = held;
     var seen = 0;
     borrow groups as &zr in {
@@ -276,12 +277,12 @@ pub fn finish_report[&h, &i, &q, &n, &e, &c, &a](heap: &!h Heap, io: &!i Io, row
     }
     if seen == 0 {
         // no row was read: the columns are listed with zeros
-        if 8 * report.width() * ncols > max_state {
-            a[engine.k_abort()] = 43;
+        if 8 * report.width_of(rk) * ncols > max_state {
+            a[engine.k_abort()] = 43 + rk - 1;
             a[engine.k_stop()] = 1;
             return (rows, scratch, groups);
         }
-        groups = agg.extend(heap, groups, report.width() * ncols);
+        groups = agg.extend(heap, groups, report.width_of(rk) * ncols);
     }
     a[engine.k_groups()] = ncols;
     var pending = rows;
@@ -300,7 +301,7 @@ pub fn finish_report[&h, &i, &q, &n, &e, &c, &a](heap: &!h Heap, io: &!i Io, row
                 a[engine.k_next()] = pos;
                 going = false;
             } else if as_csv {
-                pending = report.put_row(heap, pending, gr, pos, name_of(names, hends, column), true, delim);
+                pending = report.put_row_of(heap, rk, pending, gr, pos, name_of(names, hends, column), true, delim);
                 pending = buffer.push(heap, pending, byte_of(10));
                 a[engine.k_emitted()] = a[engine.k_emitted()] + 1;
                 var held = 0;
@@ -320,7 +321,7 @@ pub fn finish_report[&h, &i, &q, &n, &e, &c, &a](heap: &!h Heap, io: &!i Io, row
                 borrow mut row as &!rw in {
                     buffer.clear(rw);
                 }
-                row = report.put_row(heap, row, gr, pos, name_of(names, hends, column), false, delim);
+                row = report.put_row_of(heap, rk, row, gr, pos, name_of(names, hends, column), false, delim);
                 var have = 0;
                 var need = 0;
                 borrow pending as &pr in {
@@ -751,6 +752,8 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
         e = over_limit(heap, e, "limit.too-many-groups", "more groups than --max-groups; counting stopped there", "raise --max-groups, up to the ceiling introspect names, or group by fewer or coarser columns", shown, cli.nat(args, parsed, table, "max-groups"));
     } else if c.abort == 14 {
         e = over_limit(heap, e, "limit.too-many-distinct", "more distinct values than --max-distinct; counting stopped there", "raise --max-distinct, up to the ceiling introspect names", shown, cli.nat(args, parsed, table, "max-distinct"));
+    } else if c.abort == 44 {
+        e = over_limit(heap, e, "limit.state-too-large", "the date report keeps 224 bytes for each column, and the columns asked for hold more than --max-state-bytes bytes", "raise --max-state-bytes, up to the ceiling introspect names, or name the columns with --select", shown, cli.nat(args, parsed, table, "max-state-bytes"));
     } else if c.abort == 43 {
         e = over_limit(heap, e, "limit.state-too-large", "the type report keeps 248 bytes for each column, and the columns asked for hold more than --max-state-bytes bytes", "raise --max-state-bytes, up to the ceiling introspect names, or name the columns with --select", shown, cli.nat(args, parsed, table, "max-state-bytes"));
     } else if c.abort == 15 {

@@ -544,16 +544,18 @@ class Surface(unittest.TestCase):
         self.assertEqual(r.first_rule(), "where.syntax", "a suffix is a suffix only at the end of a word")
 
     def test_a_date_type_in_a_join_key_is_refused_with_a_tag(self):
-        """T1 does not extend joins (T3 does): a pair typed by a date type is args.bad-value, and --query's cast is query.syntax."""
+        """T3 (docs/datetime.md section 20) replaced the refusal T1 pinned here (a pair typed by a date type was args.bad-value, and --query's cast was query.syntax): a pair typed by a date
+        type is read as that type, so the key cell `a`, which is no date, is refused as one, with the context of a join; and `cast(d as date)` in a select list is query.unsupported."""
         s = Scratch()
         try:
             s.write("a.csv", "k,d\na,2026-01-02\n")
-            s.write("b.csv", "k,x\na,1\n")
-            for t in ("date", "timestamp", "datetime"):
-                r = run("--root", s.dir, "--join", "b.csv", "--on", "k=k:" + t, "a.csv")
-                self.assertEqual((r.first_rule(), r.status), ("args.bad-value", 2), t)
+            s.write("b.csv", "kk,x\na,1\n")
+            for t, rule in (("date", "value.not-date"), ("timestamp", "value.not-timestamp"), ("datetime", "value.not-timestamp")):
+                r = run("--root", s.dir, "--join", "b.csv", "--on", "k=kk:" + t, "a.csv")
+                self.assertEqual((r.status, r.first_rule()), (8, rule), t)
+                self.assertEqual(r.error()["detail"]["context"], "join", t)
             r = run("--root", s.dir, "--query", "select cast(d as date) from 'a.csv'")
-            self.assertEqual((r.first_rule(), r.status), ("query.syntax", 2))
+            self.assertEqual((r.first_rule(), r.status), ("query.unsupported", 2))
         finally:
             s.cleanup()
 

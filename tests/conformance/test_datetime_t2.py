@@ -391,9 +391,10 @@ class Spelling(unittest.TestCase):
         self.assertEqual((r.status, err["rule"], err["detail"]["feature"]), (2, "query.unsupported", "cast-in-group"))
         self.assertIn("--group ts:timestamp@day", err["hint"])
         self.assertIn("--group x:int, x:dec(N) or x:float", err["hint"])
-        # a date type in the query is not built (T3): the refusal has not changed
+        # the query reads the date types since T3 (docs/datetime.md section 20), so a typed group by of one is refused as the numbers' is, and its hint names the flag
         r = self.go("--query", "select count(*) from 't.csv' group by cast(ts as timestamp)")
-        self.assertEqual((r.status, r.first_rule()), (2, "query.syntax"))
+        self.assertEqual((r.status, r.first_rule(), r.error()["detail"]["feature"]), (2, "query.unsupported", "cast-in-group"))
+        self.assertIn("--group ts:timestamp@day", r.error()["hint"])
 
     def test_near_strings_stay_names(self):
         # a header that ends in @day, with no date type before it, is a name

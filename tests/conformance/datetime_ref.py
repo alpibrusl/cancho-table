@@ -448,3 +448,86 @@ def first_value_cells(kind, rng, n):
             seen.append(c)
     rng.shuffle(seen)
     return seen[:n] if n else seen
+
+
+# ---- slice T3: the report of dates, the join of the types ----------------------------------------------------------------------------------
+#
+# `--report dates` (docs/datetime.md section 9, open question 8; T3 as built, section 20): one row per column of counters. A non-empty cell is exactly one of `date`, `timestamp`,
+# `datetime` (the three grammars exclude one another: a date has ten bytes, a timestamp has an offset, a datetime has none) or `other`; an empty cell is `empty` (no bytes, or a quoted
+# pair of quotes). `suggest` is the declaration every non-empty cell satisfies, when they all satisfy the same one, else `none`.
+
+REPORT_COLUMNS = ["name", "cells", "empty", "date", "timestamp", "datetime", "other", "widest", "suggest", "first_empty_row", "first_empty_line", "first_not_date_row", "first_not_date_line",
+                  "first_not_timestamp_row", "first_not_timestamp_line", "first_not_datetime_row", "first_not_datetime_line", "first_other_row", "first_other_line", "first_other_cell",
+                  "first_other_cell_truncated"]
+
+
+def classify(cell):
+    """'empty', 'date', 'timestamp', 'datetime' or 'other' for the bytes of one cell (already unquoted)."""
+    if len(cell) == 0:
+        return "empty"
+    for kind in KINDS:
+        if parse(kind, cell)[0] == "ok":
+            return kind
+    return "other"
+
+
+def report_row(name, cells, numbers=None):
+    """The row of `--report dates` for the column `name` whose cells (bytes, in file order; row 1 is on line 2) are given; with `numbers` the 1-based row of each cell in the file
+    (a `--where` keeps some rows, and a first cell is placed by its place in the file)."""
+    count = {"empty": 0, "date": 0, "timestamp": 0, "datetime": 0, "other": 0}
+    first = {}      # key -> (row, line)
+    widest = 0
+    other_cell = None
+    for i, cell in enumerate(cells):
+        row = i + 1 if numbers is None else numbers[i]
+        line = row + 1
+        widest = max(widest, len(cell))
+        c = classify(cell)
+        count[c] += 1
+        if c == "empty":
+            first.setdefault("empty", (row, line))
+            continue
+        for kind in KINDS:
+            if c != kind:
+                first.setdefault("not_" + kind, (row, line))
+        if c == "other":
+            first.setdefault("other", (row, line))
+            if other_cell is None:
+                other_cell = cell
+    nonempty = len(cells) - count["empty"]
+    suggest = "none"
+    for kind in KINDS:
+        if nonempty > 0 and count[kind] == nonempty:
+            suggest = ":" + kind
+    out = [name, str(len(cells)), str(count["empty"]), str(count["date"]), str(count["timestamp"]), str(count["datetime"]), str(count["other"]), str(widest), suggest]
+    for key in ("empty", "not_date", "not_timestamp", "not_datetime", "other"):
+        row, line = first.get(key, ("", ""))
+        out += [str(row), str(line)]
+    out.append(other_cell[:64].decode("utf-8", "replace") if other_cell is not None else "")
+    out.append("" if other_cell is None else ("true" if len(other_cell) > 64 else "false"))
+    return out
+
+
+def join_rows(kind, probe, build, jtype, using=False):
+    """The rows of a join of `probe` (rows [id, key, ...]) with `build` (rows [key, name]) on the VALUE of the key cells read as `kind`: for each probe row in file order the build rows
+    with an equal value in file order (inner), the probe row with empty build cells when there is none (left), the probe row alone once (semi) or when there is none (anti). With
+    `using` the build key column is not repeated."""
+    def value(cell):
+        r = parse(kind, cell.encode())
+        assert r[0] == "ok", (kind, cell)
+        return r[1]
+    out = []
+    for p in probe:
+        hits = [b for b in build if value(b[0]) == value(p[1])]
+        if jtype == "semi":
+            if hits:
+                out.append(list(p))
+        elif jtype == "anti":
+            if not hits:
+                out.append(list(p))
+        elif hits:
+            for b in hits:
+                out.append(list(p) + (list(b[1:]) if using else list(b)))
+        elif jtype == "left":
+            out.append(list(p) + [""] * (len(build[0]) - 1 if using else len(build[0])))
+    return out

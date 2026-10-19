@@ -244,7 +244,7 @@ accepts, including bytes that are not UTF-8.
 
 ### 5.2 Typed keys
 
-`--on a=b:int`, `a=b:dec(S)`, `a=b:float` read **both** columns as the type, and two cells match when they have the **same value** as `--group` would put them in one group (`docs/numbers.md`, "What was built: N5"): an integer
+`--on a=b:int`, `a=b:dec(S)`, `a=b:float`, and (slice T3 of [`datetime.md`](datetime.md), section 20) `a=b:date`, `a=b:timestamp`, `a=b:datetime` read **both** columns as the type, and two cells match when they have the **same value** as `--group` would put them in one group (`docs/numbers.md`, "What was built: N5"): an integer
 `07` is `7` and `-0` is `0` (measured on `072ce15`: `--group k:int` on the cells `007, 7, -0, 0, +7` gives the groups `0` (2) and `7` (3)); at `:dec(2)` `1.5`, `1.50` and `01.5`
 are one value; at `:float` the cell is the nearest double, `-0` is `0`, and NaN and infinities are refused (`value.not-finite`). The key's bytes are
 the 8-byte order-preserving value (`agg.put_value_key`, 12 bytes with the length in the group state), so hashing and equality are the bytes' (`gmap`).

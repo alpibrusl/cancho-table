@@ -26,11 +26,11 @@ import wrepair;
 import toolbox.cli;
 import toolbox.fail;
 
-// `--on` read: a comma list of 1 to 8 pairs, `LEFT=RIGHT` or the shared-name form `NAME` (USING), each with an optional type at the end (`:int`, `:dec(S)`, `:float`).
+// `--on` read: a comma list of 1 to 8 pairs, `LEFT=RIGHT` or the shared-name form `NAME` (USING), each with an optional type at the end (`:int`, `:dec(S)`, `:float`, `:date`, `:timestamp`, `:datetime`).
 // `status` is 0 when it is a list of pairs, else why not (1 no pair, 3 a type before the equals sign, 4 a backslash that escapes nothing it may, 5 two equals signs in a pair,
 // 6 an empty name or an empty pair, 7 a type that is not one, 8 two types in a pair, 9 a position alone (`#2` is not a name shared by two files), 10 more than 8 pairs).
 // The names are in `names`, two for each pair (left, right; the right one is the left one again for a shared name), `ends` their ends; `kinds` has for each name -1 for a
-// name and N for `#N`; `types` has for each pair 0 for text, 1 for :int, 2 + S for :dec(S), 21 for :float; `using` has 1 for a shared-name pair.
+// name and N for `#N`; `types` has for each pair 0 for text, 1 for :int, 2 + S for :dec(S), 21 for :float, 22 :date, 23 :timestamp, 24 :datetime; `using` has 1 for a shared-name pair.
 pub res struct On {
     status: int,
     pairs: int,
@@ -67,6 +67,15 @@ pub fn type_of[&w](word: &w [byte]) -> [] int {
     }
     if bytes.equal(word, "float") {
         return 21;
+    }
+    if bytes.equal(word, "date") {
+        return 22;
+    }
+    if bytes.equal(word, "timestamp") {
+        return 23;
+    }
+    if bytes.equal(word, "datetime") {
+        return 24;
     }
     if len(word) >= 6 && len(word) <= 7 && bytes.starts_with(word, "dec(") && int_of(word[len(word) - 1]) == ')' {
         let digits = word[4..len(word) - 1];
@@ -314,8 +323,8 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
             } else if ostatus == 6 {
                 why = "a name in --on is empty, or a pair is: a list is PROBE=BUILD,PROBE=BUILD with a comma between pairs and none at the end";
             } else if ostatus == 7 {
-                why = "the type of a pair is :int, :float or :dec(S) with S from 0 to 18";
-                hint = "--on user=id:int, --on price=cost:dec(2)";
+                why = "the type of a pair is :int, :float, :dec(S) with S from 0 to 18, :date, :timestamp or :datetime";
+                hint = "--on user=id:int, --on price=cost:dec(2), --on seen=at:timestamp";
             } else if ostatus == 8 {
                 why = "a pair has one type, at its end: --on user=id:int, and not --on user=id:int:int";
             } else if ostatus == 9 {
@@ -344,7 +353,9 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
             e = flags.problem(heap, e, "args.conflict", "a semi or anti join gives the probe columns only, so there is no column of the --join file for --join-prefix to name", "drop --join-prefix", "--join-type --join-prefix");
         }
     }
-    if inp.has_report {
+    if inp.has_report && bytes.equal(inp.report_text, "dates") {
+        e = flags.problem(heap, e, "args.conflict", "--report dates describes the columns of one file, and the joined row has padded cells and a key with two spellings: it does not take a join", "write the join as --format csv and pipe it into a second call that reports", "--join --report");
+    } else if inp.has_report {
         e = flags.problem(heap, e, "args.conflict", "--report types describes the columns of one file, and the joined row has padded cells and a key with two spellings: it does not take a join", "write the join as --format csv and pipe it into a second call that reports", "--join --report");
     }
     if jxsrc.has(parsed, jxs, jxsrc.s_join_where(), "join-where") {

@@ -1,0 +1,63 @@
+edition 5;
+
+module dtjoin;
+
+// The refusal of a key cell of a join whose pair is a :date, a :timestamp or a :datetime (docs/datetime.md section 20): the rules of the date types (`dtfail`: `value.not-date`,
+// `value.not-timestamp`, `value.timestamp-precision`, `value.timestamp-range`, `value.timezone-missing`, `value.timestamp-offset-present`, `value.timezone-unsupported`) with the facts of a
+// join key (`context` `join`, which file it was in, the pair of `--on` counted from 1) as `jnfail.typed_key` gives them for the numbers, and the reason, offset, digits or direction of the
+// date type. No repair: the type of a pair is written once at the end of the pair, and a repair would have to rewrite `--on` (the invocation that reads the key as text is the user\'s choice).
+
+import std.buffer;
+import dtfail;
+import dtparse;
+import finish;
+import query;
+import toolbox.fail;
+
+// `status` is the answer of `dtparse.parse` (14 and more); `input` is `probe` or `build`, `shown` the path of that file, `column` the name its own header gives the key.
+pub fn key_refusal[&h, &s, &n, &v](heap: &!h Heap, e: fail.Errors, status: int, input: &static [byte], shown: &s [byte], column: &n [byte], row: int, line: int, value: &v [byte], pair: int) -> [heap] fail.Errors {
+    let reason = dtparse.reason_of(status);
+    let extra = dtparse.extra_of(status);
+    var w = fail.open_in(heap, finish.extra(), dtparse.tag_of(reason), dtfail.message_of(reason), dtfail.hint_of(reason));
+    w = fail.repair_none(heap, w, dtfail.none_reason(reason));
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_str(heap, w, "context", "join");
+    w = fail.detail_str(heap, w, "input", input);
+    w = fail.detail_int(heap, w, "pair", pair);
+    w = fail.detail_text(heap, w, "column", column);
+    w = fail.detail_int(heap, w, "row", row);
+    w = fail.detail_int(heap, w, "line", line);
+    w = fail.detail_text(heap, w, "value", value);
+    w = fail.detail_bool(heap, w, "value_truncated", len(value) >= 64);
+    if len(dtparse.reason_text(reason)) > 0 {
+        w = fail.detail_str(heap, w, "reason", dtparse.reason_text(reason));
+    }
+    if reason <= 16 {
+        w = fail.detail_int(heap, w, "offset", extra);
+    } else if reason == 17 {
+        w = fail.detail_int(heap, w, "digits", extra);
+    } else if reason == 18 {
+        w = fail.detail_str(heap, w, "direction", "before");
+    } else if reason == 19 {
+        w = fail.detail_str(heap, w, "direction", "after");
+    }
+    return fail.add(heap, e, w);
+}
+
+// The status `dtparse.parse` answers for the key cell at `first..last` of `record` (its quotes undone when `quoted` is 1) read as the type `kind`: the build and probe reads note a refused date key
+// by the number 15 (their answer has 4 bits for the status), and the cell is read once more, here, to have its reason and the byte of its fault.
+pub fn status_of[&h, &d](heap: &!h Heap, record: &d [byte], first: int, last: int, quoted: int, kind: int) -> [heap] int {
+    if quoted == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {
+        var scr = query.unquote(heap, buffer.empty(heap, 16), record[first..last]);
+        var status = 0;
+        borrow scr as &sr in {
+            let (v, bad) = dtparse.parse(buffer.bytes(sr), kind);
+            status = bad;
+        }
+        buffer.drop(heap, scr);
+        return status;
+    }
+    let (v, bad) = dtparse.parse(record[first..last], kind);
+    return bad;
+}
