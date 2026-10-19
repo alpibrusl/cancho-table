@@ -67,7 +67,7 @@ MUTANTS = [
     ("a typed order key is refused as another key", "sorter.cho", "            } else if bad != 0 {\n                status = bad;\n                which = j;", "            } else if bad != 0 {\n                status = bad;\n                which = 0;"),
     # the plan (table.cho)
     ("a group column's type is not kept", "flags.cho", "                q = query.add_gkind(heap, q, t);", "                q = query.add_gkind(heap, q, 0);"),
-    ("the type of --group is split off from --select too", "flags.cho", "    if slot == 2 {\n        let (c2, t2, b2) = split_types(heap, given, true);", "    if slot != 7 {\n        let (c2, t2, b2) = split_types(heap, given, true);"),
+    ("the type of --group is split off from --select too", "flags.cho", "    if slot == 2 {\n        let (c2, t2, b2, s2, e2, k2) = split_types(heap, given, true);", "    if slot != 7 {\n        let (c2, t2, b2, s2, e2, k2) = split_types(heap, given, true);"),
     ("an order key's type is not in its flags", "flags.cho", "        typed_flags = vec.push(heap, typed_flags, fv + 2 * kt);", "        typed_flags = vec.push(heap, typed_flags, fv);"),
     ("an order key's type is its direction", "flags.cho", "        typed_flags = vec.push(heap, typed_flags, fv + 2 * kt);", "        typed_flags = vec.push(heap, typed_flags, fv + kt);"),
     ("a bad scale in --group is not told", "flags.cho", "    if bad_item >= 0 && listed {", "    if false && bad_item >= 0 && listed {"),
