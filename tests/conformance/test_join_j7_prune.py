@@ -111,6 +111,26 @@ class Accounting(unittest.TestCase):
         finally:
             sc.cleanup()
 
+    def test_a_plan_that_leaves_out_only_the_key_holds_the_whole_record(self):
+        # pruning is on when some column that is not a key is not named: dropping the key alone would save its bytes and cost the work of a pruned record (docs/joins.md section 22, reading 3)
+        case = R7.wide_case(random.Random(34), "keyonly", extras=2)
+        sc = Scene(case)
+        try:
+            names = [h for h in case.B[0] if h != "bk"]
+            plan = {"jtype": "inner", "pairs": case.pairs, "select": ["pk"] + names}
+            self.assertIsNone(R7.keep_of(plan, case, "build"))
+            whole = sum(costs(plan, case, False))
+            self.assertEqual(sum(costs(plan, case, True)), whole)
+            self.assertEqual(sc.run(plan, bound=whole).status, 0)
+            self.assertEqual(sc.run(plan, bound=whole - 1).status, 8)
+            # and one column more left out is pruned
+            plan2 = dict(plan, select=["pk"] + names[1:])
+            self.assertLess(sum(costs(plan2, case, True)), whole)
+            self.assertEqual(sc.run(plan2, bound=sum(costs(plan2, case, True))).status, 0)
+            self.assertEqual(sc.run(plan2, bound=sum(costs(plan2, case, True)) - 1).status, 8)
+        finally:
+            sc.cleanup()
+
     def test_what_the_plan_names_decides_what_is_held(self):
         case = R7.wide_case(random.Random(32), "names")
         sc = Scene(case)

@@ -146,50 +146,30 @@ pub fn add[&h, &k, &r](heap: &!h Heap, t: JTab, key: &k [byte], record: &r [byte
     return (JTab { keys: ks, head: hd, tail: tl, rows: rw, start: st, next: nx, nrows: row + 1, held: held + cost }, true);
 }
 
-// The bytes of the record of a row of `nb` columns (`cells`, as `reader.fields` found them in `record`) when only the columns whose entry of `mask` is 1 are kept and the others are empty: the kept cells as they are
-// written (a quoted cell with its quotes) and a delimiter between every two columns (docs/joins.md section 22).
-pub fn pruned_len[&r, &c, &m](record: &r [byte], cells: &c [int], mask: &m [int]) -> [] int {
-    let nb = len(mask) - 1;
-    var n = nb - 1;
-    var j = 0;
-    while j < nb {
-        if mask[j] == 1 {
-            let q = cells[3 * j + 2];
-            n = n + (cells[3 * j + 1] + q) - (cells[3 * j] - q);
-        }
-        j = j + 1;
-    }
-    return n;
-}
-
-// The pruned record of a row appended to `into`: the same bytes `pruned_len` counted.
-fn append_pruned[&h, &r, &c, &m](heap: &!h Heap, into: buffer.Buffer, record: &r [byte], cells: &c [int], mask: &m [int], delim: int) -> [heap] buffer.Buffer {
-    let nb = len(mask) - 1;
-    var out = into;
-    var j = 0;
-    while j < nb {
-        if j > 0 {
-            out = buffer.push(heap, out, byte_of(delim));
-        }
-        if mask[j] == 1 {
-            let q = cells[3 * j + 2];
-            out = buffer.append(heap, out, record[cells[3 * j] - q..cells[3 * j + 1] + q]);
-        }
-        j = j + 1;
-    }
-    return out;
-}
+// THE PRUNED RECORD of a row (`cells`, as `reader.fields` found them), docs/joins.md section 22: the cells of the columns the plan names as they are written (a quoted cell with its quotes) and a delimiter
+// between every two columns. The mask (`jnprune.compile`) has the named columns as RUNS of columns next to each other: a run's bytes are one stretch of the record, from the start of its first cell to the end of its
+// last (the delimiters between its columns are in it), so a row costs one step for each run and not one for each column. `mask[1]` is the number of runs, `mask[3]` the delimiters that are in no run, run `i` is
+// `mask[4 + 3 * i]` its first column and `mask[5 + 3 * i]` its last, `mask[6 + 3 * i]` the delimiters before it and `mask[2]` those after the last run. `dl` is delimiters, at least as many as a row has columns.
+// The count and the copy are written in `add_pruned` itself: a call for each costs more instructions in a build row than the pruning saves.
 
 // `add` for a build that keeps only the columns the plan names: the row is held as its pruned record (the cells of the other columns empty, the delimiters kept), and that record is what is counted:
-// `pruned_len + 16`, and the key as before. The key is the caller's (it was read from the whole record). `add` itself is not changed (the build that holds whole records is the one whose cost is held to `main`'s).
-pub fn add_pruned[&h, &k, &r, &c, &m](heap: &!h Heap, t: JTab, key: &k [byte], record: &r [byte], cells: &c [int], mask: &m [int], delim: int, limit: int) -> [heap] (JTab, bool) {
+// its bytes + 16, and the key as before. The key is the caller's (it was read from the whole record). `add` itself is not changed (the build that holds whole records is the one whose cost is held to `main`'s).
+pub fn add_pruned[&h, &k, &r, &c, &m, &d](heap: &!h Heap, t: JTab, key: &k [byte], record: &r [byte], cells: &c [int], mask: &m [int], dl: &d [byte], limit: int) -> [heap] (JTab, bool) {
     let JTab { keys, head, tail, rows, start, next, nrows, held } = t;
     let hv = gmap.hash(key);
     var e = 0 - 1;
     borrow keys as &kr in {
         e = gmap.find_h(kr, key, hv);
     }
-    var cost = pruned_len(record, cells, mask) + 16;
+    let nruns = mask[1];
+    var cost = mask[3] + 16;
+    var runs = 0;
+    while runs < nruns {
+        let c1 = mask[4 + 3 * runs];
+        let c2 = mask[5 + 3 * runs];
+        cost = cost + (cells[3 * c2 + 1] + cells[3 * c2 + 2]) - (cells[3 * c1] - cells[3 * c1 + 2]);
+        runs = runs + 1;
+    }
     if e < 0 {
         cost = cost + len(key) + 60;
     }
@@ -231,7 +211,25 @@ pub fn add_pruned[&h, &k, &r, &c, &m](heap: &!h Heap, t: JTab, key: &k [byte], r
     borrow rw as &rr in {
         at = buffer.size(rr);
     }
-    rw = append_pruned(heap, rw, record, cells, mask, delim);
+    var run = 0;
+    while run < nruns {
+        let c1 = mask[4 + 3 * run];
+        let c2 = mask[5 + 3 * run];
+        let lead = mask[6 + 3 * run];
+        if lead == 1 {
+            rw = buffer.push(heap, rw, dl[0]);
+        } else if lead > 0 {
+            rw = buffer.append(heap, rw, dl[0..lead]);
+        }
+        rw = buffer.append(heap, rw, record[cells[3 * c1] - cells[3 * c1 + 2]..cells[3 * c2 + 1] + cells[3 * c2 + 2]]);
+        run = run + 1;
+    }
+    let trailing = mask[2];
+    if trailing == 1 {
+        rw = buffer.push(heap, rw, dl[0]);
+    } else if trailing > 0 {
+        rw = buffer.append(heap, rw, dl[0..trailing]);
+    }
     borrow mut st as &!sw in {
         contents(sw)[row] = at;
     }

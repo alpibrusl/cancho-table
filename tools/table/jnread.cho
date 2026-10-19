@@ -198,7 +198,15 @@ pub fn build_pass[&h, &f, &k, &m](heap: &!h Heap, r0: lines.Lines, file: &!f Fil
     // J1's build (one pair of text, the rows held) has a hold of its own, `hold_text`
     let bfast = simple && !keys_only;
     // (docs/joins.md section 22: the build keeps only the columns the plan names, when it names fewer than there are)
-    let prune = mask[nb] == 1;
+    let prune = mask[0] == 1;
+    let ufast = bfast && !prune;
+    let pfast = bfast && prune;
+    let pgen = !bfast && prune;
+    var dn = 0;
+    if prune {
+        dn = nb;
+    }
+    let dl = jnprune.delimiters(heap, dn, delim);
     let bkey = keys[1];
     var tally = box_slice(heap, engine.k_size(), 0);
     var cellbox = box_slice(heap, 3 * (nb + 1), 0);
@@ -263,18 +271,29 @@ pub fn build_pass[&h, &f, &k, &m](heap: &!h Heap, r0: lines.Lines, file: &!f Fil
                                 rec = buffer.push(heap, rec, byte_of(10));
                             } else if engine.count_row(a, n, number, 0) {
                                 var answer = 0;
-                                if prune {
-                                    let (t2, k2, b2, answer2) = jnprune.hold_row(heap, jt, kscr, kbuf, line, cells, keys, pairs, simple, limit, mask, delim);
-                                    jt = t2;
-                                    kscr = k2;
-                                    kbuf = b2;
-                                    answer = answer2;
-                                } else if bfast {
+                                if ufast {
                                     let (t2, k2, ok) = hold_text(heap, jt, kscr, line, cells, bkey, limit);
                                     jt = t2;
                                     kscr = k2;
                                     if !ok {
                                         answer = 1;
+                                    }
+                                } else if pfast {
+                                    borrow dl as &dlr in {
+                                        let (t2, k2, ok) = jnprune.hold_text(heap, jt, kscr, line, cells, bkey, limit, mask, buffer.bytes(dlr));
+                                        jt = t2;
+                                        kscr = k2;
+                                        if !ok {
+                                            answer = 1;
+                                        }
+                                    }
+                                } else if pgen {
+                                    borrow dl as &dlr in {
+                                        let (t2, k2, b2, answer2) = jnprune.hold_row(heap, jt, kscr, kbuf, line, cells, keys, pairs, simple, limit, mask, buffer.bytes(dlr));
+                                        jt = t2;
+                                        kscr = k2;
+                                        kbuf = b2;
+                                        answer = answer2;
                                     }
                                 } else {
                                     let (t2, k2, b2, answer2) = hold_row(heap, jt, kscr, kbuf, line, cells, keys, pairs, simple, keys_only, limit);
@@ -328,18 +347,29 @@ pub fn build_pass[&h, &f, &k, &m](heap: &!h Heap, r0: lines.Lines, file: &!f Fil
                                         going = false;
                                     } else if engine.count_row(a, m, opened, 0) {
                                         var answer = 0;
-                                        if prune {
-                                            let (t2, k2, b2, answer2) = jnprune.hold_row(heap, jt, kscr, kbuf, record, cells, keys, pairs, simple, limit, mask, delim);
-                                            jt = t2;
-                                            kscr = k2;
-                                            kbuf = b2;
-                                            answer = answer2;
-                                        } else if bfast {
+                                        if ufast {
                                             let (t2, k2, ok) = hold_text(heap, jt, kscr, record, cells, bkey, limit);
                                             jt = t2;
                                             kscr = k2;
                                             if !ok {
                                                 answer = 1;
+                                            }
+                                        } else if pfast {
+                                            borrow dl as &dlr in {
+                                                let (t2, k2, ok) = jnprune.hold_text(heap, jt, kscr, record, cells, bkey, limit, mask, buffer.bytes(dlr));
+                                                jt = t2;
+                                                kscr = k2;
+                                                if !ok {
+                                                    answer = 1;
+                                                }
+                                            }
+                                        } else if pgen {
+                                            borrow dl as &dlr in {
+                                                let (t2, k2, b2, answer2) = jnprune.hold_row(heap, jt, kscr, kbuf, record, cells, keys, pairs, simple, limit, mask, buffer.bytes(dlr));
+                                                jt = t2;
+                                                kscr = k2;
+                                                kbuf = b2;
+                                                answer = answer2;
                                             }
                                         } else {
                                             let (t2, k2, b2, answer2) = hold_row(heap, jt, kscr, kbuf, record, cells, keys, pairs, simple, keys_only, limit);
@@ -377,6 +407,7 @@ pub fn build_pass[&h, &f, &k, &m](heap: &!h Heap, r0: lines.Lines, file: &!f Fil
     buffer.drop(heap, rec);
     buffer.drop(heap, kscr);
     buffer.drop(heap, kbuf);
+    buffer.drop(heap, dl);
     return (r, jt, c, consumed, kept);
 }
 

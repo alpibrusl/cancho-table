@@ -532,7 +532,6 @@
     "pow2",
     "prefix_of",
     "prefix_of",
-    "pruned_len",
     "put_info",
     "qualified",
     "queried",
@@ -735,6 +734,7 @@
     "unit_code",
     "unit_text",
     "unmarked",
+    "unnamed_non_key",
     "valid",
     "value_index",
     "value_is_whole",
@@ -767,7 +767,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 329,
+  "folded_operators": 330,
   "folded_calls": 0,
-  "functions": 1297
+  "functions": 1299
 }

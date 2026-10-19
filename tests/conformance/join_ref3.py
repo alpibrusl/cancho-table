@@ -218,6 +218,15 @@ def named_build_columns(plan, ph, bh):
     return {j for j in keep if plan.get("prefix", "") + bh[j] in used}
 
 
+def kept_build_columns(plan, ph, bh):
+    """The columns of the build record that are held (docs/joins.md section 22), or None when it is held whole: pruning is on when some column that is not a key (the build side of a pair) is not named."""
+    named = named_build_columns(plan, ph, bh)
+    keys = {p[1] for p in plan["pairs"]}
+    if all(j in named for j in range(len(bh)) if j not in keys):
+        return None
+    return named
+
+
 def _held_len(row, trace):
     """The bytes of the build record held for `row` (J7, docs/joins.md section 22): the record with the cells of the columns the plan does not name left empty (`trace["keep"]`, indexes into the
     build's header; None holds the whole record)."""
@@ -238,7 +247,7 @@ def execute(plan, P, B, trace=None):
     pairs = plan["pairs"]
     pks, bks, kinds = [p[0] for p in pairs], [p[1] for p in pairs], [p[2] for p in pairs]
     if trace is not None and "keep" not in trace:
-        trace["keep"] = named_build_columns(plan, ph, bh)
+        trace["keep"] = kept_build_columns(plan, ph, bh)
     jheader, keep, np_ = joined_layout(plan, ph, bh)
     where = plan.get("where")
     jw = plan.get("jw")

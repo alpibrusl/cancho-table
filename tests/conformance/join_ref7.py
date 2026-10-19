@@ -39,15 +39,20 @@ used_names = R3.used_names
 
 
 def keep_of(plan, case, side="build"):
-    """The columns of the `--join` file (side 'build') that the plan names, as indexes into its header; for side 'probe', the columns of FILE that the plan names, when FILE is the
-    one that is held (the exchanged call): a shared-name key of the exchanged call is the other file's, so the probe's key column is not named by the plan's use of that name."""
+    """The columns of the `--join` file (side 'build') that are held, as indexes into its header, or None when it is held whole (pruning is on when some column that is not a key is not named); for side
+    'probe', the same for FILE when FILE is the one that is held (the exchanged call): a shared-name key of the exchanged call is the other file's, so the probe's key column is not named by the plan's use
+    of that name."""
     ph, bh = case.P[0], case.B[0]
     jheader, bkeep, np_ = R3.joined_layout({"jtype": "inner", "pairs": case.pairs, "prefix": case.prefix}, ph, bh)
     used = used_names(plan, jheader)
     if side == "build":
-        return {j for j in bkeep if case.prefix + bh[j] in used}
+        return R3.kept_build_columns(dict(plan, pairs=case.pairs, prefix=case.prefix), ph, bh)
     dropped = {pk for pk, bk, kind, using in case.pairs if using}
-    return {i for i in range(len(ph)) if ph[i] in used and i not in dropped}
+    named = {i for i in range(len(ph)) if ph[i] in used and i not in dropped}
+    keys = {p[0] for p in case.pairs}
+    if all(i in named for i in range(len(ph)) if i not in keys):
+        return None
+    return named
 
 
 # ---- the bytes of a held record ----------------------------------------------------------------------------------------------------------------------------------

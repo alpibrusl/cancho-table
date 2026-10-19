@@ -24,6 +24,7 @@ import std.bytes;
 import std.vec;
 import jnflags;
 import jnfmt;
+import jnprune;
 import query;
 import spec;
 import toolbox.cli;
@@ -233,13 +234,13 @@ pub fn swap_keys[&h, &k](heap: &!h Heap, keys: &k [int], pairs: int) -> [heap] B
     return out;
 }
 
-// The mask of the exchanged call's build, which is FILE: one entry for each of its `np` columns, 1 for those the plan names (`cols` maps the plan's names, `sel` the first `picked` columns the answer shows, to
+// The mask of the exchanged call's build, which is FILE (`jnprune.compile`): the columns the plan names (`cols` maps the plan's names, `sel` the first `picked` columns the answer shows, to
 // columns of the joined row of the call as written, whose first `np` are FILE's), and the last, 1 when some column is not named. A column that a shared-name pair (`using`) holds is the key of the exchanged
 // call's build and is left out of its joined row, so the plan does not name it.
 pub fn mask_probe[&h, &c, &s, &k, &u](heap: &!h Heap, names: int, cols: &c [int], sel: &s [int], picked: int, np: int, keys: &k [int], using: &u [int], pairs: int) -> [heap] Box[[int]] {
-    var mask = box_slice(heap, np + 1, 0);
-    borrow mut mask as &!mw in {
-        let m = contents(mw);
+    var named = box_slice(heap, np + 1, 0);
+    borrow mut named as &!nw in {
+        let m = contents(nw);
         var i = 0;
         while i < names {
             if cols[i] < np {
@@ -261,16 +262,13 @@ pub fn mask_probe[&h, &c, &s, &k, &u](heap: &!h Heap, names: int, cols: &c [int]
             }
             j = j + 1;
         }
-        var unnamed = 0;
-        i = 0;
-        while i < np {
-            if m[i] == 0 {
-                unnamed = 1;
-            }
-            i = i + 1;
-        }
-        m[np] = unnamed;
     }
+    var mask = box_slice(heap, 1, 0);
+    borrow named as &nr in {
+        unbox_slice(heap, mask);
+        mask = jnprune.compile(heap, contents(nr), np, keys, pairs, 0);
+    }
+    unbox_slice(heap, named);
     return mask;
 }
 

@@ -303,7 +303,9 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
         borrow cols as &kr in {
             borrow sel as &sr in {
                 borrow kmap as &kmr in {
-                    pmask = jnprune.mask_of(heap, query.name_count(tree), contents(kr), contents(sr), picked, np, nb, contents(kmr));
+                    borrow keys as &kyr in {
+                        pmask = jnprune.mask_of(heap, query.name_count(tree), contents(kr), contents(sr), picked, np, nb, contents(kmr), contents(kyr), pairs);
+                    }
                 }
             }
         }
