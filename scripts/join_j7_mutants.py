@@ -97,9 +97,9 @@ MUTANTS = [
     ("an exchange is offered for a header with a name twice", JNSWAP, "    if f.dup {\n        return 10;", "    if false {\n        return 10;"),
     ("an exchange is offered when the delimiter of a csv answer would change", JNSWAP, "    if f.dchange {\n        return 11;", "    if false {\n        return 11;"),
     ("a grouping is taken for a page of rows", JNSWAP, "    if mode != 1 {\n        return false;\n    }", "    if mode > 2 {\n        return false;\n    }"),
-    ("--top does not make a page", JNSWAP, '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "top") || cli.has(parsed, table, "from");', '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "from");'),
-    ("--from does not make a page", JNSWAP, '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "top") || cli.has(parsed, table, "from");', '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "top");'),
-    ("--limit does not make a page", JNSWAP, '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "top") || cli.has(parsed, table, "from");', '    return cli.has(parsed, table, "top") || cli.has(parsed, table, "from");'),
+    ("with --top does not make a page", JNSWAP, '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "top") || cli.has(parsed, table, "from");', '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "from");'),
+    ("with --from does not make a page", JNSWAP, '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "top") || cli.has(parsed, table, "from");', '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "top");'),
+    ("with --limit does not make a page", JNSWAP, '    return cli.has(parsed, table, "limit") || cli.has(parsed, table, "top") || cli.has(parsed, table, "from");', '    return cli.has(parsed, table, "top") || cli.has(parsed, table, "from");'),
     ("an empty name is not a name twice", JNSWAP, "        if to == from {\n            return true;\n        }", "        if to < from {\n            return true;\n        }"),
     # the other file must fit
     ("the other file is not read to see that it fits", JNRUN, "                    if fit.abort == 70 {", "                    if fit.abort == 7000 {"),
@@ -133,18 +133,21 @@ MUTANTS = [
     ("the build's delimiter is not given to the probe", JNSWAP, "    if !fmt.b_jsonl {\n        nd = bdelim;\n    }\n    let mj", "    let mj"),
     ("the probe's delimiter is not given to the build", JNSWAP, "    if !mj && delim != nd {", "    if false {"),
     ("a delimiter that is not the default is not said", JNSWAP, '    if nd != 44 || cli.has(parsed, table, "delimiter") {', '    if cli.has(parsed, table, "delimiter") {'),
-    ("--join=VALUE is written as --join VALUE", JNSWAP, '    if !whole_join {\n        rep = buffer.append(heap, rep, "--join=");', '    if false {\n        rep = buffer.append(heap, rep, "--join=");'),
-    ("--on=VALUE is written as --on VALUE", JNSWAP, '    if !whole_on {\n        rep = buffer.append(heap, rep, "--on=");', '    if false {\n        rep = buffer.append(heap, rep, "--on=");'),
+    ("with --join=VALUE is written as --join VALUE", JNSWAP, '    if !whole_join {\n        rep = buffer.append(heap, rep, "--join=");', '    if false {\n        rep = buffer.append(heap, rep, "--join=");'),
+    ("with --on=VALUE is written as --on VALUE", JNSWAP, '    if !whole_on {\n        rep = buffer.append(heap, rep, "--on=");', '    if false {\n        rep = buffer.append(heap, rep, "--on=");'),
     # what is said
     ("an offer that is made is not written", "jnfail.cho", "    if offer.offered {\n        var c = fail.choose_open(heap, o);", "    if false {\n        var c = fail.choose_open(heap, o);"),
     ("an exchange is checked and then not offered", JNRUN, "                                if wrote {\n                                    said = jnswap.Offer { offered: true,", "                                if false {\n                                    said = jnswap.Offer { offered: true,"),
-    ("--explain offers the exchange whatever the plan", "jnexplain.cho", "    if swap_code == 0 {\n        swap_json = buffer.append(heap, swap_json, \"true\");", "    if true {\n        swap_json = buffer.append(heap, swap_json, \"true\");"),
-    ("--explain does not offer the exchange", "jnexplain.cho", "    if swap_code == 0 {\n        swap_json = buffer.append(heap, swap_json, \"true\");", "    if swap_code == 99 {\n        swap_json = buffer.append(heap, swap_json, \"true\");"),
+    ("with --explain offers the exchange whatever the plan", "jnexplain.cho", "    if swap_code == 0 {\n        swap_json = buffer.append(heap, swap_json, \"true\");", "    if true {\n        swap_json = buffer.append(heap, swap_json, \"true\");"),
+    ("with --explain does not offer the exchange", "jnexplain.cho", "    if swap_code == 0 {\n        swap_json = buffer.append(heap, swap_json, \"true\");", "    if swap_code == 99 {\n        swap_json = buffer.append(heap, swap_json, \"true\");"),
     ("the refusal does not know the join is a --query", JNRUN, "queried: jxsrc.queried(jxs), prefixed: prefixed, join_where: jw_on, positions: jnswap.has_positions(tree)", "queried: false, prefixed: prefixed, join_where: jw_on, positions: jnswap.has_positions(tree)"),
     ("the refusal reads the size of the wrong file", JNRUN, "                psize = jnswap.size_of(pfile);", "                psize = size;"),
     ("the refusal does not look at the delimiter of a csv answer", JNRUN, "dchange: as_csv && !fmt.b_jsonl && bdelim != delim };", "dchange: false };"),
     ("the refusal takes a --join-prefix of the empty text for a prefix", JNRUN, "                    prefixed = buffer.size(pxr) > 0;", "                    prefixed = true;"),
 ]
+
+# (mutlib reads an argument that starts with "--" as a flag, so a name that did would never be run)
+assert not [m[0] for m in MUTANTS if m[0].startswith("--")]
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
