@@ -970,6 +970,16 @@ class Repairs(unittest.TestCase):
             self.assertEqual(r.error()["repair"]["options"][0]["argv"][-3:], ["--group", "d:timestamp@month", "r.csv"])
             again = run_argv(r.error()["repair"]["options"][0]["argv"])
             self.assertEqual((again.status, again.data()["rows"]), (0, [["2026-01-01T00:00:00Z", "1"]]))
+            # one item can be rewritten and another cannot (a :date has no day): no repair is offered, it would be refused for a conflict
+            s.write("r.csv", "id,d\n1,2026-01-02\n")
+            r = run("--root", s.dir, "--group", "d:timestamp@day", "--agg", "min:d:timestamp", "r.csv")
+            self.assertEqual((r.error()["detail"]["reason"], r.error()["repair"]["kind"]), ("date-only", "none"))
+            # another item with a bucket of another type is left as it was
+            s.write("r.csv", "id,ts,d\n1,2026-01-02T01:00:00,2026-01-02\n")
+            r = run("--root", s.dir, "--group", "ts:timestamp@day,d:date@month", "r.csv")
+            self.assertEqual(r.error()["repair"]["options"][0]["argv"][-3:], ["--group", "ts:datetime@day,d:date@month", "r.csv"])
+            again = run_argv(r.error()["repair"]["options"][0]["argv"])
+            self.assertEqual(again.status, 0)
             # an item with a bucket and another with the same old type: one repair rewrites both, or none is offered
             s.write("r.csv", "id,ts,u\n1,2026-01-02T01:00:00,2026-01-02T01:00:00\n")
             r = run("--root", s.dir, "--group", "ts:timestamp@day", "--agg", "min:u:timestamp", "r.csv")

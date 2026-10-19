@@ -13,6 +13,10 @@ offset not applied, applied twice, with its sign flipped, before the bucket), th
 as a bucket, of the base type, the unit ignored), the conflict check (comparing the unit too), `--agg` (a bucket accepted), `--order-by` (a bucket read), the repair (the unit lost or kept
 for a type that has not got it), `--explain`, the help and the hint of the query. No mutant is equivalent unless a comment says so.
 
+Mutant "a week is a day" (unit_code answers 2 for the word week) is equivalent: `unit_class` tests the word `week` before it calls `unit_code`, and `unit_code` is called only for a word that
+`unit_class` accepted (flags.cho, the repair in dtfail.cho), which `week` never is, so no run reaches the changed answer. It is kept in the list as the one survivor that is proved, and
+`--check` still verifies its site.
+
 Not mutated, equivalent: `find_at`'s `i > 0` (an `@` at the start of an item has no type before it: `suffix_in` of an empty word is (0, 0)); the `% 256` of `read` against `& 255` (the
 same for a non-negative code).
 """
