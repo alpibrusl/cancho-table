@@ -29,6 +29,7 @@ LOCAL = {
     "limit.too-many-groups": (8, "never", "--max-groups"),
     "limit.too-many-distinct": (8, "never", "--max-distinct"),
     "limit.state-too-large": (8, "sometimes", "--max-state-bytes"),
+    "join.not-sorted": (8, "never", "sorted"),
     "column.unknown": (3, "never", "--where, --group, --agg or --on"),
     "column.ambiguous": (8, "never", "more than one column"),
     "where.syntax": (2, "sometimes", "offset"),
@@ -135,6 +136,7 @@ class Rules(unittest.TestCase):
         s.write("wide.csv", "a,b\n" + "1," + "x" * 5000 + "\n")
         s.write("header.csv", '"a\n' + "b\n" * 600 + '",c\n1,2\n')
         s.write("jp.csv", "k,v\na,1\na,2\n")
+        s.write("jus.csv", "k,v\nb,1\na,2\n")
         s.write("ok.jsonl", '{"a":1}\n')
         s.write("badhead.csv", b"\xff\n1\n")
         s.write("bad.jsonl", '{"a":1,}\n')
@@ -222,6 +224,7 @@ class Rules(unittest.TestCase):
             ("rename.ambiguous-target", root + ["--select", "a,a", "--rename", "a=x", "ok.csv"], None),
             ("rename.repeated-target", root + ["--select", "a", "--rename", "a=x,#1=y", "ok.csv"], None),
             ("limit.too-many-join-rows", root + ["--join", "jp.csv", "--on", "k=k", "--join-prefix", "r_", "--max-join-rows", "1", "jp.csv"], None),
+            ("join.not-sorted", root + ["--join-sorted", "--join", "jus.csv", "--on", "k=k", "--join-prefix", "r_", "jus.csv"], None),
         ]
         if os.geteuid() != 0 or True:
             s.write("denied.csv", "a\n1\n")
