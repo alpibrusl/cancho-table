@@ -18,6 +18,7 @@ No file larger than 20,000 rows, no network. The driver is a script, so the tool
 """
 
 import csv
+import hashlib
 import io
 import json
 import os
@@ -28,6 +29,7 @@ import procs as subprocess  # every child in a group that is reaped: tests/confo
 import sys
 import tempfile
 import unittest
+from decimal import Decimal
 from fractions import Fraction
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -675,6 +677,14 @@ class NotExpressible(unittest.TestCase):
         self.assertEqual(r["rule"], "agg.bad-spec")
         self.assertNotIn("timing", r)
 
+    def test_an_exit_zero_is_never_a_refusal_even_with_the_right_rule(self):
+        d, calls, ctx = self.ctx(None)
+        out = json.dumps({"ok": False, "error": {"rule": "agg.bad-spec"}, "errors": [{"rule": "agg.bad-spec"}]}).encode() + b"\n"
+        ctx.launch = lambda argv, env=None, capture=True, timeout=120: d.Outcome(returncode=0, seconds=0.0, stdout=out, stderr=b"", timed_out=False)
+        self.assertEqual(d.probe_not_expressible(ctx, BY_ID["q6"])["status"], "class-mismatch")
+        ctx.launch = lambda argv, env=None, capture=True, timeout=120: d.Outcome(returncode=None, seconds=1.0, stdout=out, stderr=b"", timed_out=True)
+        self.assertEqual(d.probe_not_expressible(ctx, BY_ID["q6"])["status"], "class-mismatch")
+
     def test_a_probe_that_now_works_or_changes_its_rule_is_a_stale_classification(self):
         d, calls, ctx = self.ctx(None)
         ctx.launch = lambda argv, env=None, capture=True, timeout=120: d.Outcome(returncode=0, seconds=0.0, stdout=b"id4\n", stderr=b"", timed_out=False)
@@ -1089,9 +1099,13 @@ class Program(unittest.TestCase):
         self.assertIn("runs", " ".join(r["publishable_reasons"]))
         self.assertIn("load", r["conditions"])
         self.assertEqual(len(r["conditions"]["load"]["end"]), 3)
-        # the printed times come after the answers
+        # for each question, the printed times come after every answer of the question
         lines = p.stdout.splitlines()
-        self.assertLess(max(i for i, l in enumerate(lines) if l.startswith("answer")), min(i for i, l in enumerate(lines) if l.startswith("time")))
+        for qid in ("q1", "q3"):
+            answers = [i for i, l in enumerate(lines) if l.startswith("answer  %s  " % qid)]
+            times = [i for i, l in enumerate(lines) if l.startswith("time  %s  " % qid)]
+            self.assertTrue(answers and times, qid)
+            self.assertLess(max(answers), min(times))
         self.assertIn("publishable: false", p.stdout)
 
     def test_the_form_of_the_query_is_the_form_of_the_flags(self):
@@ -1139,6 +1153,52 @@ class Program(unittest.TestCase):
         self.assertIn("over 2 s", x["reason"])
         self.assertNotIn("timing", x)
 
+    def test_a_reused_file_is_checked_against_its_sha256(self):
+        data = self.dir / "reuse"
+        args = ["--runs", "1", "--contenders", "table", "--questions", "q1", "--threads", "1", "--no-scan-probe"]
+        p, results = self.drive(*args, "--out", str(data))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertNotIn("reused", p.stdout)
+        sha = self.load(results)["conditions"]["file"]["sha256"]
+        p, results = self.drive(*args, "--out", str(data))
+        self.assertIn("reused, sha256 checked", p.stdout)
+        self.assertEqual(self.load(results)["conditions"]["file"]["sha256"], sha)
+        # one byte changed, the size the same: the file is not the one its metadata describes, so it is written again
+        f = data / gen.name_of(20_000, 100)
+        raw = bytearray(f.read_bytes())
+        raw[-2] = ord("0") if raw[-2] != ord("0") else ord("1")
+        f.write_bytes(bytes(raw))
+        p, results = self.drive(*args, "--out", str(data))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertNotIn("reused", p.stdout)
+        self.assertEqual(self.load(results)["conditions"]["file"]["sha256"], sha)
+        self.assertEqual(hashlib.sha256(f.read_bytes()).hexdigest(), sha)
+
+    def test_a_skipped_contender_is_not_launched_and_says_why(self):
+        p, results = self.drive("--runs", "1", "--contenders", "table", "--questions", "q4", "--threads", "1", "--external", "stub=exact=%s" % self.stub, "--skip", "q4:stub=out of memory at 1e5",
+                                env={"STUB_MODE": "crash"})
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        (x,) = [x for x in self.load(results)["results"] if x["contender"] == "stub"]
+        self.assertEqual(x["status"], "not-run")
+        self.assertIn("out of memory at 1e5", x["reason"])
+        self.assertNotIn("timing", x)
+        p, _ = self.drive("--skip", "q4")
+        self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+        self.assertIn("bench.skip", p.stdout)
+
+    def test_a_pair_that_timed_out_at_a_smaller_step_is_dropped_from_the_next(self):
+        prior = self.dir / "prior.json"
+        prior.write_text(json.dumps({"dropped": [["q4", "stub"]]}))
+        p, results = self.drive("--runs", "1", "--contenders", "table", "--questions", "q4", "--threads", "1", "--external", "stub=exact=%s" % self.stub, "--drop-from", str(prior),
+                                "--timeout", "2", env={"STUB_MODE": "hang"})
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        (x,) = [x for x in self.load(results)["results"] if x["contender"] == "stub"]
+        self.assertEqual(x["status"], "not-run")
+        self.assertIn("over 2 s", x["reason"])
+        # and a timeout in this run is written down for the next step
+        p, results = self.drive("--runs", "1", "--contenders", "table", "--questions", "q4", "--threads", "1", "--external", "stub=exact=%s" % self.stub, "--timeout", "2", env={"STUB_MODE": "hang"})
+        self.assertIn(["q4", "stub"], self.load(results)["dropped"])
+
     def test_g_repro_the_same_seed_gives_the_same_file(self):
         shas = []
         for seed, sub in (("108", "a"), ("108", "b"), ("109", "c")):
@@ -1180,6 +1240,15 @@ class Program(unittest.TestCase):
         self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
         self.assertIn("bench.disk", p.stdout + p.stderr)
         self.assertFalse((self.dir / "tiny").exists() and any((self.dir / "tiny").iterdir()))
+
+    def test_arguments_that_make_no_step_are_refused_with_a_tag(self):
+        for args in (["--runs", "0"], ["--timeout", "0"], ["--k", "7"], ["--rows", "abc"], ["--rows", "-1"], ["--contenders", "polars"], ["--questions", "q6"], ["--questions", "q99"],
+                     ["--external", "x=fast=/bin/true"], ["--taskset", "0", "--table", "/nonexistent/table"]):
+            with self.subTest(args):
+                p = subprocess.run([sys.executable, str(DRIVER), "--out", str(self.dir / "args"), "--results", str(self.dir / "args.json"), "--table", TABLE, *args], capture_output=True, text=True, timeout=60)
+                self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
+                self.assertIn('"rule": "bench.', p.stdout)
+                self.assertNotIn("Traceback", p.stdout + p.stderr)
 
     def test_a_suite_that_is_not_built_is_refused(self):
         for suite in ("join", "1brc", "clickbench"):
@@ -1294,6 +1363,21 @@ class Forms(Shared):
                 else:
                     self.assertEqual(form.answer, form.timed)
 
+    def test_duckdb_python_module_when_there_is_no_command(self):
+        d = self.d
+        tools = d.find_tools(table=TABLE, path="/nonexistent")
+        if not tools["duckdb"]:
+            self.skipTest("the Python module duckdb is not importable here: the module form is not validated by this run")
+        self.assertEqual(tools["duckdb"][0], "python")
+        for c in d.build_contenders(tools, threads_many=4, wanted=["duckdb"]):
+            self.assertIn("python duckdb", c.version)
+            for qid in self.QUESTIONS + ("q10",):
+                with self.subTest(contender=c.name, question=qid):
+                    form = c.form(qid, str(self.path))
+                    out = d.real_launch(form.answer, env=form.env, capture=True, timeout=120)
+                    self.assertEqual(out.returncode, 0, out.stderr[:300])
+                    self.assertTrue(d.compare_answer(BY_ID[qid], self.ref10[qid], out.stdout, c.profile, exact=self.exact.get(qid))["ok"])
+
     def test_the_pins_are_recorded(self):
         d = self.d
         self.assertEqual(d.PINS["duckdb"], "1.5.6")
@@ -1313,6 +1397,329 @@ class Forms(Shared):
         self.assertGreater(r["peak_rss_kb"], 50 * 1024)
         self.assertGreaterEqual(r["cpu_s"], 0.0)
         self.assertIsNone(d.real_rusage([sys.executable, "-c", "import sys; sys.exit(3)"], env=None, timeout=60))
+
+
+class RealLaunch(unittest.TestCase):
+    """real_launch with an injected `run` and `clock`: the time is the clock's difference around the run, whatever the run does."""
+
+    def setUp(self):
+        self.d = driver()
+
+    def clock(self, *values):
+        it = iter(values)
+        return lambda: next(it)
+
+    def test_the_time_is_the_clocks_difference(self):
+        d = self.d
+        seen = {}
+
+        def run(argv, **kw):
+            seen.update(kw, argv=argv)
+            return subprocess.CompletedProcess(argv, 0, b"out", b"err")
+
+        o = d.real_launch(["x", "y"], env=None, capture=True, timeout=7, run=run, clock=self.clock(10.0, 12.5))
+        self.assertEqual((o.returncode, o.seconds, o.stdout, o.stderr, o.timed_out), (0, 2.5, b"out", b"err", False))
+        self.assertEqual((seen["timeout"], seen["stdout"], seen["stderr"], seen["stdin"]), (7, subprocess.PIPE, subprocess.PIPE, subprocess.DEVNULL))
+        self.assertIsNone(seen["env"])
+
+    def test_a_timed_run_discards_its_output(self):
+        d = self.d
+        seen = {}
+
+        def run(argv, **kw):
+            seen.update(kw)
+            return subprocess.CompletedProcess(argv, 0, None, None)
+
+        o = d.real_launch(["x"], env={"A": "1"}, capture=False, timeout=7, run=run, clock=self.clock(0.0, 1.0))
+        self.assertEqual((seen["stdout"], seen["stderr"]), (subprocess.DEVNULL, subprocess.DEVNULL))
+        self.assertEqual(seen["env"]["A"], "1")
+        self.assertIn("PATH", seen["env"])  # the environment is the process's, plus the form's
+        self.assertEqual((o.stdout, o.stderr), (b"", b""))
+
+    def test_a_timeout_and_a_missing_program_are_outcomes_not_exceptions(self):
+        d = self.d
+
+        def slow(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw["timeout"])
+
+        o = d.real_launch(["x"], run=slow, clock=self.clock(1.0, 4.0), timeout=3)
+        self.assertEqual((o.timed_out, o.returncode, o.seconds), (True, None, 3.0))
+
+        def missing(argv, **kw):
+            raise FileNotFoundError("no such program")
+
+        o = d.real_launch(["x"], run=missing, clock=self.clock(1.0, 1.5))
+        self.assertEqual((o.timed_out, o.returncode, o.seconds), (False, 127, 0.5))
+        self.assertIn(b"no such program", o.stderr)
+        self.assertEqual(d.classify(o.returncode, o.stdout, o.stderr, False, o.timed_out)["status"], "refused")
+
+
+class FakeRun:
+    """A stand-in for the module's _run_text: commands map to (returncode, stdout, stderr)."""
+
+    def __init__(self, table):
+        self.table = table
+        self.calls = []
+
+    def __call__(self, argv, timeout=15):
+        self.calls.append(argv)
+        return self.table.get(argv[0], (None, "", "not found"))
+
+
+class MachineProbes(unittest.TestCase):
+    """The probes that decide publishable, against what the machine would say."""
+
+    def setUp(self):
+        self.d = driver()
+        self.tmp = tempfile.TemporaryDirectory(prefix="named-nb2-probe-")
+        self.saved = (self.d.CPUINFO, self.d._run_text, self.d.shutil.which, self.d.platform.system)
+
+    def tearDown(self):
+        self.d.CPUINFO, self.d._run_text, self.d.shutil.which, self.d.platform.system = self.saved
+        self.tmp.cleanup()
+
+    def cpuinfo(self, flags_line):
+        p = pathlib.Path(self.tmp.name) / "cpuinfo"
+        p.write_text("processor\t: 0\nmodel name\t: Some CPU @ 3.00GHz\n%s\n" % flags_line)
+        self.d.CPUINFO = p
+
+    def test_the_hypervisor_flag_makes_it_a_virtual_machine(self):
+        self.d._run_text = FakeRun({})
+        self.cpuinfo("flags\t\t: fpu vme sse2 hypervisor lahf_lm")
+        v, why = self.d.Probes().virtualised()
+        self.assertIs(v, True)
+        self.assertIn("hypervisor", why)
+        self.cpuinfo("flags\t\t: fpu vme sse2 lahf_lm")
+        v, why = self.d.Probes().virtualised()
+        self.assertIs(v, False)
+        self.cpuinfo("flags\t\t: fpu vme nothypervisorflag")  # a word that merely contains it is not the flag
+        self.assertIs(self.d.Probes().virtualised()[0], False)
+
+    def test_without_flags_the_other_witnesses_are_asked_and_then_it_is_unknown(self):
+        self.d.CPUINFO = pathlib.Path(self.tmp.name) / "no-such-file"
+        self.d.platform.system = lambda: "Darwin"
+        self.d._run_text = FakeRun({"sysctl": (0, "1\n", "")})
+        self.assertEqual(self.d.Probes().virtualised()[0], True)
+        self.d._run_text = FakeRun({"sysctl": (0, "0\n", "")})
+        self.assertEqual(self.d.Probes().virtualised()[0], False)
+        self.d.platform.system = lambda: "Linux"
+        self.d._run_text = FakeRun({"systemd-detect-virt": (0, "kvm\n", "")})
+        self.assertEqual(self.d.Probes().virtualised()[0], True)
+        self.d._run_text = FakeRun({"systemd-detect-virt": (1, "none\n", "")})
+        self.assertEqual(self.d.Probes().virtualised()[0], False)
+        self.d._run_text = FakeRun({})
+        v, why = self.d.Probes().virtualised()
+        self.assertIsNone(v)
+        self.assertIn("no way to tell", why)
+
+    def test_docker(self):
+        d = self.d
+        d.shutil.which = lambda name, **kw: None
+        self.assertEqual(d.Probes().docker()["status"], "not-installed")
+        d.shutil.which = lambda name, **kw: "/usr/bin/docker"
+        d._run_text = FakeRun({"docker": (0, "soak-1\nweb\n", "")})
+        r = d.Probes().docker()
+        self.assertEqual((r["status"], r["containers"]), ("ok", ["soak-1", "web"]))
+        d._run_text = FakeRun({"docker": (0, "", "")})
+        self.assertEqual(d.Probes().docker()["containers"], [])
+        d._run_text = FakeRun({"docker": (1, "", "Cannot connect to the Docker daemon\nsecond line")})
+        r = d.Probes().docker()
+        self.assertEqual((r["status"], r["containers"]), ("error", []))
+        self.assertIn("Cannot connect", r["detail"])
+        self.assertNotIn("second line", r["detail"])
+
+    def test_soak_is_pgrep_without_the_driver_and_pgrep_itself(self):
+        d = self.d
+        d._run_text = FakeRun({"pgrep": (0, "101 /bin/sh soak.sh\n202 python3 scripts/bench_named.py --note soak\n303 pgrep -af soak\n", "")})
+        r = d.Probes().soak()
+        self.assertEqual(r["found"], True)
+        self.assertEqual(r["lines"], ["101 /bin/sh soak.sh"])
+        d._run_text = FakeRun({"pgrep": (1, "", "")})
+        self.assertEqual(d.Probes().soak()["found"], False)
+        d._run_text = FakeRun({})
+        r = d.Probes().soak()
+        self.assertEqual(r["found"], False)
+        self.assertIn("not available", r["detail"])
+
+    def test_uptime_is_recorded_as_it_is_said(self):
+        d = self.d
+        d._run_text = FakeRun({"uptime": (0, " 12:10:57 up 5:16,  0 user,  load average: 0.34, 0.25, 0.10\n", "")})
+        self.assertEqual(d.Probes().uptime(), "12:10:57 up 5:16,  0 user,  load average: 0.34, 0.25, 0.10")
+        d._run_text = FakeRun({})
+        self.assertIn("not available", d.Probes().uptime())
+
+
+class MoreAnswerGate(Shared):
+    """Cases the first mutant runs showed were not held."""
+
+    def test_a_numeric_key_must_be_the_same_text(self):
+        d = driver()
+        rows = [list(r) for r in self.ref["q4"]["rows"]]
+        rows[0][0] = rows[0][0] + ".0"  # the key 1 as 1.0
+        v = d.compare_answer(BY_ID["q4"], self.ref["q4"], answer_bytes(self.ref["q4"]["columns"], rows), "double", exact=d.exact_means(self.path)["q4"])
+        self.assertFalse(v["ok"])
+
+    def test_a_mean_without_its_exact_value_is_not_taken_on_trust(self):
+        d = driver()
+        rows = [list(r) for r in self.ref["q4"]["rows"]]
+        rows[0][1] = rows[0][1][:-1] + str((int(rows[0][1][-1]) + 1) % 10)  # a different value: only the exact mean could say if it is within a billionth
+        v = d.compare_answer(BY_ID["q4"], self.ref["q4"], answer_bytes(self.ref["q4"]["columns"], rows), "double", exact=None)
+        self.assertFalse(v["ok"])
+        self.assertIn("exact mean", v["problem"])
+
+    def test_a_huge_exponent_is_refused_not_computed(self):
+        d = driver()
+        rows = [list(r) for r in self.ref["q1"]["rows"]]
+        rows[0][1] = "1e999999999"
+        self.assertFalse(d.compare_answer(BY_ID["q1"], self.ref["q1"], answer_bytes(self.ref["q1"]["columns"], rows), "double")["ok"])
+        rows[0][1] = "9" * 70
+        self.assertFalse(d.compare_answer(BY_ID["q1"], self.ref["q1"], answer_bytes(self.ref["q1"]["columns"], rows), "double")["ok"])
+
+    def test_a_decimal_sum_is_held_to_its_exact_value_by_tolerance(self):
+        d = driver()
+        rows = [list(r) for r in self.ref["q5"]["rows"]]
+        truth = Fraction(Decimal(rows[3][3]))
+        for factor, ok in ((Fraction(1, 10**10), True), (Fraction(5, 10**9), False)):
+            variant = [list(r) for r in rows]
+            variant[3][3] = "%.17g" % float(truth * (1 + factor))
+            v = d.compare_answer(BY_ID["q5"], self.ref["q5"], answer_bytes(self.ref["q5"]["columns"], variant), "double")
+            self.assertEqual((v["ok"], v["level"]), (ok, "tolerance" if ok else None), v)
+
+    def test_a_nul_byte_in_a_header_a_double_engine_prints_is_refused(self):
+        d = driver()
+        raw = self.good_q1().replace(b"id1,", b"id1\x00,", 1)
+        self.assertFalse(d.compare_answer(BY_ID["q1"], self.ref["q1"], raw, "double")["ok"])
+        self.assertFalse(d.compare_answer(BY_ID["q1"], self.ref["q1"], self.good_q1().replace(b"\n", b"\n\n", 1), "double")["ok"])
+
+    def good_q1(self):
+        return answer_bytes(self.ref["q1"]["columns"], self.ref["q1"]["rows"])
+
+    def test_the_exact_means_are_checked_against_the_reference(self):
+        d = driver()
+        ex = d.exact_means(self.path)
+        self.assertIsNone(d.check_exact_against_reference(ex, self.ref))
+        bad = {k: dict(v) for k, v in ex.items()}
+        key = next(iter(bad["q3"]))
+        bad["q3"][key] = (bad["q3"][key][0] + Fraction(1, 10**6),)
+        self.assertIn("q3", d.check_exact_against_reference(bad, self.ref))
+        short = {k: dict(v) for k, v in ex.items()}
+        del short["q4"][next(iter(short["q4"]))]
+        self.assertIn("q4", d.check_exact_against_reference(short, self.ref))
+
+    def test_a_mean_is_taken_from_the_one_questions_part_or_from_the_whole(self):
+        d = driver()
+        ex = d.exact_means(self.path)
+        rows = [list(r) for r in self.ref["q3"]["rows"]]
+        key = (rows[0][0],)
+        rows[0][2] = "%.17g" % float(ex["q3"][key][0])
+        raw = answer_bytes(self.ref["q3"]["columns"], rows)
+        self.assertTrue(d.compare_answer(BY_ID["q3"], self.ref["q3"], raw, "double", exact=ex)["ok"])
+        self.assertTrue(d.compare_answer(BY_ID["q3"], self.ref["q3"], raw, "double", exact=ex["q3"])["ok"])
+
+
+class MoreOrchestration(Shared):
+    def setUp(self):
+        self.d = driver()
+        self.fake = Fake(self.d, self.ref["q1"])
+
+    def test_the_two_forms_of_table_must_give_the_same_bytes(self):
+        d = self.d
+        calls = []
+        entry = self.ref["q1"]
+        good = answer_bytes(entry["columns"], entry["rows"])
+        other = answer_bytes(entry["columns"], list(reversed(entry["rows"])))
+
+        def launch(argv, env=None, capture=True, timeout=120):
+            calls.append(argv[-1])
+            return d.Outcome(0, 0.1, other if argv[-1] == "query" else good, b"", False)
+
+        def form(qid, file):
+            return d.Form(["t", "flags"], ["t", "flags", "timed"], {}, ["t", "query"])
+
+        c = d.Contender(name="table@1", family="table", threads="1", profile="exact", version="0.3.0", form=form)
+        ctx = d.Context(launch=launch, rusage=lambda *a, **k: {"peak_rss_kb": 1, "cpu_s": 0.1}, emit=self.fake.lines.append, runs=2, timeout=120, file="F", ref={"q1": entry}, exact={}, table=None)
+        (r,) = d.run_question(ctx, BY_ID["q1"], [c])
+        self.assertEqual(r["status"], "wrong-answer")
+        self.assertIs(r["forms_equal"], False)
+        self.assertNotIn("timing", r)
+        self.assertNotIn("answer", r)
+        self.assertNotIn("timed", calls)
+        # the same bytes: timed, and recorded
+        other = good
+        calls.clear()
+        ctx.emit = self.fake.lines.append
+        (r,) = d.run_question(ctx, BY_ID["q1"], [c])
+        self.assertEqual(r["status"], "ok")
+        self.assertIs(r["forms_equal"], True)
+
+    def test_an_operator_skip_by_name_or_family(self):
+        d = self.d
+        ctx = self.fake.context()
+        ctx.skip = {("q1", "slow"): "out of memory at 1e5", ("q1", "fake"): "all of the family"}
+        recs = d.run_question(ctx, BY_ID["q1"], [self.fake.contender("slow"), self.fake.contender("other")])
+        for r in recs:
+            self.assertEqual(r["status"], "not-run")
+            self.assertIn("skipped by the operator", r["reason"])
+        self.assertIn("out of memory at 1e5", recs[0]["reason"])
+        self.assertIn("all of the family", recs[1]["reason"])
+        self.assertEqual(self.fake.calls, [])
+
+    def test_a_failure_in_the_measured_run_loses_the_times(self):
+        d = self.d
+        ctx = self.fake.context()
+        ctx.rusage = lambda argv, env=None, timeout=120: None
+        recs = d.run_question(ctx, BY_ID["q1"], [self.fake.contender("good")])
+        self.assertEqual(recs[0]["status"], "failed-while-timing")
+        for key in ("timing", "peak_rss_kb", "cpu_s"):
+            self.assertNotIn(key, recs[0])
+
+    def test_a_timeout_while_timing_is_a_failure_with_the_limit(self):
+        d = self.d
+        base = self.fake.launch
+
+        def launch(argv, env=None, capture=True, timeout=120):
+            if argv[-1] == "timed":
+                return d.Outcome(None, timeout, b"", b"", True)
+            return base(argv, env=env, capture=capture, timeout=timeout)
+
+        ctx = self.fake.context()
+        ctx.launch = launch
+        recs = d.run_question(ctx, BY_ID["q1"], [self.fake.contender("good")])
+        self.assertEqual(recs[0]["status"], "failed-while-timing")
+        self.assertIn("over 120 s", recs[0]["reason"])
+
+
+class MoreConditions(unittest.TestCase):
+    def test_the_load_line_is_a_quarter_of_the_machines_cores_not_the_usable_ones(self):
+        d = driver()
+        c = d.collect_conditions(FakeProbes(cpu_count=16, affinity=4, loadavg=(2.0, 0.0, 0.0)), run_info())
+        self.assertTrue(d.evaluate_publishable(c)[0])
+        c = d.collect_conditions(FakeProbes(cpu_count=16, affinity=4, loadavg=(4.5, 0.0, 0.0)), run_info())
+        self.assertFalse(d.evaluate_publishable(c)[0])
+
+    def test_incomplete_conditions_are_never_publishable(self):
+        d = driver()
+        c = d.collect_conditions(FakeProbes(), run_info())
+        del c["file"]["sha256"]
+        ok, reasons = d.evaluate_publishable(c)
+        self.assertFalse(ok)
+        self.assertIn("file.sha256", reasons[0])
+
+    def test_a_load_that_is_not_three_numbers_is_missing(self):
+        d = driver()
+        for bad in ([0.1], [0.1, 0.2], "0.1,0.2,0.3", [0.1, "x", 0.3], []):
+            c = d.collect_conditions(FakeProbes(), run_info())
+            c["load"]["start"] = bad
+            with self.subTest(bad):
+                self.assertEqual(d.missing_conditions(c), ["load.start"])
+
+    def test_the_snapshot_holds_the_values_of_the_start(self):
+        d = driver()
+        p = FakeProbes(loadavg=(0.5, 0.5, 0.5))
+        snap = d.Snapshot(p)
+        p.over["loadavg"] = (9.0, 9.0, 9.0)
+        self.assertEqual(snap.loadavg(), (0.5, 0.5, 0.5))
+        self.assertEqual(snap.cpu_count(), 16)
 
 
 class MutantsScript(unittest.TestCase):
