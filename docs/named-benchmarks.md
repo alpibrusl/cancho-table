@@ -1,6 +1,8 @@
 # Named benchmarks: a design for externally comparable measurements
 
-> **Status (2026-10-15): accepted, and NB1 built.** The maintainer accepted every recommendation of section 15 on 2026-10-15: Q1 groupby q1 to q5
+> **Status (2026-10-20): accepted, NB1 and NB2 built.** NB2 (section 18) is the timing driver `scripts/bench_named.py` with the answer gate, the groupby forms of DuckDB, csvtk, Miller and
+> pandas validated against NB1's reference, and a 1e6 smoke step on one shared cloud VM whose numbers are recorded and **not publishable**; Mac and gram steps, 1e7 and 1e8 are not run.
+> *(Status of 2026-10-15 follows.)* The maintainer accepted every recommendation of section 15 on 2026-10-15: Q1 groupby q1 to q5
 > and join q1 to q5 first; Q2 our own seeded Python generator, labelled as such, no R install; Q3 R only on gram and only as a separate yes (so not now); Q4 no
 > 12 GB 1BRC file for now; Q5 a measured, capped ClickBench/TLC download is allowed later (not in NB1); Q6 no `--no-header` for the benchmark's sake; Q7 no
 > rounding-mode flag for `mean`; Q8 the taxi set deferred; Q9 and Q10 as recommended; Q11 gram cores 0-6 only after confirming no soak is running (`pgrep`,
@@ -161,14 +163,16 @@ comparison (the Mac was at 12.8 to 17.7 when read, section 2.3, and the Linux li
   the order rotating), as `bench_parallel.py` does. All runs are kept in the JSON result, the **median** is reported next to the minimum, and the first
   run is listed separately (db-benchmark reports run 1 and run 2; ClickBench reports one cold and the best of two hot). 1BRC's own statistic (five runs,
   drop the slowest and the fastest, mean of three) is also computed for 1BRC, as a second column.
-* **Peak resident set** of one extra run (`/usr/bin/time -l` on macOS, `-v` on Linux), as today.
+* **Peak resident set** of one extra run (`/usr/bin/time -l` on macOS, `-v` on Linux), as today. **[corrected in NB2]** The driver reads it from `wait4` through a small launcher of its own (section 18, reading 7), because
+  `/usr/bin/time` is not present on the Linux VM NB2 ran on; the launcher's own resident set is a floor under every figure and is recorded with the result.
 * **CPU time** (user plus system) of the same run, so that a multi-threaded contender's wall time is not read without its cost.
-* **Output** to `/dev/null` for the timed runs; a separate untimed run writes the answer to a file for the gate.
+* **Output** to `/dev/null` for the timed runs; a separate untimed run gives the answer for the gate. **[corrected in NB2]** The answer is read from a pipe, not written to a file (reading 6).
 * **Cache**: **warm only.** Dropping the page cache needs `sudo purge` (macOS) or a write to `/proc/sys/vm/drop_caches` (Linux), which this work does not do
   (the gram instruction is "no kernel settings"). The data is read once before the first timed run, and the result says "warm page cache". ClickBench's
   "cold" and "hot" columns are therefore not reproduced; only a hot-like figure is.
 * **Thread counts**: `table` at 1 and at the machine's chosen number (6 on gram, as the page does; 4 and 16 on the Mac); DuckDB at 1 and at its default; csvtk at 1
-  and Miller at 1 (their own parallel flags are reported if used).
+  and Miller at 1 (their own parallel flags are reported if used). **[corrected in NB2]** Miller 6 has no thread flag: its "1" is the environment variable `GOMAXPROCS=1` of its Go runtime (reading 8); pandas has no setting and is
+  recorded as "default".
 
 ### 3.3 The gate: the answer before the time
 
@@ -235,6 +239,7 @@ decides whether 1e7 and 1e8 are run.
 
 The exact command line of every contender is a function in `scripts/named/` and **each is validated against the reference before it is used**; the syntax
 of the csvtk, Miller and pandas forms is **unverified** at the time of writing (only `table` and DuckDB forms were read in the owner's scripts or probed).
+**[corrected in NB2]** The forms are functions of `scripts/bench_named.py` (not `scripts/named/`, section 0), and the groupby forms of all five are validated against the reference at 20,000 rows for q1 to q5 and q10 (section 18); the join forms (5.3) stay unverified.
 
 ## 4. db-benchmark, groupby
 
@@ -285,6 +290,8 @@ for `v3`), `--max-rows` (default 10,000,000, ceiling 1,000,000,000: it bounds **
 
 DuckDB: the owner's SQL, over `read_csv('FILE')` instead of a loaded table, `COPY (...) TO '/dev/null' (FORMAT csv)`. csvtk: `csvtk summary -g id1 -f v1:sum` (unverified syntax). Miller:
 `mlr --icsv --ocsv stats1 -a sum -f v1 -g id1` (unverified). pandas: `pd.read_csv(FILE).groupby('id1', as_index=False)['v1'].sum()` timed as a process.
+**[corrected in NB2]** All four are validated (section 18, reading 8): csvtk's `summary` prints floats to **2 decimals by default** (`3128.00`, and a mean rounded at 2 decimals fails any check), so the form passes `-w 12`; Miller's `stats1` applies every
+accumulator to every field, so a question that asks `sum v1` and `mean v3` is `stats1 -a sum,mean -f v1,v3 then cut -o -f id3,v1_sum,v3_mean`; pandas groups with `sort=False` and writes with `to_csv`.
 
 ## 5. db-benchmark, join
 
@@ -495,7 +502,7 @@ All scripts start a process only through `import procs as subprocess` (`scripts/
 
 | file | what | gate |
 |---|---|---|
-| `scripts/bench_named.py` | the driver: `--suite groupby|join|1brc|clickbench|taxi|json` `--size 1e6` `--runs 5` `--contenders ...` `--out result.json`; checks disk and load first; **prints no time before the answer gate has passed** | G-answer: a deliberately wrong contender (a stub that drops one group) must be reported and not timed; G-refusal: a contender that refuses must be "refused", not "slow"; G-disk, G-load as above |
+| `scripts/bench_named.py` | the driver: `--suite groupby|join|1brc|clickbench|taxi|json` `--size 1e6` `--runs 5` `--contenders ...` `--out result.json`; checks disk and load first; **[corrected in NB2]** the flags are `--rows` (not `--size`), `--out` (the data directory) and `--results` (the JSON); the disk is checked before generating and the load is read and recorded at the start, not a refusal (a loaded run is flagged, Q12); **prints no time before the answer gate has passed** | G-answer: a deliberately wrong contender (a stub that drops one group) must be reported and not timed; G-refusal: a contender that refuses must be "refused", not "slow"; G-disk, G-load as above |
 | `scripts/named/gen_groupby.py`, `gen_join.py`, `gen_1brc.py` | seeded generators (4.2, 5.1, 6.2); each writes `<name>.meta.json` with seed, N, K, sha256, the reference | G-repro: the same seed twice gives the same sha256; G-ref: the reference equals a second computation from the written file; both at 1e5 rows in the unit tests |
 | `scripts/named/questions_*.py` | per suite: the owner's question text, the `table` flag form and `--query` form, each contender's command, and the classification (E, B, X) with the blocker and its link | G-forms: the flag form and the `--query` form give the same bytes on every question that has both; G-class: a question marked X must be refused by `table` with a tagged rule (so the table cannot go stale when a feature lands: an X that starts working fails the gate and must be re-classified) |
 | `scripts/named/reference.py` | the independent reference (exact integers; `Fraction` for means) | mutants in the style of `scripts/mutlib.py`: a reference with an off-by-one or a swapped rounding mode must be caught by the 1BRC sample files |
@@ -517,7 +524,7 @@ The suites' results are JSON files (`results/named-<suite>-<machine>-<date>.json
 |---|---|---|---|
 | **NB0** | this document | the questions, the mapping, the blockers are written down with sources | |
 | **NB1 (built, section 17)** | `scripts/named/` generators and references for **groupby** (own generator, seed 108), `scripts/named/questions_groupby.py`, the unit tests and gates G-repro, G-ref, G-forms, G-class. **No timing driver yet** | the layout and the reference are right before any clock; the `table` forms of q1 to q5 equal their `--query` forms q6 to q9 are refused as classified and q10 equals the reference up to the group ceiling | nothing |
-| **NB2** | `scripts/bench_named.py` with the answer gate, the contender forms for groupby (DuckDB, csvtk, Miller, pandas), the 1e6 step on the Mac and gram, the real sizes and the real time of each step; the maintainer decides 1e7 and 1e8 | the driver does not print a time for a wrong or refused answer (G-answer, G-refusal) | NB1 |
+| **NB2 (built, section 18)** | `scripts/bench_named.py` with the answer gate, the contender forms for groupby (DuckDB, csvtk, Miller, pandas), the 1e6 step on the Mac and gram, the real sizes and the real time of each step; the maintainer decides 1e7 and 1e8. **[corrected in NB2]** the 1e6 step ran on one shared VM only, recorded and not publishable; the Mac and gram steps are not run | the driver does not print a time for a wrong or refused answer (G-answer, G-refusal) | NB1 |
 | **NB3** | **join**: `gen_join.py`, the `--join` forms, the pipe check; q3 only once J2 merges | the join answers equal the owner's `chk`; the build-side bound is reported where it refuses | NB2; J2 (#62) for q3; J1 for the rest |
 | **NB4** | publish groupby (and join) sections in `docs/benchmarks.html` from measured results | claims only measured | NB2, NB3 and unloaded runs |
 | **NB5** | **1BRC**: `gen_1brc.py`, the formatter, the eleven sample pairs as a gate, the Java baseline as yardstick, 1e6 to 1e8 | `table` plus the formatter reproduces the owner's `.out` files, or the report says exactly where it does not | NB2 |
@@ -555,8 +562,8 @@ Each slice is a pull request with its gates written first and failing against `m
 
 ## 16. What was not measured, and what is unverified
 
-* **Nothing was timed.** No contender was run on any benchmark data; no `table` speed on any named question is claimed.
-* **Unverified** (not in the sources read, or not checked): which of run 1 and run 2 the db-benchmark charts plot (F10); the number of runs in Mark Litwintschik's "fastest" (F18); the public availability of his CSV dump; the row count and uncompressed size of ClickBench's `hits.csv` (F21); the distinct counts of its columns, so every B in section 8.2; the TPC-DS query count; whether the official 1e9 file's 1BRC expected output is published; whether `java CreateMeasurements.java N` runs without the Maven build; the syntax of the csvtk, Miller and pandas forms (3.6, 4.5, 5.3); DuckDB's `read_csv` typing options for the 1BRC form (6.3); that every one of the 413 stations is in the Basic Multilingual Plane (6.3); whether a plain scan of 1e8 rows needs `--max-rows` raised (4.4); whether the build side of join q5 fits at 1e7 rows (5.2); the compressed bytes of a ClickBench prefix (8.4).
+* **Nothing was timed.** No contender was run on any benchmark data; no `table` speed on any named question is claimed. **[corrected in NB2]** True of this document as a design and of NB1; NB2 timed the groupby questions once at 1e6 rows on a shared VM (section 18.3), recorded and not publishable, and still claims no speed.
+* **Unverified** (not in the sources read, or not checked): which of run 1 and run 2 the db-benchmark charts plot (F10); the number of runs in Mark Litwintschik's "fastest" (F18); the public availability of his CSV dump; the row count and uncompressed size of ClickBench's `hits.csv` (F21); the distinct counts of its columns, so every B in section 8.2; the TPC-DS query count; whether the official 1e9 file's 1BRC expected output is published; whether `java CreateMeasurements.java N` runs without the Maven build; the syntax of the csvtk, Miller and pandas forms (3.6, 4.5, 5.3) **[verified for groupby in NB2, section 18; the join forms remain]**; DuckDB's `read_csv` typing options for the 1BRC form (6.3); that every one of the 413 stations is in the Basic Multilingual Plane (6.3); whether a plain scan of 1e8 rows needs `--max-rows` raised (4.4) **[still unverified after NB2: the probe exists and ran at 1e6 only, section 18.3]**; whether the build side of join q5 fits at 1e7 rows (5.2); the compressed bytes of a ClickBench prefix (8.4).
 * **Computed, not measured:** the file sizes of section 3.5 (formula in the text), the group counts of section 4.3, the 10.7-byte arithmetic in 5.2, the exact mean 25.45 and the rounding rule read from the 1BRC sample (F17).
 * **Probed on five-row files with the J2 branch's build, no clock**: the flag forms in sections 4 to 8 that say "probed"; the J1/J2 forms in 5.2 are from `docs/joins.md` and the probe of `--join ... --on id1 --join-prefix s_` and `--join-type left`.
 * **Open pull requests this design leans on**: #62 (J2), #63 (A1). If either changes before merge, sections 5.2 and 8.2 are re-read.
@@ -602,3 +609,119 @@ mutated references (7), mutated commands (9) and a reference with truncating or 
 7. **q3 and q5 at 1e7 rows** have 100,000 groups, exactly the default `--max-groups`; the commands pass `--max-groups 1000000` anyway, and `table` answers them at 1e7 (checked by the gate).
 
 **Not done in NB1, by design:** no timing, no contender other than `table` and SQLite-as-reference, no driver (NB2), no join (NB3), no R, no download, no data in git.
+
+## 18. NB2: what was built, what it measured, and what this document had wrong
+
+Built: `scripts/bench_named.py` (the timing driver, 1,305 lines), `scripts/bench_named_mutants.py` (89 mutants of its logic, `--check` in CI) and
+`tests/conformance/test_bench_named.py` (116 tests, in CI). `scripts/bench_named_ref.py`, `bench_named_gen.py` and `bench_named_questions.json` of NB1 are used unchanged. The tool is untouched, so is
+its authority row. Everything that starts a process does it through `import procs as subprocess`. The CI changes are two: `bench_named` in the loop of `--check` of the mutants, and `pandas` in the line that installs
+what the gates validate with (so that pandas' form is held to the reference in CI as well; csvtk and Miller are not installed there and their tests are skipped with a printed reason).
+
+### 18.1 What the driver does
+
+`python3 scripts/bench_named.py --rows 1e6 [--runs 5] [--questions q1,q2,q3,q4,q5] [--contenders table,duckdb,csvtk,mlr,pandas] [--threads N] [--out DIR] [--results FILE]`, one step at a time:
+
+1. **Before it generates anything** it reads the conditions of 3.1 (a `Snapshot` of the machine: one-minute load, uptime, `docker ps`, `pgrep -af soak`, the virtual-machine witness), so that its own work is not in the load it records.
+2. It writes NB1's file (or reuses it when its sha256 is the one in its metadata), holds it to NB1's layout, computes NB1's reference twice (streaming and SQLite) and refuses to go on if they differ.
+3. It runs the **scan probe** (4.4): `table --agg count` and `table --select id1` over the file, recording the exit status, the rule tag if refused and the rows written, no clock. At `--rows 1e8 --accept-large --scan-probe-only` this
+   is the first thing the 1e8 step reports.
+4. For each question and each contender it runs the form once and judges the answer (`compare_answer`, below). A **wrong answer**, a **refusal** (`refused`, with `table`'s rule tag), a **crash** (a signal or a trap status) and a **timeout**
+   (the limit, 120 s by default) are recorded as that, with the reason and **no time**. A contender that timed out is dropped from the larger steps of that question (`--drop-from RESULT.json`).
+5. Only when every contender of the question has been judged: one untimed warm-up each, then N rounds in which each contender runs once and the order rotates (`a b c`, `b c a`, `c a b`, ...), output to /dev/null; then one more run each for the peak resident set and the CPU time. The
+   figure is the **minimum** of N, with the median and the first run beside it and all runs kept. A contender that fails during any of these loses its times and is recorded `failed-while-timing`.
+6. `q6` to `q9` are not run: their probe (the nearest spelling, from NB1) must still be refused with the stated rule, now, and the record says "not-expressible" with the blocker; a probe that is accepted or refused with another rule is a `class-mismatch` and fails the run.
+7. It writes a JSON result (`schema bench-named.v1`) with the conditions, the records and the step's real sizes and wall time, and prints a line per answer (`answer  q3  duckdb@1  ok (only by tolerance ...)`) and, after the answers of the question, a line per time (`time  q3  table@1  min ... of 5 ...`).
+
+Exit status: 0 the step ran (a contender's refusal or timeout is a result), 3 the driver refused (a rule tag: `bench.large-size`, `bench.inside-repo`, `bench.disk`, `bench.not-publishable`, `bench.conditions-missing`, `bench.result-invalid`, `bench.suite-not-built`,
+`bench.args` and others), 4 a gate failed (a wrong answer, a stale classification, a file that is not NB1's layout, a reference the two paths disagree on).
+
+**The comparison of an answer** (`compare_answer`; G-answer). The output must be UTF-8, `\n`-terminated, with a final newline, no carriage return, no NUL, no byte order mark, and a rectangle of cells. Then, by profile:
+`exact` (`table`): the header is the question's columns and every cell is the reference's text. `double` (every other engine): keys are the reference's text; an integer column (`sum` of `v1`, `v2`, `count`) is the same integer in whatever spelling (`3128.00` is
+`3128`, level *numeric*); a decimal sum (`sum:v3`) and a mean are the same number or within **1e-9 relative** of the *exact* value (level *tolerance*, marked "only by tolerance" in the output and the result); the header only has to have the right number of columns.
+The exact value of a mean is the rational of a second pass over the file (`exact_means`), which must round to NB1's reference text or the run stops. Rows are a set (3.3; an ordered comparison is there for the later suites and is tested). An integer is never taken by tolerance.
+
+### 18.2 The readings NB2 had to choose (the design is silent or ambiguous)
+
+1. **Loaded** is: the one-minute load at the **start** exceeds a quarter of the machine's logical CPUs (`os.cpu_count()`, not the CPUs the process may use), strictly (equal is not loaded). The load after the run is recorded, not judged (the run's own work is in it).
+2. **Shared VM** is any guest of a hypervisor: the `hypervisor` flag of `/proc/cpuinfo` (Linux x86), `sysctl kern.hv_vmm_present` (macOS), `systemd-detect-virt` (otherwise). A machine that cannot be told is treated as shared. There is **no override flag**: a dedicated machine is one where the witness says so.
+3. **Soak and containers** (Q11): `pgrep -af soak` finding a process (the driver's own line and `pgrep` excluded), or `docker ps` listing a container or failing while docker is installed, is a reason. No docker installed is not.
+4. **Publishable** is false, with the reasons listed, when any of: loaded, shared VM (or unknown), soak, container (or docker unreadable), **fewer than 5 runs**, or the conditions of 3.1 are incomplete. The writer of a published table (`--write-table`, `write_published_table`) recomputes this from the recorded conditions and refuses
+   (`bench.not-publishable`, `bench.conditions-missing`, `bench.result-invalid`) whatever the file's own flag says; it also refuses a result in which a contender that did not pass carries a time.
+5. **Pins** (3.6) are recorded with the version read (`pin`, `pinned`, a note); a version that differs from the pin does not by itself make a run unpublishable (the numbers are of the version read).
+6. **The answer** for the gate is read from a pipe at the untimed run, not written to a file (3.2 said a file).
+7. **Peak resident set and CPU time** come from `wait4` through a small launcher run with `python -S -E`, because `/usr/bin/time` is not on the VM; a launcher's own resident set is a floor under every figure, so the floor (the reading for `true`) is recorded in the result as `rss_floor_kb`.
+8. **Forms.** table: the flag form of NB1 with `--threads N`, timed; the `--query` form is run once per question and must give the same bytes (`forms_equal`). DuckDB: the owner's SQL over `read_csv('FILE')`, `COPY (...) TO '/dev/null' (FORMAT csv)`, `SET threads=1` or its default; the **CLI when there is one, else the Python module**
+   (the same statements; the record says which). csvtk: `csvtk -j 1 summary -w 12 -g KEYS -f col:op,...` (`-w 12` because the default is 2 decimals). Miller: `mlr --icsv --ocsv stats1 -a OPS -f COLS -g KEYS [then cut -o -f ...]` with `GOMAXPROCS=1` for "1 thread" (`stats1` applies each accumulator to each field, so the
+   extra ones are computed and cut). pandas: `pd.read_csv(FILE).groupby(KEYS, as_index=False, sort=False).agg(...).to_csv(...)` as a process (the import is in the time). Threads: table at 1 and at `--threads` (default the usable CPUs), DuckDB at 1 and default, csvtk 1, Miller 1, pandas default.
+9. **q6 to q9** are probes of `table` only. The other contenders are not asked them: there is no reference answer for a median, a difference of aggregates, a per-group top-two or a correlation, and NB1 did not build one. **q10** is opt-in (`--questions ...,q10`): its reference holds a group per row.
+10. **1e7 and 1e8** need `--accept-large`; the estimate (bytes, the free space needed, the process launches) is printed first, and without the flag the driver refuses with `bench.large-size` before touching the disk. The estimate has **no wall time**: nothing measured would support one. `--estimate` prints it and stops.
+11. `--skip QID:CONTENDER[=REASON]` records a contender as not-run with the operator's reason, and `--taskset LIST|gram` runs every contender under `taskset -c` (`gram`: cores 0-6 if no soak and no container, else 0-5, Q11), recording the cores. Both exist for the maintainer's runs and are tested; `--taskset` was not run here.
+12. Only the **groupby** suite is built; `--suite join` and the others are refused with `bench.suite-not-built`.
+13. **NB1's `gate()` is not called.** It treats a refusal of `table` as a problem, and a refusal (q10 above the group ceiling) is a result here; the driver does its two checks itself: the `--query` form equal to the flag form in bytes (`forms_equal`) and the probe of each not-expressible question (`probe_not_expressible`). Its reference (`reference`, `reference_sqlite`, `validate_layout`) is used unchanged.
+14. A **result's data directory** is `--out` (default as NB1's); a path inside the repository is refused (`bench.inside-repo`), a disk with less than three times the file's estimated size free is refused before generating (`bench.disk`).
+
+### 18.3 What was measured, with its conditions
+
+All of it on **one machine, a shared cloud VM**, so the run is **recorded and not published** (`publishable: false`, reasons below), and **no speed of any contender is claimed or compared here**: the times in the result file are there to prove that the driver records them, with their
+conditions, only for answers that passed.
+
+| condition | value (from the result file `named-groupby-vm-2026-10-20-1e6.json`, kept outside the repository) |
+|---|---|
+| machine | `vm`, Linux x86-64, Intel(R) Xeon(R) Processor @ 2.10GHz, 4 logical CPUs (4 usable), 16,874,930,176 bytes of RAM, Python 3.13.16; the `hypervisor` flag is set |
+| load before / after the step (1, 5, 15 min) | 1.60, 1.58, 0.94 / 1.38, 1.50, 1.21; the line for "loaded" is 1.00. The four mutant shards of section 18.4 had ended minutes before, and during the step the same session ran light checks (the mutants' `--check`, `cancho fmt --check`, the manifest, schema and site checks, two unit tests), which the load figures include and nothing else records |
+| uptime at the start | `12:43:28 up  5:48,  0 user,  load average: 1.60, 1.58, 0.94` |
+| docker / soak | `docker ps` failed (the daemon is not reachable); `pgrep -af soak` found nothing |
+| `publishable` | **false**: loaded (1.60 over 1.00); shared virtual machine; docker unreadable so no soak container can be ruled out. (The five runs were made, so that is not a reason.) |
+| file | `G1_1e6_1e2_0_0.csv`, 49,916,813 bytes, sha256 `16f80eb8ced039012aa9bbfdde73ecf1468e57ae28c6e40611d9736d79a73d6a`, seed 108, K 100, data directory on the VM's disk, warm page cache, output to /dev/null |
+| statistic | minimum of 5 after one untimed warm-up, interleaved, the order rotating; median and first run kept; `table` at 1 and 4 threads, DuckDB at 1 and its default, csvtk `-j 1`, Miller `GOMAXPROCS=1`, pandas as it is |
+| contenders | `table` 0.3.0 (compiler `e47d647`, built from the `tools/` of `origin/main` `beab759`, which NB2 does not touch); DuckDB CLI v1.5.6 (`069cc9f9b5`); csvtk v0.38.0; Miller 6.22.0; pandas **3.0.5** (the design pins 3.0.3: recorded as `pinned: false`). The three binaries are the projects' release downloads (`duckdb_cli-linux-amd64.zip` v1.5.6, `csvtk_linux_amd64.tar.gz` v0.38.0, `miller-6.22.0-linux-amd64.tar.gz`), extracted binaries' sha256 `61238cfb...`, `3904d683...`, `9044e7e9...`, outside the repository |
+| launcher floor under every peak RSS | 7,316 KiB |
+
+What the step showed (the numbers are counts and bytes, not speeds):
+
+* **The file.** The generator's sha256 of the 1,000,000-row file is **the digest NB1 recorded on the Mac and on gram**, now also on a third machine (x86-64 Linux, Python 3.13.16): G-repro holds across three. Real size **49,916,813 bytes**; the driver's estimate (the formula of `bench_named_gen.estimate_bytes`) is 53,600,001, 7.4% over, so
+  the estimate printed before a 1e7 or 1e8 step is on the safe side by about that much (section 3.5 had "about 51 MB", NB1 corrected it to 49.9 MB; the estimate is the formula, not the design's sentence).
+* **The wall time of the step**, which the design asks NB2 to print: **599.4 s** for the whole step of 6 questions x 7 contenders (336 launches planned, 41 pairs run, see below), of which 6.3 s generating the file, 32.5 s for the layout check, the streaming reference and the SQLite cross-check, and 560.0 s for the answers, warm-ups, rounds and measured runs. The 1e7 and 1e8 steps are not extrapolated from it (this VM is shared, and the contenders do not scale alike).
+* **The gates.** Of the 42 (question, contender) pairs asked, 41 ran and **all 41 answers passed the gate**; the 42nd is csvtk on q10, skipped by the operator (below). By the level at which the answers matched the reference: **20 exact** (`table` at both thread counts on all six questions; DuckDB, Miller and pandas on q1 and q2), **6 value-equal** in another spelling (csvtk's `3128.00` for `3128` on q1 and q2;
+  DuckDB, Miller and pandas on q10, where `sum:v3` is printed `5.5` for `5.500000`) and **15 only by tolerance** (the five other contenders on q3, q4 and q5: a double against the exact decimal or mean, within 1e-9 relative). No answer was wrong, refused, crashed or timed out at this size. `table`'s `--query` form gave the bytes of its flag form on all 12 of its records (`forms_equal`).
+* **q6 to q9** were probed on the same file and each was refused with the rule NB1 classified (`agg.bad-spec` for q6, q8, q9; `query.unsupported` for q7): the four records are `not-expressible`, with their blockers.
+* **The scan probe (4.4)** at 1,000,000 rows: `table --agg count` exits 0 and answers 1000000; `table --select id1` exits 0 and writes 1,000,000 rows (6,000,004 bytes). That says nothing about 1e8 rows (a million rows is far under the default `--max-rows` of 10,000,000): the question stays open until the maintainer runs the 1e8 probe, which the driver can now do alone (`--rows 1e8 --accept-large --scan-probe-only`).
+* **csvtk on q10.** In a trial at 1e5 rows (not in the result file) `csvtk summary` of the six keys with `v3:sum,v3:count` was **killed by the kernel's OOM killer** at 13,771,076 kB resident on this 16 GB VM (the kernel log says `Memory cgroup out of memory`); the driver recorded it as `crashed: signal 9` and no time. It was not repeated at 1e6: the step ran with `--skip q10:csvtk=...`, which records the operator's reason. A refusal is a result (3.4):
+  csvtk's six-key `summary` is memory-bound far below the group ceiling of `table`, on this data.
+* **The tests that start processes** (the classes `Program` and `Forms`) ran here with all five contenders installed (csvtk, Miller and DuckDB's CLI from `/home/user/named-tools`) and, without that directory on PATH (CI's situation), with the Python module of DuckDB, pandas and `table` only, csvtk and Miller skipped with their reason printed.
+
+
+### 18.4 Mutants of the driver
+
+`scripts/bench_named_mutants.py` has **89 mutants** of the logic that decides whether a number is recorded and published, none of them touching the tool: the load line and the divisor, the cores counted, every reason of `publishable` (loaded, virtual machine, unknown machine, docker, container, soak, the minimum of N and its boundary), the completeness of the conditions, the
+writer of a published table (the flag believed, the conditions not required, a time on a failed contender, the minimum that is not the minimum), the launch, disk and opt-in arithmetic and their boundaries, the figure (maximum, last run as first, mean as median), every refusal of the parsing of an answer (final newline, carriage return, NUL, byte order mark, header spaces, the header of `table`, the number of columns, more rows,
+the order), the tolerance (its size, relative or absolute, integers, keys, a decimal sum, the level kept, an unknown exact mean), the classification of a launch (timeout first, signal, trap status, `table`'s rule tag), the order of the work (a wrong answer timed, forms of `table` that may differ, a timeout not dropped, a dropped pair or a skip launched, N+1 rounds, no rotation, no warm-up, a failure while timing kept, a failed measured run kept), the probes of the classification, the machine probes
+(the hypervisor flag, a word containing it, the Mac witness, pgrep finding the driver, docker's list, the clock, the output sink, a missing program, the snapshot), and six program-level rules (opt-in, inside the repository, a reused file without its sha256, disk, an unbuilt suite, the scan probe's row count). Unlike the mutants of the tool, it edits a copy of `scripts/` and `tests/conformance/test_bench_named.py` in a temporary
+directory, so shards run at once and the working tree is never touched; the unit classes (86 tests, a few seconds) kill all but the six program-level ones, which name the test that must.
+
+**Run for real on this machine** (`MUT_SHARD=i/4`, four shards on the four cores, `TOOLBOX_BIN` the built `table`): the first full list had **92 mutants: 85 killed, 7 survived**. The seven: *a number may have a huge exponent* (the bound 40 raised to 4000) is **equivalent** (it only bounds the cost of `Fraction(Decimal('1e999999999'))`; both bounds refuse the cell, and every reference value is a text of at most 12
+digits) and was removed with its proof in the script; *an integer may be off by a tolerance*, *a blank line is fine* and *the times of a contender that failed stay* were mutants of **dead code** (the integer guard was shadowed by `truth is None`; the explicit blank-line refusal by the rectangle check; the lines that removed times removed nothing, as they are set after every run), so the code was removed and the first re-pointed to give integers a truth; *a decimal sum is compared with a
+mean's exact value*, *a NUL byte is fine* (in the header a double engine prints) and *a probe that works is a confirmed classification* (exit 0 with the right rule) **had no test**; a test was added for each (`test_a_decimal_sum_is_held_to_its_exact_value_by_tolerance`, `test_a_nul_byte_in_a_header_a_double_engine_prints_is_refused`, `test_an_exit_zero_is_never_a_refusal_even_with_the_right_rule`). The list is 89 and the second full run killed **all 89** (shards of 23, 22, 22 and 22; about three minutes a shard).
+
+
+### 18.5 What this document had wrong, found by building NB2
+
+1. **Peak resident set** (3.2): `/usr/bin/time` is not on every machine (it is not on this VM); the driver measures with `wait4` through a launcher of its own and records the launcher's floor (7,316 KiB here), so a figure near the floor reads "at most the floor". CPU time comes from the same call.
+2. **The answer file** (3.2): the answer is read from a pipe at the untimed run.
+3. **Thread counts** (3.2): Miller 6 has no thread flag; "1" is `GOMAXPROCS=1`. pandas has none and is recorded "default".
+4. **Unverified syntax of csvtk, Miller and pandas** (3.6, 4.5): verified for the groupby questions and corrected: csvtk prints to **2 decimals by default**, so `-w 12`; Miller's `stats1` needs `then cut -o -f ...` when the accumulators differ by field; both forms equal the reference at 20,000 rows for q1 to q5 and q10. The join forms (5.3) stay unverified.
+5. **"a slow contender" (3.5)** assumed csvtk and Miller fail by minutes; on q10 csvtk fails by **memory** (killed at 13.8 GB resident at 1e5 rows). The skip with a reason (`--skip`) is what the driver offers, and the OOM is a recorded result.
+6. **The step on "the Mac and gram"** (13, NB2): this environment is neither; the step ran on one shared VM and is not publishable. The Mac and gram steps need the maintainer's machines and are not run.
+7. **The scripts' flags** (11): `--rows`, `--out`, `--results`; the load is recorded and flagged, never a refusal.
+8. **Section 16**: "Nothing was timed" was true of NB0 and NB1; NB2 timed the groupby questions at 1e6 on one shared VM, publishes nothing, and claims no speed. "The syntax of the csvtk, Miller and pandas forms" is verified for groupby (4 above); "whether a plain scan of 1e8 rows needs --max-rows raised" stays unverified (the 1e6 probe says nothing about 1e8).
+
+
+### 18.6 Not run
+
+* **Mac and gram** steps (the driver supports them: `--threads`, `--taskset gram`, `--path-class`; `--taskset` itself was not exercised on a real run here). Q11's soak confirmation on gram and the Mac's `kern.hv_vmm_present` witness were not run (the latter is covered by a fake in the tests).
+* **1e7 and 1e8** (explicit opt-in, the maintainer decides) and therefore **the 1e8 scan probe** (4.4): not run; the driver can report it alone.
+* **csvtk on q10 at 1e6** (skipped with its recorded reason after the OOM at 1e5); **q10 at 1e7 and above** (a refusal of `table` by the group ceiling, and a reference of a group a row).
+* **Joins** (NB3), 1BRC (NB5), ClickBench (NB6), the taxi set (NB7), the JSON corpus (NB8).
+* **`scripts/manifest.py --check --against ../cancho-tools/contract`**: no checkout of cancho-tools at the pinned revision here; `tools/`, `tools.toml` and the manifests are untouched by NB2, so the step has nothing new to check.
+* **Published tables:** nothing is published (NB4); `--write-table` was exercised only on fabricated conditions in the tests and on this VM's run, where it refuses.
+
