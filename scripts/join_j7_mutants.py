@@ -30,7 +30,7 @@ sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(_
 import mutlib  # noqa: E402
 
 # cheap classes first: a killed mutant stops at the first failure (mutlib runs `unittest -f`)
-TESTS = ["test_join_j7.NotOffered", "test_join_j7.Explain", "test_join_j7.Boundary", "test_join_j7.Mechanical", "test_join_j7_prune.Accounting", "test_join_j7_prune.Memory", "test_join_j7.Fuzz",
+TESTS = ["test_join_j7.NotOffered", "test_join_j7.MaxRows", "test_join_j7.Explain", "test_join_j7.Boundary", "test_join_j7.Mechanical", "test_join_j7_prune.Accounting", "test_join_j7_prune.Memory", "test_join_j7.Fuzz",
          "test_join_j7_prune.Identity", "test_join.Accounting", "test_join_j2.Accounting", "test_join_j3.Accounting", "test_join_j5.Accounting", "test_join_j5.Oracle"]
 
 JNPRUNE = "jnprune.cho"
@@ -144,6 +144,17 @@ MUTANTS = [
     ("the refusal reads the size of the wrong file", JNRUN, "                psize = jnswap.size_of(pfile);", "                psize = size;"),
     ("the refusal does not look at the delimiter of a csv answer", JNRUN, "dchange: as_csv && !fmt.b_jsonl && bdelim != delim };", "dchange: false };"),
     ("the refusal takes a --join-prefix of the empty text for a prefix", JNRUN, "                    prefixed = buffer.size(pxr) > 0;", "                    prefixed = true;"),
+    # the rows of the --join file that remain (reading 10)
+    ("the rest of the --join file is never counted against --max-rows", JNRUN, "                if bcounts.records + more_most > most {", "                if false {"),
+    ("the bytes that remain are taken to hold few rows", JNRUN, "more_most = (size - consumed) / nb + 1;", "more_most = (size - consumed) / (nb * 1000) + 1;"),
+    ("a --join file of exactly --max-rows rows is not exchanged", JNRUN, "                    } else if bcounts.records + more > most {", "                    } else if bcounts.records + more >= most {"),
+    ("a --join file of one row more than --max-rows is exchanged", JNRUN, "                    } else if bcounts.records + more > most {", "                    } else if bcounts.records + more > most + 1 {"),
+    ("rows that cannot be counted are taken for few", JNRUN, "                    if !counted_ok {\n                        rows_state = 2;", "                    if false {\n                        rows_state = 2;"),
+    ("a row with a quote left open is counted for each of its lines", JNSWAP, "                            } else if open {\n                                quoted = true;", "                            } else if false {\n                                quoted = true;"),
+    ("the blank lines of a JSON-lines file are rows", JNSWAP, "                        if !jrec.blank(line) {", "                        if true {"),
+    ("a line past --max-line-bytes is counted as a row", JNSWAP, "            } else if status == lines.long() {\n                ok = false;", "            } else if status == lines.long() {\n                ok = true;"),
+    ("a row that is not csv is counted as a row", JNSWAP, "                            if wrong {\n                                ok = false;", "                            if false {\n                                ok = false;"),
+    ("a quote that never closes is counted", JNSWAP, "    if quoted {\n        ok = false;\n    }\n    return (r, rows, ok);", "    return (r, rows, ok);"),
 ]
 
 # (mutlib reads an argument that starts with "--" as a flag, so a name that did would never be run)

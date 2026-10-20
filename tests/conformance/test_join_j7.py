@@ -654,6 +654,94 @@ class Explain(unittest.TestCase):
         self.assertGreaterEqual(agreed, 20)
 
 
+class MaxRows(unittest.TestCase):
+    """The row limit under the exchange (docs/joins.md section 22, reading 10): a `--join` file past `--max-rows` rows is refused (`limit.too-many-rows`, always: a truncated build is a wrong answer), but as the probe
+    of the exchanged call it would be cut and say `truncated`. So the exchange is offered only when the `--join` file has no more rows than `--max-rows`, and then it gives the rows of the raised-bound call."""
+
+    M = 40
+
+    def test_a_build_file_past_max_rows_is_not_exchanged_and_one_within_it_is(self):
+        rng = random.Random(77)
+        sides = (("csv", ","), ("csv", ",")), (("csv", ","), ("jsonl", ",")), (("jsonl", ","), ("csv", ",")), (("jsonl", ","), ("jsonl", ",")), (("csv", ";"), ("csv", "\t"))
+        for pside, bside in sides:
+            for nb in (self.M - 1, self.M, self.M + 1, self.M + 60):
+                case = R7.wide_case(rng, "mr", np_rows=24, nb_rows=nb)
+                sc = Scene(case, pside, bside)
+                try:
+                    plan = {"jtype": "inner", "pairs": case.pairs}
+                    a_b, a_p = R7.bounds(plan, case)
+                    for threads in ([], ["--threads", "4"]):
+                        tag = (pside, bside, nb, threads)
+                        extra = ["--max-rows", str(self.M)] + threads
+                        r = sc.run(plan, bound=a_p, extra=extra)
+                        big = sc.run(plan, bound=BIG, extra=extra)
+                        if nb <= self.M:
+                            self.assertEqual(big.status, 0, tag)
+                            self.assertEqual(refused(r)["repair"]["kind"], "choose", tag)
+                            argv = refused(r)["repair"]["options"][0]["argv"]
+                            sw = run(*argv[1:])
+                            self.assertEqual(sw.status, 0, (tag, sw.stdout[:300]))
+                            self.assertFalse(sw.data().get("truncated"), tag)
+                            self.assertEqual(sorted(json.dumps(x) for x in sw.data()["rows"]), sorted(json.dumps(x) for x in big.data()["rows"]), tag)
+                        else:
+                            self.assertEqual(big.error()["rule"], "limit.too-many-rows", tag)
+                            self.assertIn("--max-rows", reason_of(self, r), tag)
+                finally:
+                    sc.cleanup()
+
+    def test_rows_that_cannot_be_counted_are_not_exchanged(self):
+        sc = Scratch()
+        try:
+            body = "k,v\n" + "".join("k%d,%s\n" % (i, "v" * 40) for i in range(12))
+            sc.write("p.csv", "pk\nk1\nk2\n")
+            a = ["--root", sc.dir, "--join", "b.csv", "--on", "pk=k", "--max-state-bytes", "200", "--max-rows", "13", "--format", "json", "p.csv"]
+            sc.write("b.csv", body)
+            self.assertEqual(refused(run(*a))["repair"]["kind"], "choose")
+            sc.write("b.csv", body + 'x,"unclosed\n')
+            self.assertIn("cannot be counted", reason_of(self, run(*a)))
+            sc.write("b.csv", body + 'x,"a"b\n')
+            self.assertIn("cannot be counted", reason_of(self, run(*a)))
+            sc.write("b.csv", body + "x," + "y" * 500 + "\n")
+            self.assertIn("cannot be counted", reason_of(self, run(*a, "--max-line-bytes", "200")))
+            # a quote that closes is counted: the multi-line row is one row
+            sc.write("b.csv", body + 'x,"two\nlines"\n')
+            self.assertEqual(refused(run(*a))["repair"]["kind"], "choose")
+            sc.write("b.csv", body + 'x,"two\nlines"\ny,a\nz,b\n')
+            self.assertIn("more rows than --max-rows", reason_of(self, run(*a)))
+        finally:
+            sc.cleanup()
+
+    def test_blank_lines_of_a_json_lines_build_are_not_rows(self):
+        sc = Scratch()
+        try:
+            rows = "".join('{"k":"k%d","v":"%s"}\n' % (i, "v" * 40) for i in range(12))
+            sc.write("p.csv", "pk\nk1\nk2\n")
+            a = ["--root", sc.dir, "--join", "b.jsonl", "--join-input-format", "jsonl", "--join-fields", "k,v", "--on", "pk=k", "--max-state-bytes", "200", "--max-rows", "13", "--format", "json", "p.csv"]
+            sc.write("b.jsonl", rows + "\n\n   \n\n")
+            self.assertEqual(refused(run(*a))["repair"]["kind"], "choose")
+            sc.write("b.jsonl", rows + rows.splitlines()[0] + "\n" + rows.splitlines()[1] + "\n")
+            self.assertIn("more rows than --max-rows", reason_of(self, run(*a)))
+        finally:
+            sc.cleanup()
+
+    def test_a_probe_file_past_max_rows_is_not_exchanged(self):
+        rng = random.Random(78)
+        for pside, bside in ((("csv", ","), ("csv", ",")), (("jsonl", ","), ("jsonl", ","))):
+            for np_ in (self.M, self.M + 1):
+                case = R7.wide_case(rng, "pr", np_rows=np_, nb_rows=self.M)
+                sc = Scene(case, pside, bside)
+                try:
+                    plan = {"jtype": "inner", "pairs": case.pairs}
+                    a_b, a_p = R7.bounds(plan, case)
+                    r = sc.run(plan, bound=a_p, extra=["--max-rows", str(self.M)])
+                    if np_ <= self.M:
+                        self.assertEqual(refused(r)["repair"]["kind"], "choose", (pside, bside, np_))
+                    else:
+                        self.assertIn("cannot be held", reason_of(self, r))
+                finally:
+                    sc.cleanup()
+
+
 class Fuzz(unittest.TestCase):
     """No input reaches a panic: random plans at random bounds, with junk flags, over the scenes: no trap, every refusal tagged with a rule of the catalogue, every offered option accepted by the flags and
     succeeding."""

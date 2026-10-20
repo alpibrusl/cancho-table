@@ -414,8 +414,37 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
             }
             let facts = jnswap.Facts { jtype: jtype, stdin: stdin, psize: psize, bsize: size, queried: jxsrc.queried(jxs), prefixed: prefixed, join_where: jw_on, positions: jnswap.has_positions(tree), typed_using: typed_using, paged: jnswap.is_paged(parsed, mode), dup: dup, dchange: as_csv && !fmt.b_jsonl && bdelim != delim };
             let why = jnswap.code_of(facts);
+            // the rest of the --join file is unread: as the probe of the exchanged call it would be cut at --max-rows rows where the original call is refused (reading 10), so its rows are counted unless the bytes
+            // that remain cannot hold more than --max-rows of them (a row is at least as many bytes as the file has columns)
+            var rows_state = 0;
+            if why == 0 && size >= 0 {
+                var more_most = 0 - 1;
+                if size > consumed {
+                    more_most = (size - consumed) / nb + 1;
+                }
+                if bcounts.records + more_most > most {
+                    var rest_delim = delim;
+                    if !fmt.b_jsonl {
+                        rest_delim = bdelim;
+                    }
+                    let (rb4, more, counted_ok) = jnswap.count_rest(heap, rb, bfile, rest_delim, fmt.b_jsonl, nb);
+                    rb = rb4;
+                    if !counted_ok {
+                        rows_state = 2;
+                    } else if bcounts.records + more > most {
+                        rows_state = 1;
+                    }
+                }
+            }
             var offer = jnswap.no_offer(heap, jnswap.reason_of(why, jtype));
-            if why == 0 {
+            if rows_state == 1 {
+                jnswap.drop_offer(heap, offer);
+                offer = jnswap.no_offer(heap, "the --join file has more rows than --max-rows: as the probe of the exchanged call it would be cut (and say truncated), where this call under a larger --max-state-bytes is refused with limit.too-many-rows");
+            } else if rows_state == 2 {
+                jnswap.drop_offer(heap, offer);
+                offer = jnswap.no_offer(heap, "the rows of the --join file that remain cannot be counted (a line past --max-line-bytes, a quote that never closes, or a row that is not csv), so it is not known that it has no more rows than --max-rows");
+            }
+            if why == 0 && rows_state == 0 {
                 var nd = delim;
                 if !fmt.b_jsonl {
                     nd = bdelim;
