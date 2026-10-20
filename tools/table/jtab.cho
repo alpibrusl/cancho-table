@@ -146,6 +146,118 @@ pub fn add[&h, &k, &r](heap: &!h Heap, t: JTab, key: &k [byte], record: &r [byte
     return (JTab { keys: ks, head: hd, tail: tl, rows: rw, start: st, next: nx, nrows: row + 1, held: held + cost }, true);
 }
 
+// THE PRUNED RECORD of a row (`cells`, as `reader.fields` found them), docs/joins.md section 22: the cells of the columns the plan names as they are written (a quoted cell with its quotes) and a delimiter
+// between every two columns. The mask (`jnprune.compile`) has the named columns as RUNS of columns next to each other: a run's bytes are one stretch of the record, from the start of its first cell to the end of its
+// last (the delimiters between its columns are in it), so a row costs one step for each run and not one for each column. `mask[1]` is the number of runs, `mask[3]` the delimiters that are in no run, run `i` is
+// `mask[4 + 3 * i]` its first column and `mask[5 + 3 * i]` its last, `mask[6 + 3 * i]` the delimiters before it and `mask[2]` those after the last run. `dl` is delimiters, at least as many as a row has columns.
+// The count and the copy are written in `add_pruned` itself: a call for each costs more instructions in a build row than the pruning saves.
+
+// `add` for a build that keeps only the columns the plan names: the row is held as its pruned record (the cells of the other columns empty, the delimiters kept), and that record is what is counted:
+// its bytes + 16, and the key as before. The key is the caller's (it was read from the whole record). `add` itself is not changed (the build that holds whole records is the one whose cost is held to `main`'s).
+pub fn add_pruned[&h, &k, &r, &c, &m, &d](heap: &!h Heap, t: JTab, key: &k [byte], record: &r [byte], cells: &c [int], mask: &m [int], dl: &d [byte], limit: int) -> [heap] (JTab, bool) {
+    let JTab { keys, head, tail, rows, start, next, nrows, held } = t;
+    let hv = gmap.hash(key);
+    var e = 0 - 1;
+    borrow keys as &kr in {
+        e = gmap.find_h(kr, key, hv);
+    }
+    let nruns = mask[1];
+    var cost = mask[3] + 16;
+    var runs = 0;
+    while runs < nruns {
+        let c1 = mask[4 + 3 * runs];
+        let c2 = mask[5 + 3 * runs];
+        cost = cost + (cells[3 * c2 + 1] + cells[3 * c2 + 2]) - (cells[3 * c1] - cells[3 * c1 + 2]);
+        runs = runs + 1;
+    }
+    if e < 0 {
+        cost = cost + len(key) + 60;
+    }
+    if held + cost > limit {
+        return (JTab { keys: keys, head: head, tail: tail, rows: rows, start: start, next: next, nrows: nrows, held: held }, false);
+    }
+    var ks = keys;
+    var hd = head;
+    var tl = tail;
+    var rw = rows;
+    var st = start;
+    var nx = next;
+    let row = nrows;
+    var fresh = false;
+    if e < 0 {
+        fresh = true;
+        ks = gmap.put_new(heap, ks, key, hv);
+        borrow ks as &kr in {
+            e = gmap.size(kr) - 1;
+        }
+        var cap = 0;
+        borrow hd as &hr in {
+            cap = len(contents(hr));
+        }
+        if e >= cap {
+            hd = grow_ints(heap, hd);
+            tl = grow_ints(heap, tl);
+        }
+    }
+    var rcap = 0;
+    borrow st as &sr in {
+        rcap = len(contents(sr));
+    }
+    if row >= rcap {
+        st = grow_ints(heap, st);
+        nx = grow_ints(heap, nx);
+    }
+    var at = 0;
+    borrow rw as &rr in {
+        at = buffer.size(rr);
+    }
+    var run = 0;
+    while run < nruns {
+        let c1 = mask[4 + 3 * run];
+        let c2 = mask[5 + 3 * run];
+        let lead = mask[6 + 3 * run];
+        if lead == 1 {
+            rw = buffer.push(heap, rw, dl[0]);
+        } else if lead > 0 {
+            rw = buffer.append(heap, rw, dl[0..lead]);
+        }
+        rw = buffer.append(heap, rw, record[cells[3 * c1] - cells[3 * c1 + 2]..cells[3 * c2 + 1] + cells[3 * c2 + 2]]);
+        run = run + 1;
+    }
+    let trailing = mask[2];
+    if trailing == 1 {
+        rw = buffer.push(heap, rw, dl[0]);
+    } else if trailing > 0 {
+        rw = buffer.append(heap, rw, dl[0..trailing]);
+    }
+    borrow mut st as &!sw in {
+        contents(sw)[row] = at;
+    }
+    borrow mut nx as &!nw in {
+        contents(nw)[row] = 0 - 1;
+    }
+    if fresh {
+        borrow mut hd as &!hw in {
+            contents(hw)[e] = row;
+        }
+        borrow mut tl as &!tw in {
+            contents(tw)[e] = row;
+        }
+    } else {
+        var last = 0;
+        borrow tl as &tr in {
+            last = contents(tr)[e];
+        }
+        borrow mut nx as &!nw in {
+            contents(nw)[last] = row;
+        }
+        borrow mut tl as &!tw in {
+            contents(tw)[e] = row;
+        }
+    }
+    return (JTab { keys: ks, head: hd, tail: tl, rows: rw, start: st, next: nx, nrows: row + 1, held: held + cost }, true);
+}
+
 // The same for a semi or anti join, which asks only whether a key is there: the key alone is held (no row, no chain), at 44 accounted bytes beyond its own: 4 + 24 + 16 (a length, the entry of
 // three integers, the slots at the minimum load). A key that is already held costs nothing, so a build that is mostly duplicates is small.
 pub fn add_key[&h, &k](heap: &!h Heap, t: JTab, key: &k [byte], limit: int) -> [heap] (JTab, bool) {

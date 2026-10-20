@@ -632,17 +632,22 @@ class Accounting(unittest.TestCase):
         f = self.exact("d.csv", [(0, 0, None, False)], "inner")
         self.assertGreater(f["held"], 5000 * 50)
 
-    def test_using_holds_the_whole_record(self):
-        # the dropped column is left out of the answer, not out of the table: the formula is the same as without USING (docs/joins.md 17)
+    def test_using_holds_the_whole_record_unless_another_column_is_left_out(self):
+        # the column of a shared-name key is left out of the answer, and J2 held the whole record (docs/joins.md 17). J7 (section 22) prunes when a column that is not a key is not named: a plan that names the
+        # other columns still holds the whole record (the key alone is not worth the work), and one that names none of them holds the key's cell and theirs empty, so the count falls by their bytes
         rows = [[b"k%d" % (i % 90), b"v%d" % i, b"w"] for i in range(2000)]
         self.file("u.csv", [b"a", b"b", b"c"], rows)
         f1 = self.exact("u.csv", [(0, 0, None, False)], "inner")
-        path = str(self.s.dir / "u.csv")
         on = "a"
         r = run("--root", self.s.dir, "--join", "u.csv", "--on", on, "--join-prefix", "r_", "--where", "a = zzz", "--max-state-bytes", f1["held"] - 1, "p.csv")
         self.assertEqual(r.first_rule(), "limit.state-too-large")
         ok = run("--root", self.s.dir, "--join", "u.csv", "--on", on, "--join-prefix", "r_", "--where", "a = zzz", "--max-state-bytes", f1["held"], "p.csv")
         self.assertEqual(ok.status, 0)
+        saved = sum(len(r[0]) + len(r[1]) + len(r[2]) for r in rows)
+        low = run("--root", self.s.dir, "--join", "u.csv", "--on", on, "--join-prefix", "r_", "--select", "a", "--max-state-bytes", f1["held"] - saved - 1, "p.csv")
+        self.assertEqual(low.first_rule(), "limit.state-too-large")
+        for bound in (f1["held"] - saved, f1["held"]):
+            self.assertEqual(run("--root", self.s.dir, "--join", "u.csv", "--on", on, "--join-prefix", "r_", "--select", "a", "--max-state-bytes", bound, "p.csv").status, 0, bound)
 
     def test_the_bound_is_the_same_when_the_join_is_empty_or_tiny(self):
         self.file("e.csv", [b"a", b"b", b"c"], [])

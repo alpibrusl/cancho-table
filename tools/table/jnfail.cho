@@ -14,6 +14,7 @@ import std.vec;
 import dtjoin;
 import finish;
 import jnguard;
+import jnswap;
 import toolbox.cli;
 import toolbox.fail;
 import toolbox.text;
@@ -186,10 +187,28 @@ pub fn collision[&h, &g, &p, &a, &b, &x, &y, &q, &s, &z](heap: &!h Heap, e: fail
     return fail.add(heap, e, o);
 }
 
-// `limit.state-too-large` for the build: the rows already held fit, the one named does not. Everything in it is exact; nothing is projected (the rest of the file is unread).
-pub fn build_too_large[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], limit: int, held: int, rows_held: int, row: int, line: int, bytes_read: int, file_bytes: int) -> [heap] fail.Errors {
-    var o = fail.open_in(heap, finish.extra(), "limit.state-too-large", "the --join file is held in memory and the rows held would pass --max-state-bytes", "make the smaller file the --join file (the rows and columns of the answer then change), or raise --max-state-bytes, up to the ceiling introspect names: it counts the bytes the join holds, and resident memory can be up to about three times that while the build grows. There is no join on disk");
-    o = fail.repair_none(heap, o, "the bytes the rest of the file needs are not known; the number that is raises the flag, up to the ceiling");
+// `limit.state-too-large` for the build: the rows already held fit, the one named does not. Everything in it is exact; nothing is projected (the rest of the file is unread). The repair is the call with the two
+// files exchanged when `offer` has one (docs/joins.md section 22: `jnswap`), and otherwise `none` with the reason the exchange is not offered.
+pub fn build_too_large[&h, &s, &q](heap: &!h Heap, e: fail.Errors, shown: &s [byte], limit: int, held: int, rows_held: int, row: int, line: int, bytes_read: int, file_bytes: int, offer: &q jnswap.Offer) -> [heap] fail.Errors {
+    var o = fail.open_in(heap, finish.extra(), "limit.state-too-large", "the --join file is held in memory and the rows held would pass --max-state-bytes", "name fewer columns of the --join file (the build holds only the columns the plan names), or make the smaller file the --join file (the repair, when there is one, is the call with the two files exchanged: it gives the same rows, in the order of the other file, and the columns as they were), or raise --max-state-bytes, up to the ceiling introspect names: it counts the bytes the join holds, and resident memory can be up to about three times that while the build grows. There is no join on disk");
+    if offer.offered {
+        var c = fail.choose_open(heap, o);
+        c = fail.choose_option_open(heap, c);
+        let all = buffer.bytes(offer.argv);
+        var at = 0;
+        var i = 0;
+        while i < len(all) {
+            if int_of(all[i]) == 0 {
+                c = fail.choose_arg(heap, c, all[at..i]);
+                at = i + 1;
+            }
+            i = i + 1;
+        }
+        c = fail.choose_option_close(heap, c);
+        o = fail.choose_close(heap, c);
+    } else {
+        o = fail.repair_none(heap, o, buffer.bytes(offer.reason));
+    }
     o = fail.detail_open(heap, o);
     o = fail.detail_str(heap, o, "holder", "join-build");
     o = fail.detail_str(heap, o, "input", "build");

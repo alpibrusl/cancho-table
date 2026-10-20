@@ -26,6 +26,7 @@ import explain;
 import finish;
 import jfields;
 import jn3pass;
+import jnprune;
 import jnread;
 import jnwhere;
 import jrec;
@@ -92,7 +93,7 @@ fn bare[&l](line: &l [byte], number: int) -> [] &l [byte] {
 
 // Hold one build record whose cells are `cells`, as `jn3pass.build_pass3` holds one: `--join-where`, the build-side conditions of the leading run, then the key. 0 when it is held or filtered out, 1 when it
 // does not fit within `limit` accounted bytes, 2 when the read must stop (a typed key cell that is not of its type, or a cell `--join-where` refused: the tally says which).
-fn hold3[&h, &d, &c, &k, &w, &j, &q, &l, &m, &a](heap: &!h Heap, jt0: jtab.JTab, kscr0: buffer.Buffer, kbuf0: buffer.Buffer, escr0: buffer.Buffer, kept0: buffer.Buffer, record: &d [byte], cells: &c [int], number: int, a: &!a [int], keys: &k [int], pairs: int, simple: bool, keys_only: bool, bfast: bool, bkey: int, limit: int, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &l [int], bcols: &m [int], push_b: bool) -> [heap] (jtab.JTab, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, int) {
+fn hold3[&h, &d, &c, &k, &w, &j, &q, &l, &m, &a, &z, &y](heap: &!h Heap, jt0: jtab.JTab, kscr0: buffer.Buffer, kbuf0: buffer.Buffer, escr0: buffer.Buffer, kept0: buffer.Buffer, record: &d [byte], cells: &c [int], number: int, a: &!a [int], keys: &k [int], pairs: int, simple: bool, keys_only: bool, bfast: bool, bkey: int, limit: int, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &l [int], bcols: &m [int], push_b: bool, mask: &z [int], dl: &y buffer.Buffer) -> [heap] (jtab.JTab, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, int) {
     var jt = jt0;
     var kscr = kscr0;
     var kbuf = kbuf0;
@@ -109,7 +110,13 @@ fn hold3[&h, &d, &c, &k, &w, &j, &q, &l, &m, &a](heap: &!h Heap, jt0: jtab.JTab,
         }
         return (jt, kscr, kbuf, escr, kept, 0);
     }
-    if bfast {
+    if mask[0] == 1 {
+        let (t2, k2, b2, answer2) = jnprune.hold_row(heap, jt, kscr, kbuf, record, cells, keys, pairs, simple, limit, mask, buffer.bytes(dl));
+        jt = t2;
+        kscr = k2;
+        kbuf = b2;
+        answer = answer2;
+    } else if bfast {
         let (t2, k2, ok) = jnread.hold_text(heap, jt, kscr, record, cells, bkey, limit);
         jt = t2;
         kscr = k2;
@@ -137,7 +144,7 @@ fn hold3[&h, &d, &c, &k, &w, &j, &q, &l, &m, &a](heap: &!h Heap, jt0: jtab.JTab,
 // The build phase for a build that is JSON lines (`jsonl`, `dc` its declaration) or csv with the delimiter `bdelim` (the answer's is `delim`): every record of the file whole, as a csv record in `delim`, then held.
 // Answers the reader, the table, what was counted (abort 70: the first row that did not fit; 4, 7, 1 and 2 as a file's; 50 to 55 as a JSON-lines file's), the bytes of the file consumed when it stopped, and the
 // first bytes of a refused value. A ragged csv row is counted and not held; `most` rows read and another there is `capped`.
-pub fn build_passj[&h, &f, &k, &w, &j, &q, &c, &l, &x](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab.JTab, nb: int, keys: &k [int], pairs: int, simple: bool, keys_only: bool, delim: int, bdelim: int, jsonl: bool, dc: &x Decl, cap: int, most: int, limit: int, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &c [int], bcols: &l [int], push_b: bool) -> [heap, file_read] (lines.Lines, jtab.JTab, finish.Counts, int, buffer.Buffer) {
+pub fn build_passj[&h, &f, &k, &w, &j, &q, &c, &l, &x, &z](heap: &!h Heap, r0: lines.Lines, file: &!f File, jt0: jtab.JTab, nb: int, keys: &k [int], pairs: int, simple: bool, keys_only: bool, delim: int, bdelim: int, jsonl: bool, dc: &x Decl, cap: int, most: int, limit: int, jwt: &w query.Query, jwcols: &j [int], jw_on: bool, tree: &q query.Query, cls: &c [int], bcols: &l [int], push_b: bool, mask: &z [int]) -> [heap, file_read] (lines.Lines, jtab.JTab, finish.Counts, int, buffer.Buffer) {
     var r = r0;
     var jt = jt0;
     var rec = buffer.empty(heap, 256);
@@ -148,6 +155,11 @@ pub fn build_passj[&h, &f, &k, &w, &j, &q, &c, &l, &x](heap: &!h Heap, r0: lines
     var escr = buffer.empty(heap, 16);
     let bfast = simple && !keys_only;
     let bkey = keys[1];
+    var dn = 0;
+    if mask[0] == 1 {
+        dn = nb;
+    }
+    let dl = jnprune.delimiters(heap, dn, delim);
     var tally = box_slice(heap, engine.k_size(), 0);
     var cellbox = box_slice(heap, 3 * (nb + 1), 0);
     var tape = box_slice(heap, 3 * dc.nodes + 3, 0);
@@ -217,19 +229,21 @@ pub fn build_passj[&h, &f, &k, &w, &j, &q, &c, &l, &x](heap: &!h Heap, r0: lines
                                         }
                                         if engine.count_row(a, nb, number, 0) {
                                             borrow crec as &crr in {
-                                                let (t2, k2, b2, e2, p2, code2) = hold3(heap, jt, kscr, kbuf, escr, kept, buffer.bytes(crr), cells, number, a, keys, pairs, simple, keys_only, bfast, bkey, limit, jwt, jwcols, jw_on, tree, cls, bcols, push_b);
-                                                jt = t2;
-                                                kscr = k2;
-                                                kbuf = b2;
-                                                escr = e2;
-                                                kept = p2;
-                                                if code2 == 1 {
-                                                    a[engine.k_abort()] = 70;
-                                                    a[engine.k_abort_line()] = number;
-                                                    consumed = lines.consumed(rr);
-                                                    going = false;
-                                                } else if code2 == 2 {
-                                                    going = false;
+                                                borrow dl as &dlr in {
+                                                    let (t2, k2, b2, e2, p2, code2) = hold3(heap, jt, kscr, kbuf, escr, kept, buffer.bytes(crr), cells, number, a, keys, pairs, simple, keys_only, bfast, bkey, limit, jwt, jwcols, jw_on, tree, cls, bcols, push_b, mask, dlr);
+                                                    jt = t2;
+                                                    kscr = k2;
+                                                    kbuf = b2;
+                                                    escr = e2;
+                                                    kept = p2;
+                                                    if code2 == 1 {
+                                                        a[engine.k_abort()] = 70;
+                                                        a[engine.k_abort_line()] = number;
+                                                        consumed = lines.consumed(rr);
+                                                        going = false;
+                                                    } else if code2 == 2 {
+                                                        going = false;
+                                                    }
                                                 }
                                             }
                                         }
@@ -270,19 +284,21 @@ pub fn build_passj[&h, &f, &k, &w, &j, &q, &c, &l, &x](heap: &!h Heap, r0: lines
                                         crec = jrec.csv_record(heap, crec, line, cells, nb, delim);
                                         if engine.count_row(a, n, number, 0) {
                                             borrow crec as &crr in {
-                                                let (t2, k2, b2, e2, p2, code2) = hold3(heap, jt, kscr, kbuf, escr, kept, buffer.bytes(crr), cells, number, a, keys, pairs, simple, keys_only, bfast, bkey, limit, jwt, jwcols, jw_on, tree, cls, bcols, push_b);
-                                                jt = t2;
-                                                kscr = k2;
-                                                kbuf = b2;
-                                                escr = e2;
-                                                kept = p2;
-                                                if code2 == 1 {
-                                                    a[engine.k_abort()] = 70;
-                                                    a[engine.k_abort_line()] = number;
-                                                    consumed = lines.consumed(rr);
-                                                    going = false;
-                                                } else if code2 == 2 {
-                                                    going = false;
+                                                borrow dl as &dlr in {
+                                                    let (t2, k2, b2, e2, p2, code2) = hold3(heap, jt, kscr, kbuf, escr, kept, buffer.bytes(crr), cells, number, a, keys, pairs, simple, keys_only, bfast, bkey, limit, jwt, jwcols, jw_on, tree, cls, bcols, push_b, mask, dlr);
+                                                    jt = t2;
+                                                    kscr = k2;
+                                                    kbuf = b2;
+                                                    escr = e2;
+                                                    kept = p2;
+                                                    if code2 == 1 {
+                                                        a[engine.k_abort()] = 70;
+                                                        a[engine.k_abort_line()] = number;
+                                                        consumed = lines.consumed(rr);
+                                                        going = false;
+                                                    } else if code2 == 2 {
+                                                        going = false;
+                                                    }
                                                 }
                                             }
                                         }
@@ -325,19 +341,21 @@ pub fn build_passj[&h, &f, &k, &w, &j, &q, &c, &l, &x](heap: &!h Heap, r0: lines
                                                 crec = jrec.csv_record(heap, crec, record, cells, nb, delim);
                                                 if engine.count_row(a, m, opened, 0) {
                                                     borrow crec as &crr in {
-                                                        let (t2, k2, b2, e2, p2, code2) = hold3(heap, jt, kscr, kbuf, escr, kept, buffer.bytes(crr), cells, opened, a, keys, pairs, simple, keys_only, bfast, bkey, limit, jwt, jwcols, jw_on, tree, cls, bcols, push_b);
-                                                        jt = t2;
-                                                        kscr = k2;
-                                                        kbuf = b2;
-                                                        escr = e2;
-                                                        kept = p2;
-                                                        if code2 == 1 {
-                                                            a[engine.k_abort()] = 70;
-                                                            a[engine.k_abort_line()] = opened;
-                                                            consumed = lines.consumed(rr);
-                                                            going = false;
-                                                        } else if code2 == 2 {
-                                                            going = false;
+                                                        borrow dl as &dlr in {
+                                                            let (t2, k2, b2, e2, p2, code2) = hold3(heap, jt, kscr, kbuf, escr, kept, buffer.bytes(crr), cells, opened, a, keys, pairs, simple, keys_only, bfast, bkey, limit, jwt, jwcols, jw_on, tree, cls, bcols, push_b, mask, dlr);
+                                                            jt = t2;
+                                                            kscr = k2;
+                                                            kbuf = b2;
+                                                            escr = e2;
+                                                            kept = p2;
+                                                            if code2 == 1 {
+                                                                a[engine.k_abort()] = 70;
+                                                                a[engine.k_abort_line()] = opened;
+                                                                consumed = lines.consumed(rr);
+                                                                going = false;
+                                                            } else if code2 == 2 {
+                                                                going = false;
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -366,6 +384,7 @@ pub fn build_passj[&h, &f, &k, &w, &j, &q, &c, &l, &x](heap: &!h Heap, r0: lines
     buffer.drop(heap, kscr);
     buffer.drop(heap, kbuf);
     buffer.drop(heap, escr);
+    buffer.drop(heap, dl);
     return (r, jt, c, consumed, kept);
 }
 
