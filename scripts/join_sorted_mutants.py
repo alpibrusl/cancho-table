@@ -13,7 +13,8 @@ tools/table and builds into build/). See mutlib.py.
 
 Not here (equivalent mutants, each argued):
 
-EQUIVALENT_PLACEHOLDER
+* the walk of several pairs advancing the second key by the first key's component length (`iy = iy + lx` for `iy = iy + ly`): the advance is reached only after the two components compared
+  equal (an unequal pair returns before it), and equal components have equal lengths, so lx == ly there and the two spellings are the same value on every input.
 """
 import sys
 
@@ -28,7 +29,6 @@ MUTANTS = [
     ("several pairs are ordered from the high end", "jnmerge.cho", "        let c = bytes.compare(x[ix..ix + lx], y[iy..iy + ly]);\n        if c < 0 {\n            return 0 - 1;\n        }\n        if c > 0 {\n            return 1;\n        }", "        let c = bytes.compare(x[ix..ix + lx], y[iy..iy + ly]);\n        if c < 0 {\n            return 1;\n        }\n        if c > 0 {\n            return 0 - 1;\n        }"),
     ("several pairs: the shorter component is first", "jnmerge.cho", "        let c = bytes.compare(x[ix..ix + lx], y[iy..iy + ly]);", "        let c = lx - ly;"),
     ("several pairs: only the first pair is compared", "jnmerge.cho", "        iy = iy + ly;\n        j = j + 1;", "        iy = iy + ly;\n        j = pairs;"),
-    ("several pairs: the second key is walked by the first one's lengths", "jnmerge.cho", "        iy = iy + ly;", "        iy = iy + lx;"),
     ("a cell of a key is shown to 65 bytes", "jnmerge.cho", "        keep = 64;", "        keep = 65;"),
     ("a cell that was cut is not said to be", "jnmerge.cho", "        tag = 128;", "        tag = 0;"),
     ("a JSON-lines row after --max-rows rows is read", "jnmerge.cho", "                } else if seen >= most {", "                } else if seen > most {"),
