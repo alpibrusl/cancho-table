@@ -471,6 +471,19 @@ class Unsorted(unittest.TestCase):
         finally:
             env.cleanup()
 
+    def test_a_full_page_ends_the_read_and_a_disorder_past_it_is_not_found(self):
+        P = [["a", "x", "1", "p1"], ["b", "x", "1", "p2"], ["c", "x", "1", "p3"]]
+        B = [["a", "x", "1", "q1"], ["b", "x", "1", "q2"], ["c", "x", "1", "q3"], ["z", "x", "1", "q4"], ["m", "x", "1", "q5"]]
+        case = R3.Case("page", (["pk", "pg", "pv", "pt"], P), (["bk", "bg", "bv", "bt"], B), [(0, 0, None, False)], "", False)
+        env = Env(case)
+        try:
+            paged = env.run(env.plan("inner"), "csv", ["--limit", "1"])
+            self.assertEqual(paged.status, 0, paged.stderr)
+            self.assertEqual(paged.stdout.decode().splitlines()[1:], ["a,x,1,p1,a,x,1,q1"])
+            self.assertEqual(env.run(env.plan("inner"), "json").status, 8)
+        finally:
+            env.cleanup()
+
     def test_a_probe_past_the_end_of_the_build_is_still_checked(self):
         P = [["a", "x", "1", "p1"], ["z", "x", "1", "p2"], ["y", "x", "1", "p3"]]
         B = [["a", "x", "1", "q1"]]
@@ -908,6 +921,21 @@ class Refusals(unittest.TestCase):
                     self.assertEqual(canon(m.error()), canon(h.error()), most)
                 else:
                     self.assertEqual(m.data(), h.data(), most)
+        finally:
+            s.cleanup()
+
+    def test_a_join_where_refusal_ends_the_merge_before_any_row_is_written(self):
+        # the refusal is met when the first probe row asks for its group: nothing but the header of the csv has been written
+        b = "k,bv\na,1\na,x\nb,3\n"
+        s = Scratch()
+        try:
+            s.write("p.csv", self.P)
+            s.write("b.csv", b)
+            a = ["--root", s.dir, "--join", "b.csv", "--on", "k=k", "--join-prefix", "r_", "--format", "csv", "--join-where", "bv:int > 0"]
+            m = run(*a, FLAG, "p.csv")
+            self.assertEqual(m.status, 8)
+            self.assertEqual(m.stdout.decode().splitlines(), ["k,pv,r_k,r_bv"])
+            self.assertIn(b"value.not-integer", m.stderr)
         finally:
             s.cleanup()
 
