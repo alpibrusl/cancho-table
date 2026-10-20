@@ -1,0 +1,96 @@
+#!/usr/bin/env python3
+"""Mutation check of slice J9 (docs/joins.md section 23; tests/conformance/test_join_j9.py): `--join-sorted`, the merge join over two files declared sorted by the key.
+
+Each mutant is one defect in how keys are ordered (the bytes of one pair, the components of several, the direction, ties), how the two files are read (the width of a record, `--max-rows`, the filters of the build and
+of the probe), the window of the `--join` file (the rows below a key, the rows of the key, when it is made again, what it holds and what it may hold), the checks of the order of either file and what the refusals say
+(which file, the row and the line before, the cells of the keys, the group that did not fit), the budget a plan that groups shares with the window, the flags, and `--explain`; the tool is rebuilt from it and run
+against the tests. A mutant is killed when the build refuses it or a test fails.
+
+    python3 scripts/join_sorted_mutants.py [--shard K/N] [name-substring ...]
+
+`--check` only verifies that every site still matches (no build; CI runs it). `--shard K/N` runs the K-th of N interleaved parts of the list (each part needs a checkout of its own: the runner edits
+tools/table and builds into build/). See mutlib.py.
+
+Not here (equivalent mutants, each argued):
+
+EQUIVALENT_PLACEHOLDER
+"""
+import sys
+
+sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
+import mutlib  # noqa: E402
+
+# cheap classes first: a killed mutant stops at the first failure (mutlib runs `unittest -f`)
+TESTS = ["test_join_j9.Unsorted", "test_join_j9.Refusals", "test_join_j9.Merge", "test_join_j9.Bounded", "test_join_j9.Threads", "test_join_j9.Surface", "test_join_j9.Plans", "test_rules"]
+
+MUTANTS = [
+    ("a single pair is ordered from the high end", "jnmerge.cho", "        let c = bytes.compare(x, y);\n        if c < 0 {\n            return 0 - 1;\n        }\n        if c > 0 {\n            return 1;\n        }", "        let c = bytes.compare(x, y);\n        if c < 0 {\n            return 1;\n        }\n        if c > 0 {\n            return 0 - 1;\n        }"),
+    ("several pairs are ordered from the high end", "jnmerge.cho", "        let c = bytes.compare(x[ix..ix + lx], y[iy..iy + ly]);\n        if c < 0 {\n            return 0 - 1;\n        }\n        if c > 0 {\n            return 1;\n        }", "        let c = bytes.compare(x[ix..ix + lx], y[iy..iy + ly]);\n        if c < 0 {\n            return 1;\n        }\n        if c > 0 {\n            return 0 - 1;\n        }"),
+    ("several pairs: the shorter component is first", "jnmerge.cho", "        let c = bytes.compare(x[ix..ix + lx], y[iy..iy + ly]);", "        let c = lx - ly;"),
+    ("several pairs: only the first pair is compared", "jnmerge.cho", "        iy = iy + ly;\n        j = j + 1;", "        iy = iy + ly;\n        j = pairs;"),
+    ("several pairs: the second key is walked by the first one's lengths", "jnmerge.cho", "        iy = iy + ly;", "        iy = iy + lx;"),
+    ("a cell of a key is shown to 65 bytes", "jnmerge.cho", "        keep = 64;", "        keep = 65;"),
+    ("a cell that was cut is not said to be", "jnmerge.cho", "        tag = 128;", "        tag = 0;"),
+    ("a JSON-lines row after --max-rows rows is read", "jnmerge.cho", "                } else if seen >= most {", "                } else if seen > most {"),
+    ("a csv row after --max-rows rows is read", "jnmerge.cho", "                } else if !quoted && seen >= most {", "                } else if !quoted && seen > most {"),
+    ("a record wider than the header is taken for a row", "jnmerge.cho", "                    } else if n != ncols {", "                    } else if n < ncols {"),
+    ("the order of the --join file is not checked", "jnmerge.cho", "                        if bst[b_have()] == 1 {", "                        if bst[b_have()] == 7 {"),
+    ("a key of the --join file equal to the one before is out of order", "jnmerge.cho", "                        if bst[b_have()] == 1 {\n                            borrow key1 as &kr in {\n                                borrow tkey1 as &tr in {\n                                    ordered = cmp_keys(buffer.bytes(kr), buffer.bytes(tr), pairs) <= 0;\n                                }", "                        if bst[b_have()] == 1 {\n                            borrow key1 as &kr in {\n                                borrow tkey1 as &tr in {\n                                    ordered = cmp_keys(buffer.bytes(kr), buffer.bytes(tr), pairs) < 0;\n                                }"),
+    ("the cells of a key of the --join file are shown from FILE's columns", "jnmerge.cho", "                        let (d2, s2) = make_disp(heap, tdisp1, kscr1, record, bcells, keys, pairs, 1);", "                        let (d2, s2) = make_disp(heap, tdisp1, kscr1, record, bcells, keys, pairs, 0);"),
+    ("a --join file read past --max-rows is not said to be", "jnmerge.cho", "            ab[engine.k_capped()] = 1;", "            ab[engine.k_capped()] = 0;"),
+    ("a --join-where refusal does not stop the read", "jnmerge.cho", "                        ab[engine.k_err_fn()] = 0 - 4;\n                        bst[b_stop()] = 1;", "                        ab[engine.k_err_fn()] = 0 - 4;\n                        bst[b_stop()] = 0;"),
+    ("the rows of a key at or below the probe key are left", "jnmerge.cho", "                lower = cmp_keys(buffer.bytes(cr.key), pk, pairs) < 0;", "                lower = cmp_keys(buffer.bytes(cr.key), pk, pairs) <= 0;"),
+    ("the window takes the rows above the key too", "jnmerge.cho", "            same = cmp_keys(buffer.bytes(cr.key), pk, pairs) == 0;", "            same = cmp_keys(buffer.bytes(cr.key), pk, pairs) >= 0;"),
+    ("the window holds the first row of the key only", "jnmerge.cho", "                            filling = cmp_keys(buffer.bytes(cr.key), buffer.bytes(wkr), pairs) == 0;", "                            filling = cmp_keys(buffer.bytes(cr.key), buffer.bytes(wkr), pairs) == 5;"),
+    ("the window is made again for a probe row of the same key", "jnmerge.cho", "                                                                                        same = cmp_keys(buffer.bytes(wr), buffer.bytes(kr), pairs) == 0;", "                                                                                        same = cmp_keys(buffer.bytes(wr), buffer.bytes(kr), pairs) == 7;"),
+    ("the window is kept whatever the probe key", "jnmerge.cho", "                                                                                        same = cmp_keys(buffer.bytes(wr), buffer.bytes(kr), pairs) == 0;", "                                                                                        same = true;"),
+    ("the window of a join holds one more byte", "jnmerge.cho", "                    let (t2, ok) = jtab.add(heap, win, buffer.bytes(cr.key), buffer.bytes(cr.out), wlimit);", "                    let (t2, ok) = jtab.add(heap, win, buffer.bytes(cr.key), buffer.bytes(cr.out), wlimit + 1);"),
+    ("the window of a semi or anti join holds one more byte", "jnmerge.cho", "                    let (t2, ok) = jtab.add_key(heap, win, buffer.bytes(cr.key), wlimit);", "                    let (t2, ok) = jtab.add_key(heap, win, buffer.bytes(cr.key), wlimit + 1);"),
+    ("the window that did not fit does not say its rows", "jnmerge.cho", "                    wf[1] = jtab.rows_of(wr);", "                    wf[1] = 0;"),
+    ("the window that did not fit does not say its bytes", "jnmerge.cho", "                    wf[0] = jtab.held_of(wr);", "                    wf[0] = 0;"),
+    ("the order of FILE is not checked", "jnmerge.cho", "                                                                        if have_prev {", "                                                                        if false {"),
+    ("a key of FILE equal to the one before is out of order", "jnmerge.cho", "                                                                        if have_prev {\n                                                                            borrow pkey as &kr in {\n                                                                                borrow ptkey as &tr in {\n                                                                                    ordered = cmp_keys(buffer.bytes(kr), buffer.bytes(tr), pairs) <= 0;\n                                                                                }\n                                                                            }", "                                                                        if have_prev {\n                                                                            borrow pkey as &kr in {\n                                                                                borrow ptkey as &tr in {\n                                                                                    ordered = cmp_keys(buffer.bytes(kr), buffer.bytes(tr), pairs) < 0;\n                                                                                }\n                                                                            }"),
+    ("the cells of a key of FILE are shown from the --join file's columns", "jnmerge.cho", "                                                                        let (d2, s2) = make_disp(heap, ptdisp, pkscr, record, cells, keys, pairs, 0);", "                                                                        let (d2, s2) = make_disp(heap, ptdisp, pkscr, record, cells, keys, pairs, 1);"),
+    ("the leading conditions of --where are not applied to FILE", "jnmerge.cho", "                                                                if push_p {", "                                                                if false {"),
+    ("a row of FILE of another width is not counted", "jnmerge.cho", "                                                            a[engine.k_ragged()] = a[engine.k_ragged()] + 1;", "                                                            a[engine.k_ragged()] = a[engine.k_ragged()] + 0;"),
+    ("a probe row past --max-rows is not said to be", "jnmerge.cho", "                                                            a[engine.k_capped()] = 1;", "                                                            a[engine.k_capped()] = 0;"),
+    ("the row of a refused key of FILE is not its own", "jnmerge.cho", "                                                                        pkept = jnread.note_typed(heap, pkept, record, cells, keys, 16 + 16 * which + kstatus, 0, st[jnread.s_probe()], number, a);", "                                                                        pkept = jnread.note_typed(heap, pkept, record, cells, keys, 16 + 16 * which + kstatus, 0, 0, number, a);"),
+    ("a refused key of FILE does not stop the read", "jnmerge.cho", "                                                                        pkept = jnread.note_typed(heap, pkept, record, cells, keys, 16 + 16 * which + kstatus, 0, st[jnread.s_probe()], number, a);\n                                                                        a[engine.k_stop()] = 1;", "                                                                        pkept = jnread.note_typed(heap, pkept, record, cells, keys, 16 + 16 * which + kstatus, 0, st[jnread.s_probe()], number, a);\n                                                                        a[engine.k_stop()] = 0;"),
+    ("the row before the key of FILE that was out of order is not said", "jnmerge.cho", "                                                                            fx[6] = prev_row;", "                                                                            fx[6] = 0;"),
+    ("the line before the key of FILE that was out of order is not said", "jnmerge.cho", "                                                                            fx[7] = prev_line;", "                                                                            fx[7] = 0;"),
+    ("the row of the --join file that did not fit is not said", "jnmerge.cho", "                                                                                fx[4] = bst[b_row()];", "                                                                                fx[4] = 0;"),
+    ("the line of the --join file that did not fit is not said", "jnmerge.cho", "                                                                                fx[5] = bst[b_line()];", "                                                                                fx[5] = 0;"),
+    ("the key of the group that did not fit is not shown as cells", "jnmerge.cho", "                                                                                    group_disp = buffer.append(heap, group_disp, buffer.bytes(cr.disp));", "                                                                                    group_disp = buffer.append(heap, group_disp, buffer.bytes(cr.key));"),
+    ("the rest of the --join file is not read", "jnmerge.cho", "                                                    if a[engine.k_abort()] == 0 && a[engine.k_stop()] != 1 && a[engine.k_ragged()] == 0 {", "                                                    if false && a[engine.k_stop()] != 1 && a[engine.k_ragged()] == 0 {"),
+    ("the rest of the --join file is read when the page is full", "jnmerge.cho", "                                                    if a[engine.k_abort()] == 0 && a[engine.k_stop()] != 1 && a[engine.k_ragged()] == 0 {", "                                                    if a[engine.k_abort()] == 0 &&  a[engine.k_ragged()] == 0 {"),
+    ("the row before the key of the --join file that was out of order is not said", "jnmerge.cho", "                                                        fx[6] = bst[b_row()];", "                                                        fx[6] = 0;"),
+    ("the line before the key of the --join file that was out of order is not said", "jnmerge.cho", "                                                        fx[7] = bst[b_line()];", "                                                        fx[7] = 0;"),
+    ("a plan that groups gives the window the whole flag", "jnrun.cho#merge", "            wlimit = max_state - gstate;", "            wlimit = max_state;"),
+    ("a plan that groups gives the groups a third of the flag", "jnrun.cho#merge", "            gstate = max_state / 2;", "            gstate = max_state / 3;"),
+    ("the --join-where is not applied to the --join file of a merge", "jnrun.cho#merge", "                b9[7] = 1;", "                b9[7] = 0;"),
+    ("the conditions of --where on the --join file are not pushed in a merge", "jnrun.cho#merge", "                b9[8] = 1;", "                b9[8] = 0;"),
+    ("a key of FILE out of order is said to be the --join file's", "jnrun.cho", "                        e = jnfail.not_sorted(heap, e, \"probe\", shown, c.err_row, c.err_line, contents(mfr)[6], contents(mfr)[7], buffer.bytes(mcr), buffer.bytes(mpr), pairs);", "                        e = jnfail.not_sorted(heap, e, \"build\", shown, c.err_row, c.err_line, contents(mfr)[6], contents(mfr)[7], buffer.bytes(mcr), buffer.bytes(mpr), pairs);"),
+    ("a key of the --join file out of order is said to be FILE's", "jnrun.cho#merge", "                        e = jnfail.not_sorted(heap, e, \"build\", shown_b, bc.err_row, bc.err_line, m[6], m[7], buffer.bytes(mcr), buffer.bytes(mpr), pairs);", "                        e = jnfail.not_sorted(heap, e, \"probe\", shown_b, bc.err_row, bc.err_line, m[6], m[7], buffer.bytes(mcr), buffer.bytes(mpr), pairs);"),
+    ("the groups of a merge are told the build holds nothing", "jnrun.cho", "        build_held = wlimit;", "        build_held = 0;"),
+    ("a call with --join-sorted and no --join is allowed", "jnflags.cho", "        if cli.has(parsed, table, \"on\") || cli.has(parsed, table, \"join-prefix\") || cli.has(parsed, table, \"join-type\") || cli.has(parsed, table, \"max-join-rows\") || cli.has(parsed, table, \"join-where\") || cli.has(parsed, table, \"join-input-format\") || cli.has(parsed, table, \"join-fields\") || cli.has(parsed, table, \"join-delimiter\") || cli.has(parsed, table, \"join-sorted\") {", "        if cli.has(parsed, table, \"on\") || cli.has(parsed, table, \"join-prefix\") || cli.has(parsed, table, \"join-type\") || cli.has(parsed, table, \"max-join-rows\") || cli.has(parsed, table, \"join-where\") || cli.has(parsed, table, \"join-input-format\") || cli.has(parsed, table, \"join-fields\") || cli.has(parsed, table, \"join-delimiter\") {"),
+    ("a call with --join-sorted and a --query is allowed", "table.cho", "        if cli.has(parsed, table, \"join-sorted\") {", "        if cli.has(parsed, table, \"join-sortedx\") {"),
+    ("a window that did not fit is said to be the build's", "jnfail.cho", "    o = fail.detail_str(heap, o, \"holder\", \"join-group\");", "    o = fail.detail_str(heap, o, \"holder\", \"join-build\");"),
+    ("the facts of an unsorted key leave out the previous row", "jnfail.cho", "    o = fail.detail_int(heap, o, \"previous_row\", prow);", "    o = fail.detail_int(heap, o, \"previous_row\", row);"),
+    ("the --explain of a merge does not say it is sorted", "jnexplain.cho", "        o = buffer.append(heap, o, \",\\\"sorted\\\":true,\\\"role_choice\\\":\\\"the --join file is read in step with the operand or standard input, both declared sorted by the key: the rows of one key of the --join file are held at a time, and the operand is streamed\\\",\\\"keys\\\":[\");", "        o = buffer.append(heap, o, \",\\\"role_choice\\\":\\\"the --join file is read in step with the operand or standard input, both declared sorted by the key: the rows of one key of the --join file are held at a time, and the operand is streamed\\\",\\\"keys\\\":[\");"),
+    ("the --explain of a merge leaves out the rule", "explain.cho", "            o = rule(heap, o, \"join.not-sorted\");", "            o = rule(heap, o, \"join.not-sortedx\");"),
+    ("the window of a semi or anti join holds the rows", "jnmerge.cho", "                if jtype >= 2 {", "                if jtype >= 4 {"),
+    ("the held bytes and the rows of a window that did not fit are swapped", "jnrun.cho#merge", "                    e = jnfail.group_too_large(heap, e, shown_b, wlimit, m[2], m[3], m[4], m[5], buffer.bytes(mgr), pairs);", "                    e = jnfail.group_too_large(heap, e, shown_b, wlimit, m[3], m[2], m[4], m[5], buffer.bytes(mgr), pairs);"),
+]
+
+# (mutlib reads an argument that starts with "--" as a flag, so a name that did would never be run)
+assert not [m[0] for m in MUTANTS if m[0].startswith("--")]
+
+if __name__ == "__main__":
+    argv = sys.argv[1:]
+    if "--shard" in argv:
+        at = argv.index("--shard")
+        k, n = (int(x) for x in argv[at + 1].split("/"))
+        names = [m[0] for i, m in enumerate(MUTANTS) if i % n == k - 1]
+        argv = [a for i, a in enumerate(argv) if i not in (at, at + 1)] + names
+        # (a name is matched as a substring: the part's names are matched whole by listing the whole name)
+    sys.exit(mutlib.main(MUTANTS, TESTS, argv))

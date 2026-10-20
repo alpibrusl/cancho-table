@@ -45,7 +45,7 @@ MUTANTS = [
     ("a build with the probe's delimiter, said again, is foreign", "jnfmt.cho", "    return f.b_jsonl || f.b_delim_given && f.b_delim != delim;", "    return f.b_jsonl || f.b_delim_given;"),
     # the flags of a join that is not one, and the check of the formats
     ("the formats of a join are not checked", "jnflags.cho", "    e = jnfmt.check(heap, args, parsed, inp.jmention, e);", "    e = e;"),
-    ("--join-fields without --join is not refused", "jnflags.cho", "|| cli.has(parsed, table, \"join-input-format\") || cli.has(parsed, table, \"join-fields\") || cli.has(parsed, table, \"join-delimiter\") {", "{"),
+    ("--join-fields without --join is not refused", "jnflags.cho", "|| cli.has(parsed, table, \"join-input-format\") || cli.has(parsed, table, \"join-fields\") || cli.has(parsed, table, \"join-delimiter\") || cli.has(parsed, table, \"join-sorted\") {", "|| cli.has(parsed, table, \"join-sorted\") {"),
     ("the checks of one JSON-lines file run for a join as well", "table.cho", "    if inp.jmention && !inp.has_join {", "    if inp.jmention {"),
     # the reading of a JSON-lines row for a join (jnjson.cho)
     ("a byte order mark is dropped from every line", "jnjson.cho", "    if number == 1 && len(out) >= 3 && int_of(out[0]) == 239", "    if len(out) >= 3 && int_of(out[0]) == 239"),

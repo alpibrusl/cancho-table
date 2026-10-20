@@ -114,7 +114,7 @@ def _groups(rng, n, pool, dup, empty_ok=True):
     return out[:n]
 
 
-def _table(rng, names, keys, kinds_at, key_at, extras=0, tag=""):
+def _table(rng, names, keys, key_at, tag=""):
     """Rows of `names` with `keys` in the column `key_at`, the other columns small texts and integers (the roles of a name are its last letter, as join_ref3 has them)."""
     rows = []
     for i, k in enumerate(keys):
@@ -133,26 +133,28 @@ def _table(rng, names, keys, kinds_at, key_at, extras=0, tag=""):
     return rows
 
 
-def sorted_case(rng, kind, np_rows=30, nb_rows=40, dup=4, using=False, composite=False, extras=0, prefix="", names=("pk", "pg", "pv", "pt"), bnames=("bk", "bg", "bv", "bt"), key_pool=None):
-    """An R3.Case whose two tables are sorted by the key. `kind` is a key of POOLS. The probe's key is the column `pk`, the build's `bk`; with `composite` a second pair joins `pg` to `bg` (text), and the
-    tables are sorted by the two keys. With `using` the key is the shared name `k`. Pairs are [(pk, bk, kind, using)] in the form join_ref2 has them ('int', ('dec', 2), 'float' and, for the date types,
-    the same words); `extras` adds wide text columns to the build."""
+def sorted_case(rng, kind, np_rows=30, nb_rows=40, dup=4, using=False, composite=False, extras=0, prefix="", names=("pk", "pg", "pv", "pt"), bnames=("bk", "bg", "bv", "bt"), key_pool=None, pk_at=0, bk_at=0):
+    """An R3.Case whose two tables are sorted by the key. `kind` is a key of POOLS. The probe's key is the column `pk`, the build's `bk` (at the places `pk_at` and `bk_at`, which may differ); with
+    `composite` a second pair joins `pg` to `bg` (text), and the tables are sorted by the two keys. With `using` the key is the shared name `k`. Pairs are [(pk, bk, kind, using)] in the form join_ref2 has them
+    ('int', ('dec', 2), 'float' and, for the date types, the same words); `extras` adds wide text columns to the build."""
     k, pool = POOLS[kind]
     if key_pool is not None:
         pool = key_pool
     pn, bn = list(names), list(bnames)
     if using:
         pn[0], bn[0] = "k", "k"
+    pn = R3._names(pn, pk_at)
+    bn = R3._names(bn, bk_at)
     pkeys = _groups(rng, np_rows, pool, dup)
     bkeys = _groups(rng, nb_rows, pool, dup)
-    P = _table(rng, pn, pkeys, None, 0, tag="p")
-    B = _table(rng, bn, bkeys, None, 0, tag="b")
+    P = _table(rng, pn, pkeys, pk_at, tag="p")
+    B = _table(rng, bn, bkeys, bk_at, tag="b")
     for r in B:
         r.extend(["w%d%s" % (i, rng.choice("abcdefgh")) for i in range(extras)])
     bn = bn + ["w%dx" % i for i in range(extras)]
-    pairs = [(0, 0, k, using)]
+    pairs = [(pk_at, bk_at, k, using)]
     if composite:
-        pairs.append((1, 1, None, False))
+        pairs.append((pn.index("pg"), bn.index("bg"), None, False))
     pks = [p[0] for p in pairs]
     bks = [p[1] for p in pairs]
     kinds = [p[2] for p in pairs]

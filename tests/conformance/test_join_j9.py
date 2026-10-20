@@ -110,6 +110,8 @@ def scenes(seed=9):
     out.append(("int, two pairs", lambda: R9.sorted_case(rng, "int", 30, 40, dup=5, composite=True)))
     out.append(("USING, text", lambda: R9.sorted_case(rng, "text", 30, 40, dup=5, using=True)))
     out.append(("USING, int", lambda: R9.sorted_case(rng, "int", 30, 40, dup=5, using=True)))
+    out.append(("keys in other columns", lambda: R9.sorted_case(rng, "text", 30, 40, dup=5, pk_at=2, bk_at=1)))
+    out.append(("int keys in other columns, two pairs", lambda: R9.sorted_case(rng, "int", 30, 40, dup=5, composite=True, pk_at=3, bk_at=2)))
     out.append(("prefix", lambda: R9.sorted_case(rng, "text", 20, 30, dup=4, prefix="r_", names=("k", "g", "v", "t"), bnames=("k", "g", "v", "t"))))
     out.append(("one group", lambda: R9.sorted_case(rng, "text", 25, 25, dup=1, key_pool=["same"])))
     out.append(("all distinct", lambda: R9.sorted_case(rng, "text", 25, 25, dup=1, key_pool=["k%03d" % i for i in range(200)])))
@@ -289,7 +291,7 @@ class Plans(unittest.TestCase):
             return None
         a = env.argv(plan, "json") + ([] if plan.get("limit") is not None else BIGPAGE)
         j = run(*a)
-        self.assertEqual(j.status, 0, "%s: %r %r" % (tag, j.stdout[:500], j.stderr[:300]))
+        self.assertEqual(j.status, 0, "%s: %r %r %r" % (tag, j.stdout[:500], j.stderr[:300], a))
         self.assertEqual(validate(j), [], tag)
         data = j.data()
         self.assertEqual((data["columns"], data["rows"]), ([as_text(x) for x in want[1]], [[as_text(x) for x in r] for r in want[2]]), tag)
@@ -500,7 +502,7 @@ class Unsorted(unittest.TestCase):
         env = Env(case)
         try:
             self.assertEqual(env.run(env.plan("inner"), "csv").status, 0)
-            text_case = R3.Case("txt", case.P, case.B, [(0, 0, None, False)], "", False)
+            text_case = R3.Case("txt", case.P, (["bk", "bg", "bv", "bt"], [["10", "x", "1", "p2"], ["9", "x", "1", "p1"]]), [(0, 0, None, False)], "", False)
             env2 = Env(text_case)
             try:
                 d = self.detail(env2.run(env2.plan("inner"), "json"))
@@ -539,7 +541,7 @@ class Unsorted(unittest.TestCase):
         finally:
             env.cleanup()
         P2 = [["ab", "1", "1", "p0"], ["a", "10", "1", "p1"]]
-        case2 = R3.Case("two2", (["pk", "pg", "pv", "pt"], P2), (["bk", "bg", "bv", "bt"], [list(r) for r in P2]), pairs, "", False)
+        case2 = R3.Case("two2", (["pk", "pg", "pv", "pt"], P2), (["bk", "bg", "bv", "bt"], [list(r) for r in P]), pairs, "", False)
         env = Env(case2)
         try:
             d = self.detail(env.run(env.plan("inner"), "json"))
@@ -557,6 +559,12 @@ class Unsorted(unittest.TestCase):
             ok = env.run(env.plan("inner", jw=R3.leaf("bg", "!=", "drop")), "csv")
             self.assertEqual(ok.status, 0, ok.stderr)
             self.assertEqual(ok.stdout.decode().splitlines()[1:], ["a,x,1,p1,a,x,1,q1", "c,x,1,p2,c,x,1,q4"])
+            # and so does a leading condition of --where that names the --join file, for an inner join (applied before the row is held)
+            pushed = env.run(env.plan("inner", where=R3.leaf("bg", "!=", "drop")), "csv")
+            self.assertEqual(pushed.status, 0, pushed.stderr)
+            self.assertEqual(pushed.stdout, env.run(env.plan("inner", where=R3.leaf("bg", "!=", "drop")), "csv", sorted_=False).stdout)
+            left = env.run(env.plan("left", where=R3.leaf("bg", "!=", "drop")), "json")
+            self.assertEqual(self.detail(left)["row"], 3)
             bad = env.run(env.plan("inner"), "json")
             d = self.detail(bad)
             self.assertEqual((d["input"], d["row"], d["key"], d["previous_key"]), ("build", 3, ["b"], ["z"]))
@@ -724,6 +732,26 @@ class Bounded(unittest.TestCase):
         finally:
             env.cleanup()
 
+    def test_a_group_that_does_not_fit_beside_the_window_says_what_the_window_has(self):
+        keys = ["k%03d" % i + "x" * 60 for i in range(40)]
+        P = [[k, "g", "1", "p%d" % i] for i, k in enumerate(keys)]
+        B = [[k, "g", "1", "b%d" % i] for i, k in enumerate(keys)]
+        case = R3.Case("share", (["pk", "pg", "pv", "pt"], P), (["bk", "bg", "bv", "bt"], B), [(0, 0, None, False)], "", False)
+        env = Env(case)
+        try:
+            need, rows, key = window_need(case, "inner")
+            plan = env.plan("inner", group=[("pk", "text")], aggs=[("count", None)])
+            # the window has the flag less its half, and the groups the half: 40 group keys of 64 bytes do not fit in the half of 2 * need
+            low = env.run(plan, "json", ["--max-state-bytes", str(2 * need)])
+            self.assertEqual(low.status, 8, low.stdout[:300])
+            e = low.error()
+            d = e["detail"]
+            self.assertEqual((e["rule"], d["holder"], d["build_bytes"], d["limit"]), ("limit.state-too-large", "groups", need, 2 * need))
+            ok = env.run(plan, "csv", ["--max-state-bytes", str(40 * need)])
+            self.assertEqual(ok.status, 0, ok.stderr[:300])
+        finally:
+            env.cleanup()
+
     def test_the_peak_resident_set_does_not_grow_with_the_build(self):
         from test_join_j7_prune import peak_rss
         peaks = {}
@@ -754,6 +782,154 @@ class Bounded(unittest.TestCase):
 
 
 # ---- D: threads ------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+def canon(e):
+    """A refusal without the flag in the arguments of its repairs (a retry repeats the call it repairs)."""
+    text = json.dumps(e, sort_keys=True).replace('"--join-sorted", ', "").replace(', "--join-sorted"', "")
+    return json.loads(text)
+
+
+class Refusals(unittest.TestCase):
+    """B: a file that the reader or the plan refuses is refused as the call without the flag refuses it: the same rule, row, line and facts, whichever file it is."""
+
+    P = "k,pv\n" + "".join("%s,%d\n" % (k, i) for i, k in enumerate("aabbccddeeff"))
+    B = "k,bv\n" + "".join("%s,%d\n" % (k, i) for i, k in enumerate("aabcdefg"))
+
+    def both(self, p=None, b=None, flags=(), fmt="json", stdin=False):
+        s = Scratch()
+        try:
+            s.write("p.csv", self.P if p is None else p)
+            s.write("b.csv", self.B if b is None else b)
+            base = ["--root", s.dir, "--join", "b.csv", "--on", "k=k", "--join-prefix", "r_", "--format", fmt, *flags]
+            m = run(*base, FLAG, "p.csv")
+            h = run(*base, "p.csv")
+            return m, h
+        finally:
+            s.cleanup()
+
+    def same(self, tag, **kw):
+        m, h = self.both(**kw)
+        self.assertEqual(h.status, 8 if "status" not in kw else kw["status"], "%s: the hash join: %r" % (tag, h.stdout[:300]))
+        self.assertEqual(m.status, h.status, "%s: %r %r" % (tag, m.stdout[:400], m.stderr[:200]))
+        self.assertEqual(canon(m.error()), canon(h.error()), tag)
+        return m.error()
+
+    def test_a_cell_that_is_not_of_its_type_in_either_file(self):
+        for side in ("p", "b"):
+            for pos in (2, 6):
+                p = "k,pv\n" + "".join("%d,%d\n" % (i // 2 + 1, i) for i in range(12))
+                b = "k,bv\n" + "".join("%d,%d\n" % (i // 2 + 1, i) for i in range(8))
+                lines = (p if side == "p" else b).split("\n")
+                lines[pos] = "x" + lines[pos]
+                kw = {"p": "\n".join(lines), "b": b} if side == "p" else {"p": p, "b": "\n".join(lines)}
+                s = Scratch()
+                try:
+                    s.write("p.csv", kw["p"])
+                    s.write("b.csv", kw["b"])
+                    a = ["--root", s.dir, "--join", "b.csv", "--on", "k=k:int", "--join-prefix", "r_", "--format", "json"]
+                    m = run(*a, FLAG, "p.csv")
+                    h = run(*a, "p.csv")
+                    self.assertEqual((m.status, h.status), (8, 8), (side, pos, m.stdout[:300]))
+                    self.assertEqual(canon(m.error()), canon(h.error()), (side, pos))
+                    self.assertEqual(m.error()["rule"], "value.not-integer")
+                finally:
+                    s.cleanup()
+
+    def test_ragged_rows_bad_quotes_and_long_lines_in_either_file(self):
+        cases = []
+        for side in ("p", "b"):
+            text = self.P if side == "p" else self.B
+            lines = text.split("\n")
+            for name, edit in (("ragged", lambda l: l + ",extra"), ("bad quote", lambda l: l.replace(",", ',"x"y', 1)), ("unterminated", lambda l: l.replace(",", ',"x', 1)),
+                               ("long", lambda l: l + "," + "y" * 80)):
+                for pos in (3, 7):
+                    ls = list(lines)
+                    ls[pos] = edit(ls[pos])
+                    cases.append((side, name, pos, "\n".join(ls)))
+        for side, name, pos, text in cases:
+            kw = {"p": text} if side == "p" else {"b": text}
+            tag = (side, name, pos)
+            m, h = self.both(flags=["--max-line-bytes", "60"], **kw)
+            self.assertEqual(h.status, 8, (tag, h.stdout[:300]))
+            self.assertEqual((m.status, canon(m.error())), (h.status, canon(h.error())), tag)
+
+    def test_more_rows_than_max_rows_in_either_file(self):
+        # the build has 8 rows and FILE 12: past 5 the build is refused, past 9 FILE is cut and says so
+        m, h = self.both(flags=["--max-rows", "5"])
+        self.assertEqual((m.status, h.status), (8, 8))
+        self.assertEqual(m.error()["rule"], "limit.too-many-rows")
+        self.assertEqual(canon(m.error()), canon(h.error()))
+        m, h = self.both(flags=["--max-rows", "9"])
+        self.assertEqual((m.status, h.status), (0, 0))
+        self.assertEqual(m.data(), h.data())
+        self.assertIs(m.data()["truncated"], True)
+
+    def test_a_join_where_that_refuses_a_cell_of_the_build(self):
+        b = "k,bv\na,1\na,x\nb,3\n"
+        m, h = self.both(b=b, flags=["--join-where", "bv:int > 0"])
+        self.assertEqual((m.status, h.status), (8, 8))
+        self.assertEqual(canon(m.error()), canon(h.error()))
+        self.assertEqual(m.error()["rule"], "value.not-integer")
+
+    def test_json_lines_files_that_the_reader_refuses(self):
+        s = Scratch()
+        try:
+            s.write("p.jsonl", '{"k":"a","pv":"1"}\n{"k":"b","pv":"2"}\n{"k":"c"}\n')
+            s.write("b.jsonl", '{"k":"a","bv":"1"}\n{"k":"b","bv":"2"}\n{"k":"c","bv":3}\n')
+            s.write("bad.jsonl", '{"k":"a","bv":"1"}\n{"k":"b","bv":\n')
+            a = ["--root", s.dir, "--join", "b.jsonl", "--on", "k=k", "--join-prefix", "r_", "--format", "json", "--input-format", "jsonl", "--fields", "k,pv", "--join-input-format", "jsonl", "--join-fields", "k,bv"]
+            m = run(*a, FLAG, "p.jsonl")
+            h = run(*a, "p.jsonl")
+            self.assertEqual((m.status, h.status), (8, 8), m.stdout[:300])
+            self.assertEqual(canon(m.error()), canon(h.error()))
+            self.assertEqual(m.error()["rule"], "parse.jsonl-missing-field")
+            a[a.index("b.jsonl")] = "bad.jsonl"
+            s.write("p.jsonl", '{"k":"a","pv":"1"}\n')
+            m = run(*a, FLAG, "p.jsonl")
+            h = run(*a, "p.jsonl")
+            self.assertEqual((m.status, h.status), (8, 8), m.stdout[:300])
+            self.assertEqual(canon(m.error()), canon(h.error()))
+            self.assertEqual(m.error()["rule"], "parse.jsonl-syntax")
+        finally:
+            s.cleanup()
+
+    def test_more_rows_than_max_rows_in_json_lines_files(self):
+        s = Scratch()
+        try:
+            s.write("p.jsonl", "".join('{"k":"%s","pv":"%d"}\n' % (k, i) for i, k in enumerate("aabbccddeeff")))
+            s.write("b.jsonl", "".join('{"k":"%s","bv":"%d"}\n' % (k, i) for i, k in enumerate("aabcdefg")))
+            a = ["--root", s.dir, "--join", "b.jsonl", "--on", "k=k", "--join-prefix", "r_", "--format", "json", "--input-format", "jsonl", "--fields", "k,pv", "--join-input-format", "jsonl", "--join-fields", "k,bv"]
+            for most, status in (("5", 8), ("9", 0), ("12", 0)):
+                m = run(*a, "--max-rows", most, FLAG, "p.jsonl")
+                h = run(*a, "--max-rows", most, "p.jsonl")
+                self.assertEqual((m.status, h.status), (status, status), most)
+                if status:
+                    self.assertEqual(canon(m.error()), canon(h.error()), most)
+                else:
+                    self.assertEqual(m.data(), h.data(), most)
+        finally:
+            s.cleanup()
+
+    def test_a_filtered_probe_row_out_of_order_is_not_read(self):
+        # the leading text condition of --where drops the row before its key is read: the order is the order of the keys the join reads
+        p = "k,pv\na,1\nz,drop\nb,2\nc,3\n"
+        s = Scratch()
+        try:
+            s.write("p.csv", p)
+            s.write("b.csv", self.B)
+            a = ["--root", s.dir, "--join", "b.csv", "--on", "k=k", "--join-prefix", "r_", "--format", "csv"]
+            ok = run(*a, "--where", "pv != 'drop'", FLAG, "p.csv")
+            self.assertEqual(ok.status, 0, ok.stderr)
+            self.assertEqual(ok.stdout, run(*a, "--where", "pv != 'drop'", "p.csv").stdout)
+            self.assertEqual(run(*a, FLAG, "p.csv").status, 8)
+        finally:
+            s.cleanup()
+
+    def test_a_grouped_plan_over_a_file_the_reader_refuses(self):
+        m, h = self.both(p=self.P.replace("c,4", "c,4,5"), flags=["--group", "k", "--agg", "count"])
+        self.assertEqual((m.status, h.status), (8, 8))
+        self.assertEqual(canon(m.error()), canon(h.error()))
 
 
 class Threads(unittest.TestCase):
@@ -875,7 +1051,7 @@ class Surface(unittest.TestCase):
 
     def test_the_mcp_definition_has_the_flag(self):
         text = (ROOT / "generated" / "mcp" / "tools.cho").read_text()
-        self.assertIn("join_sorted", text)
+        self.assertIn("join-sorted", text)
 
     def test_a_sorted_join_of_a_semi_and_anti_with_a_prefix_is_still_refused_as_before(self):
         env = self.small()

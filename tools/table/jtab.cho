@@ -43,6 +43,11 @@ pub fn empty[&h](heap: &!h Heap) -> [heap] JTab {
     return JTab { keys: gmap.empty(heap, 1024), head: box_slice(heap, 1024, 0), tail: box_slice(heap, 1024, 0), rows: buffer.empty(heap, 65536), start: box_slice(heap, 1024, 0), next: box_slice(heap, 1024, 0), nrows: 0, held: 0 };
 }
 
+// A table for a few keys and rows (docs/joins.md section 23: the window of `--join-sorted` is made again for each key of the probe, so it starts small and grows as the table does).
+pub fn small[&h](heap: &!h Heap) -> [heap] JTab {
+    return JTab { keys: gmap.empty(heap, 16), head: box_slice(heap, 16, 0), tail: box_slice(heap, 16, 0), rows: buffer.empty(heap, 256), start: box_slice(heap, 16, 0), next: box_slice(heap, 16, 0), nrows: 0, held: 0 };
+}
+
 // The same ints in storage twice as large.
 fn grow_ints[&h](heap: &!h Heap, b: Box[[int]]) -> [heap] Box[[int]] {
     var n = 0;

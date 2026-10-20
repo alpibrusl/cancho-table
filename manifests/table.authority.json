@@ -94,6 +94,15 @@
     "at_most",
     "at_most_j",
     "authority",
+    "b_eof",
+    "b_have",
+    "b_line",
+    "b_pending",
+    "b_row",
+    "b_size",
+    "b_started",
+    "b_stop",
+    "bare",
     "bare",
     "bare_as_name",
     "bare_tail",
@@ -123,6 +132,7 @@
     "classify",
     "closing",
     "clz64",
+    "cmp_keys",
     "cmp_one",
     "cmp_pre",
     "cmp_rest",
@@ -426,6 +436,7 @@
     "largest",
     "lc",
     "ldexp",
+    "le32",
     "lead_bits",
     "left_rows",
     "left_state",
@@ -767,7 +778,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 331,
+  "folded_operators": 338,
   "folded_calls": 0,
-  "functions": 1300
+  "functions": 1322
 }

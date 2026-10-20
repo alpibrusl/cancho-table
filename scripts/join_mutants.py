@@ -93,7 +93,7 @@ MUTANTS = [
     ("a join is read by several threads as a file is", "explain.cho", '        if joining {\n            why = "the join is read on one core";\n        } else if stdin {', '        if stdin {'),
     ("a join is explained as a file", "table.cho", "        if joining {\n            let (t4, e4, d4) = jnexplain.settle(", "        if false {\n            let (t4, e4, d4) = jnexplain.settle("),
     ("explain forgets that a join reads the whole build first", "explain.cho", '        reads = "the whole build file, then the probe until the page is full";\n        if unbounded {', '        reads = "until the page is full";\n        if unbounded {'),
-    ("the explain says the file will pass", "jnexplain.cho", "    if most > budget {\n        o = buffer.append(heap, o, \"true\");", "    if most > budget + 1000000000 {\n        o = buffer.append(heap, o, \"true\");"),
+    ("the explain says the file will pass", "jnexplain.cho", "    if most > budget || merging {\n        o = buffer.append(heap, o, \"true\");", "    if most > budget + 1000000000 || merging {\n        o = buffer.append(heap, o, \"true\");"),
     # J2: typed keys and composite keys (jnkey.cho)
     ("a typed key is compared as text", "jnhead.cho", "                    contents(kw)[3 * j + 2] = vec.get(onr.types, j);", "                    contents(kw)[3 * j + 2] = 0;"),
     ("a typed key keeps the bytes of the cell", "jnkey.cho", "                o = put_value_key(heap, o, v);", "                o = buffer.append(heap, o, record[first..last]);"),
@@ -172,7 +172,7 @@ MUTANTS = [
     ("explain forgets the keys-only bound", "jnexplain.cho", "    if keys_only {\n        return body + (44 + extra) * rows;\n    }\n    return 2 * body + (76 + extra) * rows;\n}\n\n// The same for a build of JSON lines", "    if false {\n        return body + (44 + extra) * rows;\n    }\n    return 2 * body + (76 + extra) * rows;\n}\n\n// The same for a build of JSON lines"),
     ("explain lists the shared names of a semi join", "jnexplain.cho", "            if vec.get(onr.using, j) == 1 && jtype <= 1 {", "            if vec.get(onr.using, j) == 1 {"),
     ("explain counts the dropped columns", "jnexplain.cho", "        o = buffer.push_nat(heap, o, np + nk);", "        o = buffer.push_nat(heap, o, np + nb);"),
-    ("explain says the bound is the inner one for a keys-only build", "jnexplain.cho", "    if jtype >= 2 {\n        o = buffer.append(heap, o, \",\\\"counted\\\":\\\"key bytes + 44", "    if jtype >= 20 {\n        o = buffer.append(heap, o, \",\\\"counted\\\":\\\"key bytes + 44"),
+    ("explain says the bound is the inner one for a keys-only build", "jnexplain.cho", "    } else if jtype >= 2 {\n        o = buffer.append(heap, o, \",\\\"counted\\\":\\\"key bytes + 44", "    } else if jtype >= 20 {\n        o = buffer.append(heap, o, \",\\\"counted\\\":\\\"key bytes + 44"),
     # the build and the probe of J1 (hold_text, probe_inner), which are kept as J1 had them: the same mutants, against the code that runs for an inner join of one pair of text
     ("a quoted build key keeps its quotes (the inner build)", "jnread.cho", "    if cells[3 * key + 2] == 0 {\n        let (t2, ok) = jtab.add(", "    if true {\n        let (t2, ok) = jtab.add("),
     ("an empty build key is not held (the inner build)", "jnread.cho", "    let last = cells[3 * key + 1];\n    if cells[3 * key + 2] == 0 {", "    let last = cells[3 * key + 1];\n    if last == first {\n        return (t, scratch, true);\n    }\n    if cells[3 * key + 2] == 0 {"),

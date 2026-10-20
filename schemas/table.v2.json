@@ -852,7 +852,8 @@
                         "grouped single pass",
                         "sorted rows",
                         "stream rows",
-                        "join: build then stream"
+                        "join: build then stream",
+                        "join: merge of two sorted files"
                       ]
                     },
                     "reads": {
@@ -861,7 +862,10 @@
                         "until the page is full",
                         "the whole build file, then the probe until the page is full",
                         "the whole build file, then all the probe rows",
-                        "the whole build file, then every probe row (a grouping or a sort needs every row)"
+                        "the whole build file, then every probe row (a grouping or a sort needs every row)",
+                        "both files in step, each once, until the page is full",
+                        "both files in step, each once, to the end of both",
+                        "both files in step, each once, to the end of both (a grouping or a sort needs every row)"
                       ]
                     },
                     "rows_held": {
@@ -1095,6 +1099,9 @@
                           "additionalProperties": false
                         }
                       ]
+                    },
+                    "sorted": {
+                      "const": true
                     },
                     "role_choice": {
                       "type": "string"

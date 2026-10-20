@@ -32,24 +32,42 @@ SRC = ROOT / "tools" / "table"
 STREAM_BEGIN = "// BEGIN read_stream:"
 STREAM_END = "// END read_stream\n"
 
+# The regions of a source file that a pattern is not counted in, and not applied to, unless the mutant names the region (`file#stream`, `file#merge`): a stretch of code that repeats code of the file for another
+# purpose (the loop for standard input is made from the loop for a file; the merge join of `jnrun` repeats the groups' set-up and the build's refusals), so that the mutants written before it keep their patterns.
+REGIONS = {"stream": (STREAM_BEGIN, STREAM_END), "merge": ("// BEGIN merge:", "// END merge\n")}
 
-def region(text):
-    """The region of table.cho that scripts/stream.py makes (the loop for standard input), or None."""
-    a = text.find(STREAM_BEGIN)
+
+def region(text, name="stream"):
+    """The region `name` of a source (`stream`: the loop that scripts/stream.py makes; `merge`: the merge join's block of jnrun), or None."""
+    begin, end = REGIONS[name]
+    a = text.find(begin)
     if a < 0:
         return None
-    return a, text.index(STREAM_END, a) + len(STREAM_END)
+    return a, text.index(end, a) + len(end)
+
+
+def segments(text):
+    """The text as [(region name or None, text)] in order."""
+    spans = []
+    for name in REGIONS:
+        r = region(text, name)
+        if r:
+            spans.append((r[0], r[1], name))
+    spans.sort()
+    out = []
+    at = 0
+    for a, b, name in spans:
+        out.append((None, text[at:a]))
+        out.append((name, text[a:b]))
+        at = b
+    out.append((None, text[at:]))
+    return out
 
 
 def counted_text(text):
-    """The source as a pattern is counted in it: without the region of table.cho that scripts/stream.py makes from `read_file` (the loop for standard input is a copy
-    of the loop for a file, so each of the loop's patterns occurs in both; a mutant is applied to the first occurrence, which is `read_file`'s, and the copy is the
-    business of scripts/stdin_mutants.py and of the differential of tests/conformance/test_stdin.py)."""
-    a = text.find(STREAM_BEGIN)
-    if a < 0:
-        return text
-    b = text.index(STREAM_END, a) + len(STREAM_END)
-    return text[:a] + text[b:]
+    """The source as a pattern is counted in it: without the regions (the loop for standard input is a copy of the loop for a file, so each of the loop's patterns occurs in both; a mutant is applied to the
+    first occurrence outside the regions, which is `read_file`'s, and the copy is the business of scripts/stdin_mutants.py and of the differential of tests/conformance/test_stdin.py)."""
+    return "".join(t for name, t in segments(text) if name is None)
 
 
 def check(mutants, src=None):
@@ -75,9 +93,9 @@ def check(mutants, src=None):
         if text is None:
             problems.append("mutant %s: no such file %s" % (name, file))
             continue
-        if part == "stream":
-            # a mutant of the loop for standard input: its pattern is counted in that region only
-            r = region(text)
+        if part in REGIONS:
+            # a mutant of a region: its pattern is counted in that region only
+            r = region(text, part)
             n = text[r[0]:r[1]].count(old) if r else 0
         else:
             n = counted_text(text).count(old)
@@ -91,11 +109,15 @@ def check(mutants, src=None):
 
 
 def apply(text, part, old, new):
-    """`text` with the first `old` replaced: in the region of the loop for standard input when `part` is "stream", else outside it (the first occurrence is read_file's)."""
-    if part == "stream":
-        a, b = region(text)
-        return text[:a] + text[a:b].replace(old, new, 1) + text[b:]
-    return text.replace(old, new, 1)
+    """`text` with `old` replaced once: in the region `part` when the mutant names one, else in the text outside the regions."""
+    out = []
+    done = False
+    for name, t in segments(text):
+        if not done and name == (part if part in REGIONS else None) and old in t:
+            t = t.replace(old, new, 1)
+            done = True
+        out.append(t)
+    return "".join(out)
 
 
 def build_and_test(tests, compiler, extra):
