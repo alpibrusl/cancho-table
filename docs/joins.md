@@ -22,6 +22,8 @@
 >
 > **Update 2026-10-16 (the pull request that adds section 21): slice J5 is built** (JSON lines on the probe, on the build or on both: `--input-format jsonl --fields PATHS` for FILE, `--join-input-format jsonl --join-fields PATHS` for the `--join` file, each defaulting to FILE's; and `--join-delimiter` for a csv `--join` file with a delimiter of its own), and section 21 says what it is, where it differs from this document (every narrow reading, numbered), its gates and its numbers. Where it corrects an earlier sentence the sentence says "Corrected by section 21" in place.
 >
+> **Update 2026-10-20 (the pull request that adds section 23): slice J9 is built** (`--join-sorted`, the merge join over two files the user declares sorted by the key: the state is the largest group of equal build keys, the output is key order, the first row out of order is `join.not-sorted`), and section 23 says what it is, where it differs from this document (every narrow reading, numbered), its gates and its numbers. Where it corrects an earlier sentence the sentence says "Corrected by section 23" in place.
+>
 > **Update 2026-10-19 (the pull request that adds section 22): slice J7 is built** (the swap repair of `limit.state-too-large`, and the build that keeps only the columns the plan names), and section 22 says what it is, where it differs from this document (every narrow reading, numbered), its gates and its numbers. Where it corrects an earlier sentence the sentence says "Corrected by section 22" in place.
 >
 > References to code are to `origin/main` at `072ce15` (`file:line`). The branch that adds columns renaming
@@ -48,7 +50,7 @@
 | `--where` | evaluated on the joined row, left to right, stopping at the first false, as everywhere; **the leading run of text-only conditions** that name one side is applied to that side first (probe side always; build side only for inner and semi); `--join-where` filters the build side before it is built (the SQL `ON` clause) | defined, visible in `--explain`, and equal to the unpushed evaluation except for which cells a typed key read can refuse (section 8.1) |
 | `--group`, `--agg`, `--order-by`, `--top`, `--limit`, `--from`, `--format` | work on the joined row unchanged; the build state and the groups/sort rows **share** `--max-state-bytes` | the engine sees one more kind of record, not a new plan (section 8.2) |
 | `--report types` | refused with a join in v1 (`args.conflict`); `table ... --join ... --format csv \| table --report types` does it | a report over padded rows needs its own design (section 8.5) |
-| spill | **not in v1.** Past the bound: the refusal. The designed route past memory is a **merge join over two sorted inputs**, a different contract (section 9) | bounded memory and no hidden disk; no write authority is added |
+| spill | **not in v1.** Past the bound: the refusal. The designed route past memory is a **merge join over two sorted inputs**, a different contract (section 9; **built by section 23**) | bounded memory and no hidden disk; no write authority is added |
 | authority | **unchanged**: the build file is opened with the labels the operand already uses; the gate checks the manifest (section 10) | a join must not widen what `table` may reach |
 | new rules | two: `join.column-collision`, `limit.too-many-join-rows`; every other failure is an existing rule with a `detail.input` saying `probe` or `build` | the refusal table stays small (section 5.6) |
 
@@ -507,7 +509,7 @@ skill's examples are run by `test_skill` (so a join example that stops working f
 `detail.holder: "join-build"`, whose hint reads: "the build side does not fit in memory: filter it with `--join-where`, give it fewer columns by selecting fewer (built in J7, section 22: the build holds only the columns the plan names), make the smaller file the build side (the repair offers it for an inner
 join), or raise `--max-state-bytes`, up to the ceiling `introspect` names (1,073,741,824). There is no join on disk." The same stance as the sort (`docs/backlog.md:96-98`).
 
-**The route that stays inside the philosophy, designed later (J9), is a merge join over inputs the user declares sorted**: `--join-sorted` asserts that both files are in ascending order of the key (bytewise for text, numeric for a typed
+**The route that stays inside the philosophy (J9; built, section 23), is a merge join over inputs the user declares sorted**: `--join-sorted` asserts that both files are in ascending order of the key (bytewise for text, numeric for a typed
 key); the join holds one group of equal build keys at a time (so its state is the largest duplicate group, bounded by the same flag), reads both inputs in one pass each, and **refuses at the first key out of order** (`join.not-sorted`, the
 row, line and both keys; the check costs nothing). The files can be sorted by `table --order-by` (itself bounded by `--max-sort-rows`) or `sort`. Its output order is **key order, not probe order**, which is why it is a different contract
 (a flag, not an automatic fallback) and why it is not in v1: a tool that answered one question in two orders depending on memory would break the same-bytes rule.
@@ -548,7 +550,7 @@ Gram (Linux x86-64) counterparts of EQ, IB, A, ST (with `strace`) and TH are req
 | **J6** | threaded probe, if S0 passes. **Corrected by section 15:** S0 passes for reading and fails for a worker's own output; J6 waits for the cancho change of 15.3, or is built as option (a) under a cap | TH |
 | **J7** | the swap repair; the build keeps only the columns the plan names. **Built: section 22** | the repair is mechanical and tested; the pruned build is byte-identical (a pair of runs per plan) and measures the memory saved |
 | **J8** (optional) | partitioned build | the same bytes, a faster 1M x 1M |
-| **J9** (later) | `--join-sorted` merge join | the route past memory, a different order, its own gates |
+| **J9** | `--join-sorted` merge join. **Built: section 23** | the route past memory, a different order, its own gates |
 
 Each slice is a pull request with its gates written first and failing against `main` (the practice of `docs/mcp.md` section 12.5), with its mutants, and each updates the "what it cannot do" sentences of the README and `docs/index.html` (`scripts/site.py` generates the rule counts).
 
@@ -993,9 +995,9 @@ Peak resident (once, MB): `table` 31, 34, 256, 266; DuckDB (1 thread) 86, 78, 16
 | **J6** threaded probe | **not built** | `--threads 4` is accepted and `--explain` says `work.threads` `{"requested":4,"effective":1,"reason":"the join is read on one core"}`; waits for the change of cancho in 15.3 |
 | **J7** the swap repair; the build keeps only the columns the plan names | **not built** (one thing the row does not ask for is there; **corrected by section 22: built**) | `limit.state-too-large` has `repair.kind` `none` and `data.explain.join.build_state.swap` is `{"offered":false,"reason":"the swap repair arrives with a later slice"}`; the held bytes of an inner or left join do not depend on `--select` (the bound is 260 bytes with no `--select`, with `--select id` and with `--select city`), so the build holds the whole record. The keys-only build of `semi` and `anti` (135 bytes) is J2's, not J7's |
 | **J8** (optional) partitioned build | **not built** | no flag, no code; `--explain` has no `partitions` |
-| **J9** (later) `--join-sorted` merge join | **not built** | `table --join-sorted --join b.csv --on id a.csv` is `args.unknown-flag` |
+| **J9** `--join-sorted` merge join | **built (section 23)** | `table --join-sorted --join b.csv --on id a.csv` joins two files sorted by `id`; a file out of order is `join.not-sorted` |
 
-What remains of each row, after this pull request builds J3b: J5 (the build side's own reader flags and a jsonl probe or build), J6 (the threaded probe, blocked on cancho), J7 (the swap repair as a `choose` option of `limit.state-too-large`, and the pruned build; **corrected by section 22: built**), J8, J9. **J4 has nothing left in its row**; what the design says of it in 7.2 (the threads) is J6's.
+What remains of each row, after this pull request builds J3b: J5 (the build side's own reader flags and a jsonl probe or build), J6 (the threaded probe, blocked on cancho), J7 (the swap repair as a `choose` option of `limit.state-too-large`, and the pruned build; **corrected by section 22: built**), J8 (J9 is built, section 23). **J4 has nothing left in its row**; what the design says of it in 7.2 (the threads) is J6's.
 
 
 ## 20. J3b as built (2026-10-16)
@@ -1150,7 +1152,7 @@ A JSON-lines row costs the parse of the line (`jrec.extract`, a scan of the line
 * The oracle's DuckDB on gram (not installed there): the SQLite and Python references ran there; DuckDB ran on the Mac.
 * The instruction counter on gram (`perf_event_paranoid` 4, not changed): replaced by callgrind, as in sections 17 to 20.
 * `manifest.py --check --against` the sources of `cancho-tools` (CI does it).
-* Not built, as the design says: the threaded probe (J6: a join reads a jsonl side on one core), the swap repair and the pruned build (J7; **built by section 22**), the partitioned build (J8), the merge join (J9); `--report` over a join; a per-side `--absent`.
+* Not built, as the design says: the threaded probe (J6: a join reads a jsonl side on one core), the swap repair and the pruned build (J7; **built by section 22**), the partitioned build (J8), the merge join (J9; **built by section 23**); `--report` over a join; a per-side `--absent`.
 
 ## 22. J7 as built (2026-10-19)
 
@@ -1224,6 +1226,90 @@ The accounted bytes fall by the bytes of the cells not held; the resident set fa
 * Builds above 300,000 rows in the memory table, other widths than the three, the worst ratio of resident to accounted over all shapes (as in section 16.3), `--threads` above 4 (the join is read on one core).
 * A `--query` repair: the text of a query is not rewritten (reading 5, code 3); the option for a query is `none`.
 * The exchange under `--join-where`, `--join-prefix`, `#N` names or a typed shared-name key: refused with a reason (reading 5); no attempt was made to rewrite them.
-* Not built, as the design says: the threaded probe (J6), the partitioned build (J8), the merge join (J9); `--report` over a join.
+* Not built, as the design says: the threaded probe (J6), the partitioned build (J8), the merge join (J9; **built by section 23**); `--report` over a join.
 * Still open: the groups' and the sorted rows' share of the flag is not checked by the exchange (reading 6).
 * The Mac, and `gram` (Linux x86-64, 16 cores) of the earlier sections: every figure of this section is from the machine named at its head; the conformance suite was run once here before the last push and by CI.
+
+## 23. J9 as built (2026-10-20)
+
+> Everything below is **measured** unless it says *computed* or *reading*. Conditions: one Linux x86-64 virtual machine (4 cores shared with other work, kernel 6.18, Python 3.13, valgrind 3.22), compiler `cancho` e47d647, the build of `origin/main` at `5a439ee` as `main`. **No clock time is claimed anywhere in this section**: the machine is shared and has no instruction counter, so the figures are bytes (accounted, and resident from `wait4`), instruction counts (callgrind, exact whatever the load) and counts of cases.
+
+### 23.1 What was built
+
+* **`--join-sorted`** (a flag, never a fallback): it says that FILE and the `--join` file are both in ascending order of the key, and the join is a merge of the two. Each file is read once, in step; the rows of **one key of the `--join` file** are held at a time (the *window*: a table of its own, the table the hash join looks keys up in, made again when the key of the probe row moves on). The state is the largest group of equal keys that some probe row meets, counted in `--max-state-bytes` by the formula of section 6.2 (a held row costs its record + 16, the key + 60; a semi or anti join holds the key alone, at key bytes + 44). A `--join` file of any size runs when no such group passes the bound. The `--join` file's rows are not pruned (section 22): the window holds whole records.
+* **The answer is the answer of the same call without the flag**, byte for byte, for every plan (reading 1). The emission is the hash join's own (`jnread.probe_one`, `jn3pass.probe_g`): the joined records, the padding of a left join, the semi and anti rows, `--max-join-rows`, `--where` and its split, `--join-where`, the groups and the sorter. For a FILE in order of the key that is **key order**: each row of FILE, then the rows of the `--join` file with its key, in their order.
+* **`join.not-sorted`** (new rule, exit 8, repair `none`): the first row of either file whose key is below the key of the row before it. `detail.input` (`probe` or `build`), `detail.path`, `detail.row`, `detail.line`, `detail.previous_row`, `detail.previous_line`, `detail.key` and `detail.previous_key` (the key cells as written, quotes undone, at most 64 bytes each) and `detail.key_truncated`. The claim is checked and never trusted.
+* **`limit.state-too-large`** with `detail.holder` **`join-group`** (no new tag): the rows of one key of the `--join` file that the window holds pass the bound alone. `detail.limit`, `held` and `rows_held` (before the row that did not fit), `build_row`, `build_line`, `group_key` (the cells of the key) and `group_key_truncated`. No swap is offered (`repair.kind` `none`): the window is not the file.
+* **The flag set**: `--join-sorted` without `--join` is `args.required-flag`, with `--query` is `args.conflict` (a query has no spelling for it), with `--report` is the `args.conflict` a join already has. `--explain` says `join.sorted: true`, the order (`key order ...`), the work (`join: merge of two sorted files`, `first_output_after` the first probe row and the group of its key) and `join.not-sorted` among the refusals the data could still give; `build_state.accounted_at_most` is `null` and `may_pass_bound` true (what a group costs cannot be had from the size), `swap` is not offered. A call without the flag has the explain it had.
+* Code: `jnmerge.cho` (new: `next_row`, the reader of a record of either file in csv or JSON lines; `advance_build`, the build cursor; `sync_window`; `merge_pass`; `cmp_keys`), a block of `jnrun.run` (the set-up of the groups and the refusals of the build are repeated there, between `// BEGIN merge` and `// END merge`, a region that `scripts/mutlib.py` does not count a pattern of the hash join in), `jnfail.not_sorted` and `jnfail.group_too_large`, `jtab.small`, the rule row, the usage and help, `jnexplain` and `explain`. **The authority row is unchanged** (`scripts/manifest.py --check`: `args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write`; the merge only reads the two files it already opens). No loop of the hash join is edited.
+
+### 23.2 Where J9 differs from sections 1 to 22 (every narrow reading)
+
+1. **The output is the hash join's, and for a sorted FILE that is key order.** Section 9 says the output order of the merge is "key order, not probe order", a different contract from the hash join's. Because FILE must itself be in order of the key, its order *is* key order, and the two definitions agree: the merge gives each row of FILE, in file order, and for it the rows of the `--join` file of its key in theirs (the cross product of a group is probe-major). The different contract is the one of the *inputs* (declared, checked, sorted) and of the *state* (one group), not another order of rows. **The consequence is a gate that can fail**: the bytes of the merge equal the bytes of the call without the flag (`Merge`, `Plans`, `Threads`), checked on every run; and the rows equal a sorted-merge written as two cursors with no index (`join_ref9.merge_ref`). A design that wanted another order within a key (build-major) would be a different flag.
+2. **The order of a key.** A text key is compared bytewise, as unsigned bytes (the cell with its quotes undone; a shorter cell first when it is a prefix of the other; an empty cell is the smallest; `B` before `a`). A typed key is compared by its value: its 8 bytes are the value plus 2^63, big endian (section 5.2), so `9` comes before `10` for `:int`, `007` and `7` are one key, and two spellings of one instant are one key. Several pairs are compared pair by pair, left to right, each by its own rule (`("a", 10)` before `("ab", 1)`). A key may repeat (the check is *not below*, not *strictly above*).
+3. **What is checked, and when.** The key of a row is checked when it is read, against the key of the last row of the same file whose key was read. A row that `--join-where` rejects, or that a leading condition of `--where` removes before the join (section 8.1), has its key unread and so is not checked: the order is the order of the keys the join reads. The two files are read in step, so the refusal is the first met in that order, not "the build before the probe" of section 5.6; a file with a typed key cell that is not of its type, a ragged row, a bad quote or a long line is refused by its own rule with the same facts as without the flag (`Refusals`), at the point the merge reaches it, after the rows of the keys before it. A ragged row of the `--join` file ends the read at once (without the flag the build is read whole first, so no row is written).
+4. **The `--join` file is read to its end** when the run ends because FILE does: a disorder, a bad cell or a row past `--max-rows` after the last key of FILE is found, and refused. A run that stops early does not read the rest: a full page (`--limit`, JSON's default page) or `--max-join-rows` ends the read where it is, and a disorder past that point is not found (`test_a_full_page_ends_the_read...`).
+5. **The window is the group a probe row meets, and nothing else.** A group of the `--join` file that no probe row has is read and left, and costs nothing: the bound is *the largest group some probe row meets*. The window is exact (accepted at N, refused at N - 1: `Bounded`), computed from the files by `test_join_j9.window_need`.
+6. **One flag shared by the window and the groups (a choice).** A plan that groups or sorts gives the groups `floor(--max-state-bytes / 2)` and the window the rest: the window is not known when the first group is made (it is not for the hash join either, but there the build is held first). `detail.build_bytes` of a refusal of the groups is what the window was given. A plan that does neither gives the window the whole flag.
+7. **Standard input and threads.** Standard input can be FILE (it is streamed, as always); the `--join` file is a file. `--threads` is read on one core with the same bytes, as for every join (`work.threads` says so). Each file is read once, so there is nothing for a thread to split.
+8. **JSON lines and delimiters work**: either file may be JSON lines or csv with a delimiter of its own; the key is read from the same csv record the hash join reads (`jrec.csv_record`).
+9. **`--query` has no spelling for it** (reading: `args.conflict`). A later slice may give the query form a word; it would be a pure translation to the flag.
+10. **Pruning is not applied** (section 22): the window holds whole records, and the bound is the formula over them. A group of narrow records is cheap whatever the plan.
+11. **Early version of the key display.** `detail.key` is the cells as the file writes them (quotes undone), not the key bytes, so a typed key shows `007` and not `7`; at most 64 bytes of a cell, with `key_truncated`.
+
+### 23.3 The gates
+
+Written before the code (`30c0c73`, tests alone, pushed alone), each able to fail:
+
+* **A, the differential** (`Merge`, `Plans`): sorted tables of every kind of key (text with empty cells, unicode, quoted and awkward cells; `:int`, `:dec(2)`, `:float`, `:date`, `:timestamp` and `:datetime` with several spellings of a value; two pairs; USING; the key in other columns than the first; a prefix), duplicate groups of 1 to 6 rows on either side, a group of 150 x 160 rows, empty files and empty keys, CRLF, BOM, `quote_all`, a missing final newline, csv with `,` `;` and tab, JSON lines on either side: for every join type the rows are those of the sorted-merge reference, in key order, **and the bytes of the call without the flag**; and **191 random plans** of J3's generator (`--where` and its split, `--join-where`, `--select`, `--group`, `--agg`, `--sort`, `--order-by`, `--top`, `--limit`, `--from`, `--rename`) over six shapes and four combinations of formats equal the hash join's Python reference as json, as csv, from standard input and at four threads with 7-byte ranges.
+* **B, the order** (`Unsorted`, `Refusals`): for every kind of key, either file, every join type: refused at the first row below its predecessor with the row, line, previous row and line, and both keys right (88 runs and more), in csv, JSON lines, `;` and tab, at 1 to 64 threads, from a pipe, past the last probe key, with a tie that is not a disorder, `9` before `10` as an integer and not as text, bytes order and the empty key smallest, two pairs component by component, a row the join does not read, a full page; and the refusals of the readers of either file (a typed cell, a ragged row, a bad quote, an unterminated quote, a long line, `--max-rows`, a refused `--join-where` cell, a JSON-lines line) equal to the call without the flag.
+* **C, bounded memory** (`Bounded`): a build of 600 keys and 3,200 rows (15 times the bound) runs where the hash join is refused (`limit.state-too-large`, `join-build`); the state is the formula over the largest group a probe row meets, accepted at N and refused at N - 1 for the four join types, text, `:int`, composite, `:dec` and USING keys; the refusal names the row, line and key; a group no probe row has costs nothing; the groups share the flag; and the peak resident set of a build of 160,000 rows is no more than 1.5 times that of 20,000 plus 2 MiB and under half of the hash join's.
+* **D, the same bytes** (`Threads`): 7 thread counts x 5 chunk sizes x 4 join types x text and `:int`, file and standard input, csv and json; a page and `--max-join-rows` and `--max-rows` as without the flag.
+* **E, the surface** (`Surface`): the flag, its help and the usage; the rule (exit 8, `never`) and the fixture of `test_rules`; the refusals of the flag set; `--explain`; the MCP definition; **330 fuzzed calls** over 18 cases, sorted and broken, with random plans and junk flags: no trap, every refusal tagged with a rule of the table (225 refused, 132 of them `join.not-sorted`, 105 answered).
+* **F, a call without the flag is what it was** (`Unchanged`): the 166 plans of `scripts/corpus.py` hash to **`fccb01b66dd7518d74611219a6c5aa29`** on `main`'s binary and on this branch's; and with `MAIN_TABLE` naming `main`'s binary, 16 cases x 4 join types x json and csv x three argument sets (`--explain`, `--threads 4`) give **the same status, standard output and standard error** (384 calls compared).
+* **M, mutants** (`scripts/join_sorted_mutants.py`, `--check` in CI): **55 mutants, run for real in 4 shards on the final tree (14, 14, 14 and 13): 55 killed, 0 survived.** The first run left two: a refused cell of `--join-where` in the build and a full page were each given a test, and the walk of several pairs (`iy = iy + lx` for `iy = iy + ly`) is argued equivalent in the docstring of the script (the advance is reached only after two components compared equal, and equal components have equal lengths) and is not in the list.
+* **EXPL, MCP, AU**: `scripts/manifest.py --check` and the embedded manifest are unchanged in labels; `schemas.py`, `mcp.py`, `site.py`, `seo_check.py` and `publish_numeric.py --check` pass; the explain schema gains `join.sorted` and three values of `work.reads` and one of `work.class`.
+
+**Against `main`'s binary** (`TOOLBOX_BIN` the `build` directory of `origin/main` at `5a439ee`; each test counted once whatever its sub-tests): at the first commit of the pull request (the tests alone) the two new files ran as follows (re-counted on the final test files with `main`'s binary): `test_join_j9` 51 tests, **4 passed and 47 not passed** (529 failing sub-tests; 39 whole-test failures and 1 error), `test_rules` 5 tests, **2 passed and 3 not passed**; on this branch's binary 51 of 51 and 5 of 5 pass. The 4 that pass on `main` are three of `Unchanged` (the md5 of the 166 plans, the bytes of the plain joins against `main`'s binary, a lookalike flag still unknown) and the MCP definition test, which reads the generated file of the tree and not the binary.
+
+### 23.4 What the merge holds
+
+`scripts/join_sorted_rss.py` (this machine, 4 shared cores, one thread, minimum of 5 runs; peak resident set from `wait4` of a small launcher; the call is `table --root D --join b.csv --on pk=bk --select pk,pt,bk,bg,bv,bt --format csv --max-state-bytes N [--join-sorted] p.csv` with a probe of 2,000 rows in order; the build file has keys `k%09d` in order, in groups of G equal keys, cells of 12 bytes; the accounted bytes are the formula of 6.2 computed by the script from the files and **checked against the program** for both: accepted at N, refused at N - 1):
+
+| build (rows x group) | build file bytes | accounted, merge | accounted, hash join | peak RSS, merge | peak RSS, hash join | call without the flag at the merge's bound |
+|---|---|---|---|---|---|---|
+| 100000 x 1 | 5,000,012 | 135 | 13,500,000 | 3.35 MB | 21.52 MB | exit 8 (`limit.state-too-large`) |
+| 100000 x 100 | 5,000,012 | 6,570 | 6,570,000 | 3.61 MB | 13.97 MB | exit 8 (`limit.state-too-large`) |
+| 300000 x 1 | 15,000,012 | 135 | 40,500,000 | 3.55 MB | 58.47 MB | exit 8 (`limit.state-too-large`) |
+| 300000 x 1000 | 15,000,012 | 65,070 | 19,521,000 | 3.58 MB | 27.19 MB | exit 8 (`limit.state-too-large`) |
+
+Machine `Linux-6.18.44-fc-v140-x86_64` glibc 2.39, 4 cores, load average 1.7 before and after, minimum of 5 runs, one thread. The formula holds for both (accepted at N, refused at N - 1) in all four builds.
+
+**What it shows**: the bound the merge needs is the largest group a probe row meets (135 bytes for a build of unique keys, 65,070 for groups of 1,000), where the hash join needs the whole file (13.5 and 40.5 million). The resident set of the merge is the same 3.4 to 3.6 MB for all four builds: it does not grow with the rows of the build. The hash join's grows with them (and the merge is below it in every cell). The call without the flag at the bound of the merge is `limit.state-too-large` in all four (exit 8), as the gate `Bounded` also shows.
+
+### 23.5 The instruction budget
+
+`scripts/join_callgrind.py --old main --new build/table --all` (callgrind, the cells of section 22.5 and the others; this machine; bound 1.01): **PASS: 38 cells, every ratio of the per-row cost is 1.0000 at four decimals (the worst is 1.0000)**; the total of the join cells is about 7.0 million instructions higher in the large run, a constant per call that cancels in the difference of the two runs (the cause was not investigated further).
+
+**The merge against the hash join on the same sorted files, for the record** (`scripts/join_sorted_callgrind.py`; a probe of N rows and a build of N / 4 rows, a key repeated 4 times in the build, one probe row in five with a key the build lacks; the cost of a row the difference of the counts at 20,000 and 60,000 rows over the difference of the rows; **instructions, not time, and no claim that one is faster**; the window starts at 16 entries and grows):
+
+| cell | hash Ir/row | merge Ir/row | merge / hash |
+|---|---|---|---|
+| text, inner join | 6433.56 | 9143.69 | 1.421 |
+| text, left join | 7055.51 | 9400.29 | 1.332 |
+| text, semi join | 1990.56 | 4332.51 | 2.177 |
+| text, anti join | 1479.87 | 3791.09 | 2.562 |
+| int, inner join | 6786.91 | 9237.51 | 1.361 |
+| int, left join | 7037.40 | 9487.99 | 1.348 |
+| int, semi join | 2273.91 | 4814.07 | 2.117 |
+| int, anti join | 1788.37 | 4239.46 | 2.371 |
+
+The cost of the merge per row is the cost of making the window again for each key of FILE (a table of 16 entries, and a read of the key of the build row); a first version that made it with `jtab.empty` (1,024 entries, 64 KiB of rows) cost 35,000 to 40,000 instructions a row in all eight cells, which is why the window starts small.
+
+### 23.6 What was not measured, and what did not run
+
+* Any clock time (the machine is shared and has no instruction counter); any Mac figure; any figure on a quiet machine; the speed of the merge against another library (neither DuckDB nor csvtk was run on a sorted pair here).
+* A build of more than 300,000 rows in the memory table, other widths than 4 columns of 12 bytes, groups of more than 1,000 rows, `--threads` above 4 (the join is read on one core), a probe of other than 2,000 rows.
+* The quoted text of a typed key is compared after its value is read: the cost of the date types is not separately counted.
+* A threaded merge (a thread would need the reading of the other file at the place its key reaches: a design of its own), a merge that reads FILE unsorted (a different algorithm), a `--query` spelling, and pruning of the window's records.
+* Still open: a disorder past a page that is full (reading 4); the groups' and the window's split of the flag is a choice, not a measurement (reading 6).

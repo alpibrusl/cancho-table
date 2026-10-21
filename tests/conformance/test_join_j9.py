@@ -282,7 +282,7 @@ def describe(plan):
 class Plans(unittest.TestCase):
     """A: the plans of J3 (rows, `--where` and its split, `--join-where`, groups, aggregates, sorts, pages, renames) over sorted files give the hash join's rows."""
 
-    counts = {"plans": 0, "ok": 0}
+    counts = {"plans": 0}
 
     def judge(self, env, plan, tag):
         try:
@@ -1182,6 +1182,7 @@ class Unchanged(unittest.TestCase):
                             n += 1
             finally:
                 env.cleanup()
+        print("\nJ9 unchanged: %d calls equal main's" % n, file=sys.stderr)
         self.assertGreaterEqual(n, 300)
 
     def test_a_flag_that_looks_like_it_is_still_unknown_without_the_dash_dash(self):
