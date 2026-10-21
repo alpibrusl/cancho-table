@@ -92,7 +92,9 @@ MUTANTS = [
     ("a timeout is ok when the status was 0", "    if timed_out:\n        return {\"status\": \"timeout\"", "    if False:\n        return {\"status\": \"timeout\""),
     ("a signal is a refusal", "returncode is None or returncode < 0 or returncode >= 128", "returncode is None or returncode < -100 or returncode >= 128"),
     ("a trap status is a refusal", "returncode is None or returncode < 0 or returncode >= 128", "returncode is None or returncode < 0 or returncode >= 200"),
-    ("a refusal of table loses its rule", "rule = rule_of(stdout)\n        return", "rule = None\n        return"),
+    ("a refusal of table loses its rule", "rule = rule_of(stdout) or rule_of_stderr(stderr)\n        return", "rule = None\n        return"),
+    ("a refusal written on standard error loses its rule", "rule = rule_of(stdout) or rule_of_stderr(stderr)", "rule = rule_of(stdout)"),
+    ("the rule of a line on standard error is any word", '_STDERR_RULE = re.compile(r"^table: ([a-z]+\\.[a-z0-9-]+): ", re.M)', '_STDERR_RULE = re.compile(r"^table: ([a-z.]+)", re.M)'),
     ("a nonzero exit of another tool is ok", '    if returncode == 0:\n        return {"status": "ok"', '    if returncode in (0, 1):\n        return {"status": "ok"'),
     # the order of the work and the no-time-on-failure rule
     ("a wrong answer is timed", '        if not v["ok"]:', "        if False:"),
