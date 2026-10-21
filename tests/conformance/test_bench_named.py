@@ -1262,7 +1262,7 @@ class Program(unittest.TestCase):
                 self.assertNotIn("Traceback", p.stdout + p.stderr)
 
     def test_a_suite_that_is_not_built_is_refused(self):
-        for suite in ("join", "1brc", "clickbench"):
+        for suite in ("1brc", "clickbench", "taxi", "json"):
             p = subprocess.run([sys.executable, str(DRIVER), "--suite", suite], capture_output=True, text=True, timeout=60)
             self.assertEqual(p.returncode, 3, p.stdout + p.stderr)
             self.assertIn("bench.suite-not-built", p.stdout + p.stderr)
