@@ -132,7 +132,7 @@ class Fake:
             raw = bytes(random.Random(7).randrange(256) for _ in range(5000))
         return raw
 
-    def launch_file(self, argv, env=None, dest=None, timeout=120):
+    def launch_file(self, argv, env=None, dest=None, timeout=120, stdin_path=None):
         name = argv[1]
         mode = self.modes[name]
         self.calls.append((name, "answer"))
@@ -263,6 +263,110 @@ class Orchestration(Shared):
         self.fake.payload = orig
 
 
+class SecondForms(Shared):
+    """The other spellings of a table call must give the same rows: a fake table whose second forms can be made to differ."""
+
+    def setUp(self):
+        super().setUp()
+        self.fake = Fake(self, "q2")
+        self.rows = self.fake.rows
+
+    def world(self, family, differ):
+        """A contender of `family` whose answer is right and whose second form (the --query form, the call without --join-sorted, the piped call) is `differ`-ent."""
+        fake, bn = self.fake, self.bn
+        header = self.jref.joined_columns("q2")
+        good = csv_of(header, fake.rows)
+        reordered = csv_of(header, list(reversed(fake.rows)))
+        wrong = csv_of(header, fake.rows[:-1])
+        seen = []
+
+        def launch_file(argv, env=None, dest=None, timeout=120, stdin_path=None):
+            seen.append((argv[-1], stdin_path is not None))
+            if argv[-1] == "alt":
+                payload = {"same": good, "reordered": reordered, "wrong": wrong, "none": good}[differ if differ in ("wrong", "reordered") else "same"]
+            elif stdin_path is not None:
+                payload = reordered if differ == "pipe" else good
+            else:
+                payload = good
+            pathlib.Path(dest).write_bytes(payload)
+            return bn.Outcome(0, 0.1, b"", b"", False)
+
+        fake.modes["t@1"] = "good"
+
+        def form(qid, f):
+            return bn.Form(["fake", "t@1", "answer"], ["fake", "t@1", "q2", "timed"], {}, ["fake", "t@1", "alt"])
+
+        c = bn.Contender(name="t@1", family=family, threads="1", profile="exact", version="v", form=form, path="t")
+        if family == "table-sorted":
+            c.form = form
+        ctx = fake.context()
+        ctx.launch_file = launch_file
+        ctx.paths = {**ctx.paths}
+        return c, ctx, seen
+
+    def run_one(self, family, differ):
+        c, ctx, seen = self.world(family, differ)
+        q = self.questions["q2"]
+        bj = self.bj
+        orig = bj.form_of
+        bj.form_of = lambda ctx_, c_, qid: c_.form(qid, None)       # no sorted copies are needed to test the comparison of the two forms
+        try:
+            (r,) = bj.run_join_question(ctx, q, [c])
+        finally:
+            bj.form_of = orig
+        return r, seen
+
+    def test_the_query_form_is_fingerprinted(self):
+        r, seen = self.run_one("table", "wrong")
+        self.assertEqual(r["status"], "wrong-answer")
+        self.assertIn("--query form", r["reason"])
+        self.assertNotIn("timing", r)
+
+    def test_the_query_form_may_order_its_rows_differently(self):
+        r, seen = self.run_one("table", "reordered")
+        self.assertEqual(r["status"], "ok")        # the --query form is held to the fingerprint (a set of rows), not to the bytes of the flag form
+
+    def test_the_probe_on_standard_input_gives_the_bytes_of_the_file(self):
+        r, seen = self.run_one("table", "pipe")
+        self.assertEqual(r["status"], "wrong-answer")
+        self.assertIn("standard input", r["reason"])
+        self.assertIn(("answer", False), seen)
+        r, seen = self.run_one("table", "same")
+        self.assertEqual(r["status"], "ok")
+        self.assertIs(r["forms_equal"], True)
+
+    def test_the_merge_gives_the_bytes_of_the_hash_join(self):
+        r, seen = self.run_one("table-sorted", "reordered")
+        self.assertEqual(r["status"], "wrong-answer")
+        self.assertIn("other bytes", r["reason"])
+        r, seen = self.run_one("table-sorted", "same")
+        self.assertEqual(r["status"], "ok")
+        self.assertIs(r["forms_equal"], True)
+        self.assertNotIn(("answer", True), seen)             # the sorted contender is not run with a probe on standard input
+
+    def test_a_second_form_that_does_not_run_is_a_wrong_answer(self):
+        bn = self.bn
+        c, ctx, seen = self.world("table", "same")
+        base = ctx.launch_file
+
+        def launch_file(argv, env=None, dest=None, timeout=120, stdin_path=None):
+            if argv[-1] == "alt":
+                pathlib.Path(dest).write_bytes(b"")
+                return bn.Outcome(8, 0.1, b"", b"table: limit.state-too-large: x\n", False)
+            return base(argv, env=env, dest=dest, timeout=timeout, stdin_path=stdin_path)
+
+        ctx.launch_file = launch_file
+        bj = self.bj
+        orig = bj.form_of
+        bj.form_of = lambda ctx_, c_, qid: c_.form(qid, None)
+        try:
+            (r,) = bj.run_join_question(ctx, self.questions["q2"], [c])
+        finally:
+            bj.form_of = orig
+        self.assertEqual(r["status"], "wrong-answer")
+        self.assertIn("did not run", r["reason"])
+
+
 class LaunchToFile(Shared):
     def test_the_time_is_the_clocks_difference_and_the_output_goes_to_the_file(self):
         bj = self.bj
@@ -278,7 +382,16 @@ class LaunchToFile(Shared):
         o = bj.launch_to_file(["x"], env={"A": "1"}, dest=d / "o.csv", timeout=7, run=run, clock=lambda: next(ticks))
         self.assertEqual((o.returncode, o.seconds, o.stderr, o.timed_out), (0, 2.5, b"err", False))
         self.assertEqual((d / "o.csv").read_bytes(), b"rows")
-        self.assertEqual((seen["timeout"], seen["stderr"], seen["stdin"]), (7, subprocess.PIPE, subprocess.DEVNULL))
+        self.assertEqual((seen["timeout"], seen["stderr"], seen["stdin"].name), (7, subprocess.PIPE, os.devnull))
+        src = d / "in.csv"
+        src.write_bytes(b"input")
+
+        def run2(argv, **kw):
+            kw["stdout"].write(kw["stdin"].read())
+            return subprocess.CompletedProcess(argv, 0, None, b"")
+
+        bj.launch_to_file(["x"], dest=d / "o2.csv", run=run2, stdin_path=src)
+        self.assertEqual((d / "o2.csv").read_bytes(), b"input")
         self.assertEqual(seen["env"]["A"], "1")
         self.assertIn("PATH", seen["env"])
 

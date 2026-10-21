@@ -510,6 +510,19 @@ class Output(Shared):
         bad[j][8] = "id9999"
         self.assertIsNotNone(self.check("q3", self.text(bad, qid="q3")))
 
+    def test_a_float_spelling_is_only_the_whole_number_with_a_point_zero(self):
+        rows = [list(x) for x in self.joined("q3")]
+        j = next(i for i, r in enumerate(rows) if r[-1] != "")
+        for spelled, copy_of, ok in (("5.0", "id5", True), ("5.55", "id5.5", False), ("5.5", "id5", False), ("5.00", "id5", False)):
+            r = [list(x) for x in rows]
+            r[j][7], r[j][8] = spelled, copy_of
+            with self.subTest(spelled):
+                got = self.check("q3", self.text(r, qid="q3"))
+                if ok:
+                    self.assertIsNone(got)
+                else:
+                    self.assertIn("right table", got)
+
     def test_spellings_of_a_number_that_are_the_same_number(self):
         rows = [list(x) for x in self.joined("q1")]
         v = rows[5][-1]

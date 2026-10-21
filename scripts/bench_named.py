@@ -47,6 +47,8 @@ from fractions import Fraction
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE))
+if __name__ == "__main__":
+    sys.modules["bench_named"] = sys.modules["__main__"]   # the join suite imports this module by name: one module, one Refusal class, one set of dataclasses
 import bench_named_gen as gen  # noqa: E402
 import bench_named_ref as ref  # noqa: E402
 
@@ -269,6 +271,7 @@ def collect_conditions(probes, info):
         "threads_many": info.get("threads_many"),
         "contenders": info["contenders"],
         "file": {**info["file"], "path_class": info.get("path_class") or "not stated"},
+        **({"tables": info["tables"]} if info.get("tables") else {}),
         "seed": info["seed"], "rows": info["rows"], "k": info["k"], "step": info["step"], "runs": runs,
         "statistic": "minimum of %d runs after one untimed warm-up, the contenders interleaved (each once per round, the order rotating); the median and the first run are kept beside it" % runs,
         "sink": "/dev/null",
@@ -507,6 +510,15 @@ def rule_of(stdout):
         return None
 
 
+_STDERR_RULE = re.compile(r"^table: ([a-z]+\.[a-z0-9-]+): ", re.M)
+
+
+def rule_of_stderr(stderr):
+    """A refusal written in a csv answer is one line on standard error, `table: RULE: message`; its rule tag, or None. Never raises."""
+    m = _STDERR_RULE.search(stderr.decode("utf-8", "replace")[:2000])
+    return m.group(1) if m else None
+
+
 def _short(raw, n=200):
     for line in raw.decode("utf-8", "replace").splitlines():
         line = "".join(ch for ch in line if ch.isprintable()).strip()
@@ -525,7 +537,7 @@ def classify(returncode, stdout, stderr, is_table, timed_out):
         why = "signal %d" % -returncode if returncode and returncode < 0 else "exit %s" % returncode
         return {"status": "crashed", "rule": None, "reason": why}
     if is_table:
-        rule = rule_of(stdout)
+        rule = rule_of(stdout) or rule_of_stderr(stderr)
         return {"status": "refused", "rule": rule, "reason": "%s (exit %d)" % (rule or "no rule tag", returncode)}
     return {"status": "refused", "rule": None, "reason": "exit %d: %s" % (returncode, _short(stderr))}
 
@@ -688,8 +700,15 @@ def run_question(ctx, q, contenders):
                 "tolerance": "ok (only by tolerance %.0e: a double within a billionth of the exact value)" % TOLERANCE}[v["level"]]
         ctx.emit(_answer_line(q, c, text))
         live.append((c, form, rec))
-    if not live:
-        return records
+    if live:
+        time_live(ctx, q, live)
+    return records
+
+
+def time_live(ctx, q, live):
+    """The timing of the contenders whose answers passed (`live`: (contender, form, record) triples, edited in place): one untimed warm-up each, N rounds with the order rotating, one measured run
+    each for the peak resident set and the CPU time. A contender that fails in any of them loses its times. Shared by every suite: the suite judges the answers, this times them."""
+    qid = q["id"]
 
     def fail(item, why):
         c, form, rec = item     # its times are set only after every run, so none is kept
@@ -731,7 +750,6 @@ def run_question(ctx, q, contenders):
         t = rec["timing"]
         ctx.emit("time  %s  %s  min %.6f s of %d  median %.6f s  first %.6f s  peak %s KiB  cpu %s s" % (
             qid, c.name, t["min_s"], t["runs"], t["median_s"], t["first_s"], rec["peak_rss_kb"], rec["cpu_s"]))
-    return records
 
 
 def probe_not_expressible(ctx, q):
@@ -1107,7 +1125,7 @@ def ensure_file(rows, k, seed, out_dir):
 
 def parse_args(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--suite", default="groupby", help="only groupby is built (join is NB3, 1brc NB5, clickbench NB6)")
+    ap.add_argument("--suite", default="groupby", help="groupby or join (1brc is NB5, clickbench NB6)")
     ap.add_argument("--rows", default="1e6", help="N (default 1e6, the smoke step); above 1e6 needs --accept-large")
     ap.add_argument("--k", default="100")
     ap.add_argument("--seed", type=int, default=gen.DEFAULT_SEED)
@@ -1127,6 +1145,7 @@ def parse_args(argv):
     ap.add_argument("--scan-probe-only", action="store_true", help="generate the file, report whether a plain scan is accepted (4.4), time nothing")
     ap.add_argument("--no-scan-probe", action="store_true")
     ap.add_argument("--skip", action="append", default=[], metavar="QID:CONTENDER[=REASON]", help="do not run this contender (a name such as csvtk@1, or a family) on this question; recorded as not-run with the reason")
+    ap.add_argument("--refusal-bound", type=int, default=None, metavar="BYTES", help="join suite: also report what each question says under this --max-state-bytes (default: the tool's own bound)")
     ap.add_argument("--drop-from", default=None, metavar="RESULT.json", help="drop the (question, contender) pairs that timed out in this result (3.5)")
     ap.add_argument("--write-table", default=None, metavar="FILE", help="write the published table of the result, refusing a run that is not publishable")
     ap.add_argument("--from-result", default=None, metavar="RESULT.json", help="with --write-table: use an existing result instead of running")
@@ -1139,8 +1158,11 @@ def split_csv(text):
 
 def run_step(a, emit, probes=None):
     """One step. Returns the exit status."""
+    if a.suite == "join":
+        import bench_named_join       # the join suite's forms, judge and step; it uses this module for everything else
+        return bench_named_join.run_join_step(a, emit, probes)
     if a.suite != "groupby":
-        raise Refusal("bench.suite-not-built", "only the groupby suite is built (join is NB3, 1brc NB5, clickbench NB6, taxi NB7, json NB8), not %r" % a.suite)
+        raise Refusal("bench.suite-not-built", "only the groupby and join suites are built (1brc is NB5, clickbench NB6, taxi NB7, json NB8), not %r" % a.suite)
     rows, k = parse_rows(a.rows), parse_rows(a.k)
     gen.spec(rows, k)                     # N a multiple of K, or a ValueError before anything is touched
     if a.runs < 1 or a.timeout <= 0:
