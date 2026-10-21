@@ -451,6 +451,17 @@ class Classify(unittest.TestCase):
         self.assertEqual(c["status"], "refused")
         self.assertIsNone(c["rule"])
 
+    def test_a_refusal_in_a_csv_answer_is_a_line_on_standard_error(self):
+        d = driver()
+        err = b"table: limit.state-too-large: the --join file is held in memory and the rows held would pass --max-state-bytes\n"
+        c = d.classify(8, b"", err, is_table=True, timed_out=False)
+        self.assertEqual((c["status"], c["rule"]), ("refused", "limit.state-too-large"))
+        self.assertEqual(d.rule_of_stderr(err), "limit.state-too-large")
+        for junk in (b"", b"table: not a rule: x\n", b"other: a.b: x\n", bytes(range(256)), b"table: A.B: x\n"):
+            self.assertIsNone(d.rule_of_stderr(junk))
+        # a tool that is not table has no rule tag to read
+        self.assertIsNone(d.classify(8, b"", err, is_table=False, timed_out=False)["rule"])
+
     def test_the_reason_is_short_and_has_no_control_bytes(self):
         d = driver()
         c = d.classify(1, b"", b"E" * 5000 + b"\x00\x1b[31m\n", is_table=False, timed_out=False)
