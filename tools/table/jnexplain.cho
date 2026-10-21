@@ -140,6 +140,8 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g
     let table = spec.flag_table();
     let on = jnflags.on_of(heap, args, parsed, jxs);
     let budget = cli.nat(args, parsed, table, "max-state-bytes");
+    // `--join-sorted` (docs/joins.md section 23): the files are merged, one key of the --join file held at a time
+    let merging = cli.has(parsed, table, "join-sorted");
     var typed = false;
     var j = 0;
     while j < pairs {
@@ -176,7 +178,11 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g
     o = buffer.append(heap, o, ",\"build\":");
     o = text.append_json(heap, o, shown_b);
     o = buffer.append(heap, o, reader_json);
-    o = buffer.append(heap, o, ",\"role_choice\":\"the --join file is the build side: it is held whole in memory, and the operand or standard input is the probe side, streamed\",\"keys\":[");
+    if merging {
+        o = buffer.append(heap, o, ",\"sorted\":true,\"role_choice\":\"the --join file is read in step with the operand or standard input, both declared sorted by the key: the rows of one key of the --join file are held at a time, and the operand is streamed\",\"keys\":[");
+    } else {
+        o = buffer.append(heap, o, ",\"role_choice\":\"the --join file is the build side: it is held whole in memory, and the operand or standard input is the probe side, streamed\",\"keys\":[");
+    }
     borrow on as &onr in {
         j = 0;
         while j < pairs {
@@ -237,7 +243,7 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g
     o = buffer.append(heap, o, ",\"header_bytes\":");
     o = buffer.push_nat(heap, o, bheader);
     o = buffer.append(heap, o, ",\"accounted_at_most\":");
-    if most < 0 {
+    if most < 0 || merging {
         o = buffer.append(heap, o, "null");
     } else {
         o = buffer.push_nat(heap, o, most);
@@ -245,12 +251,14 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g
     o = buffer.append(heap, o, ",\"budget\":");
     o = buffer.push_nat(heap, o, budget);
     o = buffer.append(heap, o, ",\"may_pass_bound\":");
-    if most > budget {
+    if most > budget || merging {
         o = buffer.append(heap, o, "true");
     } else {
         o = buffer.append(heap, o, "false");
     }
-    if jtype >= 2 {
+    if merging {
+        o = buffer.append(heap, o, ",\"counted\":\"the rows of ONE key of the --join file at a time, the one a probe row meets: held record bytes + 16 for each row and key bytes + 60 for the key (a semi or anti join: key bytes + 44), not resident memory; a group of equal keys that passes the bound alone is limit.state-too-large with detail.holder join-group\"");
+    } else if jtype >= 2 {
         o = buffer.append(heap, o, ",\"counted\":\"key bytes + 44 for each distinct key (a semi or anti join holds the keys only; a key is 8 bytes for a typed pair and 4 bytes of length more for each pair of several): not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\"");
     } else {
         o = buffer.append(heap, o, ",\"counted\":\"held record bytes + 16 for each row held (a record keeps the cells of the columns the plan names and holds the others empty), key bytes + 60 for each distinct key (a key is 8 bytes for a typed pair and 4 bytes of length more for each pair of several): not resident memory, which can be up to about three times that while the build grows (measured 1.5 to 2.8)\"");
@@ -262,14 +270,22 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g
         o = text.append_json(heap, o, shared);
     }
     o = buffer.append(heap, o, ",\"swap\":");
-    o = buffer.append(heap, o, swap_json);
+    if merging {
+        o = buffer.append(heap, o, "{\"offered\":false,\"reason\":\"--join-sorted does not hold the --join file, only the rows of one key of it\"}");
+    } else {
+        o = buffer.append(heap, o, swap_json);
+    }
     o = buffer.append(heap, o, "},\"where\":");
     o = buffer.append(heap, o, where_json);
     o = buffer.append(heap, o, ",\"join_where\":");
     o = buffer.append(heap, o, jw_json);
     o = buffer.append(heap, o, ",\"max_join_rows\":");
     o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "max-join-rows"));
-    o = buffer.append(heap, o, ",\"order\":\"probe order, then build order\",\"work\":{\"class\":\"join: build then stream\",\"first_output_after\":\"the whole build\",\"threads\":{\"requested\":");
+    if merging {
+        o = buffer.append(heap, o, ",\"order\":\"key order (both files are declared sorted by the key, so it is the order of the operand, then the order of the --join file within a key)\",\"work\":{\"class\":\"join: merge of two sorted files\",\"first_output_after\":\"the first probe row and the group of its key in the --join file\",\"threads\":{\"requested\":");
+    } else {
+        o = buffer.append(heap, o, ",\"order\":\"probe order, then build order\",\"work\":{\"class\":\"join: build then stream\",\"first_output_after\":\"the whole build\",\"threads\":{\"requested\":");
+    }
     o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "threads"));
     o = buffer.append(heap, o, ",\"effective\":1,\"reason\":\"the join is read on one core\"}}}");
     jnflags.drop_on(heap, on);

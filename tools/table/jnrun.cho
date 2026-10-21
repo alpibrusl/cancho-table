@@ -23,6 +23,7 @@ import jnfail;
 import jnfmt;
 import jnhead;
 import jnjson;
+import jnmerge;
 import jnprune;
 import jnread;
 import jnswap;
@@ -312,7 +313,202 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
     }
     var bcounts = jnread.nothing();
     var consumed = 0;
-    if go {
+    // `--join-sorted` (docs/joins.md section 23): both files are declared sorted by the key, and the join is a merge of the two. The window of the `--join` file is given the flag, or the half of it when the plan groups or sorts
+    let sorted = cli.has(parsed, table, "join-sorted");
+    var merged = false;
+    var probed = false;
+    var wlimit = max_state;
+    var mfacts = box_slice(heap, 8, 0);
+    var mprev = buffer.empty(heap, 1);
+    var mcur = buffer.empty(heap, 1);
+    var mgroup = buffer.empty(heap, 1);
+    // BEGIN merge: the merge join (docs/joins.md section 23), which repeats the set-up of the groups and the refusals of the build, so the mutants of the hash join are not counted in it (scripts/mutlib.py)
+    if go && sorted {
+        merged = true;
+        probed = true;
+        var gstate = max_state;
+        if row_grouping {
+            gstate = max_state / 2;
+            wlimit = max_state - gstate;
+        }
+        if as_csv {
+            out_rows = finish.start_output(heap, out_rows, lead);
+            lead = buffer.empty(heap, 1);
+        }
+        let max_distinct = cli.nat(args, parsed, table, "max-distinct");
+        var max_groups = cli.nat(args, parsed, table, "max-groups");
+        let max_sort_rows = cli.nat(args, parsed, table, "max-sort-rows");
+        var groups = agg.start(heap, tree);
+        if ordering {
+            max_groups = max_sort_rows;
+            var wanted = 0;
+            if limit < 100000000 {
+                wanted = from + limit + 1;
+            }
+            if top > 0 && (wanted == 0 || top < wanted) {
+                wanted = top;
+            }
+            if wanted > 0 && 2 * wanted + 1 > max_sort_rows {
+                wanted = 0;
+            }
+            let nko = query.order_count(tree);
+            var okeys = box_slice(heap, 1, 0);
+            unbox_slice(heap, okeys);
+            borrow cols as &kr in {
+                okeys = sorter.keys_of(heap, tree, contents(kr));
+            }
+            borrow okeys as &okr in {
+                groups = sorter.configure(groups, nko, wanted, max_sort_rows, gstate, contents(okr));
+            }
+            unbox_slice(heap, okeys);
+        }
+        var gv = box_slice(heap, 8, 0);
+        borrow mut gv as &!gw in {
+            let g8 = contents(gw);
+            g8[0] = max_groups;
+            g8[1] = max_distinct;
+            g8[2] = gstate;
+            if nw > 0 {
+                g8[3] = 1;
+            }
+            if engine.fast_ok(tree) {
+                g8[4] = 1;
+            }
+            g8[5] = sort_field;
+            g8[6] = sort_slot;
+            g8[7] = sort_desc;
+        }
+        var bcfg = box_slice(heap, 9, 0);
+        borrow mut bcfg as &!bfw in {
+            let b9 = contents(bfw);
+            b9[0] = delim;
+            b9[1] = bdelim;
+            b9[2] = cap;
+            b9[3] = nb;
+            b9[4] = most;
+            b9[5] = pairs;
+            if fmt.b_jsonl {
+                b9[6] = 1;
+            }
+            if jw_on {
+                b9[7] = 1;
+            }
+            if push_b {
+                b9[8] = 1;
+            }
+        }
+        var bkept = buffer.empty(heap, 1);
+        borrow keys as &ky in {
+            borrow kmap as &km in {
+                borrow cols as &kr in {
+                    borrow sel as &sr in {
+                        borrow cls as &clr in {
+                            borrow gv as &gr in {
+                                borrow bcfg as &bfr in {
+                                    borrow bcols as &bcr in {
+                                        borrow jwcols as &jcr in {
+                                            borrow jwtree as &jq in {
+                                                borrow pdecl as &pdr in {
+                                                    borrow bdecl as &bdr in {
+                                                        borrow mut cellbox as &!cw in {
+                                                            let (rb2, rp2, bc2, pc2, rows2, scratch2, kept2, bkept2, facts2, prevd, curd, groupd) = jnmerge.merge_pass(heap, rb, bfile, rp, pfile, io, stdin, tree, contents(kr), contents(sr), contents(cw), contents(ky), contents(km), pairs, simple, jtype, nk, out_rows, spare, np, nb, delim, bdelim, as_csv, from, limit, budget, picked, cap, most, max_join, contents(clr), push_p, push_b, row_grouping, mode, groups, contents(gr), top, fmt.p_jsonl, pdr, fmt.b_jsonl, bdr, jq, contents(jcr), jw_on, contents(bcr), wlimit, contents(bfr));
+                                                            rb = rb2;
+                                                            rp = rp2;
+                                                            bcounts = bc2;
+                                                            c = pc2;
+                                                            out_rows = rows2;
+                                                            spare = scratch2;
+                                                            buffer.drop(heap, kept);
+                                                            kept = kept2;
+                                                            buffer.drop(heap, bkept);
+                                                            bkept = bkept2;
+                                                            unbox_slice(heap, mfacts);
+                                                            mfacts = facts2;
+                                                            buffer.drop(heap, mprev);
+                                                            mprev = prevd;
+                                                            buffer.drop(heap, mcur);
+                                                            mcur = curd;
+                                                            buffer.drop(heap, mgroup);
+                                                            mgroup = groupd;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, gv);
+        unbox_slice(heap, bcfg);
+        borrow rp as &rpr in {
+            errno = lines.failed(rpr);
+        }
+        var berrno = 0;
+        borrow rb as &rbr in {
+            berrno = lines.failed(rbr);
+        }
+        let bc = bcounts;
+        borrow mfacts as &mfr in {
+            let m = contents(mfr);
+            if bc.abort == 70 {
+                borrow mgroup as &mgr in {
+                    e = jnfail.group_too_large(heap, e, shown_b, wlimit, m[2], m[3], m[4], m[5], buffer.bytes(mgr), pairs);
+                }
+            } else if bc.abort == 80 {
+                borrow mprev as &mpr in {
+                    borrow mcur as &mcr in {
+                        e = jnfail.not_sorted(heap, e, "build", shown_b, bc.err_row, bc.err_line, m[6], m[7], buffer.bytes(mcr), buffer.bytes(mpr), pairs);
+                    }
+                }
+            } else if bc.abort == 72 {
+                borrow keys as &kr2 in {
+                    borrow hb as &hbr in {
+                        borrow bkept as &bkr in {
+                            e = typed_refusal(heap, args, parsed, e, contents(kr2), bc, bkr, shown_b, "build", hbr.names, hbr.ends, hbr.names, hbr.ends);
+                        }
+                    }
+                }
+            } else if bc.abort >= 50 && bc.abort <= 55 {
+                borrow hb as &hbr in {
+                    borrow bkept as &bkr in {
+                        e = finish.jsonl_refusal(heap, e, args, parsed, hbr.names, hbr.ends, bkr, bc, shown_b, "build");
+                    }
+                }
+            } else if bc.abort != 0 && bc.err_fn == 0 - 4 {
+                borrow hb as &hbr in {
+                    borrow labels as &lr in {
+                        borrow lends as &le in {
+                            borrow bkept as &bkr in {
+                                borrow jwtree as &jq in {
+                                    e = finish.explain(heap, args, parsed, jq, hbr.names, hbr.ends, lr, le, bkr, bc, shown_b, 0 - 1, berrno, true, budget, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if bc.abort != 0 || bc.ragged > 0 || bc.capped || berrno != 0 {
+                borrow jnames as &nr in {
+                    borrow jends as &er in {
+                        borrow labels as &lr in {
+                            borrow lends as &le in {
+                                borrow bkept as &bkr in {
+                                    e = finish.explain(heap, args, parsed, tree, nr, er, lr, le, bkr, bc, shown_b, 0 - 1, berrno, true, budget, e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        buffer.drop(heap, bkept);
+    }
+    // END merge
+    if go && !merged {
         // the build phase
         var bkept = buffer.empty(heap, 1);
         borrow keys as &kr1 in {
@@ -565,8 +761,10 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
     borrow jt as &tr in {
         build_held = jtab.held_of(tr);
     }
-    var probed = false;
-    if go {
+    if merged {
+        build_held = wlimit;
+    }
+    if go && !merged {
         probed = true;
         if as_csv {
             out_rows = finish.start_output(heap, out_rows, lead);
@@ -704,6 +902,15 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
                     }
                 }
             }
+        } else if c.abort == 80 {
+            // a key of FILE below the one before it (docs/joins.md section 23)
+            borrow mfacts as &mfr in {
+                borrow mprev as &mpr in {
+                    borrow mcur as &mcr in {
+                        e = jnfail.not_sorted(heap, e, "probe", shown, c.err_row, c.err_line, contents(mfr)[6], contents(mfr)[7], buffer.bytes(mcr), buffer.bytes(mpr), pairs);
+                    }
+                }
+            }
         } else if c.abort == 15 || c.abort == 21 {
             // the groups or the sorted rows passed what the build leaves of the flag
             e = jnfail.shared_too_large(heap, e, c.abort == 15, shown, max_state, build_held, c.err_digits);
@@ -728,6 +935,10 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
             }
         }
     }
+    unbox_slice(heap, mfacts);
+    buffer.drop(heap, mprev);
+    buffer.drop(heap, mcur);
+    buffer.drop(heap, mgroup);
     query.drop(heap, jwtree);
     unbox_slice(heap, jwcols);
     unbox_slice(heap, cls);

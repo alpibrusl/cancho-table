@@ -374,6 +374,8 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
         class = 5;
     }
     let unbounded = limit >= 1000000000000000;
+    // `--join-sorted` (docs/joins.md section 23): the two files are merged, each read once
+    let merging = class == 5 && cli.has(parsed, table, "join-sorted");
     var reads = "all rows";
     if class == 4 && !unbounded {
         reads = "until the page is full";
@@ -385,6 +387,15 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
         }
         if mode == 2 || ordering {
             reads = "the whole build file, then every probe row (a grouping or a sort needs every row)";
+        }
+        if merging {
+            reads = "both files in step, each once, until the page is full";
+            if unbounded {
+                reads = "both files in step, each once, to the end of both";
+            }
+            if mode == 2 || ordering {
+                reads = "both files in step, each once, to the end of both (a grouping or a sort needs every row)";
+            }
         }
     }
     var wanted = 0;
@@ -720,6 +731,8 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
     o = buffer.append(heap, o, "},\"work\":{\"class\":\"");
     if class == 1 && query.report_kind(tree) == 2 {
         o = buffer.append(heap, o, "date report");
+    } else if merging {
+        o = buffer.append(heap, o, "join: merge of two sorted files");
     } else {
         o = buffer.append(heap, o, class_text(class));
     }
@@ -849,6 +862,9 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
     if class == 5 {
         o = rule(heap, o, "limit.too-many-join-rows");
         o = rule(heap, o, "join.column-collision");
+        if merging {
+            o = rule(heap, o, "join.not-sorted");
+        }
         o = rule(heap, o, "column.unknown");
         o = rule(heap, o, "column.ambiguous");
     }

@@ -55,7 +55,7 @@ SAMPLE = {
     "--report": "types", "--chunk-bytes": "100000", "--parallel-min-bytes": "100000", "--format": "json",
     "--query": "select host, count(*) group by host",
     "--rename": "host=h", "--join-where": "host = a", "--join": "sales.csv", "--on": "host=host", "--join-type": "inner", "--join-prefix": "r_", "--max-join-rows": "1000000",
-    "--join-input-format": "csv", "--join-fields": "host,status", "--join-delimiter": ",",
+    "--join-input-format": "csv", "--join-fields": "host,status", "--join-delimiter": ",", "--join-sorted": "",
 }
 REFUSALS = {"args.conflict", "args.required-flag"}
 # What each form's line in the usage lists: the flags the code takes for the form and does something with
@@ -69,7 +69,7 @@ FORM_FLAGS = {
     "report": (COMMON | PAGED | {"--report", "--select", "--where"}) - {"--top"},
     "all": COMMON | (PAGED - {"--top", "--max-state-bytes"}) | {"--rows", "--rename"},
     "query": COMMON | PAGED | {"--query", "--max-sort-rows", "--max-groups", "--max-distinct"},
-    "join": COMMON | {"--join", "--on", "--join-type", "--join-prefix", "--join-where", "--max-join-rows", "--join-input-format", "--join-fields", "--join-delimiter", "--select", "--where", "--group", "--agg", "--sort", "--order-by", "--top", "--rename", "--limit", "--from", "--max-bytes", "--max-groups", "--max-distinct", "--max-sort-rows", "--max-state-bytes", "--threads"},
+    "join": COMMON | {"--join", "--on", "--join-type", "--join-prefix", "--join-where", "--max-join-rows", "--join-input-format", "--join-fields", "--join-delimiter", "--join-sorted", "--select", "--where", "--group", "--agg", "--sort", "--order-by", "--top", "--rename", "--limit", "--from", "--max-bytes", "--max-groups", "--max-distinct", "--max-sort-rows", "--max-state-bytes", "--threads"},
 }
 FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"], "all": ["--rows"], "query": ["--query", "select host, count(*) group by host"], "join": ["--join", "sales.csv", "--on", "host=host", "--join-prefix", "r_"]}
 
@@ -139,6 +139,8 @@ class Usage(unittest.TestCase):
                         extra = ["--group", "host"] + extra
                     if flag == "--format":
                         extra = [flag, "text" if form == "shape" else "csv"]
+                    if flag == "--join-sorted":
+                        extra = [flag]                                                      # a switch: it takes no value
                     if flag == "--join-fields":
                         extra = ["--join-input-format", "jsonl", flag, SAMPLE[flag]]       # declares the columns of a jsonl --join file, and nothing else
                     got = refusals(s, base + extra)

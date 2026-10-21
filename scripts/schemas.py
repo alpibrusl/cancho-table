@@ -162,8 +162,8 @@ def explain_document():
             "columns": {"oneOf": [{"type": "null"}, {"type": "array", "items": TB}]},
         }),
         "work": obj({
-            "class": {"enum": ["shape", "type report", "grouped single pass", "sorted rows", "stream rows", "join: build then stream"]},
-            "reads": {"enum": ["all rows", "until the page is full", "the whole build file, then the probe until the page is full", "the whole build file, then all the probe rows", "the whole build file, then every probe row (a grouping or a sort needs every row)"]},
+            "class": {"enum": ["shape", "type report", "grouped single pass", "sorted rows", "stream rows", "join: build then stream", "join: merge of two sorted files"]},
+            "reads": {"enum": ["all rows", "until the page is full", "the whole build file, then the probe until the page is full", "the whole build file, then all the probe rows", "the whole build file, then every probe row (a grouping or a sort needs every row)", "both files in step, each once, until the page is full", "both files in step, each once, to the end of both", "both files in step, each once, to the end of both (a grouping or a sort needs every row)"]},
             "rows_held": NULLABLE_NAT,
             "bounds": obj({
                 "max_rows": NAT, "max_line_bytes": NAT, "max_bytes": NAT, "max_groups": NAT, "max_distinct": NAT, "max_sort_rows": NAT, "max_state_bytes": NAT, "max_join_rows": NAT,
@@ -173,13 +173,15 @@ def explain_document():
         "refusals": obj({"possible": {"type": "array", "items": RULE}}),
         "notes": {"type": "array", "items": TB},
         # a join (docs/joins.md section 8.4): the sides, the key, the columns, what the build can hold, the bound and the work
-        "join": obj_optional(["probe_reader", "build_reader"], {
+        "join": obj_optional(["probe_reader", "build_reader", "sorted"], {
             "type": {"enum": ["inner", "left", "semi", "anti"]},
             "probe": TB,
             "build": TB,
             # J5 (docs/joins.md section 21): the reader of a side that is JSON lines (probe_reader), and of a build that is JSON lines or is csv with a delimiter of its own (build_reader)
             "probe_reader": READER,
             "build_reader": READER,
+            # J9 (docs/joins.md section 23): present, and true, when the call has --join-sorted
+            "sorted": {"const": True},
             "role_choice": {"type": "string"},
             "keys": {"type": "array", "items": obj({"probe": TB, "build": TB, "type": {"type": "string", "pattern": "^(text|int|float|dec\\([0-9]{1,2}\\))$"},
                                                     "probe_position": {"oneOf": [{"type": "null"}, {"type": "integer", "minimum": 1}]},

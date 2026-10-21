@@ -286,8 +286,8 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
     let table = spec.flag_table();
     var e = errs;
     if !inp.has_join {
-        if cli.has(parsed, table, "on") || cli.has(parsed, table, "join-prefix") || cli.has(parsed, table, "join-type") || cli.has(parsed, table, "max-join-rows") || cli.has(parsed, table, "join-where") || cli.has(parsed, table, "join-input-format") || cli.has(parsed, table, "join-fields") || cli.has(parsed, table, "join-delimiter") {
-            e = flags.problem(heap, e, "args.required-flag", "--on, --join-type, --join-prefix, --join-where, --max-join-rows, --join-input-format, --join-fields and --join-delimiter are for a join, so they need --join", "--join FILE --on PROBE=BUILD", "--join --on --join-type --join-prefix --join-where --max-join-rows --join-input-format --join-fields --join-delimiter");
+        if cli.has(parsed, table, "on") || cli.has(parsed, table, "join-prefix") || cli.has(parsed, table, "join-type") || cli.has(parsed, table, "max-join-rows") || cli.has(parsed, table, "join-where") || cli.has(parsed, table, "join-input-format") || cli.has(parsed, table, "join-fields") || cli.has(parsed, table, "join-delimiter") || cli.has(parsed, table, "join-sorted") {
+            e = flags.problem(heap, e, "args.required-flag", "--on, --join-type, --join-prefix, --join-where, --max-join-rows, --join-input-format, --join-fields, --join-delimiter and --join-sorted are for a join, so they need --join", "--join FILE --on PROBE=BUILD", "--join --on --join-type --join-prefix --join-where --max-join-rows --join-input-format --join-fields --join-delimiter --join-sorted");
         }
         return e;
     }

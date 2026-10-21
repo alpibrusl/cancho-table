@@ -223,6 +223,63 @@ pub fn build_too_large[&h, &s, &q](heap: &!h Heap, e: fail.Errors, shown: &s [by
     return fail.add(heap, e, o);
 }
 
+// The cells of a key as a json array in the detail (docs/joins.md section 23): `shown` holds, for each of the `pairs` pairs, a byte (the bytes kept, at most 64, in the low 7 bits, and 128 when the cell was cut)
+// and then those bytes. Answers whether a cell was cut.
+fn put_key_cells[&h, &d](heap: &!h Heap, w: json.Writer, name: &static [byte], shown: &d [byte], pairs: int) -> [heap] (json.Writer, bool) {
+    var o = json.put_key(heap, w, name);
+    o = json.begin_array(heap, o);
+    var at = 0;
+    var cut = false;
+    var j = 0;
+    while j < pairs && at < len(shown) {
+        let b = int_of(shown[at]);
+        let n = b & 127;
+        if b >= 128 {
+            cut = true;
+        }
+        o = text.put(heap, o, shown[at + 1..at + 1 + n]);
+        at = at + 1 + n;
+        j = j + 1;
+    }
+    o = json.end_array(heap, o);
+    return (o, cut);
+}
+
+// `join.not-sorted` (docs/joins.md section 23): the row `row` (at line `line`) of the file `input` has a key below the key of the row `prow` (line `pline`) before it, in a call that declared both files
+// sorted. `key` and `prev` are the key cells (see `put_key_cells`).
+pub fn not_sorted[&h, &s, &k, &q](heap: &!h Heap, e: fail.Errors, input: &static [byte], shown: &s [byte], row: int, line: int, prow: int, pline: int, key: &k [byte], prev: &q [byte], pairs: int) -> [heap] fail.Errors {
+    var o = fail.open_in(heap, finish.extra(), "join.not-sorted", "a file given to --join-sorted is not in ascending order of the join key: this row has a key below the key of the row before it", "sort both files by the key, which table --order-by KEY --format csv does bytewise for a text key and by value for a typed one, or run the join without --join-sorted, which does not need them in order");
+    o = fail.repair_none(heap, o, "the files have to be sorted by the key before they are joined, and what order was meant is not known");
+    o = fail.detail_open(heap, o);
+    o = fail.detail_str(heap, o, "input", input);
+    o = fail.detail_text(heap, o, "path", shown);
+    o = fail.detail_int(heap, o, "row", row);
+    o = fail.detail_int(heap, o, "line", line);
+    o = fail.detail_int(heap, o, "previous_row", prow);
+    o = fail.detail_int(heap, o, "previous_line", pline);
+    let (o2, cut1) = put_key_cells(heap, o, "key", key, pairs);
+    let (o3, cut2) = put_key_cells(heap, o2, "previous_key", prev, pairs);
+    o = fail.detail_bool(heap, o3, "key_truncated", cut1 || cut2);
+    return fail.add(heap, e, o);
+}
+
+// `limit.state-too-large` for the rows of one key of the build that `--join-sorted` holds at a time: the rows of the group already held fit, the one named does not. `key` is the group's key (see `put_key_cells`).
+pub fn group_too_large[&h, &s, &k](heap: &!h Heap, e: fail.Errors, shown: &s [byte], limit: int, held: int, rows_held: int, row: int, line: int, key: &k [byte], pairs: int) -> [heap] fail.Errors {
+    var o = fail.open_in(heap, finish.extra(), "limit.state-too-large", "the rows of one key of the --join file, held while --join-sorted joins them, would pass --max-state-bytes", "raise --max-state-bytes, up to the ceiling introspect names, keep fewer of the rows of that key with --join-where, or join on more columns so that no key repeats so many rows");
+    o = fail.repair_none(heap, o, "which rows of the key to leave out is not known");
+    o = fail.detail_open(heap, o);
+    o = fail.detail_str(heap, o, "holder", "join-group");
+    o = fail.detail_str(heap, o, "input", "build");
+    o = fail.detail_text(heap, o, "path", shown);
+    o = fail.detail_int(heap, o, "limit", limit);
+    o = fail.detail_int(heap, o, "held", held);
+    o = fail.detail_int(heap, o, "rows_held", rows_held);
+    o = fail.detail_int(heap, o, "build_row", row);
+    o = fail.detail_int(heap, o, "build_line", line);
+    let (o2, cut) = put_key_cells(heap, o, "group_key", key, pairs);
+    return fail.add(heap, e, fail.detail_bool(heap, o2, "group_key_truncated", cut));
+}
+
 // `limit.state-too-large` for the groups or the rows held to sort, which share `--max-state-bytes` with the build (docs/joins.md section 6.3): `build_bytes` is what the build holds, `held` what the groups (their keys)
 // or the sorted rows held before the one that did not fit, and the bound those were given is `limit` minus `build_bytes`.
 pub fn shared_too_large[&h, &s](heap: &!h Heap, e: fail.Errors, groups: bool, shown: &s [byte], limit: int, build_bytes: int, held: int) -> [heap] fail.Errors {
