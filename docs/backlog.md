@@ -169,8 +169,10 @@ otherwise said to be inferred.
 
 Found while building. **Closed and adopted:** `extra_rules` (cancho-tools#28); `fail.choose_*` and `fail.detail_*`
 (#29: the hand-built `choose` repair of `plan.cho` and the key/value ladders of every error are one call each,
-48 lines fewer, the conformance suite unchanged). Still open:
+48 lines fewer, the conformance suite unchanged); #42 and #43 with the move of the pin to `af73b1b` (a hint on `args.bad-value`, `args.missing-value`, `path.empty` and `path.too-long`, the four it gave a sentence to; the flag lookups linear in the table; `docs/architecture.md`, "The pin"). Still open:
 
+* Four refusals write no hint: `io.not-a-directory`, `io.permission-denied` and `io.read-failed` (the package writes them empty; cancho-tools') and `path.empty` for a query's `from ''` (`tools/table/qpath.cho:59`, `table`'s own). `test_toolbox_pin.py` lists the first three.
+* The MCP `title` annotation of cancho-tools#42 is not in `table`'s `tools/list` (the server and its generator are copied, not imported); the four hints it already has are #42's values for `table`.
 * `describe.Tool` allows one `schema` string, so a tool with several documents shares one `oneOf`.
 * A flag value cannot be empty, and a flag table cannot hold `;` or `|` (not even in help text).
 * No `Buffer` truncate/undo (a cancho `std` gap), so bounded JSON paging builds each row in a scratch buffer.

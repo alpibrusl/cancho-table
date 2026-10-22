@@ -95,7 +95,7 @@ for the authority.
 | `kind: choice:a/b` | `{"enum": ["a", "b"]}` |
 | the operand `FILE` (min 1, max 1) | `file`, a string, in `required` |
 | `help`, `default` | `description`, `default` |
-| `guarantees.idempotent`, `authority.effects` | `annotations`: `readOnlyHint` (no write or network effect), `idempotentHint`, `openWorldHint: false` |
+| `guarantees.idempotent`, `authority.effects` | `annotations`: `readOnlyHint` (no write or network effect), `destructiveHint` (its negation), `idempotentHint`, `openWorldHint: false` |
 
 The strings a model has to write, `--where`, `--select`, `--agg`, `--order-by`, `--sort`, `--group`,
 are the flags' `help` from `introspect`, in the property's `description`, so the schema documents them
@@ -200,7 +200,7 @@ and `poll` are the deadline.)
 
 **Copied**, with its source revision recorded: `server/mcp.cho` is cancho-tools' `server/mcp.cho`
 at `74411ee43c74a2741ed1bb37404844fcbb031753` (the head of `main` when this was written; the contract
-package this repository consumes is pinned at `25acde07`, and the server is not in it), and `scripts/mcp.py`
+package this repository consumes is pinned at `af73b1b`, and the server is not in it; that revision's `server/mcp.cho` differs from the copy in two comments and the text of one refusal, and its `scripts/mcp.py` (#42) adds a `title` to the annotations and derives the four hints from `reversibility` and the effects, where this copy derives them from the effects and writes `openWorldHint: false`; the four values are the same for `table`, and `title` is the one member this `tools/list` lacks: `docs/architecture.md`, "The pin"), and `scripts/mcp.py`
 is that revision's generator, both adapted. **Why not shared:** the contract package is a set of library
 modules (`toolbox.cli`, `.describe`, `.fail`, ...), and a library cannot carry the server: its `main` must hold
 `Exec` narrowed to a *literal* directory (`narrow` takes a literal, cancho `processes.md` §7.1), which is

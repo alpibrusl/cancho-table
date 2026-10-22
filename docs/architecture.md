@@ -29,7 +29,7 @@ How `table` is put together, and what its authority row says. Short on purpose: 
 
 | piece | what it does |
 |---|---|
-| contract package (`cancho-tools`, modules `cli`, `describe`, `fail`, `limit`, `lines`, `out`, `path`, `place`, `text`) | the parts every tool of the family shares: the flag table, `introspect` and `skill`, the `table.v2` envelope, rules and repairs, limits, the line reader, paths confined beneath `--root`. Pinned by commit in `cancho.toml`, installed by `cancho build` |
+| contract package (`cancho-tools`, modules `cli`, `describe`, `fail`, `limit`, `lines`, `out`, `path`, `place`, `text`) | the parts every tool of the family shares: the flag table, `introspect` and `skill`, the `table.v2` envelope, rules and repairs, limits, the line reader, paths confined beneath `--root`. Pinned by commit in `cancho.toml` (the pin and what moving it changed: the section "The pin" below), installed by `cancho build` |
 | `tools/table/table.cho` | the flags, the sequential read loop, the answers. `body` reads the plan only through one `Inputs` value (`inputs.cho`): `body` gives `plan_body` the flags' values, `query_body` a `--query`'s translation |
 | `tools/table/inputs.cho` | the `Inputs` value: what the plan is made from (the columns, the condition, the grouping, the aggregates, the order, the cut and the page, the rows to read, the source), filled once from the flags, or from a `--query`'s translation (`inputs.for_query`); a standard-input source fills the same value (`docs/query.md` Q0, Q1) |
 | `qarena.cho`, `qlex.cho`, `qparse.cho`, `qtrans.cho` | the front end of `--query`: the query's bytes to tokens, the tokens to records, the records to the flags the query stands for (one function per flag for how a name is written in it); the existing parsers of the flags then fill the one `Query`. A hand-written recursive descent over one block of integers (docs/query.md section 14) |
@@ -83,3 +83,38 @@ Not in the row, and so not possible for this program: `net_out`, `net_in`, `ffi`
 * `python3 scripts/site.py --check` requires that the authority row on the project page is the committed one.
 
 A new capability is therefore a change to `tools.toml` that somebody has to approve.
+
+## The pin (cancho-tools)
+
+The contract package is pinned by commit, one `[dependencies.NAME]` line for each of the nine modules `table` imports (`cancho.toml`), and never copied. Three pins have been used:
+
+| pin | what it was |
+|---|---|
+| `25acde0` | the package when `table` was written |
+| `919e7ba` | `25acde0` plus the one change of cancho-tools#43 (`toolbox.cli`: a flag lookup is linear in the table), taken from a side branch (`table-pin-linear-cli`) so that nothing else of the package moved |
+| **`af73b1b`** | the head of cancho-tools `main` on 2026-10-21: #39 to #44, adopted as a step of its own (this section). The nine modules of `af73b1b` are those of `afc56dd` (#43 merged); #44 (`archive`) touches no module `table` uses |
+
+**What the move changed in the bytes of `table`: four hints.** Of the nine modules, five are byte-identical to the earlier pin's (`fail`, `lines`, `out`, `place`, `text`); `cli`, `path`, `describe` and `limit` changed, and what changed in them is, in cancho-tools' sources (`contract/cli.cho`, `contract/path.cho`, `contract/describe.cho`):
+
+| rule | where it is written | hint before | hint now |
+|---|---|---|---|
+| `args.bad-value` | a flag's value is not of the kind the flag takes (`--where ''`, `--limit x`, `--format xml`, ...) | `null` | `give the flag a value of the kind detail.expected names` |
+| `args.missing-value` | a flag is last, or is followed by another flag | `null` | `put the value after the flag, or write the two as --flag=value` |
+| `path.empty` | the operand (the file name) is empty | `null` | `name a path; an empty argument names nothing` |
+| `path.empty` | `--root` is empty (not reachable: a flag value cannot be empty, so `--root ''` is `args.bad-value`) | `null` | `name a directory, or leave --root out` |
+| `path.too-long` | the operand is longer than 4096 bytes | `null` | `use a path of at most 4096 bytes` |
+| `path.too-long` | `--root` is longer than 4096 bytes | `null` | `name a root of at most 4096 bytes` |
+
+The other changes of the package are not reachable from `table`: `describe.introspect` and `describe.skill` write a different `concurrency` sentence for a tool whose reversibility is `irreversible-consequential` (`table` is not one), and the `limit` store changed only in its recorded requirement on `cli`.
+
+**What did not change**, measured (the same status, standard output and standard error, but for those hints): the exit status and `code` of every refusal; every `message`; every `repair`; every `detail`; `introspect` (byte for byte), `skill` (byte for byte), `--help`, `--version`; `--explain`; the 166 plans of `scripts/corpus.py` (md5 `fccb01b66dd7518d74611219a6c5aa29`), `scripts/query_corpus.py` and `scripts/explain_corpus.py` (0 different); the answers of the MCP server (the refusal of a call is `table`'s own line, so it carries the new hints; `tools/list` is the same bytes); the authority row (`args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_read, io_write`) and the embedded manifest (`scripts/manifest.py` rewrote no file); the schemas. `csv`, `jsonl` and `text` refusals are written on standard error as `table: RULE: message` and never carried a hint, so they are the same bytes.
+
+**How it was measured** (the earlier pin's binary is `origin/main` at `5b9dddc`; the new one is this branch's; run on 2026-10-21 to 22 on one Linux machine): (1) the whole conformance suite was run once with `tests/conformance`'s binary replaced by a program that runs both binaries on the same arguments, standard input and working directory (the same `argv[0]`, so a repair's `argv` is the same text) and records every call whose status, standard output or standard error differ: **689 calls differ**, and in every one the answer with the hints masked is byte-identical, status and standard error included; the differences are 1,368 `args.bad-value` hints, 6 `path.empty`, 6 `path.too-long` and 4 `args.missing-value` (counted per error in the answer, `error` and `errors` both); (2) a probe of 137 calls (every flag with an empty, a wrong and a missing value, the unknown-flag and typo paths, a duplicated flag, `--flag=value`, paths, the join and query errors, `--explain`, in json and csv): 101 identical, 36 differ in the hints above and nothing else; (3) the three corpora; (4) ten calls of the MCP server for each binary.
+
+**Three refusals still carry no hint**, with this pin and with the head of cancho-tools: `io.not-a-directory`, `io.permission-denied` and `io.read-failed` (the package maps an operating-system error to a tag in `contract/fail.cho` and writes the hint empty). `tests/conformance/test_toolbox_pin.py` lists them: a pin that gives them one fails there until the list says so. It is cancho-tools' to fix; nothing was done about it here. One refusal of `table`'s own is also without a hint and is not reached by those fixtures: `path.empty` for a query's `from ''` (`tools/table/qpath.cho` writes it with an empty hint; the operand `''` is the package's and has one now). It is a one-line change of `table`'s own bytes, not of the pin, and is left to the maintainer.
+
+**What is not adopted.** The MCP annotations of cancho-tools#42 are written in cancho-tools' own `scripts/mcp.py` and `server/mcp.cho`, which `table` copies rather than imports (`docs/mcp.md` section 7); the move of the pin does not touch them. `table`'s copy already writes the four hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) and its values for `table` are the ones #42's derivation gives; the one member that differs is `title`, which #42 adds and `table`'s `tools/list` does not have. That is a change of `tools/list`, not of the pin; it is left to the maintainer.
+
+**The frozen goldens.** Three tests held `table` to the md5 of what it answered before (`test_not_a2_compat.Compat.test_golden`, `...test_every_case_that_slice_a1_pinned_and_a2_does_not_read_differently_is_unchanged`, `test_or_a1_compat.Compat.test_golden`), and read it through `or_a0.digest` and `query_join_golden.digest`. Both digests now read the answer through `toolbox_pin.before`, which puts exactly the four hints above back to `null`: **no golden file was re-recorded and no golden line changed** (`or_a0_golden.json`, `or_a1_main_golden.json`, `not_a2_base_golden.json`, `not_a2_compat_changes.json`, `query_join_main_golden.json` are the bytes they were); a golden still fails on any other change of a byte, and the new hints are pinned text by text in `test_toolbox_pin.py`. (The same way as `rename_b1.j3b_hint_moved` for the hints J3b moved, but for the bytes and not the rule.)
+
+**Cost.** Callgrind instructions, 2-row files, valgrind 3.22.0 on this machine: a call costs 261 to 344 instructions more than before (0.03 to 0.06 per cent of a call of about 0.5 million: `shape` 514,902 to 515,177; `join inner` 920,904 to 921,216; `skill` +240; `introspect` +106); a refusal of the four rules 894 to 1,214 more (about 0.3 per cent of 0.37 million). The per-row cost of the 38 cells of `scripts/join_callgrind.py --all` is unchanged at four decimals (every ratio 1.0000, the bound is 1.01). No clock time was measured.

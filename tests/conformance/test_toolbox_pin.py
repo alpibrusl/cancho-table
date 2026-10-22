@@ -1,0 +1,189 @@
+"""The adoption of cancho-tools' main (#42: a hint on every refusal), docs/architecture.md "The pin".
+
+The nine `[dependencies.*]` revs moved from 919e7ba to af73b1b. What that changed in the bytes of `table` is four hints that were null and are sentences now (`toolbox.cli`: `args.missing-value`,
+`args.bad-value`; `toolbox.path`: `path.empty`, `path.too-long`). This file states the new contract: the exact text of each, on every way to reach it; that nothing else of these refusals moved (status,
+code, message, repair, detail); that every refusal the fixtures of `test_rules.py` reach carries a hint but the three the package still writes without one; and, against the binary of the earlier pin
+(MAIN_TABLE), that the hints are the only difference in a wide set of calls.
+"""
+
+import json
+import os
+import unittest
+
+from harness import Scratch, run, run_argv, binary
+import toolbox_pin as T
+import test_rules
+
+MAIN_TABLE = os.environ.get("MAIN_TABLE")
+
+BAD = "give the flag a value of the kind detail.expected names"
+MISSING = "put the value after the flag, or write the two as --flag=value"
+BAD_MESSAGE = "this flag's value is not of the kind it takes"
+MISSING_MESSAGE = "this flag takes a value and none followed it"
+
+# (the flags, the flag the refusal names, its value)
+BAD_VALUES = [
+    (["--where", ""], "--where", ""), (["--select", ""], "--select", ""), (["--group", ""], "--group", ""), (["--agg", ""], "--agg", ""), (["--sort", ""], "--sort", ""),
+    (["--order-by", ""], "--order-by", ""), (["--report", ""], "--report", ""), (["--format", ""], "--format", ""), (["--format", "xml"], "--format", "xml"),
+    (["--threads", "x"], "--threads", "x"), (["--limit", "x"], "--limit", "x"), (["--top", "-1"], "--top", "-1"), (["--max-bytes", "abc"], "--max-bytes", "abc"),
+    (["--max-rows", "many"], "--max-rows", "many"), (["--from", "x"], "--from", "x"), (["--delimiter", ""], "--delimiter", ""), (["--root", ""], "--root", ""),
+    (["--join", ""], "--join", ""), (["--join", "b.csv", "--on", ""], "--on", ""), (["--join", "b.csv", "--on", "a=k", "--join-type", "x"], "--join-type", "x"),
+    (["--query", ""], "--query", ""), (["--rename", ""], "--rename", ""), (["--input-format", "xml"], "--input-format", "xml"), (["--fields", ""], "--fields", ""),
+    (["--explain", "--where", ""], "--where", ""),
+]
+MISSING_VALUES = ["--where", "--select", "--group", "--agg", "--sort", "--order-by", "--report", "--format", "--threads", "--limit", "--max-rows", "--root", "--join"]
+
+
+def errors_of(r):
+    doc = json.loads(r.stdout)
+    assert doc["ok"] is False
+    return doc["error"], doc["errors"]
+
+
+class Hints(unittest.TestCase):
+    def setUp(self):
+        self.s = Scratch()
+        self.s.write("f.csv", "a,b,c\n1,2,3\n4,5,6\n")
+        self.s.write("b.csv", "k,v\n1,x\n")
+
+    def tearDown(self):
+        self.s.cleanup()
+
+    def go(self, *args):
+        return run(*args) if "--root" in args else run("--root", self.s.dir, *args)
+
+    def test_a_bad_value_says_what_to_do(self):
+        for argv, flag, value in BAD_VALUES:
+            with self.subTest(argv):
+                r = self.go(*argv, "f.csv")
+                first, every = errors_of(r)
+                self.assertEqual(r.status, 2)
+                self.assertEqual(first["rule"], "args.bad-value")
+                self.assertEqual(first["hint"], BAD)
+                self.assertEqual((first["code"], first["message"], first["repair"]), ("INVALID_ARGS", BAD_MESSAGE, None))
+                self.assertEqual(first["detail"]["flag"], flag)
+                self.assertEqual(first["detail"]["value"], value)
+                self.assertIn("expected", first["detail"])
+                self.assertEqual(first, every[0])
+                for e in every:
+                    if e["rule"] == "args.bad-value":
+                        self.assertEqual(e["hint"], BAD)
+
+    def test_a_flag_with_no_value_says_where_it_goes(self):
+        for flag in MISSING_VALUES:
+            with self.subTest(flag):
+                r = self.go("f.csv", flag)
+                first, every = errors_of(r)
+                self.assertEqual(r.status, 2)
+                self.assertEqual(first["rule"], "args.missing-value")
+                self.assertEqual(first["hint"], MISSING)
+                self.assertEqual((first["code"], first["message"], first["repair"]), ("INVALID_ARGS", MISSING_MESSAGE, None))
+                self.assertEqual(first["detail"]["flag"], flag)
+                self.assertEqual(first, every[0])
+
+    def test_an_empty_or_a_long_path(self):
+        r = self.go("")
+        first, every = errors_of(r)
+        self.assertEqual((r.status, first["rule"], first["hint"], first["message"]), (2, "path.empty", "name a path; an empty argument names nothing", "the path is empty"))
+        self.assertEqual((first["code"], first["repair"]), ("INVALID_ARGS", None))
+        self.assertEqual(first, every[0])
+        r = self.go("a" * 5000)
+        first, every = errors_of(r)
+        self.assertEqual((r.status, first["rule"], first["hint"], first["message"]), (2, "path.too-long", "use a path of at most 4096 bytes", "the path is longer than 4096 bytes"))
+        self.assertEqual((first["code"], first["repair"]), ("INVALID_ARGS", None))
+        r = run("--root", "a" * 5000, "f.csv")
+        first, every = errors_of(r)
+        self.assertEqual((r.status, first["rule"], first["hint"], first["message"]), (2, "path.too-long", "name a root of at most 4096 bytes", "--root is longer than 4096 bytes"))
+
+    def test_each_error_of_a_list_carries_its_own_hint(self):
+        # several refusals in one answer: the hints of the four are in `errors` as well as in `error`
+        r = self.go("--select", "a", "--select", "b", "--where", "", "f.csv")
+        first, every = errors_of(r)
+        rules = [e["rule"] for e in every]
+        self.assertIn("args.bad-value", rules)
+        self.assertIn("args.duplicate-flag", rules)
+        for e in every:
+            if e["rule"] == "args.bad-value":
+                self.assertEqual(e["hint"], BAD)
+            if e["rule"] == "args.duplicate-flag":
+                self.assertEqual(e["hint"], "give each flag once")
+
+    def test_csv_and_text_do_not_carry_hints(self):
+        for fmt in ("csv", "text"):
+            r = self.go("--where", "", "--format", fmt, "f.csv")
+            self.assertEqual(r.status, 2)
+            self.assertEqual(r.stdout, b"")
+            self.assertIn(b"args.bad-value", r.stderr)
+            self.assertNotIn(BAD.encode(), r.stderr)
+
+    def test_the_hints_are_the_ones_of_the_helper_of_the_goldens(self):
+        # toolbox_pin.before(answer) is the answer of the earlier pin: the four hints null again, every other byte alone
+        for argv in (["--where", ""], ["f.csv", "--limit"], [""], ["a" * 5000]):
+            r = self.go(*argv) if argv != ["f.csv", "--limit"] else self.go("--limit")
+            self.assertNotEqual(T.before(r.stdout), r.stdout, argv)
+            self.assertNotIn(b'"hint":"', T.before(r.stdout).split(b'"errors"')[0])
+            self.assertEqual(T.before(T.before(r.stdout)), T.before(r.stdout))
+        ok = self.go("f.csv")
+        self.assertEqual(T.before(ok.stdout), ok.stdout)
+        other = self.go("--select", "zz", "f.csv")
+        self.assertEqual(T.before(other.stdout), other.stdout)
+
+
+class EveryRule(unittest.TestCase):
+    # the refusals whose hint the package still writes empty (toolbox.fail's reading of an operating-system error): not changed by this adoption, listed so that a pin that fixes one fails here until the list says so
+    NO_HINT = {"io.not-a-directory", "io.permission-denied", "io.read-failed"}
+
+    def test_every_rule_a_fixture_reaches_has_a_hint_but_these_three(self):
+        s = Scratch()
+        without, with_hint = set(), set()
+        try:
+            for rule, argv, preexec in test_rules.Rules().fixtures(s):
+                import procs as subprocess
+                p = subprocess.run([binary(), *[str(a) for a in argv]], capture_output=True, preexec_fn=preexec, input=b"")
+                try:
+                    first = json.loads(p.stdout)["errors"][0]
+                except ValueError:
+                    continue            # csv and text answer on standard error, which has no hint
+                (with_hint if first.get("hint") else without).add(rule)
+        finally:
+            try:
+                os.chmod(s.dir / "denied.csv", 0o644)
+            except OSError:
+                pass
+            s.cleanup()
+        self.assertGreater(len(with_hint), 60)
+        self.assertEqual(without, self.NO_HINT)
+        for rule in ("args.missing-value", "args.bad-value", "path.empty", "path.too-long"):
+            self.assertIn(rule, with_hint)
+
+
+@unittest.skipUnless(MAIN_TABLE and os.path.exists(MAIN_TABLE), "MAIN_TABLE names the binary of the earlier pin")
+class AgainstTheEarlierPin(unittest.TestCase):
+    def test_the_hints_are_the_only_difference(self):
+        s = Scratch()
+        s.write("f.csv", "a,b,c\n1,2,3\n4,5,6\n")
+        s.write("b.csv", "k,v\n1,x\n")
+        changed = 0
+        calls = [[], ["--select", "a"], ["--where", "a > 1"], ["--group", "a", "--agg", "count"], ["--report", "types"], ["--explain", "--select", "b"], ["--select", "zz"], ["--where", "zz = 1"],
+                 ["--bogus"], ["--selct", "a"], ["--limit", "x"], ["--limit"], ["--format", "xml"], ["--where", ""], [""], ["a" * 5000], ["--join", "b.csv", "--on", "a=k"], ["--max-rows", "1"],
+                 ["--join", "b.csv", "--on", "a=k", "--join-type", "x"], ["--query", "select a from 'f.csv'"], ["--query", ""], ["--introspect"], ["../f.csv"], ["/etc/passwd"], ["nofile.csv"]]
+        try:
+            for extra in calls:
+                for fmt in ([], ["--format", "csv"], ["--format", "jsonl"]):
+                    if "--format" in extra and fmt:
+                        continue
+                    argv = ["--root", str(s.dir), *extra, *fmt, "f.csv"] if extra[:1] != [""] and not (extra and len(extra[0]) > 4000) else ["--root", str(s.dir), *extra, *fmt]
+                    new = run_argv([binary(), *argv[0:]])
+                    old = run_argv([MAIN_TABLE, *argv])
+                    norm = lambda r, b: (r.status, r.stdout.replace(b.encode(), b"{BIN}"), r.stderr.replace(b.encode(), b"{BIN}"))
+                    n, o = norm(new, binary()), norm(old, MAIN_TABLE)
+                    if n != o:
+                        changed += 1
+                        self.assertEqual((n[0], T.before(n[1]), n[2]), o, argv[2:])
+        finally:
+            s.cleanup()
+        self.assertGreater(changed, 5)
+
+
+if __name__ == "__main__":
+    unittest.main()

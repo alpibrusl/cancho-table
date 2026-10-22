@@ -149,7 +149,7 @@ sources **and the installed dependency sources** in `build/deps`, and with
 (`cancho-tools/contract`) give.
 
 The contract revision and the compiler pin are the ones in [`cancho.toml`](../cancho.toml)
-(`25acde07f242` and `e47d647353c4`).
+(`af73b1b4df4e`, the head of cancho-tools `main` on 2026-10-21, and `e47d647353c4`; "The pin" in [`architecture.md`](architecture.md) says what moving it changed).
 
 ## Gates
 

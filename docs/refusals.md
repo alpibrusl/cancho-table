@@ -17,7 +17,7 @@ An error has six members, all always present:
 | `code` | the class, one of `GENERAL_ERROR`, `INVALID_ARGS`, `NOT_FOUND`, `PERMISSION_DENIED`, `CONFLICT`, `PRECONDITION_FAILED`; it fixes the exit status (below) |
 | `rule` | the tag, `area.name`: **match on this**, it does not change |
 | `message` | a sentence for a person; may be reworded |
-| `hint` | what to do about it, in a sentence, or null |
+| `hint` | what to do about it, in a sentence. Every rule a fixture of `tests/conformance/test_rules.py` reaches has one but `io.not-a-directory`, `io.permission-denied` and `io.read-failed`, where it is null (`docs/architecture.md`, "The pin") |
 | `repair` | `null`, or one of the three kinds below |
 | `detail` | an object of the facts the rule names: the flag, the column, the row, the line, the limit, the value |
 

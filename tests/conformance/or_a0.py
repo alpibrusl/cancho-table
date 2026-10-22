@@ -25,6 +25,7 @@ sys.path.insert(0, str(HERE))
 
 import query_cases  # noqa: E402
 import query_ref  # noqa: E402
+import toolbox_pin  # noqa: E402
 
 GOLDEN = HERE / "or_a0_golden.json"
 MAIN_GOLDEN = HERE / "or_a1_main_golden.json"       # the answers of main (62d60ad, slice A0 merged) to every case below, refusals and answers: slice A1's compatibility gate
@@ -597,7 +598,8 @@ def blank_repair(text):
 
 
 def digest(text):
-    return hashlib.sha256(text.encode()).hexdigest()[:20]
+    """The sha of an answer, read as the tool at the earlier pin wrote it (toolbox_pin.before: four hints that were null then and are sentences now)."""
+    return hashlib.sha256(toolbox_pin.before(text).encode()).hexdigest()[:20]
 
 
 def run_cases(cases, directory, run):
