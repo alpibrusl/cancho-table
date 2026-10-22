@@ -688,7 +688,8 @@ class Threads(unittest.TestCase):
 
 
 class Strace(unittest.TestCase):
-    """ST and AU on Linux (`strace`, skipped where there is none): a join of any type starts no thread, opens no socket and opens no file for writing, from a file and from a pipe."""
+    """ST and AU on Linux (`strace`, skipped where there is none): a join of any type over a build under --parallel-min-bytes starts no thread, opens no socket and opens no file for writing, from a file and from a pipe. Corrected by J8
+    (docs/joins.md section 24): the join no longer carries --parallel-min-bytes 0, because a build of at least that many bytes is read by threads (test_join_j8.Used); the probe never is."""
 
     @unittest.skipUnless(shutil.which("strace") and sys.platform.startswith("linux"), "strace is Linux only")
     def test_no_thread_no_socket_no_write(self):
@@ -708,7 +709,7 @@ class Strace(unittest.TestCase):
                 for piped in (False, True):
                     log = str(s.dir / "trace.txt")
                     argv = ["strace", "-f", "-o", log, "-e", "trace=clone,clone3,socket,connect,openat,open,creat,unlink,rename,mkdir", binary(), "--root", str(s.dir), "--join", "b.csv", "--on", "k=id,n=m:int",
-                            "--join-type", jt, "--format", "csv", "--threads", "4", "--parallel-min-bytes", "0", "--chunk-bytes", "100"] + ([] if piped else ["p.csv"])
+                            "--join-type", jt, "--format", "csv", "--threads", "4", "--chunk-bytes", "100"] + ([] if piped else ["p.csv"])
                     p = subprocess.run(argv, capture_output=True, input=probe if piped else b"", timeout=120)
                     self.assertEqual(p.returncode, 0, (jt, p.stderr[:300]))
                     trace = open(log).read()

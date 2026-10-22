@@ -1078,7 +1078,8 @@ class Authority(unittest.TestCase):
 
 
 class Strace(unittest.TestCase):
-    """On Linux, a join with groups starts no thread, opens no socket and opens no file for writing (the control: a threaded --select of the same file does)."""
+    """On Linux, a join with groups over a build under --parallel-min-bytes starts no thread, opens no socket and opens no file for writing (the control: a threaded --select of the same file does). Corrected by J8 (docs/joins.md
+    section 24): with --parallel-min-bytes 0 the build is read by threads (test_join_j8.Used); the probe never is."""
 
     @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("strace"), "strace is Linux only")
     def test_no_thread_no_socket_no_write(self):
@@ -1086,7 +1087,7 @@ class Strace(unittest.TestCase):
         try:
             case = R3.shapes()[0]
             write_case(s.dir, case)
-            base = [binary(), "--root", str(s.dir), "--join", "b.csv", "--on", "pk=bk", "--group", "bg", "--agg", "count,sum:bv", "--threads", "4", "--chunk-bytes", "7", "--parallel-min-bytes", "0", "--format", "csv", "p.csv"]
+            base = [binary(), "--root", str(s.dir), "--join", "b.csv", "--on", "pk=bk", "--group", "bg", "--agg", "count,sum:bv", "--threads", "4", "--chunk-bytes", "7", "--format", "csv", "p.csv"]
             p = subprocess.run(["strace", "-f", "-e", "trace=clone,clone3,socket,openat", *base], capture_output=True, input=b"")
             err = p.stderr.decode("latin-1")
             self.assertNotIn("CLONE_THREAD", err)
