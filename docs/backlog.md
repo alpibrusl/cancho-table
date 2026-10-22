@@ -19,16 +19,27 @@ detection. Start-up of `duckdb -c "select 1"` is 0.013 s, so it does not explain
 
 * That first table compared only the group-count answers. The later one below checks every contender's answer
   against one computed in Python before timing.
-* DuckDB infers column types and `table` does not, so it does more work. One file shape, one machine, no Linux
-  run (a soak was running there).
+* DuckDB infers column types and `table` does not (it reports a suggested declaration with `--report types` and
+  never coerces silently), so it does more work. One file shape, one machine, no Linux run (a soak was running
+  there).
 * So per core `table` is level with or ahead of DuckDB on these CSV questions, and DuckDB's threads win the
   groupings by about 1.8x. Neither says anything about the rest of what DuckDB is.
 * cancho's own scan primitives were measured level with DuckDB's single thread on 50 million `int64`
   (cancho `docs/parallelism.md` §3.3).
 
-**What DuckDB has that `table` is far from:** SQL and a planner, joins (hash and merge), window functions,
-spill-to-disk for large sorts and aggregations, vectorised execution, typed columns (decimal, date, timestamp,
-nested), CSV type inference, Parquet and JSON readers, a storage format with transactions, extensions.
+**What DuckDB has that `table` is far from:** SQL with a planner (`table --query` is a subset, `docs/query.md`),
+window functions, spill-to-disk for large sorts and aggregations, vectorised execution, nested types, Parquet,
+silent CSV type inference, a storage format with transactions, extensions.
+
+**Corrected (2026-10-22).** This paragraph used to list joins, date and timestamp types and a JSON reader as things
+`table` lacks. `table` now has: hash joins (`inner`, `left`, `semi`, `anti`; typed and composite keys; a bounded
+build; the swap repair; a partitioned build with `--threads`) and a merge join over sorted files (`--join-sorted`),
+`docs/joins.md`; `:date`, `:timestamp` and `:datetime` columns, period buckets and join keys, `docs/datetime.md`;
+`:dec(S)` decimals; and JSON lines in and out. What it does not have, of those: a join over more than two files in
+one plan, a threaded probe (J6), and `--report` over a join. No quiet-machine and no Linux comparison with
+DuckDB on joins has been run. `docs/joins.md` sections 12, 16.5, 17.4 and 18.4 hold join timings against DuckDB and
+csvtk from the Mac under load (section 16.5: load 8.5 to 9.4), which are not publishable. NOT RUN: the quiet-machine
+suite (`docs/named-benchmarks.md` section 19 builds it, and its DuckDB side is parked until a quiet machine).
 
 **Why that is not the target.** `table` is bounded, deterministic and refuses instead of guessing; every limit has a
 rule and a repair. An engine that is those things and still SQL-complete is a different, much larger project. The use
