@@ -20,6 +20,9 @@ import jnswap;
 import jnfmt;
 import jnhead;
 import jnjson;
+import jnpart;
+import jnpbuild;
+import jnpwords;
 import jnwhere;
 import jxsrc;
 import orparse;
@@ -136,7 +139,7 @@ fn type_name[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buff
 }
 
 // The text of the `join` member. `jtype`: 0 inner, 1 left, 2 semi, 3 anti.
-fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte], reader_json: &y [byte], bjsonl: bool, swap_json: &z [byte]) -> [heap, args] buffer.Buffer {
+fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte], reader_json: &y [byte], bjsonl: bool, foreign: bool, swap_json: &z [byte]) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let on = jnflags.on_of(heap, args, parsed, jxs);
     let budget = cli.nat(args, parsed, table, "max-state-bytes");
@@ -286,8 +289,26 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g
     } else {
         o = buffer.append(heap, o, ",\"order\":\"probe order, then build order\",\"work\":{\"class\":\"join: build then stream\",\"first_output_after\":\"the whole build\",\"threads\":{\"requested\":");
     }
-    o = buffer.push_nat(heap, o, cli.nat(args, parsed, table, "threads"));
-    o = buffer.append(heap, o, ",\"effective\":1,\"reason\":\"the join is read on one core\"}}}");
+    let requested = cli.nat(args, parsed, table, "threads");
+    o = buffer.push_nat(heap, o, requested);
+    // J8 (docs/joins.md section 24): a csv build read with the answer's delimiter is built by threads, by the rule of `jnpart`; the explain says so when the build would be, and the document of any other join is the bytes it was
+    var partitions = 0;
+    if !merging && !foreign && bsize >= 0 {
+        partitions = jnpbuild.partitions(requested, bsize - bheader, cli.nat(args, parsed, table, "parallel-min-bytes"));
+    }
+    if partitions > 0 {
+        o = buffer.append(heap, o, ",\"effective\":1,\"reason\":\"");
+        o = buffer.append(heap, o, jnpwords.reason());
+        o = buffer.append(heap, o, "\"}");
+        let pdoc = jnpart.partitions_doc(heap, partitions, bsize - bheader, cli.nat(args, parsed, table, "chunk-bytes"));
+        borrow pdoc as &pdr in {
+            o = buffer.append(heap, o, buffer.bytes(pdr));
+        }
+        buffer.drop(heap, pdoc);
+        o = buffer.append(heap, o, "}}");
+    } else {
+        o = buffer.append(heap, o, ",\"effective\":1,\"reason\":\"the join is read on one core\"}}}");
+    }
     jnflags.drop_on(heap, on);
     return o;
 }
@@ -648,7 +669,7 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
                 borrow jw_json as &jjr in {
                     borrow reader_json as &rjr in {
                         borrow swap_json as &sjr in {
-                            doc = join_doc(heap, args, parsed, jxs, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, known, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared, buffer.bytes(rjr), fmt.b_jsonl, buffer.bytes(sjr));
+                            doc = join_doc(heap, args, parsed, jxs, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, known, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared, buffer.bytes(rjr), fmt.b_jsonl, jnfmt.foreign(fmt, delim), buffer.bytes(sjr));
                         }
                     }
                 }

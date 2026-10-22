@@ -78,7 +78,7 @@ MUTANTS = [
     # the run: which loop reads which file, and how a refusal names it (jnrun.cho, finish.cho)
     ("the header of a jsonl build is read as csv", "jnrun.cho", "    if fmt.b_jsonl {\n        // JSON lines have no header", "    if false {\n        // JSON lines have no header"),
     ("the header of a jsonl probe is read as csv", "jnrun.cho", "        if fmt.p_jsonl {\n            let (d2, h2)", "        if false {\n            let (d2, h2)"),
-    ("a foreign build is read by the loop of csv", "jnrun.cho", "            if foreign {\n                // a JSON-lines build", "            if false {\n                // a JSON-lines build"),
+    ("a foreign build is read by the loop of csv", "jnrun.cho", "            } else if foreign {\n                // a JSON-lines build", "            } else if false {\n                // a JSON-lines build"),
     ("a jsonl probe is read by the loop of csv", "jnrun.cho", "                                    if push_p || row_grouping || fmt.p_jsonl {", "                                    if push_p || row_grouping {"),
     ("--absent is ignored by a join", "jnrun.cho", "            absent = 1;", "            absent = 0;"),
     ("--max-json-nodes is ignored by a join", "jnrun.cho", "        nodes = cli.nat(args, parsed, table, \"max-json-nodes\");", "        nodes = 4096;"),

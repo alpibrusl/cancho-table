@@ -1,0 +1,42 @@
+edition 5;
+
+// SPIKE S8, negative (docs/joins.md section 24.2, reading 1): a worker returns the table it built, for the parent to take with `join`.
+// Must NOT compile; the compiler's first error is what the gate (tests/conformance/test_join_j8.py `Premise`) pins:
+//     `body` returns `JTab`, which cannot cross back from a real thread yet
+
+import std.io;
+import jtab;
+
+res struct Job {
+    heap: Heap,
+    n: int,
+}
+
+fn work[&r](w: &!r Job) -> [heap] jtab.JTab {
+    return jtab.empty(w.heap);
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    var hp = heap;
+    borrow mut hp as &!h in {
+        var job = Job { heap: fork_heap(h), n: 3 };
+        var t = jtab.empty(h);
+        borrow mut job as &!kj in {
+            let body = work;
+            let th = spawn(kj, body);
+            t = join(th);
+        }
+        let Job { heap, n } = job;
+        release(heap);
+        jtab.drop(h, t);
+    }
+    release(hp);
+    return 0;
+}

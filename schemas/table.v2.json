@@ -1327,6 +1327,46 @@
                             "reason"
                           ],
                           "additionalProperties": false
+                        },
+                        "partitions": {
+                          "type": "object",
+                          "properties": {
+                            "count": {
+                              "type": "integer",
+                              "minimum": 2
+                            },
+                            "build_data_bytes": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "range_bytes": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "ranges": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "rule": {
+                              "type": "string"
+                            },
+                            "declines": {
+                              "type": "string"
+                            },
+                            "memory": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "count",
+                            "build_data_bytes",
+                            "range_bytes",
+                            "ranges",
+                            "rule",
+                            "declines",
+                            "memory"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [

@@ -24,6 +24,8 @@ import jnfmt;
 import jnhead;
 import jnjson;
 import jnmerge;
+import jnpart;
+import jnpbuild;
 import jnprune;
 import jnread;
 import jnswap;
@@ -86,7 +88,7 @@ fn fits_as_build[&h, &f, &k, &w, &j, &q, &c, &l, &x, &z](heap: &!h Heap, r0: lin
 }
 
 // Everything once both files are open: `bfile` is the build, `pfile` the probe (or the empty file that stands in for standard input). Answers as `read_file` does.
-fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, bfile: &!b File, pfile: &!f File, stdin: bool, shown: &s [byte], shown_b: &t [byte], io: &!i Io, delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_read, io_write] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, bfile: &!b File, pfile: &!f File, stdin: bool, shown: &s [byte], shown_b: &t [byte], io: &!i Io, delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors, fs: &fs Fs(""), root: &rt [byte], brel: &rl [byte], bfull: &fu [byte]) -> [heap, args, conc, file_read, io_read, io_write, fs_read(""), dir_read] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
     let table = spec.flag_table();
     let cap = cli.nat(args, parsed, table, "max-line-bytes");
     let most = cli.nat(args, parsed, table, "max-rows");
@@ -511,8 +513,49 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
     if go && !merged {
         // the build phase
         var bkept = buffer.empty(heap, 1);
+        // J8 (docs/joins.md section 24): a csv build read with the answer's delimiter is built by threads when `--threads` and `--parallel-min-bytes` say so; when anything makes that unsafe (jnpbuild.cho) it is declined and the build below runs
+        var pdone = false;
+        if !foreign {
+            var hstart = 0;
+            borrow hb as &hbr in {
+                hstart = hbr.consumed;
+            }
+            var pruned = false;
+            borrow pmask as &pmr0 in {
+                pruned = contents(pmr0)[0] == 1;
+            }
+            let pcfg = jnpart.config(heap, args, parsed, bfile, hstart, nb, delim, pairs, simple, jtype >= 2, jw_on, push_b, pruned, cap, most, max_state);
+            borrow pcfg as &pcr in {
+                if contents(pcr)[jnpbuild.c_threads()] > 0 {
+                    borrow keys as &pk in {
+                        borrow jwtree as &pjq in {
+                            borrow jwcols as &pjc in {
+                                borrow cls as &pcl in {
+                                    borrow bcols as &pbc in {
+                                        borrow pmask as &pmk in {
+                                            let (pok, pjt, pcounts) = jnpbuild.build(heap, fs, root, brel, bfull, tree, pjq, contents(pk), contents(pjc), contents(pcl), contents(pbc), contents(pmk), contents(pcr));
+                                            if pok {
+                                                jtab.drop(heap, jt);
+                                                jt = pjt;
+                                                bcounts = pcounts;
+                                                pdone = true;
+                                            } else {
+                                                jtab.drop(heap, pjt);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            unbox_slice(heap, pcfg);
+        }
         borrow keys as &kr1 in {
-            if foreign {
+            if pdone {
+                // built by threads
+            } else if foreign {
                 // a JSON-lines build, or a csv build with a delimiter of its own: its rows are handed to the join as csv records in the answer's delimiter (jnjson.cho)
                 borrow cls as &clr in {
                     borrow bcols as &bcr in {
@@ -964,7 +1007,7 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q](heap: &!h Heap, args: &g Args, parsed
 
 // The read of a join: the `--join` file is found beneath the root as a query's `from 'path'` is (`qpath.resolve`: the rules of an operand), opened the same way, and both files go to `run`.
 // `file` is the probe (an empty file stands in for standard input). A path or an open that fails is the refusal of an operand, naming the path given to `--join`.
-pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, stdin: bool, shown: &s [byte], io: &!i Io, fs: &fs Fs(""), root: &rt [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_read, io_write, fs_read(""), dir_read] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, stdin: bool, shown: &s [byte], io: &!i Io, fs: &fs Fs(""), root: &rt [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, conc, file_read, io_read, io_write, fs_read(""), dir_read] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
     let table = spec.flag_table();
     var e = errs;
     var c = jnread.nothing();
@@ -994,7 +1037,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt](heap: &!h Heap, args: &g Args,
                 Opened::Ok(opened) => {
                     var bf = opened;
                     borrow mut bf as &!bh in {
-                        let (c2, h2, r2, n2, d2, e2) = run(heap, args, parsed, bh, file, stdin, shown, build, io, delim, mode, as_csv, from, limit, budget, top, tree, names_at, e);
+                        let (c2, h2, r2, n2, d2, e2) = run(heap, args, parsed, bh, file, stdin, shown, build, io, delim, mode, as_csv, from, limit, budget, top, tree, names_at, e, fs, root, build, whole);
                         c = c2;
                         buffer.drop(heap, head);
                         head = h2;

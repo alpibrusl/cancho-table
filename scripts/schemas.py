@@ -197,8 +197,11 @@ def explain_document():
             "join_where": {"type": "array", "items": TB},
             "max_join_rows": NAT,
             "order": {"type": "string"},
-            "work": obj({"class": {"type": "string"}, "first_output_after": {"type": "string"},
-                         "threads": obj({"requested": {"type": "integer", "minimum": 1}, "effective": {"type": "integer", "minimum": 1}, "reason": {"type": "string"}})}),
+            # J8 (docs/joins.md section 24): present when the build would be read by threads (`--threads` at least 2, a csv build with the answer's delimiter, data of at least `--parallel-min-bytes`)
+            "work": obj_optional(["partitions"], {"class": {"type": "string"}, "first_output_after": {"type": "string"},
+                                                  "threads": obj({"requested": {"type": "integer", "minimum": 1}, "effective": {"type": "integer", "minimum": 1}, "reason": {"type": "string"}}),
+                                                  "partitions": obj({"count": {"type": "integer", "minimum": 2}, "build_data_bytes": {"type": "integer", "minimum": 1}, "range_bytes": {"type": "integer", "minimum": 1},
+                                                                     "ranges": {"type": "integer", "minimum": 1}, "rule": {"type": "string"}, "declines": {"type": "string"}, "memory": {"type": "string"}})}),
         }),
     }, required=["source", "plan", "output", "work", "refusals", "notes"])})
 

@@ -1,0 +1,684 @@
+edition 5;
+
+module jnpbuild;
+
+// The second half of the partitioned build, and the whole of it (docs/joins.md sections 7.2 and 24, slice J8).
+//
+//     the plan      the build file after its header is cut into ranges at the starts of lines (`align`)
+//     the ranges    waves of up to `--threads` threads, each `jnprange.range_work`: the rows the build would hold, as frames in one blob for each partition (the hash of the key modulo the partitions)
+//     the store     the parent takes the ranges IN FILE ORDER and keeps their blobs; a range that says it must be read by one thread (anything the sequential build does not simply do) ends the attempt
+//     the tables    one thread for each partition: it is given blob k of every range in range order and puts the frames in a `jtab.JTab` of its own with `jtab.add` (or `add_key`), which is the sequential build's
+//                   insert, so a key's rows are chained in build file order and the accounted bytes are the formula's; its table is written as integers and bytes into its job's boxes
+//     the table     the parent copies each partition's table into one set of arrays (entries, rows, keys and records at the bases the sizes of the blobs fix before the threads start), puts the entries in the slots,
+//                   and hands the join one `jtab.JTab` that the probe looks up in as it always did
+//
+// A refusal is never decided here. The sequential build refuses at the first row after which the accounted bytes pass the bound; the bytes only grow, so the whole build passes the bound exactly when the sum of the
+// partitions' does, and a partition that passes it alone means the whole does. Any attempt that cannot be completed (a range or a partition said so, the sum is past the bound, a file could not be opened)
+// is DECLINED: nothing is kept and the caller builds the table as one thread does, which gives the refusal with its row, line and column, or the same table.
+
+import std.buffer;
+import finish;
+import gmap;
+import jnprange;
+import jtab;
+import query;
+import toolbox.place;
+
+// The integers the build is given, in `cfg`.
+pub fn c_nb() -> [] int {
+    return 0;
+}
+
+pub fn c_delim() -> [] int {
+    return 1;
+}
+
+pub fn c_cap() -> [] int {
+    return 2;
+}
+
+pub fn c_most() -> [] int {
+    return 3;
+}
+
+pub fn c_limit() -> [] int {
+    return 4;
+}
+
+pub fn c_pairs() -> [] int {
+    return 5;
+}
+
+pub fn c_simple() -> [] int {
+    return 6;
+}
+
+pub fn c_keys_only() -> [] int {
+    return 7;
+}
+
+pub fn c_jw_on() -> [] int {
+    return 8;
+}
+
+pub fn c_push_b() -> [] int {
+    return 9;
+}
+
+pub fn c_prune() -> [] int {
+    return 10;
+}
+
+pub fn c_threads() -> [] int {
+    return 11;
+}
+
+pub fn c_chunk() -> [] int {
+    return 12;
+}
+
+pub fn c_start() -> [] int {
+    return 13;
+}
+
+pub fn c_size() -> [] int {
+    return 14;
+}
+
+pub fn c_count() -> [] int {
+    return 16;
+}
+
+// The partitions of a build of `data` bytes after its header, read with `threads` threads and `--parallel-min-bytes` `min_bytes`: none (0) when the build is read by one thread.
+pub fn partitions(threads: int, data: int, min_bytes: int) -> [] int {
+    if threads < 2 || data < 1 || data < min_bytes {
+        return 0;
+    }
+    return threads;
+}
+
+// The bytes of a range: `--chunk-bytes`, or a thread's share of the data when that is smaller, and never so few that the build has more than 16,384 ranges (the parent keeps four integers for each range and
+// partition; a choice, which bounds that table whatever `--chunk-bytes` says).
+pub fn range_bytes(threads: int, data: int, chunk: int) -> [] int {
+    let share = (data + threads - 1) / threads;
+    var rb = chunk;
+    if share < rb {
+        rb = share;
+    }
+    let least = (data + 16383) / 16384;
+    if rb < least {
+        rb = least;
+    }
+    return rb;
+}
+
+// The first offset at or after `p` that begins a line (the byte before it is a newline), or `size` when there is none within a megabyte: a range that cannot be aligned is not made.
+fn align[&h, &f](heap: &!h Heap, file: &!f File, p: int, size: int) -> [heap, file_read] int {
+    if p >= size {
+        return size;
+    }
+    var window = buffer.empty(heap, 4096);
+    var at = p - 1;
+    var found = size;
+    var rounds = 0;
+    var going = true;
+    while going && rounds < 256 {
+        var got = 0;
+        borrow mut window as &!ww in {
+            buffer.clear(ww);
+            match file_pread(file, at, buffer.room(ww)) {
+                Read::Got(n) => {
+                    buffer.filled(ww, n);
+                    got = n;
+                }
+                Read::End => {
+                    got = 0;
+                }
+                Read::Failed(reason) => {
+                    got = 0;
+                }
+            }
+        }
+        if got == 0 {
+            going = false;
+        } else {
+            var q = 0 - 1;
+            borrow window as &wr in {
+                q = index_of_byte(buffer.bytes(wr), byte_of(10));
+            }
+            if q >= 0 {
+                found = at + q + 1;
+                going = false;
+            } else {
+                at = at + got;
+                rounds = rounds + 1;
+            }
+        }
+    }
+    buffer.drop(heap, window);
+    return found;
+}
+
+// The arrays of the table the partitions make, at the places their bases give.
+res struct Uni {
+    u_meta: Box[[int]],
+    u_head: Box[[int]],
+    // the tail of a chain is read only while a table is being built: the table the probe reads has none, and one zero
+    u_tail: Box[[int]],
+    u_start: Box[[int]],
+    u_next: Box[[int]],
+    u_kbytes: Box[[byte]],
+    u_rbytes: Box[[byte]],
+    // for each partition: 0 status, 1 entries, 2 rows, 3 held, 4 key bytes, 5 record bytes
+    u_res: Box[[int]],
+}
+
+res struct Job {
+    heap: Heap,
+    ints: Box[[int]],
+    inp: Box[[byte]],
+    oi: Box[[int]],
+    ob: Box[[byte]],
+}
+
+// the integers of a partition's job
+fn q_keys_only() -> [] int {
+    return 0;
+}
+
+fn q_limit() -> [] int {
+    return 1;
+}
+
+fn q_length() -> [] int {
+    return 2;
+}
+
+fn q_rows_base() -> [] int {
+    return 3;
+}
+
+fn q_key_base() -> [] int {
+    return 4;
+}
+
+fn q_rec_base() -> [] int {
+    return 5;
+}
+
+fn get32[&b](b: &b [byte], at: int) -> [] int {
+    return int_of(b[at]) | int_of(b[at + 1]) << 8 | int_of(b[at + 2]) << 16 | int_of(b[at + 3]) << 24;
+}
+
+// A partition: its frames into a table of its own, and the table into the boxes of the job, with the bases added to the numbers of entries, rows and bytes so that the parent need only copy.
+fn part_work[&r](w: &!r Job) -> [heap] int {
+    let keys_only = contents(w.ints)[q_keys_only()] == 1;
+    let limit = contents(w.ints)[q_limit()];
+    let length = contents(w.ints)[q_length()];
+    let rb = contents(w.ints)[q_rows_base()];
+    let kb = contents(w.ints)[q_key_base()];
+    let cb = contents(w.ints)[q_rec_base()];
+    var t = jtab.empty(w.heap);
+    let inp = contents(w.inp);
+    var at = 0;
+    var ok = true;
+    while at < length && ok {
+        let kl = get32(inp, at);
+        let rl = get32(inp, at + 4);
+        let key = inp[at + 8..at + 8 + kl];
+        if keys_only {
+            let (t2, ok2) = jtab.add_key(w.heap, t, key, limit);
+            t = t2;
+            ok = ok2;
+        } else {
+            let (t2, ok2) = jtab.add(w.heap, t, key, inp[at + 8 + kl..at + 8 + kl + rl], limit);
+            t = t2;
+            ok = ok2;
+        }
+        at = at + 8 + kl + rl;
+    }
+    let oi = contents(w.oi);
+    let ob = contents(w.ob);
+    oi[0] = 1;
+    if ok {
+        borrow t as &tr in {
+            let entries = tr.keys.entries;
+            let nrows = tr.nrows;
+            let km = contents(tr.keys.meta);
+            let kbytes = buffer.bytes(tr.keys.keys);
+            oi[0] = 0;
+            oi[1] = nrows;
+            oi[2] = tr.held;
+            oi[3] = entries;
+            oi[4] = len(kbytes);
+            copy_into(ob[0..len(kbytes)], kbytes);
+            var e = 0;
+            while e < entries {
+                oi[8 + 3 * e] = km[3 * e] + kb;
+                oi[8 + 3 * e + 1] = km[3 * e + 1];
+                oi[8 + 3 * e + 2] = km[3 * e + 2];
+                e = e + 1;
+            }
+            if !keys_only {
+                let hd = contents(tr.head);
+                let st = contents(tr.start);
+                let nx = contents(tr.next);
+                e = 0;
+                while e < entries {
+                    oi[8 + 3 * entries + e] = hd[e] + rb;
+                    e = e + 1;
+                }
+                var row = 0;
+                while row < nrows {
+                    oi[8 + 4 * entries + row] = st[row] + cb;
+                    if nx[row] < 0 {
+                        oi[8 + 4 * entries + nrows + row] = 0 - 1;
+                    } else {
+                        oi[8 + 4 * entries + nrows + row] = nx[row] + rb;
+                    }
+                    row = row + 1;
+                }
+                let rows = buffer.bytes(tr.rows);
+                oi[5] = len(rows);
+                copy_into(ob[len(kbytes)..len(kbytes) + len(rows)], rows);
+            }
+        }
+    }
+    jtab.drop(w.heap, t);
+    return 0;
+}
+
+fn copy_ints[&h, &s](heap: &!h Heap, from: &s [int]) -> [heap] Box[[int]] {
+    let out = box_slice(heap, len(from) + 1, 0);
+    var o = out;
+    borrow mut o as &!ow in {
+        let t = contents(ow);
+        var i = 0;
+        while i < len(from) {
+            t[i] = from[i];
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+// One level of the partitions: job `k` is given blob `k` of every range (in range order), its thread is started, the rest are made, it is joined, and its table is copied into `uni`.
+// `tabs` has four integers for each range and partition (frames, key bytes, record bytes, where the blob starts in `store`), `bases` four for each partition (the base of its entries and rows, of its key bytes and of its
+// record bytes, and the size of its job's integers).
+fn fan_parts[&p, &s, &t, &b, &g, &u](parent: &!p Heap, store: &s [byte], tabs: &t [int], bases: &b [int], cfg: &g [int], uni: &!u Uni, k: int, parts: int, ranges: int) -> [heap, conc] int {
+    if k >= parts {
+        return 0;
+    }
+    let rows = bases[6 * k + 4];
+    var length = 0;
+    var r = 0;
+    while r < ranges {
+        let tab = (r * parts + k) * 4;
+        length = length + 8 * tabs[tab] + tabs[tab + 1] + tabs[tab + 2];
+        r = r + 1;
+    }
+    let inp = box_slice(parent, length + 1, byte_of(0));
+    var inw = inp;
+    borrow mut inw as &!iw in {
+        var at = 0;
+        r = 0;
+        while r < ranges {
+            let tab = (r * parts + k) * 4;
+            let n = 8 * tabs[tab] + tabs[tab + 1] + tabs[tab + 2];
+            copy_into(contents(iw)[at..at + n], store[tabs[tab + 3]..tabs[tab + 3] + n]);
+            at = at + n;
+            r = r + 1;
+        }
+    }
+    var ints = box_slice(parent, 8, 0);
+    borrow mut ints as &!nw in {
+        let c = contents(nw);
+        c[q_keys_only()] = cfg[c_keys_only()];
+        c[q_limit()] = cfg[c_limit()];
+        c[q_length()] = length;
+        c[q_rows_base()] = bases[6 * k];
+        c[q_key_base()] = bases[6 * k + 1];
+        c[q_rec_base()] = bases[6 * k + 2];
+    }
+    var job = Job { heap: fork_heap(parent), ints: ints, inp: inw, oi: box_slice(parent, 8 + 7 * rows + 8, 0), ob: box_slice(parent, bases[6 * k + 3] + bases[6 * k + 5] + 1, byte_of(0)) };
+    var rest = 0;
+    borrow mut job as &!kj in {
+        let body = part_work;
+        let thread = spawn(kj, body);
+        rest = fan_parts(parent, store, tabs, bases, cfg, uni, k + 1, parts, ranges);
+        join(thread);
+    }
+    let Job { heap, ints, inp, oi, ob } = job;
+    release(heap);
+    unbox_slice(parent, ints);
+    unbox_slice(parent, inp);
+    borrow oi as &or in {
+        borrow ob as &bor in {
+            let o = contents(or);
+            let b = contents(bor);
+            let rb = bases[6 * k];
+            let kb = bases[6 * k + 1];
+            let cb = bases[6 * k + 2];
+            let pr = contents(uni.u_res);
+            pr[8 * k] = o[0];
+            if o[0] == 0 {
+                let entries = o[3];
+                let nrows = o[1];
+                pr[8 * k + 1] = entries;
+                pr[8 * k + 2] = nrows;
+                pr[8 * k + 3] = o[2];
+                pr[8 * k + 4] = o[4];
+                pr[8 * k + 5] = o[5];
+                let meta = contents(uni.u_meta);
+                var i = 0;
+                while i < 3 * entries {
+                    meta[3 * rb + i] = o[8 + i];
+                    i = i + 1;
+                }
+                if cfg[c_keys_only()] == 0 {
+                    let head = contents(uni.u_head);
+                    i = 0;
+                    while i < entries {
+                        head[rb + i] = o[8 + 3 * entries + i];
+                        i = i + 1;
+                    }
+                    let start = contents(uni.u_start);
+                    let next = contents(uni.u_next);
+                    i = 0;
+                    while i < nrows {
+                        start[rb + i] = o[8 + 4 * entries + i];
+                        next[rb + i] = o[8 + 4 * entries + nrows + i];
+                        i = i + 1;
+                    }
+                }
+                copy_into(contents(uni.u_kbytes)[kb..kb + o[4]], b[0..o[4]]);
+                copy_into(contents(uni.u_rbytes)[cb..cb + o[5]], b[o[4]..o[4] + o[5]]);
+            }
+        }
+    }
+    unbox_slice(parent, oi);
+    unbox_slice(parent, ob);
+    return rest;
+}
+
+fn slot_count(cap: int) -> [] int {
+    var n = 8;
+    while n < cap * 2 {
+        n = n * 2;
+    }
+    return n;
+}
+
+// Put the entries `from` to `to - 1` of `meta` in `slots`, as `gmap.put_new` puts each one.
+fn place_all[&m, &s](meta: &m [int], slots: &!s [int], from: int, to: int) -> [] int {
+    let mask = len(slots) - 1;
+    var e = from;
+    while e < to {
+        let h = meta[3 * e + 2];
+        var at = h & mask;
+        while slots[at] != 0 {
+            at = at + 1 & mask;
+        }
+        slots[at] = (h >> 33 & 0x7fffffff) << 32 | e + 1;
+        e = e + 1;
+    }
+    return to;
+}
+
+fn empty_counts(nb: int, records: int) -> [] finish.Counts {
+    return finish.Counts { columns: nb, records: records, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+}
+
+// The build of the `--join` file by threads. Answers whether it was done, the table and what was counted: when it was not done (the build must be read by one thread) the table is an empty one and nothing else is to
+// be used. `rel` and `full` open the file again for each thread, `start` is where the rows begin (after the header) and `size` the file's size.
+pub fn build[&h, &f, &x, &y, &z, &t, &w, &k, &jc, &cl, &bc, &m, &g](heap: &!h Heap, fs: &f Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &t query.Query, jwt: &w query.Query, keys: &k [int], jwcols: &jc [int], cls: &cl [int], bcols: &bc [int], mask: &m [int], cfg: &g [int]) -> [heap, conc, file_read, fs_read(""), dir_read] (bool, jtab.JTab, finish.Counts) {
+    let nb = cfg[c_nb()];
+    let threads = cfg[c_threads()];
+    let limit = cfg[c_limit()];
+    let start = cfg[c_start()];
+    let size = cfg[c_size()];
+    let data = size - start;
+    let parts = threads;
+    let rbytes = range_bytes(threads, data, cfg[c_chunk()]);
+    let ranges = (data + rbytes - 1) / rbytes;
+    let hs = jnprange.info_size(parts);
+    let slot_bytes = 3 * rbytes + 65536;
+    // where the ranges begin
+    var plan = box_slice(heap, ranges + 2, 0);
+    var planned = true;
+    match place.open_operand(fs, root, rel, full) {
+        Opened::Failed(reason) => {
+            planned = false;
+        }
+        Opened::Ok(file) => {
+            var fh = file;
+            borrow mut fh as &!fw in {
+                borrow mut plan as &!pw in {
+                    let pl = contents(pw);
+                    pl[0] = start;
+                    var j = 1;
+                    while j < ranges {
+                        var edge = align(heap, fw, start + j * rbytes, size);
+                        if edge < pl[j - 1] {
+                            edge = pl[j - 1];
+                        }
+                        pl[j] = edge;
+                        j = j + 1;
+                    }
+                    pl[ranges] = size;
+                }
+            }
+            file_close(fh);
+        }
+    }
+    var ints = box_slice(heap, jnprange.p_size() + 1, 0);
+    borrow mut ints as &!iw in {
+        let c = contents(iw);
+        c[jnprange.p_nb()] = nb;
+        c[jnprange.p_delim()] = cfg[c_delim()];
+        c[jnprange.p_cap()] = cfg[c_cap()];
+        c[jnprange.p_most()] = cfg[c_most()];
+        c[jnprange.p_pairs()] = cfg[c_pairs()];
+        c[jnprange.p_simple()] = cfg[c_simple()];
+        c[jnprange.p_keys_only()] = cfg[c_keys_only()];
+        c[jnprange.p_jw_on()] = cfg[c_jw_on()];
+        c[jnprange.p_push_b()] = cfg[c_push_b()];
+        c[jnprange.p_prune()] = cfg[c_prune()];
+        c[jnprange.p_parts()] = parts;
+        c[jnprange.p_limit()] = limit;
+    }
+    var store = buffer.empty(heap, 65536);
+    var tabs = box_slice(heap, ranges * parts * 4 + 4, 0);
+    var tot = box_slice(heap, parts * 4 + 4, 0);
+    var infos = box_slice(heap, threads * hs + 1, 0);
+    var blobs = box_slice(heap, threads * slot_bytes + 1, byte_of(0));
+    var wplan = box_slice(heap, threads + 2, 0);
+    var good = planned;
+    var records = 0;
+    var least = 0;
+    var j0 = 0;
+    while good && j0 < ranges {
+        var n = threads;
+        if ranges - j0 < n {
+            n = ranges - j0;
+        }
+        borrow mut wplan as &!ww in {
+            borrow plan as &pr in {
+                var q = 0;
+                while q <= n {
+                    contents(ww)[q] = contents(pr)[j0 + q];
+                    q = q + 1;
+                }
+            }
+        }
+        borrow mut infos as &!nw in {
+            var q = 0;
+            while q < n {
+                contents(nw)[q * hs] = 2;
+                q = q + 1;
+            }
+            borrow mut blobs as &!bw in {
+                borrow ints as &ir in {
+                    borrow wplan as &wr in {
+                        let got = jnprange.fan(heap, fs, root, rel, full, tree, jwt, keys, jwcols, cls, bcols, mask, contents(ir), contents(wr), contents(nw), contents(bw), 0, n, slot_bytes);
+                        if got != 0 {
+                            good = false;
+                        }
+                    }
+                }
+            }
+        }
+        var q = 0;
+        while good && q < n {
+            borrow infos as &nr in {
+                borrow blobs as &br in {
+                    let inf = contents(nr);
+                    let at = q * hs;
+                    if inf[at] != 0 {
+                        good = false;
+                    } else {
+                        records = records + inf[at + 1];
+                        least = least + inf[at + 2];
+                        if records > cfg[c_most()] || least > limit {
+                            good = false;
+                        } else {
+                            var base = 0;
+                            borrow store as &sr in {
+                                base = buffer.size(sr);
+                            }
+                            store = buffer.append(heap, store, contents(br)[q * slot_bytes..q * slot_bytes + inf[at + 3]]);
+                            borrow mut tabs as &!tw in {
+                                borrow mut tot as &!ow in {
+                                    var p = 0;
+                                    while p < parts {
+                                        let tab = ((j0 + q) * parts + p) * 4;
+                                        contents(tw)[tab] = inf[at + 4 + 4 * p];
+                                        contents(tw)[tab + 1] = inf[at + 4 + 4 * p + 1];
+                                        contents(tw)[tab + 2] = inf[at + 4 + 4 * p + 2];
+                                        contents(tw)[tab + 3] = base + inf[at + 4 + 4 * p + 3];
+                                        contents(ow)[4 * p] = contents(ow)[4 * p] + inf[at + 4 + 4 * p];
+                                        contents(ow)[4 * p + 1] = contents(ow)[4 * p + 1] + inf[at + 4 + 4 * p + 1];
+                                        contents(ow)[4 * p + 2] = contents(ow)[4 * p + 2] + inf[at + 4 + 4 * p + 2];
+                                        p = p + 1;
+                                    }
+                                }
+                            }
+                            borrow store as &sr in {
+                                if buffer.size(sr) > 8 * limit + 65536 {
+                                    good = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            q = q + 1;
+        }
+        j0 = j0 + n;
+    }
+    unbox_slice(heap, infos);
+    unbox_slice(heap, blobs);
+    unbox_slice(heap, wplan);
+    unbox_slice(heap, plan);
+    unbox_slice(heap, ints);
+    // the sizes of the partitions' tables, before any thread starts: for each partition the bases of its entries and rows, of its key bytes and of its record bytes, then its key bytes, its frames and its record bytes
+    var bases = box_slice(heap, 6 * parts + 6, 0);
+    var total_rows = 0;
+    var total_keys = 0;
+    var total_recs = 0;
+    borrow mut bases as &!bw in {
+        borrow tot as &tr in {
+            var p = 0;
+            while p < parts {
+                contents(bw)[6 * p] = total_rows;
+                contents(bw)[6 * p + 1] = total_keys;
+                contents(bw)[6 * p + 2] = total_recs;
+                contents(bw)[6 * p + 3] = contents(tr)[4 * p + 1];
+                contents(bw)[6 * p + 4] = contents(tr)[4 * p];
+                contents(bw)[6 * p + 5] = contents(tr)[4 * p + 2];
+                total_rows = total_rows + contents(tr)[4 * p];
+                total_keys = total_keys + contents(tr)[4 * p + 1];
+                total_recs = total_recs + contents(tr)[4 * p + 2];
+                p = p + 1;
+            }
+        }
+    }
+    var uni = Uni { u_meta: box_slice(heap, 3 * total_rows + 3, 0), u_head: box_slice(heap, total_rows + 1, 0), u_tail: box_slice(heap, 1, 0), u_start: box_slice(heap, total_rows + 1, 0), u_next: box_slice(heap, total_rows + 1, 0), u_kbytes: box_slice(heap, total_keys + 1, byte_of(0)), u_rbytes: box_slice(heap, total_recs + 1, byte_of(0)), u_res: box_slice(heap, 8 * parts + 8, 0) };
+    var done = false;
+    if good {
+        borrow mut uni as &!un in {
+            borrow store as &sr in {
+                borrow tabs as &tr in {
+                    borrow bases as &br in {
+                        let rest = fan_parts(heap, buffer.bytes(sr), contents(tr), contents(br), cfg, un, 0, parts, ranges);
+                        if rest != 0 {
+                            good = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, store);
+    unbox_slice(heap, tabs);
+    unbox_slice(heap, tot);
+    var out = jtab.empty(heap);
+    var counted = empty_counts(nb, 0);
+    let Uni { u_meta, u_head, u_tail, u_start, u_next, u_kbytes, u_rbytes, u_res } = uni;
+    var entries = 0;
+    var nrows = 0;
+    var held = 0;
+    var kused = 0;
+    var rused = 0;
+    if good {
+        borrow u_res as &rr in {
+            var p = 0;
+            while p < parts {
+                if contents(rr)[8 * p] != 0 {
+                    good = false;
+                }
+                entries = entries + contents(rr)[8 * p + 1];
+                nrows = nrows + contents(rr)[8 * p + 2];
+                held = held + contents(rr)[8 * p + 3];
+                kused = kused + contents(rr)[8 * p + 4];
+                rused = rused + contents(rr)[8 * p + 5];
+                p = p + 1;
+            }
+        }
+        if held > limit {
+            good = false;
+        }
+    }
+    if good {
+        var slots = box_slice(heap, slot_count(entries), 0);
+        borrow mut slots as &!sw in {
+            borrow u_meta as &mr in {
+                borrow u_res as &rr in {
+                    borrow bases as &br in {
+                        var p = 0;
+                        while p < parts {
+                            let from = contents(br)[6 * p];
+                            place_all(contents(mr), contents(sw), from, from + contents(rr)[8 * p + 1]);
+                            p = p + 1;
+                        }
+                    }
+                }
+            }
+        }
+        done = true;
+        jtab.drop(heap, out);
+        out = jtab.JTab { keys: gmap.Tab { slots: slots, meta: u_meta, keys: buffer.Buffer { held: u_kbytes, used: total_keys }, entries: entries }, head: u_head, tail: u_tail, rows: buffer.Buffer { held: u_rbytes, used: rused }, start: u_start, next: u_next, nrows: nrows, held: held };
+        counted = empty_counts(nb, records);
+    } else {
+        unbox_slice(heap, u_meta);
+        unbox_slice(heap, u_head);
+        unbox_slice(heap, u_tail);
+        unbox_slice(heap, u_start);
+        unbox_slice(heap, u_next);
+        unbox_slice(heap, u_kbytes);
+        unbox_slice(heap, u_rbytes);
+    }
+    unbox_slice(heap, bases);
+    unbox_slice(heap, u_res);
+    return (done, out, counted);
+}

@@ -1,0 +1,38 @@
+edition 5;
+
+// SPIKE S8, negative (docs/joins.md section 24.2, reading 1): a worker that is lent a job by `&!` builds a table and puts it in the job, for the parent to use after the join.
+// Must NOT compile; the compiler's first error is what the gate (tests/conformance/test_join_j8.py `Premise`) pins:
+//     the value overwritten here is `res` (`JTab`), so it cannot be discarded; name the function that consumes it
+
+import std.io;
+import jtab;
+
+res struct Job {
+    heap: Heap,
+    tab: jtab.JTab,
+    n: int,
+}
+
+fn work[&r](w: &!r Job) -> [heap] int {
+    var t = jtab.empty(w.heap);
+    var i = 0;
+    while i < w.n {
+        let (t2, ok) = jtab.add(w.heap, t, "k", "rec", 1000000);
+        t = t2;
+        i = i + 1;
+    }
+    w.tab = t;
+    return 0;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(args);
+    release(clock);
+    release(io);
+    release(heap);
+    return 0;
+}

@@ -1,0 +1,503 @@
+edition 5;
+
+module jnprange;
+
+// The first half of the partitioned build (docs/joins.md sections 7.2 and 24, slice J8): a thread reads one RANGE of the `--join` file and cuts the rows the build would hold into one blob for each partition.
+//
+// A range is `[start, until)`: `start` is the byte where a line begins (the parent aligned it) and the range's rows are the lines that BEGIN before `until`. A row is read as `jn3pass.build_pass3` reads it (the same
+// `reader.fields`, the same `jn3pass.filter3` for `--join-where` and the conditions of `--where` that name the build file, the same key from `jnkey.make` or the cell itself, the same pruned record) and is not put in a
+// table: it is written as a FRAME
+//
+//     key length (4 bytes), record length (4 bytes), the key, the record
+//
+// into the blob of its partition, which is the hash of its key modulo the number of partitions. The record is empty for a semi or anti join (only the key is held).
+//
+// A range that meets anything the sequential build does not simply do (a quoted line break, a ragged row, a refused cell, a typed key that is not of its type, a line past the cap, more rows than `--max-rows`, a
+// partition's frames that do not fit the slot) does not decide it: its status is 1 and the parent reads the whole build again as one thread reads it. A line that begins before `until` and holds a quote that is
+// open at its end is such a line, which is how a range that begins inside a quoted field is found: the range before it ended in that field and declined.
+
+import std.buffer;
+import agg;
+import engine;
+import gmap;
+import jn3pass;
+import jnkey;
+import jnprune;
+import query;
+import reader;
+import scan;
+import toolbox.lines;
+import toolbox.place;
+
+// The integers a job is given, in `ints`.
+pub fn p_start() -> [] int {
+    return 0;
+}
+
+pub fn p_until() -> [] int {
+    return 1;
+}
+
+pub fn p_nb() -> [] int {
+    return 2;
+}
+
+pub fn p_delim() -> [] int {
+    return 3;
+}
+
+pub fn p_cap() -> [] int {
+    return 4;
+}
+
+pub fn p_most() -> [] int {
+    return 5;
+}
+
+pub fn p_pairs() -> [] int {
+    return 6;
+}
+
+pub fn p_simple() -> [] int {
+    return 7;
+}
+
+pub fn p_keys_only() -> [] int {
+    return 8;
+}
+
+pub fn p_jw_on() -> [] int {
+    return 9;
+}
+
+pub fn p_push_b() -> [] int {
+    return 10;
+}
+
+pub fn p_prune() -> [] int {
+    return 11;
+}
+
+pub fn p_parts() -> [] int {
+    return 12;
+}
+
+pub fn p_limit() -> [] int {
+    return 13;
+}
+
+pub fn p_size() -> [] int {
+    return 16;
+}
+
+// What a job answers, in `info`: 0 status (0 read, 1 the parent must read the build itself, 2 not run), 1 the rows of the range that are records, 2 the least accounted bytes of the frames (record + 16 each; a semi or anti join counts none),
+// 3 the payload's length; then four integers for each partition: its frames, its key bytes, its record bytes, and where its blob starts in the payload.
+pub fn info_size(parts: int) -> [] int {
+    return 4 + 4 * parts;
+}
+
+res struct Job {
+    heap: Heap,
+    file: File,
+    tree: query.Query,
+    jwt: query.Query,
+    keys: Box[[int]],
+    jwcols: Box[[int]],
+    cls: Box[[int]],
+    bcols: Box[[int]],
+    mask: Box[[int]],
+    ints: Box[[int]],
+    info: Box[[int]],
+    out: Box[[byte]],
+}
+
+fn put32[&b](b: &!b [byte], at: int, v: int) -> [] int {
+    b[at] = byte_of(v & 255);
+    b[at + 1] = byte_of(v >> 8 & 255);
+    b[at + 2] = byte_of(v >> 16 & 255);
+    b[at + 3] = byte_of(v >> 24 & 255);
+    return at + 4;
+}
+
+fn get32[&b](b: &b [byte], at: int) -> [] int {
+    return int_of(b[at]) | int_of(b[at + 1]) << 8 | int_of(b[at + 2]) << 16 | int_of(b[at + 3]) << 24;
+}
+
+fn push32[&h](heap: &!h Heap, b: buffer.Buffer, v: int) -> [heap] buffer.Buffer {
+    var o = buffer.push(heap, b, byte_of(v & 255));
+    o = buffer.push(heap, o, byte_of(v >> 8 & 255));
+    o = buffer.push(heap, o, byte_of(v >> 16 & 255));
+    return buffer.push(heap, o, byte_of(v >> 24 & 255));
+}
+
+// The partition of a key: the high bits of its hash (the low ones are the place in a table), modulo the number of partitions.
+pub fn part_of[&k](key: &k [byte], parts: int) -> [] int {
+    return (gmap.hash(key) >> 33 & 0x7fffffff) % parts;
+}
+
+// A frame in the stage: the partition, the lengths, the key, the record.
+fn put_frame[&h, &k, &r](heap: &!h Heap, stage: buffer.Buffer, pid: int, key: &k [byte], record: &r [byte]) -> [heap] buffer.Buffer {
+    var s = push32(heap, stage, pid);
+    s = push32(heap, s, len(key));
+    s = push32(heap, s, len(record));
+    s = buffer.append(heap, s, key);
+    return buffer.append(heap, s, record);
+}
+
+// The pruned record of a row (`jtab.add_pruned` builds the same bytes into the table): the cells of the columns the plan names as written, the delimiters between them kept.
+fn pruned_into[&h, &d, &c, &m, &z](heap: &!h Heap, out: buffer.Buffer, record: &d [byte], cells: &c [int], mask: &m [int], dl: &z [byte]) -> [heap] buffer.Buffer {
+    var rw = out;
+    let nruns = mask[1];
+    var run = 0;
+    while run < nruns {
+        let c1 = mask[4 + 3 * run];
+        let c2 = mask[5 + 3 * run];
+        let lead = mask[6 + 3 * run];
+        if lead == 1 {
+            rw = buffer.push(heap, rw, dl[0]);
+        } else if lead > 0 {
+            rw = buffer.append(heap, rw, dl[0..lead]);
+        }
+        rw = buffer.append(heap, rw, record[cells[3 * c1] - cells[3 * c1 + 2]..cells[3 * c2 + 1] + cells[3 * c2 + 2]]);
+        run = run + 1;
+    }
+    let trailing = mask[2];
+    if trailing == 1 {
+        rw = buffer.push(heap, rw, dl[0]);
+    } else if trailing > 0 {
+        rw = buffer.append(heap, rw, dl[0..trailing]);
+    }
+    return rw;
+}
+
+// The frame of one row that the build holds, appended to `stage`; answers the stage, the buffer the pruned record was made in, and the least accounted bytes of the row (its record + 16, none for a semi or anti join).
+fn frame_row[&h, &k, &d, &c, &m, &z](heap: &!h Heap, stage: buffer.Buffer, prec: buffer.Buffer, key: &k [byte], line: &d [byte], cells: &c [int], keys_only: bool, prune: bool, mask: &m [int], dl: &z [byte], parts: int) -> [heap] (buffer.Buffer, buffer.Buffer, int) {
+    let pid = part_of(key, parts);
+    if keys_only {
+        return (put_frame(heap, stage, pid, key, line[0..0]), prec, 0);
+    }
+    if prune {
+        var p = prec;
+        borrow mut p as &!pw in {
+            buffer.clear(pw);
+        }
+        p = pruned_into(heap, p, line, cells, mask, dl);
+        var s = stage;
+        var cost = 0;
+        borrow p as &pr in {
+            s = put_frame(heap, s, pid, key, buffer.bytes(pr));
+            cost = buffer.size(pr) + 16;
+        }
+        return (s, p, cost);
+    }
+    return (put_frame(heap, stage, pid, key, line), prec, len(line) + 16);
+}
+
+// One range, read to the end of the rows that begin before `until`, answered in `info` and `out`.
+fn range_work[&r](w: &!r Job) -> [heap, file_read] int {
+    let start = contents(w.ints)[p_start()];
+    let until = contents(w.ints)[p_until()];
+    let nb = contents(w.ints)[p_nb()];
+    let delim = contents(w.ints)[p_delim()];
+    let cap = contents(w.ints)[p_cap()];
+    let most = contents(w.ints)[p_most()];
+    let pairs = contents(w.ints)[p_pairs()];
+    let simple = contents(w.ints)[p_simple()] == 1;
+    let keys_only = contents(w.ints)[p_keys_only()] == 1;
+    let jw_on = contents(w.ints)[p_jw_on()] == 1;
+    let push_b = contents(w.ints)[p_push_b()] == 1;
+    let prune = contents(w.ints)[p_prune()] == 1;
+    let parts = contents(w.ints)[p_parts()];
+    let limit = contents(w.ints)[p_limit()];
+    var dn = 0;
+    if prune {
+        dn = nb;
+    }
+    let dl = jnprune.delimiters(w.heap, dn, delim);
+    var r = lines.start(w.heap, cap);
+    var stage = buffer.empty(w.heap, 65536);
+    var scr = buffer.empty(w.heap, 64);
+    var kbuf = buffer.empty(w.heap, 64);
+    var kept = buffer.empty(w.heap, 64);
+    var escr = buffer.empty(w.heap, 16);
+    var prec = buffer.empty(w.heap, 256);
+    var tally = box_slice(w.heap, engine.k_size(), 0);
+    var cellbox = box_slice(w.heap, 3 * (nb + 1), 0);
+    let room = len(contents(w.out));
+    var status = 0;
+    var records = 0;
+    var frames = 0;
+    var least = 0;
+    var going = true;
+    borrow mut tally as &!tw in {
+        let a = contents(tw);
+        a[engine.k_columns()] = nb;
+        borrow dl as &dlr in {
+            borrow mut cellbox as &!cw in {
+                let cells = contents(cw);
+                while going {
+                    var state = 9;
+                    borrow mut r as &!rw in {
+                        state = scan.next_fast(rw);
+                    }
+                    if state == 9 {
+                        let (stepped, answer) = lines.next(w.heap, r);
+                        r = stepped;
+                        state = answer;
+                    }
+                    if state == lines.need() {
+                        r = scan.fill_at(r, w.file, start);
+                    } else if state == lines.done() {
+                        going = false;
+                    } else if state == lines.long() {
+                        status = 1;
+                        going = false;
+                    } else {
+                        borrow r as &rr in {
+                            var line = lines.text(rr);
+                            if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                                line = line[0..len(line) - 1];
+                            }
+                            if len(line) == 0 {
+                                // A blank line is not a record.
+                            } else if start + lines.offset(rr) >= until {
+                                // The next range's.
+                                going = false;
+                            } else {
+                                let (n, open, wrong) = reader.fields(line, delim, cells, nb);
+                                if wrong || open || n != nb {
+                                    status = 1;
+                                    going = false;
+                                } else {
+                                    records = records + 1;
+                                    if records > most {
+                                        status = 1;
+                                        going = false;
+                                    } else {
+                                        var verdict = 1;
+                                        if jw_on || push_b {
+                                            let (v3, e3, k3) = jn3pass.filter3(w.heap, w.jwt, contents(w.jwcols), jw_on, w.tree, contents(w.cls), contents(w.bcols), push_b, line, cells, records, escr, kept, a);
+                                            escr = e3;
+                                            kept = k3;
+                                            verdict = v3;
+                                        }
+                                        if verdict < 0 {
+                                            status = 1;
+                                            going = false;
+                                        } else if verdict == 1 {
+                                            var cost = 0;
+                                            if simple {
+                                                let key = contents(w.keys)[1];
+                                                let first = cells[3 * key];
+                                                let last = cells[3 * key + 1];
+                                                if cells[3 * key + 2] == 0 {
+                                                    let (s2, p2, c2) = frame_row(w.heap, stage, prec, line[first..last], line, cells, keys_only, prune, contents(w.mask), buffer.bytes(dlr), parts);
+                                                    stage = s2;
+                                                    prec = p2;
+                                                    cost = c2;
+                                                } else {
+                                                    borrow mut scr as &!sw in {
+                                                        buffer.clear(sw);
+                                                    }
+                                                    scr = query.unquote(w.heap, scr, line[first..last]);
+                                                    borrow scr as &sr in {
+                                                        let (s2, p2, c2) = frame_row(w.heap, stage, prec, buffer.bytes(sr), line, cells, keys_only, prune, contents(w.mask), buffer.bytes(dlr), parts);
+                                                        stage = s2;
+                                                        prec = p2;
+                                                        cost = c2;
+                                                    }
+                                                }
+                                            } else {
+                                                let (kb, sc, st, which) = jnkey.make(w.heap, kbuf, scr, line, cells, contents(w.keys), pairs, 1);
+                                                kbuf = kb;
+                                                scr = sc;
+                                                if st != 0 {
+                                                    status = 1;
+                                                    going = false;
+                                                } else {
+                                                    borrow kbuf as &kr in {
+                                                        let (s2, p2, c2) = frame_row(w.heap, stage, prec, buffer.bytes(kr), line, cells, keys_only, prune, contents(w.mask), buffer.bytes(dlr), parts);
+                                                        stage = s2;
+                                                        prec = p2;
+                                                        cost = c2;
+                                                    }
+                                                }
+                                            }
+                                            if status == 0 {
+                                                frames = frames + 1;
+                                                least = least + cost;
+                                                if least > limit {
+                                                    status = 1;
+                                                    going = false;
+                                                }
+                                                var held = 0;
+                                                borrow stage as &gr in {
+                                                    held = buffer.size(gr) - 4 * frames;
+                                                }
+                                                if held > room {
+                                                    status = 1;
+                                                    going = false;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    borrow r as &rr in {
+        if lines.failed(rr) != 0 {
+            status = 1;
+        }
+    }
+    // The blobs: the frames of each partition together, in the order they were read.
+    var payload = 0;
+    let o = contents(w.out);
+    let inf = contents(w.info);
+    var i = 0;
+    while i < 4 + 4 * parts {
+        inf[i] = 0;
+        i = i + 1;
+    }
+    if status == 0 {
+        borrow stage as &sr in {
+            let b = buffer.bytes(sr);
+            var at = 0;
+            while at < len(b) {
+                let pid = get32(b, at);
+                let kl = get32(b, at + 4);
+                let rl = get32(b, at + 8);
+                inf[4 + 4 * pid] = inf[4 + 4 * pid] + 1;
+                inf[4 + 4 * pid + 1] = inf[4 + 4 * pid + 1] + kl;
+                inf[4 + 4 * pid + 2] = inf[4 + 4 * pid + 2] + rl;
+                at = at + 12 + kl + rl;
+            }
+            var p = 0;
+            var base = 0;
+            while p < parts {
+                inf[4 + 4 * p + 3] = base;
+                base = base + 8 * inf[4 + 4 * p] + inf[4 + 4 * p + 1] + inf[4 + 4 * p + 2];
+                p = p + 1;
+            }
+            // the frames fit the slot: the check is made as each frame is written (`held > room`), and the payload is the frames less the four bytes of partition in each
+            payload = base;
+            var cur = box_slice(w.heap, parts + 1, 0);
+            borrow mut cur as &!cw2 in {
+                let c = contents(cw2);
+                var q = 0;
+                while q < parts {
+                    c[q] = inf[4 + 4 * q + 3];
+                    q = q + 1;
+                }
+                at = 0;
+                while at < len(b) {
+                    let pid = get32(b, at);
+                    let kl = get32(b, at + 4);
+                    let rl = get32(b, at + 8);
+                    let d = c[pid];
+                    put32(o, d, kl);
+                    put32(o, d + 4, rl);
+                    copy_into(o[d + 8..d + 8 + kl + rl], b[at + 12..at + 12 + kl + rl]);
+                    c[pid] = d + 8 + kl + rl;
+                    at = at + 12 + kl + rl;
+                }
+            }
+            unbox_slice(w.heap, cur);
+        }
+    }
+    if status != 0 {
+        payload = 0;
+    }
+    inf[0] = status;
+    inf[1] = records;
+    inf[2] = least;
+    inf[3] = payload;
+    buffer.drop(w.heap, stage);
+    buffer.drop(w.heap, scr);
+    buffer.drop(w.heap, kbuf);
+    buffer.drop(w.heap, kept);
+    buffer.drop(w.heap, escr);
+    buffer.drop(w.heap, prec);
+    buffer.drop(w.heap, dl);
+    lines.drop(w.heap, r);
+    unbox_slice(w.heap, tally);
+    unbox_slice(w.heap, cellbox);
+    return 0;
+}
+
+fn copy_ints[&h, &s](heap: &!h Heap, from: &s [int]) -> [heap] Box[[int]] {
+    let out = box_slice(heap, len(from) + 1, 0);
+    var o = out;
+    borrow mut o as &!ow in {
+        let t = contents(ow);
+        var i = 0;
+        while i < len(from) {
+            t[i] = from[i];
+            i = i + 1;
+        }
+    }
+    return o;
+}
+
+// One level of a wave: make job `k`, start its thread, make the rest, join it, and move its answer up into `infos` (the integers) and `blobs` (the payload), at the place `k` has in the wave. `plan` holds where the
+// ranges begin (`plan[k]`, and `plan[n]` where the last ends). Answers 0, or 1 when a file could not be opened (the build is then read by one thread).
+pub fn fan[&p, &f, &x, &y, &z, &t, &w, &c, &l, &j, &m, &s, &u, &v, &i, &e](parent: &!p Heap, fs: &f Fs(""), root: &x [byte], rel: &y [byte], full: &z [byte], tree: &t query.Query, jwt: &w query.Query, keys: &c [int], jwcols: &l [int], cls: &j [int], bcols: &m [int], mask: &s [int], ints: &u [int], plan: &v [int], infos: &!i [int], blobs: &!e [byte], k: int, n: int, slot_bytes: int) -> [heap, conc, file_read, fs_read(""), dir_read] int {
+    if k >= n {
+        return 0;
+    }
+    match place.open_operand(fs, root, rel, full) {
+        Opened::Failed(reason) => {
+            return 1;
+        }
+        Opened::Ok(file) => {
+            let parts = ints[p_parts()];
+            let forked = fork_heap(parent);
+            let own = copy_ints(parent, ints);
+            var job = Job { heap: forked, file: file, tree: query.duplicate(parent, tree), jwt: query.duplicate(parent, jwt), keys: copy_ints(parent, keys), jwcols: copy_ints(parent, jwcols), cls: copy_ints(parent, cls), bcols: copy_ints(parent, bcols), mask: copy_ints(parent, mask), ints: own, info: box_slice(parent, info_size(parts) + 1, 0), out: box_slice(parent, slot_bytes, byte_of(0)) };
+            borrow mut job as &!kj in {
+                contents(kj.ints)[p_start()] = plan[k];
+                contents(kj.ints)[p_until()] = plan[k + 1];
+                contents(kj.info)[0] = 2;
+            }
+            var rest = 0;
+            borrow mut job as &!kj in {
+                let body = range_work;
+                let thread = spawn(kj, body);
+                rest = fan(parent, fs, root, rel, full, tree, jwt, keys, jwcols, cls, bcols, mask, ints, plan, infos, blobs, k + 1, n, slot_bytes);
+                join(thread);
+            }
+            let Job { heap, file, tree, jwt, keys, jwcols, cls, bcols, mask, ints, info, out } = job;
+            file_close(file);
+            release(heap);
+            query.drop(parent, tree);
+            query.drop(parent, jwt);
+            unbox_slice(parent, keys);
+            unbox_slice(parent, jwcols);
+            unbox_slice(parent, cls);
+            unbox_slice(parent, bcols);
+            unbox_slice(parent, mask);
+            unbox_slice(parent, ints);
+            let hs = info_size(parts);
+            borrow info as &ir in {
+                let src = contents(ir);
+                var q = 0;
+                while q < hs {
+                    infos[k * hs + q] = src[q];
+                    q = q + 1;
+                }
+                if src[0] == 0 {
+                    borrow out as &ob in {
+                        copy_into(blobs[k * slot_bytes..k * slot_bytes + src[3]], contents(ob)[0..src[3]]);
+                    }
+                }
+            }
+            unbox_slice(parent, info);
+            unbox_slice(parent, out);
+            return rest;
+        }
+    }
+}

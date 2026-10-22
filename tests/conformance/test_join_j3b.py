@@ -467,7 +467,8 @@ class Oracle(unittest.TestCase):
 
 
 class Strace(unittest.TestCase):
-    """On Linux, a join query, from a file and from a pipe, starts no thread, opens no socket and opens no file for writing (the control: a threaded --select of the same file does)."""
+    """On Linux, a join query over a build under --parallel-min-bytes, from a file and from a pipe, starts no thread, opens no socket and opens no file for writing (the control: a threaded --select of the same file does). Corrected by J8
+    (docs/joins.md section 24): the join no longer carries --parallel-min-bytes 0 (a build of at least that many bytes is read by threads, test_join_j8.Used)."""
 
     @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("strace"), "strace is Linux only")
     def test_no_thread_no_socket_no_write(self):
@@ -476,9 +477,10 @@ class Strace(unittest.TestCase):
         self.addCleanup(s.cleanup)
         fixtures(s)
         threaded = ["--threads", "4", "--chunk-bytes", "7", "--parallel-min-bytes", "0", "--format", "csv"]
+        joined = ["--threads", "4", "--chunk-bytes", "7", "--format", "csv"]
         for query, stdin in (("select a.name, count(*) from 'p.csv' as a left join 'b.csv' as b on a.id = b.id group by a.name", None),
                              ("select a.name from stdin as a anti join 'b.csv' as b on a.id = b.id", C.FIXTURES["p.csv"].encode())):
-            p = subprocess.run(["strace", "-f", "-e", "trace=clone,clone3,socket,openat", binary(), "--root", str(s.dir), "--query", query, *threaded], capture_output=True, input=stdin or b"")
+            p = subprocess.run(["strace", "-f", "-e", "trace=clone,clone3,socket,openat", binary(), "--root", str(s.dir), "--query", query, *joined], capture_output=True, input=stdin or b"")
             err = p.stderr.decode("latin-1")
             self.assertEqual(p.returncode, 0, err[-300:])
             self.assertIn("b.csv", err, "the control: strace saw the build file opened")

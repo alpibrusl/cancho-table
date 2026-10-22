@@ -807,8 +807,9 @@ class Stdin(unittest.TestCase):
         finally:
             s.cleanup()
 
-    def test_no_thread_is_started_for_a_join(self):
-        # --threads is accepted and the join is read on one core with the same bytes; the explain says why
+    def test_a_join_is_the_same_bytes_at_any_thread_count_and_the_explain_says_why(self):
+        # (J8, docs/joins.md section 24, corrected the name and this comment: they said no thread is started for a join.) --threads is accepted, the probe is read on one core, and a build under --parallel-min-bytes
+        # is read on one core too; with --parallel-min-bytes 0 the build is built by threads (test_join_j8.Used); the bytes are the same; the explain says why
         s = Scratch()
         try:
             s.write("p.csv", "k,v\n" + "a,1\n" * 20000)
