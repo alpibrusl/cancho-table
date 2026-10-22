@@ -337,7 +337,7 @@ No other older text was found false while writing this; nothing was re-measured.
 
 * `scripts/bench_matrix_forms.py` (tasks X01 to X11, the inputs, the references, the judge, the command of each contender for each task), `scripts/bench_matrix.py` (the driver and the decision logic),
   `scripts/bench_matrix_tools.json` (the manifest: contenders, pins, detection, install commands), `scripts/bench_matrix_mutants.py` (86 mutants of the decision logic),
-  `tests/conformance/test_bench_matrix.py` (the gates). Every process is started through `import procs as subprocess`; the largest file has under 800 lines; every refusal has a `matrix.*` tag:
+  `tests/conformance/test_bench_matrix.py` (the gates). Every process is started through `import procs as subprocess`; no file passes 910 lines; every refusal has a `matrix.*` tag:
   `matrix.args`, `matrix.clock-switch`, `matrix.clock-not-quiet`, `matrix.clock-conditions-missing`, `matrix.clock-min-runs`, `matrix.large-size`, `matrix.inside-repo`, `matrix.tool-missing`,
   `matrix.cell-without-kind`, `matrix.blank-without-reason`, `matrix.cell-both`, `matrix.score-field`, `matrix.time-outside-clock`, `matrix.time-on-failed`, `matrix.time-invalid`,
   `matrix.no-outputs`, `matrix.slope-rows`, `matrix.limit-no-pressure`, `matrix.result-invalid`; exit status 3 for each, as the driver of the named benchmarks does.
@@ -369,7 +369,7 @@ intended result, and CI checks it.
 ### 15.3 What the first run recorded (one VM, recorded, not published, no speed claimed)
 
 **Conditions.** One shared cloud VM: Linux x86-64, Intel Xeon @ 2.10 GHz, 4 logical CPUs, 16,872,808,448 bytes of RAM, the `hypervisor` flag set, Python 3.13.16, docker not reachable; one-minute load at the
-start 0.46 (kinds a and b), 0.72 (c, d, h), 1.21 (g); other work of the same session (the mutants, in four shards) ran during the runs of c, d, h and g, which is why no clock is read from them. The file:
+start 0.46 (kinds a and b), 0.72 (c, d, h), 1.21 (g); other work of the same session (the mutants, in four shards) ran during the run of g, and the VM is shared in any case, which is why no clock is read from any of it. The file:
 NB1's, 20,000 rows, K 100, seed 108, 969,972 bytes, sha256 `42f9eae0a22df80ee41ae4020f964f4e7806932dd6a19a0c1087bd5cd7a7042f` (the jsonl 2,149,939 bytes, the quoted file 42,004). `table` 0.3.0 from
 `/home/user/t-main/build/table`, **commit `5a439ee` (a build that was already on the VM, not `origin/main` at `6c0291c`)**; DuckDB CLI 1.5.6, Miller 6.22.0, csvtk 0.38.0 (the NB2 binaries), pandas 3.0.5
 (**not the pin 3.0.3**), mawk 1.3.4, jq 1.7, valgrind 3.22.0. Not installed, so blank with their install commands: ClickHouse, Polars, SQLite CLI, qsv, DataFusion CLI.
@@ -413,7 +413,7 @@ shows); Miller's X04 count is two orders of magnitude over its neighbours and is
 ### 15.4 Mutants and gates
 
 `scripts/bench_matrix_mutants.py`: 86 mutants of the clock gate, the blank-cell and no-score rules, the answer judge, the determinism count, the slope, the classification at a limit, the profile of a fault, the detection of
-a tool, the order of the clock kinds, the references and the forms. The first full run killed 80 and left 6 alive; each was a missing assertion, not an equivalent mutant, and got a test (the first run's of a pair's *first* time,
+a tool, the order of the clock kinds, the references and the forms. The first full run killed 80 and left 6 alive; each was a missing assertion, not an equivalent mutant, and got a test (the first time of a series,
 the width of a header and of a row, a repeat count, a run that fails while timing, the length of the list of times); the full list was then run again (four shards of 22, 22, 21 and 21) and **all 86 were killed**.
 
 ### 15.5 NOT RUN
