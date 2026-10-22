@@ -1,7 +1,7 @@
 """The hints that the adoption of cancho-tools' main (#42, docs/architecture.md "The pin") gave to four refusals that had none.
 
 `toolbox.cli` and `toolbox.path` write the hint of `args.missing-value`, `args.bad-value`, `path.empty` and `path.too-long`; at the earlier pin (919e7ba) each was null. That is the whole change of
-the bytes of `table` (docs/toolbox-pin.md lists how it was measured), so the golden files of the earlier slices, which hold the md5 of what the tool answered then, are not re-recorded: `before` puts the
+the bytes of `table` (docs/architecture.md, "The pin", lists how it was measured), so the golden files of the earlier slices, which hold the md5 of what the tool answered then, are not re-recorded: `before` puts the
 four hints back to null in an answer, and the digests of those goldens read the answer through it. A golden therefore still fails on any other change of a byte, and `test_toolbox_pin.py` pins the new
 hints text by text.
 """
