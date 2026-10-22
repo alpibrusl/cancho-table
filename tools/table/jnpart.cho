@@ -29,6 +29,8 @@ pub fn partitions_doc[&h](heap: &!h Heap, parts: int, data: int, chunk: int) -> 
     o = buffer.append(heap, o, jnpwords.rule());
     o = buffer.append(heap, o, "\",\"declines\":\"");
     o = buffer.append(heap, o, jnpwords.declines());
+    o = buffer.append(heap, o, "\",\"memory\":\"");
+    o = buffer.append(heap, o, jnpwords.memory());
     return buffer.append(heap, o, "\"}");
 }
 

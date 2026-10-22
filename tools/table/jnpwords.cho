@@ -23,3 +23,7 @@ pub fn top_reason() -> [] &static [byte] {
 pub fn note() -> [] &static [byte] {
     return "--threads partitions the build of a join across threads (join.work.partitions), with the same bytes; the probe is read on one core";
 }
+
+pub fn memory() -> [] &static [byte] {
+    return "the frames of the rows, the tables of the partitions and the table are held together while the build is made: resident memory can be more than the sequential build's, which is up to about three times the accounted bytes (measured 1.8 to 4.2 times on three shapes, docs/joins.md section 24.4); no bound is claimed";
+}

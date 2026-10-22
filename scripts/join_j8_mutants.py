@@ -121,6 +121,7 @@ MUTANTS = [
     ("the explain of a merge has partitions", "jnexplain.cho", "    if !merging && !foreign && bsize >= 0 {", "    if !foreign && bsize >= 0 {"),
     ("the explain counts the header in the data", "jnexplain.cho", "        partitions = jnpbuild.partitions(requested, bsize - bheader, cli.nat(args, parsed, table, \"parallel-min-bytes\"));", "        partitions = jnpbuild.partitions(requested, bsize, cli.nat(args, parsed, table, \"parallel-min-bytes\"));"),
     ("the explain gives the whole file as the data", "jnexplain.cho", "        let pdoc = jnpart.partitions_doc(heap, partitions, bsize - bheader, cli.nat(args, parsed, table, \"chunk-bytes\"));", "        let pdoc = jnpart.partitions_doc(heap, partitions, bsize, cli.nat(args, parsed, table, \"chunk-bytes\"));"),
+    ("the explain leaves out what the build holds", P, "    o = buffer.append(heap, o, jnpwords.memory());", "    o = buffer.append(heap, o, \"\");"),
     ("the explain gives the chunk as the range", P, "    let rb = jnpbuild.range_bytes(parts, data, chunk);", "    let rb = chunk;"),
     ("the explain counts one range too few", P, "    o = buffer.push_nat(heap, o, (data + rb - 1) / rb);", "    o = buffer.push_nat(heap, o, data / rb);"),
     ("the top level of the explain says the join is read on one core", "explain.cho", "                why = jnpwords.top_reason();", "                why = \"the join is read on one core\";"),

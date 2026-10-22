@@ -483,6 +483,7 @@
     "mantissa",
     "max_depth",
     "memo_size",
+    "memory",
     "mentions_join",
     "message_of",
     "message_of",
@@ -832,5 +833,5 @@
   ],
   "folded_operators": 346,
   "folded_calls": 0,
-  "functions": 1389
+  "functions": 1390
 }

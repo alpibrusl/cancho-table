@@ -50,6 +50,7 @@ BIGPAGE = ["--limit", "1000000", "--max-bytes", "67108864"]
 STRACE = sys.platform.startswith("linux") and shutil.which("strace")
 RULE = "the --join file is csv with the answer's delimiter, --threads is at least 2, and the data after its header is at least --parallel-min-bytes"
 DECLINE = "a quoted line break, a ragged row, a refusal or the bound: the build is then read as one thread reads it, with the same bytes"
+MEMORY = "the frames of the rows, the tables of the partitions and the table are held together while the build is made: resident memory can be more than the sequential build's, which is up to about three times the accounted bytes (measured 1.8 to 4.2 times on three shapes, docs/joins.md section 24.4); no bound is claimed"
 
 
 def part(threads, chunk):
@@ -518,6 +519,7 @@ class Refusals(unittest.TestCase):
         self.refused("k,r,x\n" + good + 'k1,"ab"c,d\n', "text after a closing quote")
         self.refused("k,r,x\n" + good + 'k1,"never closed,d\n' + good, "an unterminated quote with rows after it")
         self.refused("k,r,x\n" + good + 'k1,a,b,"x"y\n' + good, "a bad quote after as many cells as the header has")
+        self.refused("k,r,x\n" + good + 'k1,a,b,"x\ny",z,w\n' + good, "a record over two lines whose first line has as many cells as the header and one open")
 
     def test_a_line_past_the_line_bytes(self):
         self.refused("k,r,x\n" + build_rows(40) + "k1," + "z" * 300 + ",x\n" + build_rows(20), "long line", "--max-line-bytes", "200")
@@ -761,7 +763,7 @@ class Explain(unittest.TestCase):
         x = self.explain("--threads", "4", "--chunk-bytes", "1000", "--parallel-min-bytes", "0")
         w = x["join"]["work"]
         rng = 1000
-        self.assertEqual(w["partitions"], {"count": 4, "build_data_bytes": self.data, "range_bytes": rng, "ranges": -(-self.data // rng), "rule": RULE, "declines": DECLINE})
+        self.assertEqual(w["partitions"], {"count": 4, "build_data_bytes": self.data, "range_bytes": rng, "ranges": -(-self.data // rng), "rule": RULE, "declines": DECLINE, "memory": MEMORY})
         self.assertEqual(w["threads"], {"requested": 4, "effective": 1, "reason": "the probe is read on one core; the build is partitioned (work.partitions)"})
         self.assertEqual(x["work"]["threads"], {"requested": 4, "effective": 1, "reason": "the probe is read on one core; the build is partitioned (join.work.partitions)"})
         self.assertTrue(any("--threads partitions the build of a join" in n for n in x["notes"]))

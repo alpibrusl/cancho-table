@@ -1352,6 +1352,9 @@
                             },
                             "declines": {
                               "type": "string"
+                            },
+                            "memory": {
+                              "type": "string"
                             }
                           },
                           "required": [
@@ -1360,7 +1363,8 @@
                             "range_bytes",
                             "ranges",
                             "rule",
-                            "declines"
+                            "declines",
+                            "memory"
                           ],
                           "additionalProperties": false
                         }

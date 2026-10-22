@@ -201,7 +201,7 @@ def explain_document():
             "work": obj_optional(["partitions"], {"class": {"type": "string"}, "first_output_after": {"type": "string"},
                                                   "threads": obj({"requested": {"type": "integer", "minimum": 1}, "effective": {"type": "integer", "minimum": 1}, "reason": {"type": "string"}}),
                                                   "partitions": obj({"count": {"type": "integer", "minimum": 2}, "build_data_bytes": {"type": "integer", "minimum": 1}, "range_bytes": {"type": "integer", "minimum": 1},
-                                                                     "ranges": {"type": "integer", "minimum": 1}, "rule": {"type": "string"}, "declines": {"type": "string"}})}),
+                                                                     "ranges": {"type": "integer", "minimum": 1}, "rule": {"type": "string"}, "declines": {"type": "string"}, "memory": {"type": "string"}})}),
         }),
     }, required=["source", "plan", "output", "work", "refusals", "notes"])})
 
