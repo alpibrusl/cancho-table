@@ -102,7 +102,7 @@ jobs:
       - name: The mutants still apply
         working-directory: table
         run: |
-          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin query explain jsonl jsonl_out or join group rename query_join join_jsonl join_j7 join_sorted join_j8 datetime datetime_bucket datetime_surface groupsort bench_named bench_named_join; do python3 scripts/${m}_mutants.py --check; done
+          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin query explain jsonl jsonl_out or join group rename query_join join_jsonl join_j7 join_sorted join_j8 datetime datetime_bucket datetime_surface groupsort bench_named bench_named_join bench_matrix; do python3 scripts/${m}_mutants.py --check; done
 
       - name: Conformance gates (differential against Python's csv, rules, limits, memory, authority)
         working-directory: table
@@ -135,6 +135,16 @@ jobs:
       - name: The standard-input benchmark script runs
         working-directory: table
         run: python3 scripts/bench_stdin.py --rows 20000 --runs 1 --file build/bench/data_stdin.csv
+
+      # The matrix harness (docs/matrix-benchmark.md): the kinds a shared machine can settle, no clock, on whatever contenders this job has (table, and pandas); the others are blank with
+      # their install command. The clock kinds are refused here (this is a virtual machine) and that refusal is itself checked.
+      - name: The matrix harness runs without a clock, and refuses the clock kinds
+        working-directory: table
+        run: |
+          python3 scripts/bench_matrix.py --check-tools
+          python3 scripts/bench_matrix.py --kinds a,b,c,h --rows 2000 --repeats 2 --results "$RUNNER_TEMP/matrix.json"
+          if python3 scripts/bench_matrix.py --clock --kinds f --rows 2000 >/dev/null 2>"$RUNNER_TEMP/clock.err"; then echo "the clock ran on a shared runner"; exit 1; fi
+          grep -q "matrix.clock-not-quiet" "$RUNNER_TEMP/clock.err"
 
       # --query is the flags it is translated to (docs/query.md, Q1-EQ): every plan of the corpus on the benchmark file this job has, written both ways. The corpus's other files
       # (adversarial, numbers) are the maintainer's machines'; a missing one is reported and skipped here, and required there (--require f1,f2,q,long,wide,num).

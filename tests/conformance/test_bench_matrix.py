@@ -147,6 +147,35 @@ class AnswerGate(Tiny):
         self.assertTrue(o["ordered"])
         self.assertEqual(forms.compare(o, render(o, list(reversed(o["texts"]))))["status"], "wrong")
 
+    def test_a_wider_row_and_a_wider_header_are_wrong_even_with_the_right_count(self):
+        r = self.ref("X06")
+        n = r["texts"][0][0]
+        self.assertEqual(forms.compare(r, "n,extra\n%s,1\n" % n)["status"], "wrong")
+        self.assertEqual(forms.compare(r, "n\n%s,1\n" % n)["status"], "wrong")
+        self.assertEqual(forms.compare(r, "n,extra\n%s\n" % n)["status"], "wrong")
+        r2 = self.ref("X02")
+        texts = [list(row) for row in r2["texts"]]
+        body = render(r2, texts).splitlines()
+        body[1] += ",extra"
+        self.assertEqual(forms.compare(r2, "\n".join(body) + "\n")["status"], "wrong")
+
+    def test_a_key_twice_is_wrong_even_when_the_count_is_right(self):
+        r = self.ref("X02")
+        texts = [list(row) for row in r["texts"]]
+        texts[-1] = list(texts[0])
+        self.assertEqual(forms.compare(r, render(r, texts))["status"], "wrong")
+
+    def test_a_nul_and_a_byte_order_mark_are_wrong(self):
+        r = self.ref("X02")
+        self.assertEqual(forms.compare(r, "\ufeff" + render(r))["status"], "wrong")
+        self.assertEqual(forms.compare(r, render(r) + "\x00")["status"], "wrong")
+
+    def test_an_integer_cell_is_exact_or_wrong_whatever_its_size(self):
+        from fractions import Fraction as F
+        self.assertEqual(forms._cell("int", "1000000000001", "1000000000000", F(10**12))[0], None)
+        self.assertEqual(forms._cell("dec6", "1000000000.000001", "1000000000.000000", F(10**9))[0], "tolerance")
+        self.assertEqual(forms._cell("int", "1e3", "1000", F(1000))[0], "numeric")
+
     def test_a_wrong_width_a_nan_and_an_empty_output_are_wrong(self):
         r = self.ref("X02")
         self.assertEqual(forms.compare(r, "")["status"], "wrong")
@@ -197,6 +226,13 @@ class Reference(Tiny):
         vs = sorted(Fraction(x["v3"]) for x in rows)
         mid = (vs[len(vs) // 2 - 1] + vs[len(vs) // 2]) / 2 if len(vs) % 2 == 0 else vs[len(vs) // 2]
         self.assertEqual(forms.reference("X10", self.inputs)["rows"], [[mid]])
+
+    def test_the_median_of_an_odd_count_is_the_middle_value(self):
+        with tempfile.TemporaryDirectory() as d:
+            inputs = forms.make_inputs(301, 7, d)
+            with open(inputs["csv"], newline="") as f:
+                vs = sorted(Fraction(r["v3"]) for r in csv.DictReader(f))
+            self.assertEqual(forms.reference("X10", inputs)["rows"], [[vs[150]]])
 
     def test_the_quoted_file_is_read_by_a_csv_parser_and_groups_by_its_odd_keys(self):
         with open(self.inputs["quoted"], newline="") as f:
@@ -421,6 +457,8 @@ class Cells(unittest.TestCase):
     def test_the_minimum_must_be_the_minimum_and_fewer_than_five_runs_never_pass(self):
         bad = self.cell(kind="f", value={"min_s": 0.2, "median_s": 0.2, "first_s": 0.1, "runs": 5, "answer": "ok", "all_s": [0.1, 0.2, 0.2, 0.3, 0.3]})
         self.assertEqual(self.check([bad]), "matrix.time-invalid")
+        short = self.cell(kind="f", value={"min_s": 0.1, "median_s": 0.1, "first_s": 0.1, "runs": 5, "answer": "ok", "all_s": [0.1, 0.2, 0.3, 0.4]})
+        self.assertEqual(self.check([short]), "matrix.time-invalid")
         few = self.cell(kind="f", value={"min_s": 0.1, "median_s": 0.1, "first_s": 0.1, "runs": 4, "answer": "ok"})
         self.assertEqual(self.check([few]), "matrix.clock-min-runs")
 
@@ -483,6 +521,8 @@ class Limits(unittest.TestCase):
             bm.check_pressure(limit_bytes=2 << 30, unconstrained_peak_bytes=1 << 30)
         self.assertEqual(e.exception.rule, "matrix.limit-no-pressure")
         bm.check_pressure(limit_bytes=1 << 29, unconstrained_peak_bytes=1 << 30)
+        with self.assertRaises(bm.Refusal):
+            bm.check_pressure(limit_bytes=1 << 30, unconstrained_peak_bytes=1 << 30)    # equal is no pressure
 
 
 class Faults(unittest.TestCase):
@@ -537,7 +577,7 @@ class Tools(unittest.TestCase):
 
     def test_a_tool_that_is_on_the_path_but_does_not_run_is_not_found(self):
         m = bm.load_manifest()
-        by = {s["name"]: s for s in bm.detect_tools(m, table=None, which=lambda n, path=None: "/bin/" + n if n == "csvtk" else None, run=lambda argv, timeout=30: (127, "", "bad"))}
+        by = {s["name"]: s for s in bm.detect_tools(m, table=None, which=lambda n, path=None: "/bin/" + n if n == "csvtk" else None, run=lambda argv, timeout=30: (127, "csvtk 0.38.0", ""))}
         self.assertFalse(by["csvtk"]["found"])
 
     def test_the_report_names_the_install_command_of_every_missing_tool_for_this_system(self):
@@ -636,12 +676,33 @@ class Orchestration(Tiny):
         c = self.by(cells, "c", "X02")
         self.assertEqual(c["value"]["canonical"], 1)
         self.assertEqual(c["value"]["raw"], 1)
+        self.assertEqual(c["value"]["runs"], 6)      # three thread levels, two repeats each
 
     def test_determinism_sees_a_contender_whose_output_order_varies(self):
         cells = bm.cells_c(self.ctx(Scripted(self.inputs, vary=True)))
         c = self.by(cells, "c", "X02")
         self.assertEqual(c["value"]["canonical"], 1)
         self.assertEqual(c["value"]["raw"], 2)
+
+    def test_the_command_replaces_the_logical_name_and_a_shell_line_is_left_alone(self):
+        seen = []
+
+        def launch(argv, env=None, stdin_path=None, timeout=60):
+            seen.append(list(argv))
+            return bn.Outcome(0, 0.0, b"", b"", False)
+        tools = [fake_status("t1", family="table", command=["/opt/t1", "sub"])]
+        ctx = bm.Context(inputs=self.inputs, tools=tools, launch=launch, emit=lambda s: None, tasks=["X02"], form_builder=lambda fam, task, ns: forms.FormSpec(["t1", "--x", task], None, {}))
+        bm.cells_ab(ctx)
+        self.assertEqual(seen, [["/opt/t1", "sub", "--x", "X02"]])
+        seen.clear()
+        ctx.form_builder = lambda fam, task, ns: forms.FormSpec(["sh", "-c", "echo hi"], None, {}, shell=True)
+        bm.cells_ab(ctx)
+        self.assertEqual(seen, [["sh", "-c", "echo hi"]])
+
+    def test_an_ordered_task_is_counted_in_order(self):
+        cells = bm.cells_c(self.ctx(Scripted(self.inputs, vary=True), tasks=["X05"]))
+        c = self.by(cells, "c", "X05")
+        self.assertEqual((c["value"]["raw"], c["value"]["canonical"]), (2, 2))
 
     def test_the_clock_kinds_are_blank_without_the_switch_with_the_reason(self):
         cells = bm.cells_clock_blank(self.ctx(Scripted(self.inputs)))
@@ -675,6 +736,19 @@ class Program(unittest.TestCase):
         self.assertEqual(rc, 3)
         self.assertIn("matrix.clock-not-quiet", out + err)
 
+    def test_the_gate_refuses_before_any_data_is_written(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = os.path.join(d, "never")
+            rc, o, e = self.run_main(["--clock", "--kinds", "f", "--out", out], probes=FakeProbes(load=(9.0, 9.0, 9.0)))
+            self.assertEqual(rc, 3)
+            self.assertIn("matrix.clock-not-quiet", o + e)
+            self.assertFalse(os.path.exists(out))
+
+    def test_a_large_size_needs_the_opt_in(self):
+        rc, out, err = self.run_main(["--rows", "2000000", "--kinds", "a"])
+        self.assertEqual(rc, 3)
+        self.assertIn("matrix.large-size", out + err)
+
     def test_an_unknown_kind_and_an_unknown_task_are_refused(self):
         for argv in (["--kinds", "z"], ["--tasks", "X99"], ["--rows", "-5"]):
             rc, out, err = self.run_main(argv)
@@ -690,6 +764,107 @@ class Program(unittest.TestCase):
     def test_the_default_kinds_are_the_ones_a_shared_vm_can_settle(self):
         self.assertEqual(bm.DEFAULT_KINDS, ["a", "b", "c", "d", "g", "h"])
         self.assertEqual(bm.CLOCK_KINDS, ["e", "f"])
+
+
+class ClockCells(Tiny):
+    """kinds e and f (called only after the clock gate): the gate first, then one warm-up, N rounds interleaved with the order rotating, the minimum, and nothing for a pair that failed."""
+
+    def setUp(self):
+        self.calls = []
+        self.seconds = {}
+
+    def launch(self, argv, env=None, stdin_path=None, timeout=60, capture=True):
+        self.calls.append((argv[0], capture))
+        seq = self.seconds.get(argv[0], [0.1])
+        i = sum(1 for c in self.calls if c[0] == argv[0]) - 1
+        rc = 0
+        return bn.Outcome(rc, seq[min(i, len(seq) - 1)], b"", b"", False)
+
+    def ctx(self, runs=5):
+        tools = [fake_status("t1", family="table", command=["t1"]), fake_status("t2", family="duckdb", command=["t2"])]
+        return bm.Context(inputs=self.inputs, tools=tools, launch=self.launch, emit=lambda s: None, repeats=2, tasks=["X02"], runs=runs,
+                          form_builder=lambda fam, task, ns: forms.FormSpec([fam, task], None, {}), rusage=lambda argv, env=None: {"peak_rss_kb": 100, "cpu_s": 0.1})
+
+    def ab(self, ok2=True):
+        good = {"status": "ok", "level": "exact", "detail": ""}
+        bad = {"status": "wrong", "level": None, "detail": "x"}
+        return [bm.cell("X02", "t1", "b", good), bm.cell("X02", "t2", "b", good if ok2 else bad)]
+
+    def test_the_minimum_of_n_after_a_warm_up_with_the_order_rotating(self):
+        self.seconds = {"t1": [9.0, 0.5, 0.3, 0.4, 0.2, 0.6], "t2": [9.0, 0.1, 0.1, 0.1, 0.1, 0.1]}
+        cells = bm.cells_clock(self.ctx(), self.ab())
+        f1 = [c for c in cells if c["kind"] == "f" and c["contender"] == "t1"][0]
+        self.assertEqual(f1["value"]["min_s"], 0.2)
+        self.assertEqual(f1["value"]["all_s"], [0.5, 0.3, 0.4, 0.2, 0.6])
+        self.assertEqual(f1["value"]["runs"], 5)
+        self.assertEqual(f1["value"]["first_s"], 0.5)
+        self.assertEqual(f1["value"]["median_s"], 0.4)
+        order = [c[0] for c in self.calls[2:12]]       # after the two warm-ups
+        self.assertEqual(order[:4], ["t1", "t2", "t2", "t1"])
+        self.assertEqual([c[0] for c in self.calls[:2]], ["t1", "t2"])
+        bm.validate_cells(cells)
+
+    def test_a_run_that_fails_while_timing_leaves_no_time(self):
+        def launch(argv, env=None, stdin_path=None, timeout=60, capture=True):
+            self.calls.append((argv[0], capture))
+            n = sum(1 for c in self.calls if c[0] == "t1")
+            return bn.Outcome(1 if (n == 4 and argv[0] == "t1") else 0, 0.1, b"", b"", False)
+        ctx = self.ctx()
+        ctx.launch = launch
+        cells = bm.cells_clock(ctx, self.ab())
+        for c in cells:
+            if c["contender"] == "t1":
+                self.assertIsNone(c["value"])
+                self.assertIn("failed while timing", c["reason"])
+        self.assertTrue([c for c in cells if c["contender"] == "t2" and c["kind"] == "f" and c["value"]])
+
+    def test_every_timed_launch_discards_its_output(self):
+        bm.cells_clock(self.ctx(), self.ab())
+        self.assertTrue(all(cap is False for _, cap in self.calls))
+
+    def test_a_pair_whose_answer_did_not_pass_the_gate_is_never_launched_or_timed(self):
+        cells = bm.cells_clock(self.ctx(), self.ab(ok2=False))
+        self.assertFalse([c for c in self.calls if c[0] == "t2"])
+        for c in cells:
+            if c["contender"] == "t2":
+                self.assertIsNone(c["value"])
+                self.assertIn("gate", c["reason"])
+
+    def test_the_resident_set_is_recorded_with_the_floor(self):
+        cells = bm.cells_clock(self.ctx(), self.ab())
+        e = [c for c in cells if c["kind"] == "e" and c["contender"] == "t1"][0]
+        self.assertEqual(e["value"]["peak_rss_kb"], 100)
+        self.assertEqual(e["value"]["rss_floor_kb"], 100)
+
+
+class MoreKinds(Tiny):
+    def test_instruction_counts_are_summed_over_processes_and_the_slope_is_taken(self):
+        def launch(argv, env=None, stdin_path=None, timeout=60, capture=True):
+            rows = sum(1 for _ in open([a for a in argv if a.endswith(".csv")][0])) if any(a.endswith(".csv") for a in argv) else 0
+            return bn.Outcome(0, 0.1, b"", ("==1== Collected : %d\n==2== Collected : 500\n" % (1000 + 10 * rows)).encode(), False)
+        tools = [fake_status("t1", family="table", command=["t1"])]
+        ctx = bm.Context(inputs=self.inputs, tools=tools, launch=launch, emit=lambda s: None, tasks=["X02"], valgrind="valgrind", cg_rows=(100, 300),
+                         form_builder=lambda fam, task, ns: forms.FormSpec([fam, ns.file], None, {}), scratch=self.tmp.name)
+        c = bm.cells_g(ctx)[0]
+        self.assertEqual(c["value"]["per_row"], 10.0)
+        self.assertEqual(c["value"]["processes"], 2)
+
+    def test_a_tool_that_does_not_run_under_callgrind_is_a_blank_cell_with_the_reason(self):
+        launch = lambda argv, env=None, stdin_path=None, timeout=60, capture=True: bn.Outcome(1, 0.1, b"", b"valgrind: failed to start", False)
+        tools = [fake_status("t1", family="table", command=["t1"])]
+        ctx = bm.Context(inputs=self.inputs, tools=tools, launch=launch, emit=lambda s: None, tasks=["X02"], valgrind="valgrind", scratch=self.tmp.name,
+                         form_builder=lambda fam, task, ns: forms.FormSpec([fam, ns.file], None, {}))
+        c = bm.cells_g(ctx)[0]
+        self.assertIsNone(c["value"])
+        self.assertIn("does not run under callgrind", c["reason"])
+
+    def test_the_fault_cells_record_the_profile_of_each_fault(self):
+        launch = lambda argv, env=None, stdin_path=None, timeout=60, capture=True: bn.Outcome(2, 0.1, b"", b"boom\n", False)
+        tools = [fake_status("t1", family="table", command=["t1"])]
+        ctx = bm.Context(inputs=self.inputs, tools=tools, launch=launch, emit=lambda s: None, form_builder=lambda fam, task, ns: forms.FormSpec([fam, task], None, {}))
+        cells = bm.cells_h(ctx)
+        self.assertEqual(sorted(c["value"]["fault"] for c in cells), ["missing-file", "unknown-column"])
+        self.assertTrue(all(c["value"]["exit_nonzero"] and c["value"]["stderr_nonempty"] for c in cells))
 
 
 @unittest.skipUnless(table_binary(), "no built table (TOOLBOX_BIN)")

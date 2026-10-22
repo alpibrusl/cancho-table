@@ -1,13 +1,16 @@
 # A matrix benchmark: a design for testing "analytics over files" as a thesis
 
-> **Status (2026-10-22): design only. Nothing was run, nothing was built, nothing was downloaded, no clock was read.** The pull request that added this file adds this
-> document and two links (`docs/named-benchmarks.md` status header, `docs/backlog.md` item 12) and nothing else: no script, no test, no data, no change to
-> `README.md`, `docs/index.html` or `docs/benchmarks.html`. **It makes no claim about how fast or how correct `table` or any other tool is on any task of the matrix.**
-> Every number quoted from this repository is given with its source file and the conditions under which it was measured; a number whose conditions could not be
-> found is not quoted. Every fact about a tool that is not ours carries a URL and an access date (2026-10-22), or is marked **unverified**.
+> **Status (2026-10-22): designed, and the harness built and ready to run; no matrix has been published and no clock was run.** The pull request adds this document, the harness
+> (`scripts/bench_matrix.py`, `scripts/bench_matrix_forms.py`, `scripts/bench_matrix_tools.json`, `scripts/bench_matrix_mutants.py`, `tests/conformance/test_bench_matrix.py`) and links; it does
+> not touch the tool, `docs/benchmarks.html` or the numbers of the README. **It makes no claim about how fast or how correct `table` or any other tool is on any task of the matrix.**
+> The kinds a shared virtual machine can settle (expressible, correct, deterministic, at a limit, instructions, error contract) were run once on one cloud VM, for the contenders installed
+> there, and are **recorded, not published** (section 15). **Every clock kind (peak resident set, time) is NOT RUN**: on the Mac and on gram (no access from here), and on every contender that is not installed.
+> Every number quoted from this repository is given with its source file and the conditions under which it was measured; a number whose conditions could not be found is not quoted. Every
+> fact about a tool that is not ours carries a URL and an access date (2026-10-22), or is marked **unverified**.
 >
-> The base is `origin/main` at `6c0291c`, plus the correction of the open pull request #90 (`docs/backlog.md`, "Corrected (2026-10-22)"), which is **not merged** and
-> which this document does not edit. One sentence of that correction is itself contradicted by `docs/joins.md`; see section 14, item 1.
+> The base is `origin/main` at `6c0291c`, plus the correction of the open pull request #90 (`docs/backlog.md`, "Corrected (2026-10-22)"), which is **not merged** and which this document does not
+> edit. One sentence of that correction is itself contradicted by `docs/joins.md`; see section 14, item 1. *(The first version of this file, of the same day, was design only; section 15 is what the
+> harness added.)*
 
 ## 0. The short version
 
@@ -20,8 +23,9 @@
 | presentation | **no composite score, no ranking, no colour for "winner"**; each cell shows its kind and conditions; a cell not measured is blank with the reason; where `table` loses the cell says so | section 5 |
 | the thesis test | a **falsification table** (section 6) fixed before any cell is measured: the cells where `table` must win or tie for H to stand, and the cells where one loss refutes it | section 6 |
 | honest prior | on the repository's own recorded numbers DuckDB is ahead on high-cardinality group-by on Linux (section 2.1, E1) and on breadth (SQL, windows, Parquet, spill, per the backlog) | H is open, not established |
-| staging | MX0 to MX9, each a small pull request with its gates written first and shown failing; MX0 to MX5 run on the cloud VM; the clock matrix (MX7) and every new download are parked | section 8 |
-| output | `docs/matrix-benchmark.md` (this), a committed JSON `docs/assets/matrix-benchmark.json`, a generator `scripts/bench_matrix.py`, a section in `docs/benchmarks.html` | section 10 |
+| staging | MX0 to MX9; **MX0 to MX5 and the machinery of MX7 are built** (section 8, 15), their gates written first and shown failing; the clock matrix itself and every contender that is not installed are parked | section 8, 15 |
+| output | this document, `scripts/bench_matrix.py` (the driver), `scripts/bench_matrix_forms.py` (tasks, references, the judge, the commands), `scripts/bench_matrix_tools.json` (contenders, pins, install commands); a committed JSON `docs/assets/matrix-benchmark.json` and a section of `docs/benchmarks.html` only when a matrix is published | section 10 |
+| run it | `python3 scripts/bench_matrix.py --check-tools`, then one command on the cloud VM (no clock) or on a quiet machine (`--clock`) | section 15.2 |
 
 ## 1. Why a matrix, and what it can and cannot do for the thesis
 
@@ -117,25 +121,30 @@ the sizes at which a valgrind run finishes) and **quiet-machine size** (1e6 to 1
 
 ### 3.2 Columns: contenders
 
-| contender | status | how it is run | notes |
-|---|---|---|---|
-| `table` 0.3.0 | wired | NB2/NB3 forms; `--threads 1` and N; flag and `--query` forms | the subject |
-| DuckDB CLI 1.5.6 | wired | `read_csv` with detection; `all_varchar` forms where the reference needs the text (`docs/joins.md` 5.3) | typed inference is a feature **and** a source of wrong answers on text keys (`docs/joins.md` 5.3) |
-| csvtk 0.38.0 | wired | `-j 1` | killed by OOM at the six-key summary (E6, E7) |
-| Miller 6.22.0 | wired | `GOMAXPROCS=1` | no thread flag (`docs/named-benchmarks.md` 18.2) |
-| pandas 3.0.x | wired | a Python process, import in the time | the design pins 3.0.3; the VM had 3.0.5 (`docs/named-benchmarks.md` 18.3) |
-| SQLite | **reference, not a contender** (NB1's second path) | | could become a contender in MX9 with the maintainer's yes |
-| qsv | candidate, **not wired** | binaries or `cargo`; with and without `index`; `sqlp` and `joinp` as separate columns | X1; x86-64 prebuilts need AVX2 (the VM's CPU flags were not checked: **unverified**) |
-| xsv | candidate | | X2: archived 2025-04-24; kept only as a historical column if at all (Q4) |
-| Polars | candidate, as a Python process | | X5: no CLI read on the README |
-| ClickHouse-local | candidate | | **unverified** (page unreachable) |
-| DataFusion CLI | candidate | | **unverified** install and CSV behaviour (X6) |
-| SQLite CLI (`.import` + SQL) | candidate | | **unverified** import behaviour; a load step is part of the task |
-| q, textql | candidates | | X3, X4: SQLite-backed; q's cache would have to be off and the cold path measured |
-| jq | candidate for T12 only | `jq -c` as a JSONL reader/aggregator | X7: **unverified** |
-| awk, `sort | uniq -c` | floors, T01/T03/T07/T14 only | "do not understand CSV quoting", as on the page |
+The maintainer's instruction (2026-10-22) was to take the contenders "because their performance is very good or because they are very popular" and to leave the harness ready to run. The
+list below starts from the suggestion made (DuckDB CLI, ClickHouse local, Polars, pandas, SQLite, qsv, Miller, csvtk, DataFusion CLI, awk and jq as the JSONL baseline) and changes two things, each argued.
+**Popularity** is quoted only where a page was read (GitHub stars, read 2026-10-22); **speed is not asserted for any contender here** and is what the matrix would measure. The versions are pinned in
+`scripts/bench_matrix_tools.json` (the file the harness reads; the pin of a tool nobody could read a version for is `null`, with the reason).
 
-A candidate is *listed, not run*. It enters the matrix only after a slice of section 8 wires it, with its forms validated against the reference as in NB2.
+| contender | why it is on the list | popularity evidence | pin | state on the VM that wrote this (2026-10-22) |
+|---|---|---|---|---|
+| `table` | the subject | | 0.3.0 | the binary of `/home/user/t-main/build/table`, commit `5a439ee`, not `origin/main` (section 15.3) |
+| DuckDB CLI | the incumbent the repository measures against (E1 to E4); reads CSV, JSON lines and Parquet | 42.4k stars (<https://github.com/duckdb/duckdb>) | 1.5.6 | installed (`/home/user/named-tools`) |
+| ClickHouse (`clickhouse-local`) | the other most-starred engine on the list; runs its engine over files with no server; its organisation publishes ClickBench (`docs/named-benchmarks.md` S15) | 50.5k stars (<https://github.com/ClickHouse/ClickHouse>) | none: no release list could be read; pin at first install | not installed |
+| Polars (a Python process) | a Rust engine with a streaming mode for data larger than memory (<https://github.com/pola-rs/polars>); no command-line tool on the README read, so it is run as pandas is | not visible on the pages read: **unverified** | 2.0.0 (the releases page listed `py-2.0.0`, 06 Oct, as latest; the year was not shown) | not installed |
+| pandas | the most common way to read a CSV in Python; already a contender of NB2 and NB3 | not measured: **unverified** | 3.0.3 (design pin) | installed, 3.0.5: **differs from the pin** |
+| SQLite CLI | on every machine; SQL over an imported CSV (the load is part of the task). Also NB1's second path for the reference, so it is a contender only for tasks whose reference does not use it (Q7) | not measured: **unverified** | system's own | not installed (`sqlite3` absent) |
+| qsv | the maintained toolkit that replaced xsv; `sqlp` (Polars SQL), `joinp`, an optional index, prebuilt binaries (<https://github.com/dathere/qsv>) | not visible on the pages read: **unverified** | 26.0.0 (19 Oct 2026 per the releases page) | not installed |
+| Miller (`mlr`) | already a contender; reads CSV, TSV and JSON lines | 10.0k stars (<https://github.com/johnkerl/miller>) | 6.22.0 | installed |
+| csvtk | already a contender | 1.2k stars (<https://github.com/shenwei356/csvtk>): kept for continuity with the existing page, not for popularity | 0.38.0 | installed |
+| DataFusion CLI | the Rust engine under several other tools; its shell is `datafusion-cli` (<https://github.com/apache/datafusion>); its install and CSV behaviour could not be read: **unverified** | not visible: **unverified** | none: no release list could be read | not installed |
+| awk | the floor on every machine; does not understand CSV quoting, which the quoted task shows | | system's | installed (mawk 1.3.4) |
+| jq | the baseline for JSON lines only (`X07`) | <https://github.com/jqlang/jq> was read; the stars were not looked for | system's | installed (1.7) |
+
+**Not on the list, and why.** *xsv*: the repository was archived on 2025-04-24 and its README says it is unmaintained and recommends qsv (X2, read 2026-10-22). *q and textql*: both run SQL through SQLite
+(X3, X4), so the SQLite column already stands for the engine, and q's cache would have to be switched off to measure the cold path. *Pandas on its own is kept next to Polars* because a Python process is how
+most people would run either. **Differences from the suggestion:** xsv is excluded (verified unmaintained); `awk` and `jq` are floors, not engines, and `jq` is asked one task only. A candidate is *listed,
+not run* until it is installed: the harness records it as a blank cell with its install command, never an estimate.
 
 ## 4. The cell kinds
 
@@ -225,6 +234,8 @@ Each slice is one small pull request. **Its gate is written first, committed alo
 of the PR is the tests alone, `docs/named-benchmarks.md` section 19 preamble), and each slice with logic has mutants in the style of `scripts/mutlib.py`. All scripts
 start processes through `import procs as subprocess`; no file exceeds 2,000 lines; every refusal has a rule tag (`matrix.*`, a new area, listed in MX0).
 
+*Status (2026-10-22): MX0 to MX5 and the machinery of MX7 are built (section 15); MX6 (publishing) and MX7 (the clock run itself) are not run; MX8 is covered by the manifest and `--check-tools` (the tools are not installed); MX9 is not started.*
+
 | slice | what | cloud VM? | the gate written first (must fail first) | depends on |
 |---|---|---|---|---|
 | **MX0** | the task catalogue: `scripts/bench_matrix_tasks.json` (T01 to T19, the reference, the sizes, `table`'s predicted status), the cell schema (`bench-matrix.v1`), the verdict functions of section 6, the rule tags of the harness. **No contender is run** | yes | a schema test; a **verdict test**: a fabricated JSON in which `table` is wrong on T01 must give H1 *refuted*, one in which a contender is exact and deterministic on T05 and T06 must give H2 *refuted*, one in which `table` gives two sha256 must give H3 *refuted*; a test that a cell with no `reason` and no value is refused | NB1 to NB3 |
@@ -241,19 +252,12 @@ start processes through `import procs as subprocess`; no file exceeds 2,000 line
 **What is never part of this:** a GPU run, a model run (`cancho-ml`'s rules do not apply here, but the instruction of the work is the same), a download without the yes of
 section 9, a kernel setting, installing a package system-wide.
 
-## 9. Downloads: nothing is downloaded by this design; the list to ask about
+## 9. Installs and downloads: none was made; the list to ask about
 
-| item | needed by | size | state |
-|---|---|---|---|
-| qsv release binary for Linux x86-64 (and a check that the VM's CPU has AVX2/BMI) | MX8 | **unverified** (not on the page read) | **ask** |
-| Polars via `pip` into a user environment | MX8 (optional) | **unverified** | **ask** |
-| DuckDB, csvtk, Miller release binaries | already in `/home/user/named-tools` on the VM used by NB2 (the directory existed when this document was written; a fresh VM may not have it) | the NB2 note names the three archives; their sizes are **not recorded** | covered by NB2's yes, if the VM is a fresh one it is a new download: **ask** |
-| `valgrind` | MX4, already installed on this VM | | none |
-| ClickHouse-local, DataFusion CLI, SQLite CLI, q, textql, jq, xsv | MX9 | **unverified** | **ask, one at a time** |
-| Python packages (`pandas` is already used by NB2) | | | none for MX0 to MX6 |
-
-The ask for MX8 is: "may I download the qsv Linux x86-64 release binary (size to be read from the releases page first and quoted back), and Polars through `pip` into a
-virtual environment under the scratch directory?" Nothing is fetched before the answer.
+The harness installs nothing. `python3 scripts/bench_matrix.py --check-tools` prints, for every contender, whether it is found, its version, whether that is the pin, and for the missing ones the exact install
+command for the system it runs on (`scripts/bench_matrix_tools.json`). **Every install command is unverified** (no session that wrote them could run them; `install_verified` is false for all but the
+subject's own build), and the sizes of the downloads are not known (unverified). Missing on the VM that wrote this: ClickHouse, Polars, SQLite CLI, qsv, DataFusion CLI. Already present there: DuckDB CLI,
+csvtk and Miller (in `/home/user/named-tools`, from NB2), pandas (3.0.5, not the pin 3.0.3), mawk, jq, valgrind 3.22.0. **Each install needs the maintainer's yes, one tool at a time, with the size read first.**
 
 ## 10. Output
 
@@ -261,7 +265,7 @@ virtual environment under the scratch directory?" Nothing is fetched before the 
   `scripts/site.py`, not written by hand, with the conditions next to every cell, the falsification table above it and the facts strip (D5, D6) beside it.
 * **The data** is a committed JSON, **`docs/assets/matrix-benchmark.json`**, in the manner of `docs/assets/threads-vs-duckdb.json`: schema `bench-matrix.v1`, the machine
   class, the versions, one record per (task, contender, kind) with the file name and sha256, the conditions, the value or the reason it is blank.
-* **The generator** is **`scripts/bench_matrix.py`** (with `bench_matrix_tasks.json` and, if it passes 2,000 lines, `bench_matrix_*.py` by concern; never a raised ceiling).
+* **The generator** is **`scripts/bench_matrix.py`** with `scripts/bench_matrix_forms.py` (tasks, references, the judge, the commands), `scripts/bench_matrix_tools.json` (the manifest) and `scripts/bench_matrix_mutants.py`; none passes 2,000 lines, and the ceiling is never raised (**[as built]** the tasks are in the forms module, not a `bench_matrix_tasks.json`).
   Every process is started through `import procs as subprocess` (`scripts/procs.py` locating `tests/conformance/procs.py`; `tests/conformance/test_reaper.py` already
   fails a file that starts a process another way). The tests are `tests/conformance/test_bench_matrix*.py`, in CI, at tiny sizes, with no network, and the mutants
   `scripts/bench_matrix_mutants.py` with `--check` in the loop of the CI.
@@ -289,9 +293,9 @@ virtual environment under the scratch directory?" Nothing is fetched before the 
 | Q1 | Is the thesis H to be tested in the five sub-claims of section 6, with the thresholds there? | **Yes, and fix the thresholds now, before MX1** | a threshold chosen after the data is a result in disguise |
 | Q2 | Is T19 (breadth probes where `table` is expected to lose) kept in the matrix and on the page? | **Yes** | the matrix is not evidence for H if it leaves out the part H does not cover |
 | Q3 | Which kinds does the page show first? | **Correctness, determinism, refusal behaviour, instructions** (the four the VM can settle), clock **blank** until MX7 | what can be published honestly now; time cells blank say why |
-| Q4 | Include xsv as a column? | **No for the matrix; mention it as archived (X2)** | an unmaintained tool as a contender measures history |
-| Q5 | Wire qsv in MX8 (download, size quoted first)? | **Yes, later, after MX6**, with and without `index`, and `sqlp`/`joinp` separately | it is the closest in purpose (X1) and the one a reader will ask about |
-| Q6 | Polars as a Python process, as pandas is? | **Yes in MX8, optional**; no CLI was found on the README (X5) | keeps the column honest about what is being run |
+| Q4 | Include xsv as a column? | **No (answered by the instruction of 2026-10-22: contenders by popularity or speed; xsv is archived, X2)** | an unmaintained tool as a contender measures history |
+| Q5 | Install qsv, ClickHouse, Polars, SQLite CLI and DataFusion CLI so their columns fill? | **Ask per tool, with the size read first** (`--check-tools` lists the commands). qsv with and without `index`, and `sqlp`/`joinp`, are separate columns once installed | each install is a machine change; the harness is ready and does not need them to run |
+| Q6 | Polars as a Python process, as pandas is? | **Yes** (done in the manifest and the forms; not installed here); no CLI was found on the README (X5) | keeps the column honest about what is being run |
 | Q7 | SQLite as a contender (it is already the reference's second path)? | **Not in the first cut.** If added, it must not also be the reference for the cell it competes in | an independence rule: a contender is never the reference (`docs/named-benchmarks.md` 3.3) |
 | Q8 | May MX5 set a cgroup or `ulimit -v` limit on the VM? | **Yes if the session can without a kernel setting; else the cell is NOT RUN** | the same "no kernel settings" rule as for gram |
 | Q9 | Where do the D5 (authority row) and D6 (install) facts go? | **A "facts" strip beside the matrix, not cells**; and D6 is shown as it is today (build from source, no release) | they are not measurements of the eight kinds, and D6 is currently a loss |
@@ -322,4 +326,109 @@ virtual environment under the scratch directory?" Nothing is fetched before the 
    `docs/named-benchmarks.md` 19. **Corrected in place in this PR**, with the link to this document.
 3. **`docs/named-benchmarks.md` status header** did not mention this document. A one-line pointer was added; no other text of that file changed.
 
+4. **This document's own first version** (same day) said it was design only and that the generator was "not built"; section 15 and the status header now say what was built. The text of sections 0, 3.2, 8, 9, 10
+   and 12 was changed in place for that; the falsification table and the kinds were not.
+
 No other older text was found false while writing this; nothing was re-measured.
+
+## 15. The harness as built, how to run it, and what it recorded on one cloud VM
+
+### 15.1 What was built
+
+* `scripts/bench_matrix_forms.py` (tasks X01 to X11, the inputs, the references, the judge, the command of each contender for each task), `scripts/bench_matrix.py` (the driver and the decision logic),
+  `scripts/bench_matrix_tools.json` (the manifest: contenders, pins, detection, install commands), `scripts/bench_matrix_mutants.py` (86 mutants of the decision logic),
+  `tests/conformance/test_bench_matrix.py` (the gates). Every process is started through `import procs as subprocess`; the largest file has under 800 lines; every refusal has a `matrix.*` tag:
+  `matrix.args`, `matrix.clock-switch`, `matrix.clock-not-quiet`, `matrix.clock-conditions-missing`, `matrix.clock-min-runs`, `matrix.large-size`, `matrix.inside-repo`, `matrix.tool-missing`,
+  `matrix.cell-without-kind`, `matrix.blank-without-reason`, `matrix.cell-both`, `matrix.score-field`, `matrix.time-outside-clock`, `matrix.time-on-failed`, `matrix.time-invalid`,
+  `matrix.no-outputs`, `matrix.slope-rows`, `matrix.limit-no-pressure`, `matrix.result-invalid`; exit status 3 for each, as the driver of the named benchmarks does.
+* **The tasks** (`forms.TASKS`): X01 scan (count where v1 >= 4), X02 group-by with few keys, X03 group-by with many keys, X04 exact decimal sum, X05 sort and limit, X06 distinct, X07 JSON lines, X08 standard
+  input, X09 quoted keys with a comma, a quote and a newline, and the two breadth probes X10 (median) and X11 (a computed column), where `table` is expected to refuse. They sit on NB1's seeded file
+  (`bench_named_gen.py`, seed 108: the same bytes as the named benchmarks' file of that size) and two files derived from it. Not yet tasks of the harness: the joins (the NB3 suite has them), dates, ragged
+  and malformed input (T16), start-up on a tiny file (T18): listed in section 3.1, not built.
+* **The gates**, written first (commit `c68df38`, tests alone: 0 of the tests could run against `main`, `import bench_matrix` failed) then made to pass; later commits added tests where the mutants survived.
+
+### 15.2 The commands
+
+```
+python3 scripts/bench_matrix.py --check-tools [--tools-dir DIR] [--table PATH]      # what is installed, what is missing, the install command for this system
+# the cloud VM or any machine: the kinds a, b, c, d, g, h; no clock, no resident set; data under the temporary directory, outside the repository
+python3 scripts/bench_matrix.py --rows 20000 --table build/table --tools-dir DIR --results /tmp/matrix-vm.json
+# a quiet Mac: the same plus kinds e (peak resident set) and f (time), 16 cores of which 4 threads are used by the contenders that have a thread setting
+python3 scripts/bench_matrix.py --clock --rows 1000000 --threads 4 --table build/table --tools-dir DIR --path-class "internal SSD" --results ~/matrix-mac.json
+# gram: the same, pinned to the cores the notes allow (cores 0-6 if no soak and no container, else 0-5)
+python3 scripts/bench_matrix.py --clock --rows 1000000 --threads 6 --taskset gram --table build/table --tools-dir DIR --path-class "internal SSD" --results ~/matrix-gram.json
+```
+
+`--clock` **refuses before it generates or launches anything** unless the machine is quiet: the one-minute load average at the start is at most a quarter of the cores, no hypervisor flag (or the Mac's
+witness), no soak, no container, docker readable, the conditions of `docs/named-benchmarks.md` 3.1 complete (machine, cores, load, file, sha256, versions and threads of every contender found) and at least
+five runs (`--runs`, default 5). The checks are NB2's (`evaluate_publishable`), reused. A time or a resident set is written only for a pair whose answer passed the judge at that size; the minimum of N
+is taken after one untimed warm-up, the contenders interleaved with the order rotating, output to /dev/null; the writer re-checks all of this and refuses a result that breaks it. `--rows` above
+1,000,000 needs `--accept-large`. **Run on the VM that wrote this, `--clock` was refused** with `matrix.clock-not-quiet` (a shared virtual machine, a load of 1.67 over 1.00, an unreadable docker); that is the
+intended result, and CI checks it.
+
+### 15.3 What the first run recorded (one VM, recorded, not published, no speed claimed)
+
+**Conditions.** One shared cloud VM: Linux x86-64, Intel Xeon @ 2.10 GHz, 4 logical CPUs, 16,872,808,448 bytes of RAM, the `hypervisor` flag set, Python 3.13.16, docker not reachable; one-minute load at the
+start 0.46 (kinds a and b), 0.72 (c, d, h), 1.21 (g); other work of the same session (the mutants, in four shards) ran during the runs of c, d, h and g, which is why no clock is read from them. The file:
+NB1's, 20,000 rows, K 100, seed 108, 969,972 bytes, sha256 `42f9eae0a22df80ee41ae4020f964f4e7806932dd6a19a0c1087bd5cd7a7042f` (the jsonl 2,149,939 bytes, the quoted file 42,004). `table` 0.3.0 from
+`/home/user/t-main/build/table`, **commit `5a439ee` (a build that was already on the VM, not `origin/main` at `6c0291c`)**; DuckDB CLI 1.5.6, Miller 6.22.0, csvtk 0.38.0 (the NB2 binaries), pandas 3.0.5
+(**not the pin 3.0.3**), mawk 1.3.4, jq 1.7, valgrind 3.22.0. Not installed, so blank with their install commands: ClickHouse, Polars, SQLite CLI, qsv, DataFusion CLI.
+
+**Kinds a and b** (the answer judged against the reference; X01 to X11, the seven installed contenders):
+
+| contender | result |
+|---|---|
+| `table` | yes and **exact** on X01 to X09; X10 (median) **refused**, `agg.bad-spec`; X11 (computed column) **refused**, `column.unknown`; nothing to judge on the two |
+| DuckDB, pandas, Miller | yes on all eleven tasks; **exact** except X04 (the decimal sum, by a double) **only by tolerance** (flagged) |
+| csvtk | yes on ten tasks, no form written for X07; **value-equal in another spelling** (numeric) on X02, X03, X08 to X11; X04 only by tolerance |
+| awk (mawk) | exact on X01 to X06, X08 and X11; **wrong on X09** (the quoted file: 58 rows where 1,805 are right), as expected of a tool that does not read quotes; no form for X07 and X10 |
+| jq | X07 exact; the other ten tasks have no form (jq is asked the JSON lines task only) |
+
+**Kind c** (thresholds 1, 2, 4 and 5 repeats each, 15 runs per cell; tools with no thread setting: 5 repeats): `table` gave **1 distinct output (bytewise) on X01 to X06**. DuckDB gave 1 on X01, X05 and X06, and
+**5, 4 and 6 different byte strings on X02, X03 and X04, which are 1 after the rows are put in order**, so only the row order varied. pandas, Miller, csvtk and awk gave 1 on every task they ran. This is one file of
+20,000 rows; it says nothing about larger inputs or about X07 to X11.
+
+**Kind d.** `table`'s own bounds, set to 10 below the size of the input: `limit.too-many-groups` (X03) and `limit.too-many-sort-rows` (X05), exit 8, both with repair kind `none`. The address-space ladder (`ulimit -v`, **virtual
+address space, not resident memory**, so it is not a statement about memory use), X03: `table` answered correctly at 64, 256 and 1,024 MiB (its unconstrained peak resident was 5,840 KB); DuckDB was **killed** at 64 MiB, gave a
+message and exit 1 at 256 MiB and answered at 1,024; pandas, Miller and csvtk gave a message at 64 and 256 and answered at 1,024; awk answered at all three. Whether any of them spills was not probed (the probe only
+sees a limit that the input is over, and a 20,000-row file is not over any of these).
+
+**Kind h** (a missing file, an unknown column; `table` asked for its default JSON): `table` exits non-zero with a JSON error on standard output and a rule tag (`io.not-found`, `column.unknown`), repair kind `none` for the
+second; DuckDB, pandas, csvtk exit non-zero with a message on standard error and no tag; Miller exits non-zero for the missing file and **exits 0 with an empty output for the unknown column**; awk exits non-zero for the
+missing file and, having no column names, exits 0 on the unknown one (its form cannot name a column; this says nothing of awk's contract).
+
+**Kind g** (instructions retired by callgrind, `--trace-children`, the slope between two prefixes of the same file, per row; one run each; **instructions, not a time**; `table` built as above):
+
+| task | prefixes | `table` | DuckDB | pandas | Miller | csvtk | awk |
+|---|---|---:|---:|---:|---:|---:|---:|
+| X02 | 2,000 and 6,000 rows | 1,936 | not valid (see below) | 5,457 | 7,540 | 7,805 | 3,187 |
+| X02 | 20,000 and 60,000 rows | 1,939 | 2,347 | 6,881 | does not run under callgrind | 8,225 | 3,187 |
+| X04 | 20,000 and 60,000 rows | 2,158 | 2,501 | 5,514 | 169,796 (not credible: see below) | 9,967 | 3,714 |
+
+The other tasks at 2,000 and 6,000 rows (`table`: X01 1,724, X03 1,965, X06 2,643; awk: X01 3,172, X03 3,237, X06 2,828) are in the run. **Cells that are blank or not to be trusted, with the reason the harness wrote:**
+DuckDB at 2,000 and 6,000 rows is "not valid: the count did not grow with the rows" (its start-up, 2.6e8 to 3.0e8 instructions and varying by run, swamps six thousand rows: the slope needs the larger prefixes, as the second row
+shows); Miller's X04 count is two orders of magnitude over its neighbours and is, by the way of a Go runtime under valgrind (threads, garbage collection), **not credible**; Miller (X04 and X06 at the smaller prefixes, X02 at the larger) and csvtk (X01 at the smaller) exit with status 1 under valgrind and are blank with the tail of the message. **Nothing here compares speed**; the kind is valid on a shared VM, one run is not a result, and the claim of H6 (section 6) is about
+`table` against the lowest contender at the *quiet-machine sizes*, which was not run.
+
+### 15.4 Mutants and gates
+
+`scripts/bench_matrix_mutants.py`: 86 mutants of the clock gate, the blank-cell and no-score rules, the answer judge, the determinism count, the slope, the classification at a limit, the profile of a fault, the detection of
+a tool, the order of the clock kinds, the references and the forms. The first full run killed 80 and left 6 alive; each was a missing assertion, not an equivalent mutant, and got a test (the first run's of a pair's *first* time,
+the width of a header and of a row, a repeat count, a run that fails while timing, the length of the list of times); the full list was then run again (four shards of 22, 22, 21 and 21) and **all 86 were killed**.
+
+### 15.5 NOT RUN
+
+* **Every clock kind** (e peak resident set, f time): the Mac and gram were not available to this work and the cloud VM is refused by the gate. The one-command forms are in 15.2.
+* **Every contender that is not installed**: ClickHouse, Polars, SQLite CLI, qsv, DataFusion CLI. Their forms were written without the tool and are **unvalidated**: the first run that has them will judge each against
+  the reference and report a wrong form as a wrong answer. Their install commands are unverified.
+* The tasks of section 3.1 that are not in the harness (joins, dates, malformed input, start-up on a tiny file) and the sizes above 20,000 rows for kinds a to d, g and h.
+* Spilling at a limit: not probed (no input over a limit was used for the other tools).
+* No GPU, no model, no dataset download, no installation.
+
+### 15.6 Deviations from the named-benchmarks design
+
+* The judge is a smaller one (`forms.compare`), not NB2's `compare_answer`, because the tasks are not NB1's questions and have no `chk`; the rules are the same (rows as a set unless ordered, an integer never by tolerance, a
+  tolerance flagged, the first difference reported). NB2's conditions, launcher, publishable test and `classify` are reused unchanged.
+* The thread levels of kind c are 1, 2 and 4, not the machine's own, so that a four-core VM can run it; the clock kinds use `--threads` (default 4).
+* Contenders are chosen by the maintainer's instruction, not by `docs/named-benchmarks.md` 3.6, and two are added (awk, jq as floors) and the polars column that 3.6 skipped is wired in the manifest.
+* The `table` forms are the flag form only; the `--query` form is not asked here (NB2 and NB3 hold it equal).
