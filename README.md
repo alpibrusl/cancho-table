@@ -477,6 +477,7 @@ All the tables, the harder cases and how to rerun them: [docs/benchmarks.html](h
 | [docs/select.md](docs/select.md), [docs/filter.md](docs/filter.md) | how `--select`, `--where`, `--group` and `--agg` behave |
 | [docs/parallel.md](docs/parallel.md) | `--threads`: how it gives the one-core answer |
 | [benchmarks](https://alpibrusl.github.io/cancho-table/benchmarks.html) | the latest timings, with conditions, and how to rerun them |
+| [docs/matrix-benchmark.md](docs/matrix-benchmark.md) | a design and a harness for a matrix benchmark (tasks x contenders, eight kinds of cell); no matrix has been published and no time of it has been run |
 | [docs/backlog.md](docs/backlog.md) | what is not done yet |
 | [docs/reference.md](docs/reference.md) | the long description of every flag and of the layout |
 | [docs/history.md](docs/history.md), [docs/adversarial.md](docs/adversarial.md) | for contributors: what was measured and changed, and the harder cases |

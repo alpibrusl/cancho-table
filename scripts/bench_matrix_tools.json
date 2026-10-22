@@ -1,0 +1,306 @@
+{
+ "schema": "bench-matrix-tools.v1",
+ "about": "The contenders of the matrix (docs/matrix-benchmark.md section 3.2), the version pinned for each, how to detect it and the exact install command per system. Nothing here was installed by the session that wrote it: every install_verified is false but the subject's own build. $TOOLS is the directory the driver is given with --tools-dir (put it on PATH or pass --tools-dir).",
+ "accessed": "2026-10-22",
+ "contenders": [
+  {
+   "name": "table",
+   "family": "table",
+   "role": "subject",
+   "why": "The tool under test.",
+   "sources": [
+    "repo:README.md"
+   ],
+   "pin": "0.3.0",
+   "pin_note": "the version `table introspect` reports; the commit of the checkout is recorded with every result",
+   "detect": {
+    "kind": "table"
+   },
+   "install": {
+    "linux": "build it: see README.md 'Two-minute quick start' (the pinned compiler, then `cancho build`); pass the binary with --table or TOOLBOX_BIN",
+    "macos": "the same build (README.md 'Two-minute quick start')"
+   },
+   "install_verified": true,
+   "install_note": "no release exists (GitHub releases of alpibrusl/cancho-table: empty list, read 2026-10-22)"
+  },
+  {
+   "name": "duckdb",
+   "family": "duckdb",
+   "role": "engine",
+   "why": "The incumbent the repository already measures against, and the most-starred analytical engine on the list (42.4k stars, https://github.com/duckdb/duckdb, read 2026-10-22). Reads CSV, JSON lines and Parquet directly.",
+   "sources": [
+    "https://github.com/duckdb/duckdb",
+    "repo:docs/named-benchmarks.md"
+   ],
+   "pin": "1.5.6",
+   "pin_note": "pinned by docs/named-benchmarks.md 3.6; the VM of NB2 and NB3 had v1.5.6 (069cc9f9b5)",
+   "detect": {
+    "kind": "cli",
+    "argv": [
+     "duckdb",
+     "--version"
+    ],
+    "regex": "v?(\\d+\\.\\d+\\.\\d+)"
+   },
+   "install": {
+    "linux": "mkdir -p \"$TOOLS\" && curl -L -o \"$TOOLS/duckdb_cli-linux-amd64.zip\" https://github.com/duckdb/duckdb/releases/download/v1.5.6/duckdb_cli-linux-amd64.zip && unzip -o \"$TOOLS/duckdb_cli-linux-amd64.zip\" -d \"$TOOLS\"  # asset name as recorded in docs/named-benchmarks.md 18.3; URL path unverified",
+    "macos": "brew install duckdb  # Homebrew had 1.5.6 on the Mac of docs/named-benchmarks.md 2.3; to pin exactly, use the release zip duckdb_cli-osx-universal.zip (name unverified)"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "clickhouse",
+   "family": "clickhouse",
+   "role": "engine",
+   "why": "The most-starred project on the list (50.5k stars, https://github.com/ClickHouse/ClickHouse, read 2026-10-22), Apache-2.0; `clickhouse local` runs its engine over files with no server. Its own organisation publishes ClickBench (docs/named-benchmarks.md S15), so it is the engine a reader of that benchmark will ask for. Its speed is not asserted here.",
+   "sources": [
+    "https://github.com/ClickHouse/ClickHouse"
+   ],
+   "pin": null,
+   "pin_note": "not pinned: the releases page showed no release list to read from this session (2026-10-22) and clickhouse.com did not resolve; the maintainer pins at first install and records it here",
+   "detect": {
+    "kind": "cli",
+    "argv": [
+     "clickhouse-local",
+     "--version"
+    ],
+    "alt": [
+     [
+      "clickhouse",
+      "local",
+      "--version"
+     ]
+    ],
+    "regex": "(\\d+\\.\\d+(?:\\.\\d+)*)"
+   },
+   "install": {
+    "linux": "see https://clickhouse.com/docs/install and put `clickhouse` (or `clickhouse-local`) on PATH  # not reachable from the session that wrote this; unverified",
+    "macos": "brew install clickhouse  # unverified; or the same page"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "polars",
+   "family": "polars",
+   "role": "library",
+   "why": "A Rust query engine with a streaming mode for larger-than-RAM data (https://github.com/pola-rs/polars, read 2026-10-22); installed by pip, run as a Python process like pandas because the README read mentions no command-line tool. Popularity (stars) not visible on the pages read: unverified.",
+   "sources": [
+    "https://github.com/pola-rs/polars"
+   ],
+   "pin": "2.0.0",
+   "pin_note": "the releases page listed `py-2.0.0` (06 Oct, year not shown) as latest on 2026-10-22; unverified that it is the version to use",
+   "detect": {
+    "kind": "python",
+    "module": "polars"
+   },
+   "install": {
+    "linux": "python3 -m pip install polars==2.0.0",
+    "macos": "python3 -m pip install polars==2.0.0"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "pandas",
+   "family": "pandas",
+   "role": "library",
+   "why": "The most used dataframe library in Python; already a contender of NB2 and NB3. Popularity not measured here (unverified).",
+   "sources": [
+    "repo:docs/named-benchmarks.md"
+   ],
+   "pin": "3.0.3",
+   "pin_note": "pinned by docs/named-benchmarks.md 3.6; the VM had 3.0.5 (recorded as not pinned there)",
+   "detect": {
+    "kind": "python",
+    "module": "pandas"
+   },
+   "install": {
+    "linux": "python3 -m pip install pandas==3.0.3",
+    "macos": "python3 -m pip install pandas==3.0.3"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "sqlite",
+   "family": "sqlite",
+   "role": "engine",
+   "why": "The SQL engine every machine has; the reference's second path in NB1, so here it is a contender only for tasks whose reference does not use it (docs/matrix-benchmark.md Q7). Imports the CSV first, so the load is part of the task.",
+   "sources": [
+    "repo:docs/named-benchmarks.md"
+   ],
+   "pin": null,
+   "pin_note": "not pinned: the system's own (3.51.0 on the Mac and 3.46.1 on gram, per docs/named-benchmarks.md 2.3); the version is recorded",
+   "detect": {
+    "kind": "cli",
+    "argv": [
+     "sqlite3",
+     "--version"
+    ],
+    "regex": "(\\d+\\.\\d+\\.\\d+)"
+   },
+   "install": {
+    "linux": "sudo apt-get install -y sqlite3  # Debian/Ubuntu; unverified here",
+    "macos": "ships with macOS (/usr/bin/sqlite3)"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "qsv",
+   "family": "qsv",
+   "role": "toolkit",
+   "why": "The maintained successor of xsv (xsv is archived, https://github.com/BurntSushi/xsv, read 2026-10-22); a Rust toolkit with SQL (`sqlp`, Polars) and an optional index, with prebuilt binaries (https://github.com/dathere/qsv, read 2026-10-22). Popularity not visible on the pages read: unverified.",
+   "sources": [
+    "https://github.com/dathere/qsv",
+    "https://github.com/BurntSushi/xsv"
+   ],
+   "pin": "26.0.0",
+   "pin_note": "the releases page listed 26.0.0 (19 Oct 2026, per the release notes) as the most recent on 2026-10-22",
+   "detect": {
+    "kind": "cli",
+    "argv": [
+     "qsv",
+     "--version"
+    ],
+    "regex": "(\\d+\\.\\d+\\.\\d+)"
+   },
+   "install": {
+    "linux": "download the Linux x86_64 asset of https://github.com/dathere/qsv/releases/tag/26.0.0 into \"$TOOLS\"  # asset name not visible on the page read; needs AVX2/FMA/BMI per the README (this VM's /proc/cpuinfo shows avx2)",
+    "macos": "brew install qsv  # Homebrew listed on the README; version not pinned by brew: check with --check-tools"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "mlr",
+   "family": "mlr",
+   "role": "toolkit",
+   "why": "Miller, already a contender; 10.0k stars (https://github.com/johnkerl/miller, read 2026-10-22), BSD-2-Clause. Reads CSV, TSV and JSON lines.",
+   "sources": [
+    "https://github.com/johnkerl/miller",
+    "repo:docs/named-benchmarks.md"
+   ],
+   "pin": "6.22.0",
+   "pin_note": "pinned by docs/named-benchmarks.md 3.6",
+   "detect": {
+    "kind": "cli",
+    "argv": [
+     "mlr",
+     "--version"
+    ],
+    "regex": "(\\d+\\.\\d+\\.\\d+)"
+   },
+   "install": {
+    "linux": "mkdir -p \"$TOOLS\" && curl -L https://github.com/johnkerl/miller/releases/download/v6.22.0/miller-6.22.0-linux-amd64.tar.gz | tar xz -C \"$TOOLS\"  # asset name as recorded in docs/named-benchmarks.md 18.3; layout of the archive unverified",
+    "macos": "brew install miller  # unverified pin"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "csvtk",
+   "family": "csvtk",
+   "role": "toolkit",
+   "why": "csvtk, already a contender; 1.2k stars (https://github.com/shenwei356/csvtk, read 2026-10-22), MIT. Chosen for continuity with the existing page, not for its popularity.",
+   "sources": [
+    "https://github.com/shenwei356/csvtk",
+    "repo:docs/named-benchmarks.md"
+   ],
+   "pin": "0.38.0",
+   "pin_note": "pinned by docs/named-benchmarks.md 3.6",
+   "detect": {
+    "kind": "cli",
+    "argv": [
+     "csvtk",
+     "version"
+    ],
+    "regex": "(\\d+\\.\\d+\\.\\d+)"
+   },
+   "install": {
+    "linux": "mkdir -p \"$TOOLS\" && curl -L https://github.com/shenwei356/csvtk/releases/download/v0.38.0/csvtk_linux_amd64.tar.gz | tar xz -C \"$TOOLS\"  # asset name as recorded in docs/named-benchmarks.md 18.3",
+    "macos": "brew install csvtk  # the Mac of docs/named-benchmarks.md 2.3 had 0.38.0"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "datafusion",
+   "family": "datafusion",
+   "role": "engine",
+   "why": "Apache DataFusion's command-line shell (the repository has a `datafusion-cli` directory, https://github.com/apache/datafusion, read 2026-10-22), the Rust engine under several of the other tools. Its install and CSV behaviour could not be read: unverified.",
+   "sources": [
+    "https://github.com/apache/datafusion"
+   ],
+   "pin": null,
+   "pin_note": "not pinned: the repository showed no release list to read (2026-10-22); the maintainer pins at first install",
+   "detect": {
+    "kind": "cli",
+    "argv": [
+     "datafusion-cli",
+     "--version"
+    ],
+    "regex": "(\\d+\\.\\d+\\.\\d+)"
+   },
+   "install": {
+    "linux": "cargo install datafusion-cli --locked  # unverified: add --version <pin> once pinned",
+    "macos": "brew install datafusion  # unverified; or cargo install datafusion-cli --locked"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "awk",
+   "family": "awk",
+   "role": "floor",
+   "why": "The floor every machine has; does not understand CSV quoting, which the quoted task shows. mawk 1.3.4 on the VM (the awk of gram and the Mac was not read: unverified).",
+   "sources": [
+    "repo:docs/benchmarks.html"
+   ],
+   "pin": null,
+   "pin_note": "not pinned: the system's awk; the version is recorded",
+   "detect": {
+    "kind": "cli",
+    "argv": [
+     "awk",
+     "-W",
+     "version"
+    ],
+    "alt": [
+     [
+      "awk",
+      "--version"
+     ],
+     [
+      "awk",
+      "-V"
+     ]
+    ],
+    "regex": "(\\d+\\.\\d+(?:\\.\\d+)?)"
+   },
+   "install": {
+    "linux": "present on Debian/Ubuntu (mawk); sudo apt-get install -y gawk for gawk  # unverified",
+    "macos": "present on macOS (BSD awk); its version is recorded"
+   },
+   "install_verified": false
+  },
+  {
+   "name": "jq",
+   "family": "jq",
+   "role": "floor",
+   "why": "The baseline for JSON lines only (the task `X07`); jq 1.7 on the VM, 1.7.1 on the Mac and 1.8.1 on gram per docs/named-benchmarks.md 2.3. Its behaviour on large numbers was not read (unverified).",
+   "sources": [
+    "https://github.com/jqlang/jq",
+    "repo:docs/named-benchmarks.md"
+   ],
+   "pin": null,
+   "pin_note": "not pinned: the system's jq; the version is recorded",
+   "detect": {
+    "kind": "cli",
+    "argv": [
+     "jq",
+     "--version"
+    ],
+    "regex": "(\\d+\\.\\d+(?:\\.\\d+)?)"
+   },
+   "install": {
+    "linux": "sudo apt-get install -y jq  # unverified",
+    "macos": "brew install jq  # the Mac had 1.7.1"
+   },
+   "install_verified": false
+  }
+ ]
+}
