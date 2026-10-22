@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """J8 (docs/joins.md section 24): what the partitioned build holds, measured: the peak resident set of a join over a build file, at `--threads 1` (the sequential build) and at 2, 4 and 8 threads (the partitioned
-build, `--parallel-min-bytes 0`), for the same call, with the accounted bytes by the formula of section 6.2 beside them.
+build, `--parallel-min-bytes 0`), for the same call, with the accounted bytes by the formula of section 6.2 (over the pruned records the plan holds) beside them.
 
     python3 scripts/join_j8_rss.py [--bin build/table] [--runs 5] [--shapes ROWSxCOLS,...] [--threads 2,4,8] [--json out.json]
 
@@ -26,6 +26,7 @@ import procs as subprocess  # every child in a group that is reaped: tests/confo
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tests" / "conformance"))
+import join_ref7 as R7  # noqa: E402
 
 
 def launcher():
@@ -47,12 +48,13 @@ def make(d, rows, cols):
     rng.shuffle(keys)
     total = 0
     seen = set()
+    keep = {1, 2} if cols > 2 else {1}            # the columns the plan names (bg, c0): the build holds the others empty (docs/joins.md section 22)
     with open(d / "b.csv", "w") as f:
         f.write(",".join(names) + "\n")
         for k in keys:
             row = ["k%d" % k, rng.choice("xyz")] + ["".join(rng.choice("abcdefghij") for _ in range(10)) for _ in range(cols - 2)]
             f.write(",".join(row) + "\n")
-            total += len(",".join(row)) + 16
+            total += R7.record_len(row, keep) + 16
             if row[0] not in seen:
                 seen.add(row[0])
                 total += len(row[0]) + 60
@@ -64,7 +66,8 @@ def make(d, rows, cols):
 
 
 def call(d, extra):
-    return ["--root", d, "--join", "b.csv", "--on", "pk=bk", "--format", "csv", "--max-state-bytes", 1073741824, *extra, "p.csv"]
+    bound = [] if "--max-state-bytes" in extra else ["--max-state-bytes", 1073741824]
+    return ["--root", d, "--join", "b.csv", "--on", "pk=bk", "--format", "csv", *bound, *extra, "p.csv"]
 
 
 def threads_started(binary, args):
@@ -92,7 +95,13 @@ def main():
             size = os.path.getsize(d / "b.csv")
             sel = ["--select", "pk,bg,c0" if cols > 2 else "pk,bg"]
             base = subprocess.run([a.bin, *[str(x) for x in call(d, sel + ["--threads", 1])]], capture_output=True, input=b"")
-            row = {"shape": shape, "file_bytes": size, "accounted_whole_record": accounted, "rss_threads_1": min(peak(helper, a.bin, call(d, sel + ["--threads", 1]))[0] for _ in range(a.runs))}
+            def status_at(bound, extra):
+                return subprocess.run([a.bin, *[str(x) for x in call(d, sel + ["--max-state-bytes", bound] + extra)]], capture_output=True, input=b"").returncode
+
+            # the formula is the program's count: accepted at N and refused at N - 1, with one thread and with four (the bound is the same byte)
+            holds = [status_at(accounted, ["--threads", t, "--parallel-min-bytes", 0]) == 0 and status_at(accounted - 1, ["--threads", t, "--parallel-min-bytes", 0]) == 8 for t in (1, 4)]
+            bad |= not all(holds)
+            row = {"shape": shape, "file_bytes": size, "accounted": accounted, "formula_holds_1_and_4_threads": holds, "rss_threads_1": min(peak(helper, a.bin, call(d, sel + ["--threads", 1]))[0] for _ in range(a.runs))}
             for tcount in (int(x) for x in a.threads.split(",")):
                 extra = sel + ["--threads", tcount, "--parallel-min-bytes", 0]
                 got = subprocess.run([a.bin, *[str(x) for x in call(d, extra)]], capture_output=True, input=b"")

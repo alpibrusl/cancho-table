@@ -21,6 +21,7 @@ fail there; the others pass on both, which is their point: they hold the partiti
 * G, the explain (`Explain`): `data.explain.join.work.partitions` for an eligible build and its absence otherwise, valid against the schema; the rule is stated.
 * H, a call that does not partition is what it was (`Unchanged`): the 166 plans of `scripts/corpus.py` keep their md5 `fccb01b66dd7518d74611219a6c5aa29`, and with `MAIN_TABLE` naming `main`'s binary every plain join and every
   `--explain` that is not eligible gives its bytes.
+* P, the premise (`Premise`): a worker cannot hand a table back (the two programs of `scripts/spikes/join/s8` do not compile, with the messages quoted in docs/joins.md 24.2); if a compiler accepts one, this fails on purpose.
 * I, no input reaches a panic (`Fuzz`): random plans over the scenes with junk flags and random bounds: no trap, every refusal tagged, and the bytes of `--threads 1`.
 """
 
@@ -257,6 +258,18 @@ class Edges(unittest.TestCase):
         self.check(rows, "quoted keys looked up")
         self.assertEqual(base.status, 0)
 
+    def test_a_quoted_key_with_doubled_quotes_is_the_key_with_one(self):
+        rows = 'k,r,x\n"say ""hi""",1,a\n"say ""hi""",2,b\nplain,3,c\n"a,b",4,d\n' + build_rows(30)
+        self.f.put("p.csv", 'id,k\n1,"say ""hi"""\n2,plain\n3,"a,b"\n4,say "hi"\n')
+        base = self.check(rows, "doubled quotes in a key")
+        self.assertEqual(base.status, 0)
+
+    def test_a_record_over_two_lines_whose_lines_each_look_like_a_record(self):
+        # the record is k1,a,"b<LF>c,d,e" : its two lines have three cells each, and it is one row
+        rows = 'k,r,x\n' + build_rows(10) + 'k1,a,"b\nc,d,e"\n' + build_rows(10)
+        base = self.check(rows, "two lines that look like two rows")
+        self.assertEqual(base.status, 0)
+
     def test_empty_keys_and_unicode(self):
         self.f.put("p.csv", "id,k\n1,\n2,été\n3,日本\n4,k1\n")
         self.check("k,r,x\n,e1,a\nété,e2,b\n日本,e3,c\n,e4,d\nk1,e5,e\n" + build_rows(40), "empty and unicode keys")
@@ -392,6 +405,8 @@ class Bound(unittest.TestCase):
                                 got = run(*a, *part(t, c), "--max-state-bytes", bound)
                                 self.assertEqual(triple(got), triple(base), "%s: %d threads, ranges of %d" % (tag, t, c))
                             if STRACE and status == 0:
+                                # and the main thread did not read the build again after the threads (a bound passed by the sum is found after the partitions, and the build is then read again)
+                                self.assertEqual(reads_after_threads([*a, *part(4, 200), "--max-state-bytes", bound]), 0, tag)
                                 # accepted at its least bound: the build was done by threads, not declined and read again
                                 self.assertEqual(clones([*a, *part(4, 200), "--max-state-bytes", bound]), expected_threads(len((f.d / "b.csv").read_bytes()) - len(text.split("\n", 1)[0]) - 1, 4, 200), tag)
                             n += 1
@@ -502,6 +517,7 @@ class Refusals(unittest.TestCase):
         self.refused("k,r,x\n" + good + 'k1,a"b,c\n', "a quote in an unquoted cell", status=0)
         self.refused("k,r,x\n" + good + 'k1,"ab"c,d\n', "text after a closing quote")
         self.refused("k,r,x\n" + good + 'k1,"never closed,d\n' + good, "an unterminated quote with rows after it")
+        self.refused("k,r,x\n" + good + 'k1,a,b,"x"y\n' + good, "a bad quote after as many cells as the header has")
 
     def test_a_line_past_the_line_bytes(self):
         self.refused("k,r,x\n" + build_rows(40) + "k1," + "z" * 300 + ",x\n" + build_rows(20), "long line", "--max-line-bytes", "200")
@@ -639,6 +655,38 @@ class Used(unittest.TestCase):
         self.f.put("b.csv", "k,r,x\n" + build_rows(400))
         for jt in JTYPES:
             self.assertEqual(reads_after_threads(self.f.argv("--join-type", jt, *part(4, 64))), 0, jt)
+
+    def test_a_partition_that_passes_the_bound_alone_is_found_after_the_partitions(self):
+        # long distinct keys and pruned records: the least bytes of the frames (a record and 16 each) are far below the bound, a partition's keys are not
+        self.f.put("b.csv", "k,r,x\n" + "".join("%s%d,r%d,x\n" % ("K" * 600, i, i) for i in range(100)))
+        self.f.put("p.csv", "id,k\n1,%s5\n" % ("K" * 600))
+        a = self.f.argv("--select", "id", "--max-state-bytes", "5000", *part(4, 1 << 22))
+        r = run(*a)
+        self.assertEqual(r.status, 8, r.stdout[:300])
+        self.assertEqual(triple(r), triple(run(*self.f.argv("--select", "id", "--max-state-bytes", "5000", "--threads", "1"))))
+        data = self.data_bytes()
+        self.assertEqual(clones(a), expected_threads(data, 4, 1 << 22))
+
+    def test_a_range_count_that_divides_the_data_evenly(self):
+        # rows of 16 bytes, 40 of them: ranges of 64 bytes are exactly ten
+        self.f.put("b.csv", "k,r,x\n" + "".join("k%d,r%04d,xxxxxx\n" % (i % 7, i) for i in range(40)))
+        data = self.data_bytes()
+        self.assertEqual(data % 64, 0)
+        self.assertEqual(clones(self.f.argv(*part(4, 64))), expected_threads(data, 4, 64))
+        self.assertEqual(clones(self.f.argv(*part(2, 64))), expected_threads(data, 2, 64))
+
+    def test_a_bound_the_ranges_pass_together_and_not_alone_is_given_up_on_after_a_wave_that_passes_it(self):
+        text = (self.f.d / "b.csv").read_text()
+        rows = text.split("\n")[1:-1]
+        least = sum(len(r) + 16 for r in rows)
+        data = self.data_bytes()
+        rb = 64
+        k = -(-data // rb)
+        n = clones(self.f.argv(*part(4, rb), "--max-state-bytes", str(least // 3)))
+        # the first wave is under the third of the least bytes, so a second is read; the third is not
+        self.assertGreater(n, 4)
+        self.assertLess(n, k)
+        self.assertEqual(n % 4, 0)
 
     def test_a_bound_far_below_the_build_is_given_up_on_by_the_first_wave(self):
         data = self.data_bytes()
@@ -808,6 +856,25 @@ class Unchanged(unittest.TestCase):
                 s.cleanup()
         print("\nJ8 unchanged: %d calls equal main's" % n, file=sys.stderr)
         self.assertGreaterEqual(n, 500)
+
+
+# ---- the premise: why the partitions are put together into one table -----------------------------------------------------------------------------------------------
+
+
+class Premise(unittest.TestCase):
+    """A table cannot be handed back by a worker (docs/joins.md section 24.2, reading 1): the two programs of scripts/spikes/join/s8 do not compile with the pinned compiler, with the messages quoted there. If a compiler
+    accepts one, the partitions need not be copied back as integers and bytes, and the design can be reconsidered: this test then fails on purpose."""
+
+    @unittest.skipUnless(shutil.which("cancho"), "needs the pinned compiler on PATH")
+    def test_a_table_cannot_cross_back_from_a_thread(self):
+        import tempfile
+        want = {"n1_table_into_job": "the value overwritten here is `res` (`JTab`), so it cannot be discarded", "n2_table_as_result": "`body` returns `JTab`, which cannot cross back from a real thread yet"}
+        with tempfile.TemporaryDirectory() as d:
+            for name, message in want.items():
+                p = subprocess.run(["cancho", "build", str(ROOT / "scripts" / "spikes" / "join" / "s8" / (name + ".cho")), str(ROOT / "tools" / "table" / "jtab.cho"), str(ROOT / "tools" / "table" / "gmap.cho"), "--std", "-o", os.path.join(d, name)],
+                                   capture_output=True, text=True, timeout=300)
+                self.assertNotEqual(p.returncode, 0, "%s compiled: the refusal it records is gone" % name)
+                self.assertIn(message, p.stdout + p.stderr, name)
 
 
 # ---- I: no input reaches a panic ----------------------------------------------------------------------------------------------------------------------------------

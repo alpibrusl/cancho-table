@@ -90,10 +90,10 @@ pub fn p_size() -> [] int {
     return 16;
 }
 
-// What a job answers, in `info`: 0 status (0 read, 1 the parent must read the build itself, 2 not run), 1 the rows of the range that are records, 2 the frames written, 3 the least accounted bytes of the frames
-// (record + 16 each; a semi or anti join counts none), 4 the payload's length; then four integers for each partition: its frames, its key bytes, its record bytes, and where its blob starts in the payload.
+// What a job answers, in `info`: 0 status (0 read, 1 the parent must read the build itself, 2 not run), 1 the rows of the range that are records, 2 the least accounted bytes of the frames (record + 16 each; a semi or anti join counts none),
+// 3 the payload's length; then four integers for each partition: its frames, its key bytes, its record bytes, and where its blob starts in the payload.
 pub fn info_size(parts: int) -> [] int {
-    return 8 + 4 * parts;
+    return 4 + 4 * parts;
 }
 
 res struct Job {
@@ -359,7 +359,7 @@ fn range_work[&r](w: &!r Job) -> [heap, file_read] int {
     let o = contents(w.out);
     let inf = contents(w.info);
     var i = 0;
-    while i < 8 + 4 * parts {
+    while i < 4 + 4 * parts {
         inf[i] = 0;
         i = i + 1;
     }
@@ -371,45 +371,42 @@ fn range_work[&r](w: &!r Job) -> [heap, file_read] int {
                 let pid = get32(b, at);
                 let kl = get32(b, at + 4);
                 let rl = get32(b, at + 8);
-                inf[8 + 4 * pid] = inf[8 + 4 * pid] + 1;
-                inf[8 + 4 * pid + 1] = inf[8 + 4 * pid + 1] + kl;
-                inf[8 + 4 * pid + 2] = inf[8 + 4 * pid + 2] + rl;
+                inf[4 + 4 * pid] = inf[4 + 4 * pid] + 1;
+                inf[4 + 4 * pid + 1] = inf[4 + 4 * pid + 1] + kl;
+                inf[4 + 4 * pid + 2] = inf[4 + 4 * pid + 2] + rl;
                 at = at + 12 + kl + rl;
             }
             var p = 0;
             var base = 0;
             while p < parts {
-                inf[8 + 4 * p + 3] = base;
-                base = base + 8 * inf[8 + 4 * p] + inf[8 + 4 * p + 1] + inf[8 + 4 * p + 2];
+                inf[4 + 4 * p + 3] = base;
+                base = base + 8 * inf[4 + 4 * p] + inf[4 + 4 * p + 1] + inf[4 + 4 * p + 2];
                 p = p + 1;
             }
+            // the frames fit the slot: the check is made as each frame is written (`held > room`), and the payload is the frames less the four bytes of partition in each
             payload = base;
-            if payload > room {
-                status = 1;
-            } else {
-                var cur = box_slice(w.heap, parts + 1, 0);
-                borrow mut cur as &!cw2 in {
-                    let c = contents(cw2);
-                    var q = 0;
-                    while q < parts {
-                        c[q] = inf[8 + 4 * q + 3];
-                        q = q + 1;
-                    }
-                    at = 0;
-                    while at < len(b) {
-                        let pid = get32(b, at);
-                        let kl = get32(b, at + 4);
-                        let rl = get32(b, at + 8);
-                        let d = c[pid];
-                        put32(o, d, kl);
-                        put32(o, d + 4, rl);
-                        copy_into(o[d + 8..d + 8 + kl + rl], b[at + 12..at + 12 + kl + rl]);
-                        c[pid] = d + 8 + kl + rl;
-                        at = at + 12 + kl + rl;
-                    }
+            var cur = box_slice(w.heap, parts + 1, 0);
+            borrow mut cur as &!cw2 in {
+                let c = contents(cw2);
+                var q = 0;
+                while q < parts {
+                    c[q] = inf[4 + 4 * q + 3];
+                    q = q + 1;
                 }
-                unbox_slice(w.heap, cur);
+                at = 0;
+                while at < len(b) {
+                    let pid = get32(b, at);
+                    let kl = get32(b, at + 4);
+                    let rl = get32(b, at + 8);
+                    let d = c[pid];
+                    put32(o, d, kl);
+                    put32(o, d + 4, rl);
+                    copy_into(o[d + 8..d + 8 + kl + rl], b[at + 12..at + 12 + kl + rl]);
+                    c[pid] = d + 8 + kl + rl;
+                    at = at + 12 + kl + rl;
+                }
             }
+            unbox_slice(w.heap, cur);
         }
     }
     if status != 0 {
@@ -417,9 +414,8 @@ fn range_work[&r](w: &!r Job) -> [heap, file_read] int {
     }
     inf[0] = status;
     inf[1] = records;
-    inf[2] = frames;
-    inf[3] = least;
-    inf[4] = payload;
+    inf[2] = least;
+    inf[3] = payload;
     buffer.drop(w.heap, stage);
     buffer.drop(w.heap, scr);
     buffer.drop(w.heap, kbuf);
@@ -495,7 +491,7 @@ pub fn fan[&p, &f, &x, &y, &z, &t, &w, &c, &l, &j, &m, &s, &u, &v, &i, &e](paren
                 }
                 if src[0] == 0 {
                     borrow out as &ob in {
-                        copy_into(blobs[k * slot_bytes..k * slot_bytes + src[4]], contents(ob)[0..src[4]]);
+                        copy_into(blobs[k * slot_bytes..k * slot_bytes + src[3]], contents(ob)[0..src[3]]);
                     }
                 }
             }

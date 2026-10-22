@@ -22,6 +22,10 @@ Not here (equivalent mutants, each argued):
 * `next[row] < 0` for `<= 0` in the partition's table: a row is never the next of row 0.
 * the lower bound of the accounted bytes for a semi or anti join (`cost = 0`): it only gives up earlier, and a semi or anti join that is refused is refused by the sequential build.
 * the records counted on success (`empty_counts(nb, records)`): `Counts.records` of a build that was done is read by nothing (it is read for a refusal, which the sequential build gives).
+* the check of the least bytes of the frames that a range makes for itself (`least > limit` in `jnprange.cho`): the parent makes the same check on the sum after the wave, so the build is declined either way and by
+  the same wave; the worker's check only stops its own range earlier, which only time and the memory of one range show.
+* the hook's `c_threads() > 0` for `> 1`: the partitions are 0 or at least 2.
+* the tails of the chains: the table the probe reads has none (a tail is read only while a table is built), so what is put in it is not read.
 * the bound handed to a partition (`limit + 1`): a partition that holds one more byte than the bound is found by the parent's sum, which is the sequential build's refusal either way.
 """
 import sys
@@ -45,10 +49,9 @@ MUTANTS = [
     ("the ranges may be more than 16,384", B, "    if rb < least {", "    if rb > least {"),
     ("a thread's share is rounded down", B, "    let share = (data + threads - 1) / threads;", "    let share = data / threads;"),
     ("the minimum counts the header", P, "        parts = jnpbuild.partitions(threads, size - consumed, cli.nat(args, parsed, table, \"parallel-min-bytes\"));", "        parts = jnpbuild.partitions(threads, size, cli.nat(args, parsed, table, \"parallel-min-bytes\"));"),
+    ("the hook partitions every build", "jnrun.cho", "                if contents(pcr)[jnpbuild.c_threads()] > 0 {", "                if contents(pcr)[jnpbuild.c_threads()] >= 0 {"),
     ("the hook partitions a build that is not csv with the answer's delimiter", "jnrun.cho", "        if !foreign {\n            var hstart = 0;", "        if true {\n            var hstart = 0;"),
-    ("the hook partitions with one thread", "jnrun.cho", "                if contents(pcr)[jnpbuild.c_threads()] > 0 {", "                if contents(pcr)[jnpbuild.c_threads()] > 1 {"),
     ("the rows begin at the start of the file", "jnrun.cho", "                hstart = hbr.consumed;", "                hstart = 0;"),
-    ("the table that was made is thrown away", "jnrun.cho", "                                                jt = pjt;\n", "                                                jtab.drop(heap, pjt);\n"),
     ("the table is made and the build is made again", "jnrun.cho", "                                                pdone = true;", "                                                pdone = false;"),
     ("the pruning of the build is not told", "jnrun.cho", "                pruned = contents(pmr0)[0] == 1;", "                pruned = false;"),
     # the plan of ranges
@@ -63,7 +66,6 @@ MUTANTS = [
     ("a row that a filter leaves out is held", R, "                                        } else if verdict == 1 {", "                                        } else if verdict >= 0 {"),
     ("the key of a quoted cell is the cell with its quotes", R, "                                                if cells[3 * key + 2] == 0 {", "                                                if cells[3 * key + 2] != 0 {"),
     ("a typed key that is not of its type is taken", R, "                                                if st != 0 {", "                                                if st != 99 {"),
-    ("the lower bound of the held bytes is not used", R, "                                                if least > limit {", "                                                if least > limit + 1000000000 {"),
     ("a frame that does not fit the slot is written", R, "                                                if held > room {", "                                                if held > room + 100000000 {"),
     ("the next range's first row is read too", R, "                            } else if start + lines.offset(rr) >= until {", "                            } else if start + lines.offset(rr) > until {"),
     ("a row goes to the partition its record's length says", R, "    let pid = part_of(key, parts);", "    let pid = len(line) % parts;"),
@@ -71,19 +73,18 @@ MUTANTS = [
     ("a pruned record has one delimiter less before a run", R, "            rw = buffer.append(heap, rw, dl[0..lead]);", "            rw = buffer.append(heap, rw, dl[0..lead - 1]);"),
     ("a pruned record loses its trailing delimiters", R, "    if trailing == 1 {\n        rw = buffer.push(heap, rw, dl[0]);\n    } else if trailing > 0 {\n        rw = buffer.append(heap, rw, dl[0..trailing]);\n    }\n    return rw;", "    return rw;"),
     ("a semi join's frames carry the record", R, "        return (put_frame(heap, stage, pid, key, line[0..0]), prec, 0);", "        return (put_frame(heap, stage, pid, key, line), prec, len(line) + 16);"),
-    ("a range says it wrote no frames", R, "    inf[2] = frames;", "    inf[2] = 0;"),
-    ("a range's least bytes are not told", R, "    inf[3] = least;", "    inf[3] = 0;"),
-    ("a range's payload is not told", R, "    inf[4] = payload;", "    inf[4] = payload - 1;"),
-    ("a blob starts where the one before began", R, "                base = base + 8 * inf[8 + 4 * p] + inf[8 + 4 * p + 1] + inf[8 + 4 * p + 2];", "                base = base + inf[8 + 4 * p + 1] + inf[8 + 4 * p + 2];"),
+    ("a range's least bytes are not told", R, "    inf[2] = least;", "    inf[2] = 0;"),
+    ("a range's payload is not told", R, "    inf[3] = payload;", "    inf[3] = payload - 1;"),
+    ("a blob starts where the one before began", R, "                base = base + 8 * inf[4 + 4 * p] + inf[4 + 4 * p + 1] + inf[4 + 4 * p + 2];", "                base = base + inf[4 + 4 * p + 1] + inf[4 + 4 * p + 2];"),
     # the parent
     ("the rows of the ranges are not added up against --max-rows", B, "                        records = records + inf[at + 1];", "                        records = records;"),
     ("the sum of the rows may pass --max-rows by one", B, "                        if records > cfg[c_most()] || least > limit {", "                        if records > cfg[c_most()] + 1 || least > limit {"),
     ("the least bytes of the ranges are not checked", B, "                        if records > cfg[c_most()] || least > limit {", "                        if records > cfg[c_most()] {"),
     ("the store may grow without a bound", B, "                                if buffer.size(sr) > 8 * limit + 65536 {", "                                if buffer.size(sr) > 800 * limit + 65536 {"),
     ("the first range of a wave is the only one taken", B, "                        records = records + inf[at + 1];", "                        records = records + inf[at + 1];\n                        q = n;"),
-    ("a blob of a range is taken from where the range's payload began", B, "                                        contents(tw)[tab + 3] = base + inf[at + 8 + 4 * p + 3];", "                                        contents(tw)[tab + 3] = inf[at + 8 + 4 * p + 3];"),
-    ("the key bytes of a partition are not added up", B, "                                        contents(ow)[4 * p + 1] = contents(ow)[4 * p + 1] + inf[at + 8 + 4 * p + 1];", "                                        contents(ow)[4 * p + 1] = contents(ow)[4 * p + 1];"),
-    ("the record bytes of a partition are not added up", B, "                                        contents(ow)[4 * p + 2] = contents(ow)[4 * p + 2] + inf[at + 8 + 4 * p + 2];", "                                        contents(ow)[4 * p + 2] = contents(ow)[4 * p + 2];"),
+    ("a blob of a range is taken from where the range's payload began", B, "                                        contents(tw)[tab + 3] = base + inf[at + 4 + 4 * p + 3];", "                                        contents(tw)[tab + 3] = inf[at + 4 + 4 * p + 3];"),
+    ("the key bytes of a partition are not added up", B, "                                        contents(ow)[4 * p + 1] = contents(ow)[4 * p + 1] + inf[at + 4 + 4 * p + 1];", "                                        contents(ow)[4 * p + 1] = contents(ow)[4 * p + 1];"),
+    ("the record bytes of a partition are not added up", B, "                                        contents(ow)[4 * p + 2] = contents(ow)[4 * p + 2] + inf[at + 4 + 4 * p + 2];", "                                        contents(ow)[4 * p + 2] = contents(ow)[4 * p + 2];"),
     ("the entries of the partitions begin one early", B, "                total_rows = total_rows + contents(tr)[4 * p];", "                total_rows = total_rows + contents(tr)[4 * p] + 1;"),
     ("the key bytes of every partition begin at the start", B, "                contents(bw)[6 * p + 1] = total_keys;", "                contents(bw)[6 * p + 1] = 0;"),
     ("the record bytes of every partition begin at the start", B, "                contents(bw)[6 * p + 2] = total_recs;", "                contents(bw)[6 * p + 2] = 0;"),
@@ -95,9 +96,8 @@ MUTANTS = [
     # a partition's table
     ("a partition's entries point at its own key bytes", B, "                oi[8 + 3 * e] = km[3 * e] + kb;", "                oi[8 + 3 * e] = km[3 * e];"),
     ("a partition's heads point at its own rows", B, "                    oi[8 + 3 * entries + e] = hd[e] + rb;", "                    oi[8 + 3 * entries + e] = hd[e];"),
-    ("a partition's tails point at its own rows", B, "                    oi[8 + 4 * entries + e] = tl[e] + rb;", "                    oi[8 + 4 * entries + e] = tl[e];"),
-    ("a partition's rows start in its own record bytes", B, "                    oi[8 + 5 * entries + row] = st[row] + cb;", "                    oi[8 + 5 * entries + row] = st[row];"),
-    ("a partition's chains link its own rows", B, "                        oi[8 + 5 * entries + nrows + row] = nx[row] + rb;", "                        oi[8 + 5 * entries + nrows + row] = nx[row];"),
+    ("a partition's rows start in its own record bytes", B, "                    oi[8 + 4 * entries + row] = st[row] + cb;", "                    oi[8 + 4 * entries + row] = st[row];"),
+    ("a partition's chains link its own rows", B, "                        oi[8 + 4 * entries + nrows + row] = nx[row] + rb;", "                        oi[8 + 4 * entries + nrows + row] = nx[row];"),
     ("a semi join's partition holds rows", B, "        if keys_only {\n            let (t2, ok2) = jtab.add_key(w.heap, t, key, limit);", "        if false {\n            let (t2, ok2) = jtab.add_key(w.heap, t, key, limit);"),
     ("the last meta number of a partition is not copied", B, "                while i < 3 * entries {", "                while i < 3 * entries - 1 {"),
     ("the last head of a partition is not copied", B, "                    while i < entries {", "                    while i < entries - 1 {"),

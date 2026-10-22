@@ -163,6 +163,7 @@ fn align[&h, &f](heap: &!h Heap, file: &!f File, p: int, size: int) -> [heap, fi
 res struct Uni {
     u_meta: Box[[int]],
     u_head: Box[[int]],
+    // the tail of a chain is read only while a table is being built: the table the probe reads has none, and one zero
     u_tail: Box[[int]],
     u_start: Box[[int]],
     u_next: Box[[int]],
@@ -260,22 +261,20 @@ fn part_work[&r](w: &!r Job) -> [heap] int {
             }
             if !keys_only {
                 let hd = contents(tr.head);
-                let tl = contents(tr.tail);
                 let st = contents(tr.start);
                 let nx = contents(tr.next);
                 e = 0;
                 while e < entries {
                     oi[8 + 3 * entries + e] = hd[e] + rb;
-                    oi[8 + 4 * entries + e] = tl[e] + rb;
                     e = e + 1;
                 }
                 var row = 0;
                 while row < nrows {
-                    oi[8 + 5 * entries + row] = st[row] + cb;
+                    oi[8 + 4 * entries + row] = st[row] + cb;
                     if nx[row] < 0 {
-                        oi[8 + 5 * entries + nrows + row] = 0 - 1;
+                        oi[8 + 4 * entries + nrows + row] = 0 - 1;
                     } else {
-                        oi[8 + 5 * entries + nrows + row] = nx[row] + rb;
+                        oi[8 + 4 * entries + nrows + row] = nx[row] + rb;
                     }
                     row = row + 1;
                 }
@@ -378,19 +377,17 @@ fn fan_parts[&p, &s, &t, &b, &g, &u](parent: &!p Heap, store: &s [byte], tabs: &
                 }
                 if cfg[c_keys_only()] == 0 {
                     let head = contents(uni.u_head);
-                    let tail = contents(uni.u_tail);
                     i = 0;
                     while i < entries {
                         head[rb + i] = o[8 + 3 * entries + i];
-                        tail[rb + i] = o[8 + 4 * entries + i];
                         i = i + 1;
                     }
                     let start = contents(uni.u_start);
                     let next = contents(uni.u_next);
                     i = 0;
                     while i < nrows {
-                        start[rb + i] = o[8 + 5 * entries + i];
-                        next[rb + i] = o[8 + 5 * entries + nrows + i];
+                        start[rb + i] = o[8 + 4 * entries + i];
+                        next[rb + i] = o[8 + 4 * entries + nrows + i];
                         i = i + 1;
                     }
                 }
@@ -541,7 +538,7 @@ pub fn build[&h, &f, &x, &y, &z, &t, &w, &k, &jc, &cl, &bc, &m, &g](heap: &!h He
                         good = false;
                     } else {
                         records = records + inf[at + 1];
-                        least = least + inf[at + 3];
+                        least = least + inf[at + 2];
                         if records > cfg[c_most()] || least > limit {
                             good = false;
                         } else {
@@ -549,19 +546,19 @@ pub fn build[&h, &f, &x, &y, &z, &t, &w, &k, &jc, &cl, &bc, &m, &g](heap: &!h He
                             borrow store as &sr in {
                                 base = buffer.size(sr);
                             }
-                            store = buffer.append(heap, store, contents(br)[q * slot_bytes..q * slot_bytes + inf[at + 4]]);
+                            store = buffer.append(heap, store, contents(br)[q * slot_bytes..q * slot_bytes + inf[at + 3]]);
                             borrow mut tabs as &!tw in {
                                 borrow mut tot as &!ow in {
                                     var p = 0;
                                     while p < parts {
                                         let tab = ((j0 + q) * parts + p) * 4;
-                                        contents(tw)[tab] = inf[at + 8 + 4 * p];
-                                        contents(tw)[tab + 1] = inf[at + 8 + 4 * p + 1];
-                                        contents(tw)[tab + 2] = inf[at + 8 + 4 * p + 2];
-                                        contents(tw)[tab + 3] = base + inf[at + 8 + 4 * p + 3];
-                                        contents(ow)[4 * p] = contents(ow)[4 * p] + inf[at + 8 + 4 * p];
-                                        contents(ow)[4 * p + 1] = contents(ow)[4 * p + 1] + inf[at + 8 + 4 * p + 1];
-                                        contents(ow)[4 * p + 2] = contents(ow)[4 * p + 2] + inf[at + 8 + 4 * p + 2];
+                                        contents(tw)[tab] = inf[at + 4 + 4 * p];
+                                        contents(tw)[tab + 1] = inf[at + 4 + 4 * p + 1];
+                                        contents(tw)[tab + 2] = inf[at + 4 + 4 * p + 2];
+                                        contents(tw)[tab + 3] = base + inf[at + 4 + 4 * p + 3];
+                                        contents(ow)[4 * p] = contents(ow)[4 * p] + inf[at + 4 + 4 * p];
+                                        contents(ow)[4 * p + 1] = contents(ow)[4 * p + 1] + inf[at + 4 + 4 * p + 1];
+                                        contents(ow)[4 * p + 2] = contents(ow)[4 * p + 2] + inf[at + 4 + 4 * p + 2];
                                         p = p + 1;
                                     }
                                 }
@@ -606,7 +603,7 @@ pub fn build[&h, &f, &x, &y, &z, &t, &w, &k, &jc, &cl, &bc, &m, &g](heap: &!h He
             }
         }
     }
-    var uni = Uni { u_meta: box_slice(heap, 3 * total_rows + 3, 0), u_head: box_slice(heap, total_rows + 1, 0), u_tail: box_slice(heap, total_rows + 1, 0), u_start: box_slice(heap, total_rows + 1, 0), u_next: box_slice(heap, total_rows + 1, 0), u_kbytes: box_slice(heap, total_keys + 1, byte_of(0)), u_rbytes: box_slice(heap, total_recs + 1, byte_of(0)), u_res: box_slice(heap, 8 * parts + 8, 0) };
+    var uni = Uni { u_meta: box_slice(heap, 3 * total_rows + 3, 0), u_head: box_slice(heap, total_rows + 1, 0), u_tail: box_slice(heap, 1, 0), u_start: box_slice(heap, total_rows + 1, 0), u_next: box_slice(heap, total_rows + 1, 0), u_kbytes: box_slice(heap, total_keys + 1, byte_of(0)), u_rbytes: box_slice(heap, total_recs + 1, byte_of(0)), u_res: box_slice(heap, 8 * parts + 8, 0) };
     var done = false;
     if good {
         borrow mut uni as &!un in {
