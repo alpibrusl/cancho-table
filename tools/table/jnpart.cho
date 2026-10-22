@@ -1,0 +1,83 @@
+edition 5;
+
+module jnpart;
+
+// The settings of a partitioned build (docs/joins.md sections 7.2 and 24, slice J8) and the words `--explain` says about it.
+//
+// THE RULE (a choice, not a measurement): the `--join` file is built by threads when it is csv read with the answer's delimiter (not JSON lines, not a delimiter of its own: those go through `jnjson`), the join is
+// the hash join (not `--join-sorted`), `--threads` is at least 2, and the data after its header is at least `--parallel-min-bytes` (the flag that already says when a file is worth splitting, 1 MiB unless given) and at
+// least one byte. The partitions are as many as the threads. A build that does not meet it is built as it always was, with the instructions it always cost.
+
+import std.buffer;
+import jnpbuild;
+import jnpwords;
+import spec;
+import toolbox.cli;
+
+// The text of the `partitions` member of `join.work`.
+pub fn partitions_doc[&h](heap: &!h Heap, parts: int, data: int, chunk: int) -> [heap] buffer.Buffer {
+    let rb = jnpbuild.range_bytes(parts, data, chunk);
+    var o = buffer.append(heap, buffer.empty(heap, 512), ",\"partitions\":{\"count\":");
+    o = buffer.push_nat(heap, o, parts);
+    o = buffer.append(heap, o, ",\"build_data_bytes\":");
+    o = buffer.push_nat(heap, o, data);
+    o = buffer.append(heap, o, ",\"range_bytes\":");
+    o = buffer.push_nat(heap, o, rb);
+    o = buffer.append(heap, o, ",\"ranges\":");
+    o = buffer.push_nat(heap, o, (data + rb - 1) / rb);
+    o = buffer.append(heap, o, ",\"rule\":\"");
+    o = buffer.append(heap, o, jnpwords.rule());
+    o = buffer.append(heap, o, "\",\"declines\":\"");
+    o = buffer.append(heap, o, jnpwords.declines());
+    return buffer.append(heap, o, "\"}");
+}
+
+// The settings of the build of `bfile` whose header ended at byte `consumed`: the integers `jnpbuild.build` reads, with the number of partitions in `c_threads` (0 when the build is read by one thread).
+pub fn config[&h, &g, &p, &f](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, bfile: &!f File, consumed: int, nb: int, delim: int, pairs: int, simple: bool, keys_only: bool, jw_on: bool, push_b: bool, prune: bool, cap: int, most: int, limit: int) -> [heap, args, file_read] Box[[int]] {
+    let table = spec.flag_table();
+    var c = box_slice(heap, jnpbuild.c_count() + 1, 0);
+    let threads = cli.nat(args, parsed, table, "threads");
+    var size = 0 - 1;
+    match file_size(bfile) {
+        Done::Ok(n) => {
+            size = n;
+        }
+        Done::Failed(reason) => {
+            size = 0 - 1;
+        }
+    }
+    var parts = 0;
+    if size >= 0 && threads > 1 {
+        parts = jnpbuild.partitions(threads, size - consumed, cli.nat(args, parsed, table, "parallel-min-bytes"));
+    }
+    var flags = 0;
+    borrow mut c as &!cw in {
+        let k = contents(cw);
+        k[jnpbuild.c_nb()] = nb;
+        k[jnpbuild.c_delim()] = delim;
+        k[jnpbuild.c_cap()] = cap;
+        k[jnpbuild.c_most()] = most;
+        k[jnpbuild.c_limit()] = limit;
+        k[jnpbuild.c_pairs()] = pairs;
+        if simple {
+            k[jnpbuild.c_simple()] = 1;
+        }
+        if keys_only {
+            k[jnpbuild.c_keys_only()] = 1;
+        }
+        if jw_on {
+            k[jnpbuild.c_jw_on()] = 1;
+        }
+        if push_b {
+            k[jnpbuild.c_push_b()] = 1;
+        }
+        if prune {
+            k[jnpbuild.c_prune()] = 1;
+        }
+        k[jnpbuild.c_threads()] = parts;
+        k[jnpbuild.c_chunk()] = cli.nat(args, parsed, table, "chunk-bytes");
+        k[jnpbuild.c_start()] = consumed;
+        k[jnpbuild.c_size()] = size;
+    }
+    return c;
+}

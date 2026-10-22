@@ -19,6 +19,7 @@ import explainor;
 import finish;
 import frame;
 import jfields;
+import jnpwords;
 import query;
 import reader;
 import relfail;
@@ -421,6 +422,9 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
         }
         if joining {
             why = "the join is read on one core";
+            if bytes.find(jn, "\"partitions\":{") >= 0 {
+                why = jnpwords.top_reason();
+            }
         } else if stdin {
             why = "standard input is read on one core";
         } else if mode == 0 {
@@ -936,7 +940,11 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             first_note = false;
         }
         if requested > 1 {
-            o = note(heap, o, first_note, "--threads has no effect on a join: it is read on one core, with the same bytes");
+            if bytes.find(jn, "\"partitions\":{") >= 0 {
+                o = note(heap, o, first_note, jnpwords.note());
+            } else {
+                o = note(heap, o, first_note, "--threads has no effect on a join: it is read on one core, with the same bytes");
+            }
             first_note = false;
         }
         o = buffer.append(heap, o, "],\"join\":");

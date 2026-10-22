@@ -1,0 +1,25 @@
+edition 5;
+
+module jnpwords;
+
+// The words `--explain` says about a partitioned build (docs/joins.md section 24), in a module that imports nothing so that `explain.cho` and `jnexplain.cho` and the build say the same.
+
+pub fn rule() -> [] &static [byte] {
+    return "the --join file is csv with the answer's delimiter, --threads is at least 2, and the data after its header is at least --parallel-min-bytes";
+}
+
+pub fn declines() -> [] &static [byte] {
+    return "a quoted line break, a ragged row, a refusal or the bound: the build is then read as one thread reads it, with the same bytes";
+}
+
+pub fn reason() -> [] &static [byte] {
+    return "the probe is read on one core; the build is partitioned (work.partitions)";
+}
+
+pub fn top_reason() -> [] &static [byte] {
+    return "the probe is read on one core; the build is partitioned (join.work.partitions)";
+}
+
+pub fn note() -> [] &static [byte] {
+    return "--threads partitions the build of a join across threads (join.work.partitions), with the same bytes; the probe is read on one core";
+}

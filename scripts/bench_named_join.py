@@ -132,7 +132,7 @@ def build_contenders(tools, paths, wanted=FAMILIES, taskset=None, externals=()):
             extra = {k: v for k, v in bn.table_version(tools["table"]).items() if k != "version"}
             add("table@1", "table", "1", "exact", lambda qid, f, b=tools["table"]: bn.Form(bn.with_taskset(table_argv(b, qid, paths), taskset), bn.with_taskset(table_argv(b, qid, paths), taskset),
                                                                                        {}, bn.with_taskset(table_argv(b, qid, paths, "query"), taskset)),
-                tools["table"], {**extra, "note": "--threads is accepted and the join is read on one core (docs/joins.md section 7)"})
+                tools["table"], {**extra, "note": "the benchmark runs table at --threads 1, where the join is read on one core (docs/joins.md section 7); since J8 a build of at least --parallel-min-bytes is built by threads at --threads 2 or more (section 24), which this benchmark does not use and claims nothing of"})
         elif family == "table-sorted" and tools.get("table"):
             extra = {k: v for k, v in bn.table_version(tools["table"]).items() if k != "version"}
             add("table-sorted@1", "table-sorted", "1", "exact", None, tools["table"], {**extra, "note": "--join-sorted over copies of the two tables sorted bytewise by the key"})

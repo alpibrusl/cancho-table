@@ -79,9 +79,32 @@ def same_as_one_thread(test, argv, tag, variants=((2, 7), (4, 64), (8, 1000)), s
 
 
 def clones(argv, stdin=b""):
-    """How many threads a run starts (strace -f, Linux): the successful clone calls that share the address space."""
+    """How many threads a run starts (strace -f, Linux): the threads strace says it attached."""
     p = subprocess.run(["strace", "-f", "-e", "trace=clone,clone3", binary(), *[str(a) for a in argv]], capture_output=True, input=stdin, timeout=120)
-    return len([ln for ln in p.stderr.decode("latin-1").splitlines() if "CLONE_THREAD" in ln and re.search(r"= \d+$", ln.strip())])
+    return len(re.findall(r"Process \d+ attached", p.stderr.decode("latin-1")))
+
+
+def reads_after_threads(argv, name="b.csv"):
+    """The reads of the build file that the main thread makes after it has started its first thread (strace -ff, Linux): none when the build was done by the threads, and one pass over the file when it was read again."""
+    import tempfile
+    d = tempfile.mkdtemp()
+    try:
+        log = os.path.join(d, "t")
+        subprocess.run(["strace", "-ff", "-y", "-e", "trace=clone,clone3,read,pread64", "-o", log, binary(), *[str(a) for a in argv]], capture_output=True, input=b"", timeout=120)
+        names = sorted(os.listdir(d), key=lambda n: int(n.split(".")[1]))
+        main = open(os.path.join(d, names[0])).read().splitlines()
+        started = [i for i, ln in enumerate(main) if ln.startswith(("clone3(", "clone("))]
+        if not started:
+            return None
+        return len([ln for ln in main[started[0]:] if (ln.startswith("read(") or ln.startswith("pread64(")) and name in ln])
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def expected_threads(data, threads, chunk):
+    """The threads a build that is partitioned and not declined starts: one for each range and one for each partition."""
+    rb = min(chunk, -(-data // threads))
+    return -(-data // rb) + threads
 
 
 class Files:
@@ -281,6 +304,39 @@ class Edges(unittest.TestCase):
             a = ["--root", str(self.f.d), "--join", "b.csv", "--on", "k", "--join-type", jt, "--format", "csv"]
             same_as_one_thread(self, a, jt, ((4, 64),), stdin=probe)
 
+    def test_a_larger_build_with_ranges_that_hold_many_rows(self):
+        rng = random.Random(5)
+        rows = "".join("k%d,r%d,%s\n" % (rng.randrange(900), i, "z" * rng.randrange(1, 40)) for i in range(12000))
+        self.f.put("p.csv", "id,k\n" + "".join("%d,k%d\n" % (i, i % 1000) for i in range(300)))
+        self.check("k,r,x\n" + rows, "12,000 rows", variants=((2, 50000), (4, 1 << 16), (8, 1 << 22), (3, 100000)))
+
+    def test_quoted_cells_in_the_columns_a_pruned_build_keeps(self):
+        rows = 'k,r,x\n' + "".join('k%d,"a,%d","he said ""%d"""\n' % (i % 5, i, i) for i in range(60))
+        self.check(rows, "pruned, quoted", "--select", "id,r,x")
+        self.check(rows, "pruned, one quoted column", "--select", "id,x")
+        self.check(rows.replace("k1", '"k1"'), "quoted keys, pruned", "--select", "id,r")
+
+    def test_blank_lines_before_the_header(self):
+        self.check("\n\nk,r,x\n" + build_rows(60), "blank lines before the header")
+        self.check('"k",r,x\n' + build_rows(60), "a quoted header")
+
+    def test_join_sorted_is_unaffected_by_threads(self):
+        # --join-sorted reads each file once, in step: it is not partitioned, and its refusals are what they were
+        self.f.put("p.csv", "id,k\n" + "".join("%d,k%02d\n" % (i, i // 3) for i in range(60)))
+        self.f.put("b.csv", "k,r,x\n" + "".join("k%02d,r%d,z\n" % (i // 4, i) for i in range(80)))
+        for jt in JTYPES:
+            a = self.f.argv("--join-type", jt, "--join-sorted")
+            base = same_as_one_thread(self, a, "sorted [%s]" % jt, variants=((2, 7), (4, 64), (8, 1000)))
+            self.assertEqual(base.status, 0)
+            self.assertEqual(base.stdout, run(*self.f.argv("--join-type", jt, "--threads", "1")).stdout, jt)
+            m = main_run([*a, *part(4, 64)])
+            if m is not None:
+                self.assertEqual(triple(run(*a, *part(4, 64))), (m.returncode, ECHO.sub(b"", m.stdout), ECHO.sub(b"", m.stderr)), jt)
+        # a file out of order is join.not-sorted with the same facts
+        self.f.put("b.csv", "k,r,x\n" + "".join("k%02d,r%d,z\n" % (i // 4, i) for i in range(30)) + "k00,late,z\n")
+        base = same_as_one_thread(self, self.f.argv("--join-sorted", fmt="json"), "unsorted")
+        self.assertEqual((base.status, base.first_rule()), (8, "join.not-sorted"))
+
     def test_a_page_of_json(self):
         self.f.put("b.csv", "k,r,x\n" + build_rows(80))
         for jt in JTYPES:
@@ -335,6 +391,9 @@ class Bound(unittest.TestCase):
                             for t, c in ((2, 7), (4, 64), (8, 1000)):
                                 got = run(*a, *part(t, c), "--max-state-bytes", bound)
                                 self.assertEqual(triple(got), triple(base), "%s: %d threads, ranges of %d" % (tag, t, c))
+                            if STRACE and status == 0:
+                                # accepted at its least bound: the build was done by threads, not declined and read again
+                                self.assertEqual(clones([*a, *part(4, 200), "--max-state-bytes", bound]), expected_threads(len((f.d / "b.csv").read_bytes()) - len(text.split("\n", 1)[0]) - 1, 4, 200), tag)
                             n += 1
             # two pairs and USING and a typed key
             f.put("b.csv", "bk,bk2,r\n" + "".join("k%d,s%d,r%d\n" % (i % 6, i % 3, i) for i in range(90)))
@@ -472,13 +531,19 @@ class Used(unittest.TestCase):
     def tearDown(self):
         self.f.cleanup()
 
-    def test_an_eligible_join_starts_threads_for_every_join_type(self):
+    def data_bytes(self):
+        return len((self.f.d / "b.csv").read_bytes()) - len("k,r,x\n")
+
+    def test_an_eligible_join_starts_a_thread_for_each_range_and_each_partition(self):
+        # the exact count is what tells a build that was done from one that was declined and read again by one thread
+        data = self.data_bytes()
         for jt in JTYPES:
-            n = clones(self.f.argv("--join-type", jt, *part(4, 64)))
-            self.assertGreaterEqual(n, 4, jt)
+            for t, c in ((4, 64), (2, 100), (3, 1000), (8, 700), (4, 1 << 22)):
+                n = clones(self.f.argv("--join-type", jt, *part(t, c)))
+                self.assertEqual(n, expected_threads(data, t, c), (jt, t, c))
 
     def test_two_threads_start_threads_too(self):
-        self.assertGreaterEqual(clones(self.f.argv(*part(2, 100))), 2)
+        self.assertEqual(clones(self.f.argv(*part(2, 100))), expected_threads(self.data_bytes(), 2, 100))
 
     def test_one_thread_starts_none(self):
         self.assertEqual(clones(self.f.argv("--threads", "1", "--chunk-bytes", "64", "--parallel-min-bytes", "0")), 0)
@@ -487,7 +552,7 @@ class Used(unittest.TestCase):
         self.assertEqual(clones(self.f.argv("--threads", "4", "--chunk-bytes", "64")), 0)
         data = len((self.f.d / "b.csv").read_bytes()) - len("k,r,x\n")
         self.assertEqual(clones(self.f.argv("--threads", "4", "--chunk-bytes", "64", "--parallel-min-bytes", data + 1)), 0)
-        self.assertGreaterEqual(clones(self.f.argv("--threads", "4", "--chunk-bytes", "64", "--parallel-min-bytes", data)), 4)
+        self.assertEqual(clones(self.f.argv("--threads", "4", "--chunk-bytes", "64", "--parallel-min-bytes", data)), expected_threads(data, 4, 64))
 
     def test_join_sorted_and_foreign_builds_start_none(self):
         self.f.put("p.csv", "id,k\n" + "".join("%d,k%d\n" % (i, i // 5) for i in range(40)))
@@ -503,19 +568,97 @@ class Used(unittest.TestCase):
         self.assertEqual(clones(self.f.argv(*part(4, 64))), 0)
 
     def test_a_declined_build_still_gives_the_sequential_bytes(self):
+        # a quoted line break: the ranges are read, one of them says it cannot be taken, and no partition is made
         self.f.put("b.csv", 'k,r,x\n' + build_rows(100) + 'k1,"a\nb",x\n')
         a = self.f.argv(*part(4, 64))
-        self.assertGreaterEqual(clones(a), 1)
+        data = self.data_bytes()
+        n = clones(a)
+        self.assertGreaterEqual(n, 1)
+        self.assertLess(n, expected_threads(data, 4, 64))
+        self.assertEqual(triple(run(*a)), triple(run(*self.f.argv("--threads", "1"))))
+        # a ragged row in the first range: the first wave is the only one read
+        self.f.put("b.csv", 'k,r,x\nk1,short\n' + build_rows(400))
+        self.assertLessEqual(clones(self.f.argv(*part(4, 64))), 4)
+
+    def test_a_bound_passed_by_the_sum_declines_after_the_partitions(self):
+        # every partition fits the bound alone, the sum does not (the bound is half of what the whole needs)
+        whole = least_bound(self.f.argv())
+        self.assertIsNotNone(whole)
+        a = self.f.argv(*part(4, 1 << 22), "--max-state-bytes", whole - 1)
+        r = run(*a)
+        self.assertEqual(r.status, 8)
+        self.assertEqual(triple(r), triple(run(*self.f.argv("--threads", "1", "--max-state-bytes", whole - 1))))
+        self.assertEqual(run(*self.f.argv(*part(4, 1 << 22), "--max-state-bytes", whole)).status, 0)
+
+    def test_rows_that_a_filter_leaves_out_do_not_make_the_build_be_read_again(self):
+        rows = "k,r,x\n" + "".join("k%d,r%d,%s\n" % (i % 6, i, "ab" if i % 3 else "cd") for i in range(150))
+        self.f.put("b.csv", rows)
+        data = self.data_bytes()
+        for flags in (["--join-where", "x = 'ab'"], ["--where", "x = 'cd'"], ["--join-where", "x = 'zz'"], ["--select", "id"], ["--select", "id,r"]):
+            self.assertEqual(clones(self.f.argv(*flags, *part(4, 200))), expected_threads(data, 4, 200), flags)
+
+    def test_max_rows_at_the_count_is_still_built_by_threads_and_one_past_it_is_not(self):
+        for n in (1, 2, 9, 60):
+            self.f.put("b.csv", "k,r,x\n" + build_rows(n))
+            data = self.data_bytes()
+            self.assertEqual(clones(self.f.argv("--max-rows", str(n), *part(2, 1 << 22))), expected_threads(data, 2, 1 << 22), n)
+            if n > 1:
+                self.assertLess(clones(self.f.argv("--max-rows", str(n - 1), *part(2, 1 << 22))), expected_threads(data, 2, 1 << 22), n)
+
+    def test_keys_with_a_different_spelling_and_a_typed_key_are_built_by_threads(self):
+        self.f.put("p.csv", "id,k\n" + "".join("%d,%s\n" % (i, v) for i, v in enumerate(["7", "007", "+7", "-0", "0", "12"] * 4)))
+        self.f.put("b.csv", "k,r\n" + "".join("%s,r%d\n" % (["7", "007", "+7", "12", "0", "-0"][i % 6], i) for i in range(120)))
+        data = self.data_bytes()
+        self.assertEqual(clones(self.f.argv(*part(4, 100), on="k:int")), expected_threads(data, 4, 100))
+
+    def test_a_row_larger_than_a_slot_makes_the_build_be_read_by_one_thread(self):
+        # a slot is three ranges long and 64 KiB: a row of 100 KB in a range of 7 bytes does not fit, and the answer is the sequential one
+        self.f.put("b.csv", "k,r,x\n" + build_rows(20) + "k1,%s,x\n" % ("w" * 100000) + build_rows(20))
+        a = self.f.argv(*part(4, 7))
+        self.assertLess(clones(a), expected_threads(self.data_bytes(), 4, 7))
         self.assertEqual(triple(run(*a)), triple(run(*self.f.argv("--threads", "1"))))
 
+    def test_frames_much_larger_than_the_bound_make_the_build_be_read_by_one_thread(self):
+        # the table of one long key repeated holds little (the rows are pruned to nothing), but its frames carry the key each time: more than eight times the bound and 64 KiB is given up on
+        key = "K" * 3000
+        self.f.put("b.csv", "k,r,x\n" + "".join("%s,r%d,x\n" % (key, i) for i in range(200)))
+        self.f.put("p.csv", "id,k\n1,%s\n2,other\n" % key)
+        a = self.f.argv("--select", "id", "--max-state-bytes", "10000", *part(4, 1 << 22))
+        r = run(*a)
+        self.assertEqual(r.status, 0, r.stderr[:300])
+        self.assertEqual(triple(r), triple(run(*self.f.argv("--select", "id", "--max-state-bytes", "10000", "--threads", "1"))))
+        self.assertLess(clones(a), expected_threads(self.data_bytes(), 4, 1 << 22))
+        # with room for the frames the same build is done by threads
+        b = self.f.argv("--select", "id", "--max-state-bytes", "100000", *part(4, 1 << 22))
+        self.assertEqual(clones(b), expected_threads(self.data_bytes(), 4, 1 << 22))
+
+    def test_a_build_that_was_done_is_not_read_again(self):
+        # the control first: a build that is declined is read again by the main thread, after the threads were started
+        self.f.put("b.csv", "k,r,x\n" + build_rows(100) + 'k1,"a\nb",x\n')
+        self.assertGreater(reads_after_threads(self.f.argv(*part(4, 64))), 0, "the control")
+        self.f.put("b.csv", "k,r,x\n" + build_rows(400))
+        for jt in JTYPES:
+            self.assertEqual(reads_after_threads(self.f.argv("--join-type", jt, *part(4, 64))), 0, jt)
+
+    def test_a_bound_far_below_the_build_is_given_up_on_by_the_first_wave(self):
+        data = self.data_bytes()
+        rb = min(64, -(-data // 4))
+        for bound in (1, 16, 100):
+            self.assertEqual(clones(self.f.argv(*part(4, 64), "--max-state-bytes", str(bound))), min(4, -(-data // rb)), bound)
+
+    def test_a_bound_the_sum_passes_is_found_after_the_partitions(self):
+        whole = least_bound(self.f.argv())
+        data = self.data_bytes()
+        self.assertEqual(clones(self.f.argv(*part(4, 1 << 22), "--max-state-bytes", str(whole - 1))), expected_threads(data, 4, 1 << 22))
+        self.assertEqual(clones(self.f.argv(*part(4, 1 << 22), "--max-state-bytes", str(whole))), expected_threads(data, 4, 1 << 22))
+
     def test_the_probe_is_read_on_one_core(self):
-        # a probe much larger than the build: the threads started are the build's (at most the ranges and the partitions), not one for each probe range
+        # a probe much larger than the build: the threads started are the build's, not one for each probe range
         self.f.put("b.csv", "k,r,x\n" + build_rows(30))
         self.f.put("p.csv", "id,k\n" + "".join("%d,k%d\n" % (i, i % 9) for i in range(3000)))
-        small = clones(self.f.argv("--threads", "4", "--chunk-bytes", "100000", "--parallel-min-bytes", "0"))
-        big = clones(self.f.argv("--threads", "4", "--chunk-bytes", "100", "--parallel-min-bytes", "0"))
-        self.assertGreaterEqual(small, 1)
-        self.assertLessEqual(big, small + 4 * 40, "the chunk size is the build's")
+        data = self.data_bytes()
+        for c in (100, 1 << 22):
+            self.assertEqual(clones(self.f.argv("--threads", "4", "--chunk-bytes", str(c), "--parallel-min-bytes", "0")), expected_threads(data, 4, c))
 
 
 # ---- F: every thread count --------------------------------------------------------------------------------------------------------------------------------------
@@ -599,6 +742,16 @@ class Explain(unittest.TestCase):
     def test_the_boundary_of_the_minimum(self):
         self.assertIn("partitions", self.explain("--threads", "2", "--parallel-min-bytes", str(self.data))["join"]["work"])
         self.assertNotIn("partitions", self.explain("--threads", "2", "--parallel-min-bytes", str(self.data + 1))["join"]["work"])
+
+    def test_the_ranges_are_at_most_16384(self):
+        # a chunk of one byte on a large file would make a table of a range for every byte: the range is made larger
+        self.f.put("b.csv", "k,r,x\n" + build_rows(120000))
+        data = len((self.f.d / "b.csv").read_bytes()) - len("k,r,x\n")
+        p = self.explain("--threads", "4", "--chunk-bytes", "1", "--parallel-min-bytes", "0")["join"]["work"]["partitions"]
+        self.assertEqual((p["range_bytes"], p["ranges"]), (-(-data // 16384), -(-data // -(-data // 16384))))
+        self.assertLessEqual(p["ranges"], 16384)
+        r = run(*self.f.argv("--threads", "4", "--chunk-bytes", "1", "--parallel-min-bytes", "0", "--limit", "5"))
+        self.assertEqual(r.status, 0)
 
     def test_an_empty_build_has_no_partitions(self):
         self.f.put("b.csv", "k,r,x\n")
