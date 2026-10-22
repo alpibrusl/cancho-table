@@ -1,5 +1,7 @@
 # Named benchmarks: a design for externally comparable measurements
 
+> **See also (2026-10-22): [`docs/matrix-benchmark.md`](matrix-benchmark.md)**, a matrix view of the same harness (tasks x contenders, eight kinds of cell: expressible, correct, deterministic, at a limit, resident set, time, instructions, error contract) with a falsification table for the "analytics over files" thesis. Its harness (`scripts/bench_matrix.py`) is built and ready to run; **no matrix has been published and no clock was run**. It does not replace NB4.
+>
 > **Status (2026-10-21): accepted, NB1, NB2 and NB3 built.** NB3 (section 19) is the join suite: `scripts/bench_named_join_gen.py`, `bench_named_join_ref.py`, `bench_named_join.py`, the join contenders (table, `table --join-sorted`, DuckDB, csvtk, Miller, pandas) validated against the reference, a 1e6 smoke step on one shared VM (recorded, not publishable) and the report of what `table` says where it refuses; Mac and gram, 1e7 and 1e8 are not run.
 > *(Status of 2026-10-20 follows.)* **Status (2026-10-20): accepted, NB1 and NB2 built.** NB2 (section 18) is the timing driver `scripts/bench_named.py` with the answer gate, the groupby forms of DuckDB, csvtk, Miller and
 > pandas validated against NB1's reference, and a 1e6 smoke step on one shared cloud VM whose numbers are recorded and **not publishable**; Mac and gram steps, 1e7 and 1e8 are not run.
