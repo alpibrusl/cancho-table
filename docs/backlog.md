@@ -36,9 +36,10 @@ silent CSV type inference, a storage format with transactions, extensions.
 build; the swap repair; a partitioned build with `--threads`) and a merge join over sorted files (`--join-sorted`),
 `docs/joins.md`; `:date`, `:timestamp` and `:datetime` columns, period buckets and join keys, `docs/datetime.md`;
 `:dec(S)` decimals; and JSON lines in and out. What it does not have, of those: a join over more than two files in
-one plan, a threaded probe (J6), and `--report` over a join. No speed comparison with DuckDB on joins has been
-run (NOT RUN: `docs/named-benchmarks.md` section 19 builds the suite, and its DuckDB side is parked until a quiet
-machine).
+one plan, a threaded probe (J6), and `--report` over a join. No quiet-machine and no Linux comparison with
+DuckDB on joins has been run. `docs/joins.md` sections 12, 16.5, 17.4 and 18.4 hold join timings against DuckDB and
+csvtk from the Mac under load (section 16.5: load 8.5 to 9.4), which are not publishable. NOT RUN: the quiet-machine
+suite (`docs/named-benchmarks.md` section 19 builds it, and its DuckDB side is parked until a quiet machine).
 
 **Why that is not the target.** `table` is bounded, deterministic and refuses instead of guessing; every limit has a
 rule and a repair. An engine that is those things and still SQL-complete is a different, much larger project. The use
