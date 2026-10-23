@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_query", "test_inputs"]
+TESTS = ["test_query", "test_inputs", "test_toolbox_pin"]
 
 MUTANTS = [
     # ---- the lexer
@@ -127,6 +127,10 @@ MUTANTS = [
     ("source: a query's from path is the operand's", "table.cho", "} else if inp.src_file {", "} else if inp.src_file && false {"),
     ("source: a path is not confined (dotdot)", "qpath.cho", "if path.has_dotdot(given) {", "if path.has_dotdot(given) && len(root) == 77 {"),
     ("source: a path is not confined (absolute)", "qpath.cho", "    if absolute {\n        var below", "    if absolute && len(root) == 77 {\n        var below"),
+    ("source: an empty path has no hint", "qpath.cho", "\"the path is empty\", \"name a path; an empty argument names nothing\", given", "\"the path is empty\", \"\", given"),
+    ("source: an empty path says the long path's hint", "qpath.cho", "\"the path is empty\", \"name a path; an empty argument names nothing\", given", "\"the path is empty\", \"use a path of at most 4096 bytes\", given"),
+    ("source: a long path has no hint", "qpath.cho", "\"use a path of at most 4096 bytes\", given", "\"\", given"),
+    ("source: a long path is a path", "qpath.cho", "if len(given) > path.longest() {", "if len(given) > 99999 {"),
     ("source: an empty path is a path", "qpath.cho", "    if len(given) == 0 {\n        e = refuse(heap, e, \"path.empty\"", "    if len(given) == 77 {\n        e = refuse(heap, e, \"path.empty\""),
     ("conflict: --select does not conflict", "table.cho", "    if inp.has_select {\n        clash = buffer.append(heap, clash, \" --select\");", "    if inp.has_select && false {\n        clash = buffer.append(heap, clash, \" --select\");"),
     ("conflict: --where does not conflict", "table.cho", "    if inp.has_where {\n        clash", "    if inp.has_where && false {\n        clash"),
@@ -187,8 +191,6 @@ EQUIVALENT = [
      "a query cannot name a sort key that is not an output column (the translation refuses a position and a name that starts with a dash, and writes the label as the output prints it), so `sort.unknown-key` cannot be raised through a query and its detail is only the flag's"),
     ("source: from stdin is a file", "inputs.cho", "    if qtrans.info_at(t, qtrans.i_source()) == 2 {\n        stdin = true;", "    if qtrans.info_at(t, qtrans.i_source()) == 7 {\n        stdin = true;",
      "`from stdin` is refused beside an operand, so there is none: the standard input that `Inputs.stdin` already has when there is no operand is the same one"),
-    ("source: a long path is a path", "qpath.cho", "if len(given) > path.longest() {", "if len(given) > 99999 {",
-     "a path of over 4,096 bytes does not fit in a query of at most 4,096 (the check is the operand's, kept for the day the limits differ)"),
     ("source: the root is not joined", "qpath.cho", "    full = buffer.append(heap, full, root);", "    full = buffer.append(heap, full, given);",
      "with a root, `place.open_operand` opens the path as `shown` spells it beneath the root and reads `full` only for `.` (the root itself, a directory either way, refused as one with the same words), so the root in `full` is not observable; without a root `full` is the path itself, and that is tested"),
     ("repair: a keyword typo of three edits is repaired", "qrepair.cho", "    while d <= 2 {", "    while d <= 3 {",

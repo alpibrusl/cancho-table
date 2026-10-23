@@ -7,7 +7,8 @@ module qpath;
 // a `..` component, an absolute path (under the root: `path.absolute`; elsewhere: `path.outside-root`), and then `.` components, repeated `/` and a trailing `/` are collapsed. What
 // the checks do not see, a symbolic link, is `toolbox.place`'s, which opens the path beneath the root one component at a time and refuses a link (`path.symlink`). The refusals are
 // the operand's, with the path in the detail and no argument position (the path is not an argument).
-// tests/conformance/test_query.py holds this to the operand for each of those rules.
+// tests/conformance/test_query.py holds this to the operand for each of those rules. The hints of the first two are the package's sentences, word for word (`toolbox.path.operand`);
+// tests/conformance/test_toolbox_pin.py reads them from the installed package and requires these to be the same.
 
 import std.buffer;
 import std.bytes;
@@ -56,11 +57,11 @@ fn collapsed[&h, &p](heap: &!h Heap, p: &p [byte]) -> [heap] buffer.Buffer {
 pub fn resolve[&h, &r, &s](heap: &!h Heap, root: &r [byte], given: &s [byte], errs: fail.Errors) -> [heap] (buffer.Buffer, int, fail.Errors) {
     var e = errs;
     if len(given) == 0 {
-        e = refuse(heap, e, "path.empty", "the path is empty", "", given);
+        e = refuse(heap, e, "path.empty", "the path is empty", "name a path; an empty argument names nothing", given);
         return (buffer.empty(heap, 1), 0 - 1, e);
     }
     if len(given) > path.longest() {
-        e = refuse(heap, e, "path.too-long", "the path is longer than 4096 bytes", "", given);
+        e = refuse(heap, e, "path.too-long", "the path is longer than 4096 bytes", "use a path of at most 4096 bytes", given);
         return (buffer.empty(heap, 1), 0 - 1, e);
     }
     let absolute = int_of(given[0]) == '/';

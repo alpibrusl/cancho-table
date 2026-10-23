@@ -174,7 +174,7 @@ def definition(d):
         "description": d["summary"] + DESCRIPTION_SUFFIX,
         "inputSchema": {"type": "object", "properties": props, "required": required,
                         "additionalProperties": False},
-        "annotations": {"readOnlyHint": read_only, "destructiveHint": not read_only,
+        "annotations": {"title": d["tool"], "readOnlyHint": read_only, "destructiveHint": not read_only,
                         "idempotentHint": bool(d.get("guarantees", {}).get("idempotent")),
                         "openWorldHint": False},
     }

@@ -10,7 +10,7 @@ import json
 import os
 import unittest
 
-from harness import Scratch, run, run_argv, binary
+from harness import Scratch, run, run_argv, binary, BIN
 import toolbox_pin as T
 import test_rules
 
@@ -155,6 +155,82 @@ class EveryRule(unittest.TestCase):
         self.assertEqual(without, self.NO_HINT)
         for rule in ("args.missing-value", "args.bad-value", "path.empty", "path.too-long"):
             self.assertIn(rule, with_hint)
+
+
+class OwnPathRefusals(unittest.TestCase):
+    """The refusals `qpath.cho` writes for a path that is not an operand (a query's `from 'path'` or `join 'path'`, the file of `--join`): `table`'s own copy of two rules of `toolbox.path`
+    (`path.empty`, `path.too-long`), written with no hint while the package's carries one. They say the package's sentence now, read here from the installed package and not typed twice."""
+
+    PATH_EMPTY = "name a path; an empty argument names nothing"
+    PATH_TOO_LONG = "use a path of at most 4096 bytes"
+
+    def setUp(self):
+        self.s = Scratch()
+        self.s.write("f.csv", "a,b,c\n1,2,3\n4,5,6\n")
+        self.s.write("b.csv", "k,v\n1,x\n")
+
+    def tearDown(self):
+        self.s.cleanup()
+
+    def go(self, *args):
+        return run("--root", self.s.dir, *args)
+
+    def check(self, r, rule, hint, detail):
+        first, every = errors_of(r)
+        self.assertEqual(r.status, 2)
+        self.assertEqual((first["code"], first["rule"], first["hint"], first["repair"]), ("INVALID_ARGS", rule, hint, None))
+        self.assertEqual(first["detail"], detail)
+        self.assertEqual(first, every[0])
+        return first
+
+    def test_the_package_wording_is_the_one_pinned_here(self):
+        # the operand's refusals (the package's own) say what this file says the query's say
+        first = self.check(self.go(""), "path.empty", self.PATH_EMPTY, {"path": "", "position": 3})
+        self.assertEqual(first["message"], "the path is empty")
+        first = self.check(self.go("a" * 5000), "path.too-long", self.PATH_TOO_LONG, {"path": "a" * 5000, "position": 3})
+        self.assertEqual(first["message"], "the path is longer than 4096 bytes")
+
+    def test_a_query_from_an_empty_path(self):
+        for query in ("select a from ''", "select a from ''  ", "select a, b from '' where a > 1"):
+            with self.subTest(query):
+                r = self.go("--query", query)
+                first = self.check(r, "path.empty", self.PATH_EMPTY, {"path": ""})
+                self.assertEqual(first["message"], "the path is empty")
+        # the same words as the operand's, byte for byte, except the position the operand has and a path in a query has not
+        operand = errors_of(self.go(""))[0]
+        query = errors_of(self.go("--query", "select a from ''"))[0]
+        self.assertEqual({k: v for k, v in operand.items() if k != "detail"}, {k: v for k, v in query.items() if k != "detail"})
+
+    def test_a_query_join_of_an_empty_path(self):
+        q = "select a.a from 'f.csv' as a join '' as b on a.a = b.a"
+        for extra in ([], ["--explain"]):
+            with self.subTest(extra):
+                self.check(self.go(*extra, "--query", q), "path.empty", self.PATH_EMPTY, {"path": ""})
+
+    def test_a_join_file_that_is_too_long(self):
+        long = "a" * 5000
+        for extra in ([], ["--explain"]):
+            with self.subTest(extra):
+                r = self.go(*extra, "--join", long, "--on", "a=a", "f.csv")
+                first, every = errors_of(r)
+                self.assertEqual((r.status, first["rule"], first["hint"], first["repair"]), (2, "path.too-long", self.PATH_TOO_LONG, None))
+                self.assertEqual(first["detail"], {"path": long})
+                self.assertEqual(first["message"], "the path is longer than 4096 bytes")
+
+    def test_the_hints_in_the_source_are_the_packages(self):
+        import glob
+        import pathlib
+        import re
+        root = pathlib.Path(__file__).resolve().parents[2]
+        package = [t for t in (open(f).read() for f in sorted(glob.glob(str(BIN / "deps" / "*.cho")))) if 'path_error(heap, e, args, "path.empty", "the path is empty"' in t]
+        self.assertEqual(len(package), 1, "the installed toolbox.path")
+        own = open(root / "tools" / "table" / "qpath.cho").read()
+        for rule, message in (("path.empty", "the path is empty"), ("path.too-long", "the path is longer than 4096 bytes")):
+            theirs = re.findall(r'path_error\(heap, e, args, "%s", "%s", ("[^"]*")' % (re.escape(rule), re.escape(message)), package[0])
+            mine = re.findall(r'refuse\(heap, e, "%s", "%s", ("[^"]*")' % (re.escape(rule), re.escape(message)), own)
+            self.assertEqual(len(theirs), 1, rule)
+            self.assertEqual(mine, theirs, rule)
+            self.assertNotEqual(mine, ['""'], rule)
 
 
 @unittest.skipUnless(MAIN_TABLE and os.path.exists(MAIN_TABLE), "MAIN_TABLE names the binary of the earlier pin")

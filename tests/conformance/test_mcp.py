@@ -478,7 +478,8 @@ class Schema(unittest.TestCase):
         self.assertIn("COLUMN OP VALUE", props["where"]["description"])
         for word in ("sum", "mean", ":dec(S)", ":float", "@N"):
             self.assertIn(word, props["agg"]["description"])
-        self.assertEqual(tool["annotations"], {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
+        # `title` is the tool's own name, from `introspect` (cancho-tools#42 writes it the same way); the four hints are the effects'
+        self.assertEqual(tool["annotations"], {"title": d["tool"], "readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
         self.assertNotIn("outputSchema", tool)
 
     def test_the_description_says_the_bound_and_what_to_ask_for(self):

@@ -4,6 +4,9 @@
 the bytes of `table` (docs/architecture.md, "The pin", lists how it was measured), so the golden files of the earlier slices, which hold the md5 of what the tool answered then, are not re-recorded: `before` puts the
 four hints back to null in an answer, and the digests of those goldens read the answer through it. A golden therefore still fails on any other change of a byte, and `test_toolbox_pin.py` pins the new
 hints text by text.
+
+`table`'s own `path.empty` and `path.too-long` (`qpath.cho`: a query's `from` and `join` paths, the file of `--join`) say the same two sentences as the package's operand refusals, since the follow-up of the
+move; they were null at the earlier pin too, so `before` puts them back to null as well, by the same rule and text, and no golden changes for them.
 """
 
 import re
