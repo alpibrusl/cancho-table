@@ -1,9 +1,11 @@
-"""The adoption of cancho-tools' main (#42: a hint on every refusal), docs/architecture.md "The pin".
+"""The adoption of cancho-tools' main (#42: a hint on every refusal; then cancho-tools#53: a hint on the operating-system refusals), docs/architecture.md "The pin".
 
-The nine `[dependencies.*]` revs moved from 919e7ba to af73b1b. What that changed in the bytes of `table` is four hints that were null and are sentences now (`toolbox.cli`: `args.missing-value`,
-`args.bad-value`; `toolbox.path`: `path.empty`, `path.too-long`). This file states the new contract: the exact text of each, on every way to reach it; that nothing else of these refusals moved (status,
-code, message, repair, detail); that every refusal the fixtures of `test_rules.py` reach carries a hint but the three the package still writes without one; and, against the binary of the earlier pin
-(MAIN_TABLE), that the hints are the only difference in a wide set of calls.
+The nine `[dependencies.*]` revs moved from 919e7ba to af73b1b, and from af73b1b to d3fed0c. What the first move changed in the bytes of `table` is four hints that were null and are sentences now (`toolbox.cli`:
+`args.missing-value`, `args.bad-value`; `toolbox.path`: `path.empty`, `path.too-long`); what the second changed is three more (`toolbox.fail`: `io.not-a-directory`, `io.permission-denied`, `io.read-failed`), seven
+in all, and `io.write-failed` has one in the package that `table` cannot deliver (its refusal is written when standard output is what failed, so it goes to standard error as `table: RULE: message`, which has no hint).
+This file states the new contract: the exact text of each, on every way to reach it; that nothing else of these refusals moved (status, code, message, repair, detail); that the sentences are the installed
+package's and the same as `toolbox_pin.HINTS`; that every refusal the fixtures of `test_rules.py` reach in json carries a hint; and, against the binary of the earlier pin (MAIN_TABLE), that the hints are the only
+difference in a wide set of calls.
 """
 
 import json
@@ -130,10 +132,10 @@ class Hints(unittest.TestCase):
 
 
 class EveryRule(unittest.TestCase):
-    # the refusals whose hint the package still writes empty (toolbox.fail's reading of an operating-system error): not changed by this adoption, listed so that a pin that fixes one fails here until the list says so
-    NO_HINT = {"io.not-a-directory", "io.permission-denied", "io.read-failed"}
+    # the refusals whose hint the package writes empty: none since cancho-tools#53 (toolbox.fail's reading of an operating-system error gave the last three a sentence); a pin that takes one away fails here
+    NO_HINT = set()
 
-    def test_every_rule_a_fixture_reaches_has_a_hint_but_these_three(self):
+    def test_every_rule_a_fixture_reaches_has_a_hint(self):
         s = Scratch()
         without, with_hint = set(), set()
         try:
@@ -153,8 +155,88 @@ class EveryRule(unittest.TestCase):
             s.cleanup()
         self.assertGreater(len(with_hint), 60)
         self.assertEqual(without, self.NO_HINT)
-        for rule in ("args.missing-value", "args.bad-value", "path.empty", "path.too-long"):
+        for rule in ("args.missing-value", "args.bad-value", "path.empty", "path.too-long", "io.not-a-directory", "io.permission-denied", "io.read-failed"):
             self.assertIn(rule, with_hint)
+
+
+class OperatingSystemRefusals(unittest.TestCase):
+    """cancho-tools#53: the refusals that carry an operating-system error (`toolbox.fail.io_error`) say a hint. The sentences are read from the installed package and compared with `toolbox_pin.HINTS` (which
+    `before` uses to put them back to null for the frozen goldens), then each rule `table` reaches is made, end to end, in the way `test_rules.py` makes it."""
+
+    NOT_A_DIRECTORY = "a name in the path that has to be a directory is a file; name a path whose directories are all directories"
+    PERMISSION_DENIED = "the user running the tool lacks permission for this path; check the permissions of the path and of the directories above it"
+    OS_REFUSED = "the operating system refused the operation (detail.errno is its code); check the path and the storage, then try again"
+
+    @staticmethod
+    def package_sentences():
+        """(default, errno 20, errno 13/1) from the installed toolbox.fail: the ladder of io_error."""
+        import glob
+        import re
+        texts = [t for t in (open(f).read() for f in sorted(glob.glob(str(BIN / "deps" / "*.cho")))) if "pub fn io_error[" in t]
+        assert len(texts) == 1, "the installed toolbox.fail"
+        body = texts[0][texts[0].index("pub fn io_error["):]
+        def sentence(pattern, what):
+            m = re.search(pattern, body)
+            assert m, "the installed toolbox.fail has no hint for %s" % what
+            return m.group(1)
+        default = sentence(r'var hint: &static \[byte\] = "([^"]*)";', "an operating-system error")
+        not_a_directory = sentence(r'errno == 20 \{\s*message = "[^"]*";\s*hint = "([^"]*)";', "errno 20")
+        permission = sentence(r'errno == 13 \|\| errno == 1 \{\s*message = "[^"]*";\s*hint = "([^"]*)";', "errno 13")
+        return default, not_a_directory, permission
+
+    def test_the_sentences_are_the_installed_packages_and_the_helpers(self):
+        default, not_a_directory, permission = self.package_sentences()
+        self.assertEqual((default, not_a_directory, permission), (self.OS_REFUSED, self.NOT_A_DIRECTORY, self.PERMISSION_DENIED))
+        self.assertEqual(T.HINTS["io.not-a-directory"], [not_a_directory])
+        self.assertEqual(T.HINTS["io.permission-denied"], [permission])
+        self.assertEqual(T.HINTS["io.read-failed"], [default])
+        self.assertEqual(T.HINTS["io.write-failed"], [default])
+
+    def reached(self, rule):
+        s = Scratch()
+        try:
+            for r, argv, preexec in test_rules.Rules().fixtures(s):
+                if r == rule:
+                    import procs as subprocess
+                    return subprocess.run([binary(), *[str(a) for a in argv]], capture_output=True, preexec_fn=preexec, input=b"")
+        finally:
+            try:
+                os.chmod(s.dir / "denied.csv", 0o644)
+            except OSError:
+                pass
+            s.cleanup()
+        self.fail("no fixture reaches %s" % rule)
+
+    def first(self, rule):
+        p = self.reached(rule)
+        doc = json.loads(p.stdout)
+        self.assertEqual(doc["errors"][0], doc["error"])
+        self.assertEqual(doc["error"]["rule"], rule)
+        return p.returncode, doc["error"]
+
+    def test_a_path_through_a_file(self):
+        status, e = self.first("io.not-a-directory")
+        self.assertEqual((status, e["code"], e["message"], e["hint"], e["repair"]), (3, "NOT_FOUND", "a component of the path is not a directory", self.NOT_A_DIRECTORY, None))
+        self.assertEqual(e["detail"], {"path": "ok.csv/x", "errno": 20})
+
+    def test_a_file_the_user_may_not_read(self):
+        status, e = self.first("io.permission-denied")
+        self.assertEqual((status, e["code"], e["message"], e["hint"], e["repair"]), (4, "PERMISSION_DENIED", "permission denied", self.PERMISSION_DENIED, None))
+        self.assertEqual(e["detail"], {"path": "denied.csv", "errno": 13})
+
+    @unittest.skipUnless(os.path.exists("/proc/self/mem"), "Linux")
+    def test_a_read_the_system_fails(self):
+        status, e = self.first("io.read-failed")
+        self.assertEqual((status, e["code"], e["message"], e["hint"], e["repair"]), (1, "GENERAL_ERROR", "the operating system failed the operation", self.OS_REFUSED, None))
+        self.assertEqual(e["detail"], {"path": "/proc/self/mem", "errno": 5})
+
+    @unittest.skipUnless(os.path.exists("/dev/full"), "Linux")
+    def test_io_write_failed_has_no_hint_to_carry(self):
+        # NOT REACHED with a hint: the refusal is for a write to standard output that failed, so it is written on standard error as text, which has no hint (docs/architecture.md, "The pin")
+        p = self.reached("io.write-failed")
+        self.assertEqual(p.returncode, 1)
+        self.assertEqual(p.stdout, b"")
+        self.assertEqual(p.stderr, b"table: io.write-failed: standard output took fewer bytes than were written\n")
 
 
 class OwnPathRefusals(unittest.TestCase):
@@ -256,7 +338,26 @@ class AgainstTheEarlierPin(unittest.TestCase):
                     if n != o:
                         changed += 1
                         self.assertEqual((n[0], T.before(n[1]), n[2]), o, argv[2:])
+            # the operating-system refusals (cancho-tools#53): an operand through a file, a file nobody may read, a read the system fails; the hint is the only difference
+            s.write("denied.csv", "a\n1\n")
+            os.chmod(s.dir / "denied.csv", 0)
+            for operand, preexec in (("f.csv/x", None), ("denied.csv", test_rules.as_nobody)):
+                for fmt in ([], ["--format", "csv"], ["--format", "jsonl"]):
+                    import procs as subprocess
+                    runs = []
+                    for b in (binary(), MAIN_TABLE):
+                        p = subprocess.run([b, "--root", str(s.dir), *fmt, operand], capture_output=True, preexec_fn=preexec, input=b"")
+                        runs.append((p.returncode, p.stdout.replace(b.encode(), b"{BIN}"), p.stderr.replace(b.encode(), b"{BIN}")))
+                    n, o = runs
+                    if n != o:
+                        changed += 1
+                        self.assertEqual((n[0], T.before(n[1]), n[2]), o, (operand, fmt))
+            os.chmod(s.dir / "denied.csv", 0o644)
         finally:
+            try:
+                os.chmod(s.dir / "denied.csv", 0o644)
+            except OSError:
+                pass
             s.cleanup()
         self.assertGreater(changed, 5)
 
