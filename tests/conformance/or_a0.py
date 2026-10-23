@@ -598,7 +598,7 @@ def blank_repair(text):
 
 
 def digest(text):
-    """The sha of an answer, read as the tool at the earlier pin wrote it (toolbox_pin.before: four hints that were null then and are sentences now)."""
+    """The sha of an answer, read as the tool at the earlier pin wrote it (toolbox_pin.before: seven hints that were null then and are sentences now)."""
     return hashlib.sha256(toolbox_pin.before(text).encode()).hexdigest()[:20]
 
 

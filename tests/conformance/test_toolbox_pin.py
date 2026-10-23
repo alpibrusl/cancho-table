@@ -119,7 +119,7 @@ class Hints(unittest.TestCase):
             self.assertNotIn(BAD.encode(), r.stderr)
 
     def test_the_hints_are_the_ones_of_the_helper_of_the_goldens(self):
-        # toolbox_pin.before(answer) is the answer of the earlier pin: the four hints null again, every other byte alone
+        # toolbox_pin.before(answer) is the answer of the earlier pin: the seven hints null again, every other byte alone
         for argv in (["--where", ""], ["f.csv", "--limit"], [""], ["a" * 5000]):
             r = self.go(*argv) if argv != ["f.csv", "--limit"] else self.go("--limit")
             self.assertNotEqual(T.before(r.stdout), r.stdout, argv)
@@ -338,20 +338,28 @@ class AgainstTheEarlierPin(unittest.TestCase):
                     if n != o:
                         changed += 1
                         self.assertEqual((n[0], T.before(n[1]), n[2]), o, argv[2:])
-            # the operating-system refusals (cancho-tools#53): an operand through a file, a file nobody may read, a read the system fails; the hint is the only difference
+            # the operating-system refusals (cancho-tools#53): an operand through a file, a file nobody may read, a read the system fails; the hint is the only difference.
+            # At this pin these are the only calls that differ from the pin before it (MAIN_TABLE is that pin's binary): each differs in json, and not in csv or jsonl (standard error, no hint)
             s.write("denied.csv", "a\n1\n")
             os.chmod(s.dir / "denied.csv", 0)
-            for operand, preexec in (("f.csv/x", None), ("denied.csv", test_rules.as_nobody)):
+            io_calls = [(["--root", str(s.dir), "f.csv/x"], None), (["--root", str(s.dir), "denied.csv"], test_rules.as_nobody)]
+            if os.path.exists("/proc/self/mem"):
+                io_calls.append((["/proc/self/mem"], None))
+            io_changed = 0
+            for operand, preexec in io_calls:
                 for fmt in ([], ["--format", "csv"], ["--format", "jsonl"]):
                     import procs as subprocess
                     runs = []
                     for b in (binary(), MAIN_TABLE):
-                        p = subprocess.run([b, "--root", str(s.dir), *fmt, operand], capture_output=True, preexec_fn=preexec, input=b"")
+                        argv = [b, *operand[:-1], *fmt, operand[-1]]
+                        p = subprocess.run(argv, capture_output=True, preexec_fn=preexec, input=b"")
                         runs.append((p.returncode, p.stdout.replace(b.encode(), b"{BIN}"), p.stderr.replace(b.encode(), b"{BIN}")))
                     n, o = runs
                     if n != o:
-                        changed += 1
+                        io_changed += 1
+                        self.assertEqual(fmt, [], "only the json answer carries a hint")
                         self.assertEqual((n[0], T.before(n[1]), n[2]), o, (operand, fmt))
+            self.assertEqual(io_changed, len(io_calls))
             os.chmod(s.dir / "denied.csv", 0o644)
         finally:
             try:
@@ -359,7 +367,7 @@ class AgainstTheEarlierPin(unittest.TestCase):
             except OSError:
                 pass
             s.cleanup()
-        self.assertGreater(changed, 5)
+        self.assertEqual(changed, 0, "the calls above differ from the pin before only in the operating-system refusals, which the calls of the loop after them cover")
 
 
 if __name__ == "__main__":
