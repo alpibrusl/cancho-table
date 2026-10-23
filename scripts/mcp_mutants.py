@@ -116,6 +116,8 @@ MUTANTS = [
     ("the operand is an array", "../scripts/mcp.py", "        if o[\"max\"] == 1:\n            s = {\"type\": \"string\"", "        if False:\n            s = {\"type\": \"string\""),
     ("the format does not choose the structure", "../scripts/mcp.py", "        selector = \"format\"", "        selector = \"\""),
     ("the tool is not read-only", "../scripts/mcp.py", "    read_only = not (effects & {", "    read_only = False and not (effects & {"),
+    ("the tool has no title", "../scripts/mcp.py", "\"annotations\": {\"title\": d[\"tool\"], \"readOnlyHint\"", "\"annotations\": {\"readOnlyHint\""),
+    ("the title is not the tool's name", "../scripts/mcp.py", "\"annotations\": {\"title\": d[\"tool\"],", "\"annotations\": {\"title\": d[\"summary\"],"),
     ("the default bound is one mebibyte", "../scripts/mcp.py", "DEFAULT_MAX_OUTPUT = 2097152 ", "DEFAULT_MAX_OUTPUT = 1048576 "),
     ("the gate allows any label", "../scripts/mcp.py", "        if text not in allowed:", "        if False:"),
     ("the gate forbids nothing", "../scripts/mcp.py", "        if label[\"name\"] in ceiling[\"forbid\"]:", "        if False:"),
