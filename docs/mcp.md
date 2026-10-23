@@ -89,7 +89,7 @@ for the authority.
 
 | `introspect` | input schema |
 |---|---|
-| `kind: bool` | `{"type": "boolean"}`, passed as `--name` when true (the tool has none today; the generator and the server handle it, and a test builds a scratch copy of the tool with one) |
+| `kind: bool` | `{"type": "boolean"}`, passed as `--name` when true (`table` has one, `--rows`, and the generator and the server handle it; a test also builds a scratch copy of the tool with another) |
 | `kind: nat` | `{"type": "integer", "minimum": 0}`, and `maximum` from the flag's row in `limits` (its ceiling) |
 | `kind: text`, `any`, `path` | `{"type": "string"}` (`text` with `minLength: 1`); a `path` flag with role `root` is the server's and is not offered |
 | `kind: choice:a/b` | `{"enum": ["a", "b"]}` |
@@ -343,7 +343,7 @@ one-off, and what it found is below):
   is therefore absent, correctly, and the number is only in the help.
 * **Two rules the code can say are not in the catalogue:** `io.write-failed` (standard output took fewer bytes than
   written; in the contract's `out` module, on standard error) and `args.unexpected-value` (a flag that takes no value was
-  given one; unreachable today, `table` has no boolean flag). `introspect`'s `rules` is the tool's list, not the
+  given one; reachable since `--rows`, a boolean flag: `table --rows=1 FILE` is `args.unexpected-value`, exit 2, checked on the build of `5a439ee`). `introspect`'s `rules` is the tool's list, not the
   package's, and `test_rules.py` asserts it equals what the fixtures reach, so the first is a rule with no fixture.
 * **`skill` has no operand section, no example, no hint:** FILE appears only in the usage line and in `--root`'s help;
   there is not one example invocation; each rule has its summary but not its hint or repair kind, which is what an
