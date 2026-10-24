@@ -17,7 +17,7 @@ An error has six members, all always present:
 | `code` | the class, one of `GENERAL_ERROR`, `INVALID_ARGS`, `NOT_FOUND`, `PERMISSION_DENIED`, `CONFLICT`, `PRECONDITION_FAILED`; it fixes the exit status (below) |
 | `rule` | the tag, `area.name`: **match on this**, it does not change |
 | `message` | a sentence for a person; may be reworded |
-| `hint` | what to do about it, in a sentence. Every rule a fixture of `tests/conformance/test_rules.py` reaches has one but `io.not-a-directory`, `io.permission-denied` and `io.read-failed`, where it is null: the package writes them without one (`docs/architecture.md`, "The pin"; what cancho-tools would change is in `docs/backlog.md`). A path in a query (`from`, `join`) or the file of `--join` that is empty or longer than 4096 bytes says the same hint as an operand does |
+| `hint` | what to do about it, in a sentence. Every rule a fixture of `tests/conformance/test_rules.py` reaches in JSON has one, the operating-system ones since the contract package was pinned at cancho-tools `d3fed0c` (`io.not-a-directory`, `io.permission-denied`, `io.read-failed`; `docs/architecture.md`, "The pin"). `io.write-failed` is the exception that is not a null: its refusal is written when standard output is what failed, so it is the line `table: io.write-failed: ...` on standard error, which has no hint. A path in a query (`from`, `join`) or the file of `--join` that is empty or longer than 4096 bytes says the same hint as an operand does |
 | `repair` | `null`, or one of the three kinds below |
 | `detail` | an object of the facts the rule names: the flag, the column, the row, the line, the limit, the value |
 
@@ -161,5 +161,16 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 <!-- /gen:rules -->
 
 The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other cancho-tools; the rest are `table`'s own.
+
+The `io.*` rules that carry an operating-system error say, in `hint`, what the contract package (cancho-tools `d3fed0c`) writes for the errno; `detail.errno` is the code, and the catalogue above carries no hint for a package rule:
+
+| rule | when | `hint` |
+|---|---|---|
+| `io.not-a-directory` | errno 20: a name in the path that has to be a directory is a file (`ok.csv/x`) | a name in the path that has to be a directory is a file; name a path whose directories are all directories |
+| `io.permission-denied` | errno 13 or 1: the user running the tool may not read the path | the user running the tool lacks permission for this path; check the permissions of the path and of the directories above it |
+| `io.read-failed` | any other errno of a read (`/proc/self/mem` is errno 5) | the operating system refused the operation (detail.errno is its code); check the path and the storage, then try again |
+| `io.write-failed` | the write of the answer to standard output failed or was short | none in `table`: the refusal is the line `table: io.write-failed: ...` on standard error (the package would give the `io.read-failed` sentence) |
+
+All carry `repair: null`.
 
 A rule can hold several cases told apart by `detail.reason`. Two that belong to the period of a group key (`--group ts:timestamp@day`, `docs/datetime.md` section 19): an `args.bad-value` with `detail.flags` `--group` and `detail.item`, `detail.unit` and `detail.reason` `week-not-built` (`@week` is not built; group by `@day`, `@month` or `@year`), `finer-than-type` (`@hour` or `@day` of a `:date`: its cells have no hour, and its key is the day) or `unknown-unit` (`@minute`, `@second`, `@DAY`, an empty word or a second `@`: the units are `hour`, `day`, `month` and `year`, in lower case), refused before a row is read and with no repair; and an `agg.bad-spec` for a period in `--agg` (`min:ts:timestamp@day`: a period belongs to a group key, and the hint gives the flag). `--report` takes `types` or `dates` (`args.bad-value` for any other word) and `--report dates` has the refusals of `--report types`, worded for dates. A key cell of a join whose pair is `:date`, `:timestamp` or `:datetime` is refused with the rules of the types (`value.not-date`, `value.not-timestamp`, ...) with `detail.context` `join`, `detail.input` (`probe` or `build`) and `detail.pair`, and no repair. A cell that is not of the type is refused in a period key as in a plain one (`value.*`, `context` `group`), and its repair keeps the unit when the type it offers has it.
