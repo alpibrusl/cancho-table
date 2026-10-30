@@ -238,6 +238,10 @@ h3.task { margin: 0 0 .15rem; font-size: 1.1rem; }
 
 footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(--muted); font-size: .9rem; text-align: center; }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+.toc { display: flex; flex-direction: column; gap: .7rem; align-items: center; margin-top: 1.2rem; }
+.tg { display: flex; flex-wrap: wrap; gap: .45rem; justify-content: center; align-items: center; }
+.tg a { text-decoration: none; border: 1px solid var(--line); border-radius: 99px; padding: .2rem .8rem; background: var(--surface); font-size: .88rem; }
+.tg a.tn { border: 0; background: none; font-weight: 700; color: var(--fg); padding-left: 0; }
 </style>
 </head>
 <body>
@@ -245,7 +249,7 @@ footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(-
 <header class="top"><div class="wrap">
   <a class="brand" href="#top"><img class="mark" src="assets/cancho-table-icon-64.png" alt="" width="28" height="28">table</a>
   <nav aria-label="Sections">
-    <a href="#how" class="opt">How it works</a><a href="#does" class="opt">What it does</a><a href="#results" class="opt">Results</a><a href="#try">Try it</a><a href="stories.html">Stories</a><a href="#docs" class="opt">Docs</a>
+    <a href="#how" class="opt">How it works</a><a href="#does" class="opt">What it does</a><a href="#results" class="opt">Results</a><a href="#try">Try it</a><a href="#stories">Stories</a><a href="#docs" class="opt">Docs</a>
     <a href="https://github.com/alpibrusl/cancho-table">GitHub</a>
   </nav>
 </div></header>
@@ -274,6 +278,7 @@ footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(-
 <section class="alt" id="why"><div class="wrap">
   <h2>Trust the answer, not the chat</h2>
   <p class="lead">Most data tools optimise for flexibility. <code>table</code> optimises for predictability.</p>
+  <p class="fine" style="margin-top:0">That is a promise about the arithmetic and the plan, not about the question. An exact sum of the wrong column, or a join on the wrong key, is exact and wrong. The <a href="#stories">stories below</a> ask real questions of real files: a refusal that tells you what to type, a join, a survey with duplicate answers, decimals that add up to the cent.</p>
   <div class="cards">
     <div class="card"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h14M5 15h14M10 4 8 20M16 4l-2 16"/></svg><h3>Exact numbers</h3><p>Write <code>:int</code>, <code>:dec(S)</code> or <code>:float</code> and the column is read as that number. A cell with more digits than the scale is refused, never rounded; a float sum is rounded once. <code>:date</code>, <code>:timestamp</code> and <code>:datetime</code> read days and times the same way: a real calendar, no zone guessed.</p></div>
     <div class="card"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5H6v14h3M15 5h3v14h-3"/><path d="M10 12h4"/></svg><h3>Bounded by rules</h3><p>Rows, line and record size, groups, distinct values and group state each have a limit with its own rule, listed by <code>table introspect</code>. Measured memory is in the <a href="#results">results</a>.</p></div>
@@ -295,6 +300,15 @@ footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(-
 <p class="fine sbs-cond"><strong>Conditions.</strong> Apple M4 Max, macOS-26.2-arm64-arm-64bit-Mach-O, 16 cores, load average 32.27 (1 minute) at the start and 34.75 at the end. DuckDB v1.5.6 (Variegata) 069cc9f9b5; <code>table</code> at <code>db42054</code> with <code>--agg sum:x:float</code>; Python 3.14.5. DuckDB aggregates: <code>sum(x)</code> on a DOUBLE column (plain double addition), <code>kahan_sum(x)</code> on a DOUBLE column, and <code>sum(x)</code> on DECIMAL(38,12), at <code>SET threads=N</code>. File: 2,000,000 rows, 54,304,130 bytes, seed 20261015, sha256 <code>8ea33d01087afbfcd912eb7bdd31fa37d464cce80fa688f24ed12f57d1fb9209</code>, written under a temporary directory by the script. 3 runs at each thread count; every value is as printed, no timings are reported. Re-run it: <code>python3 scripts/threads_vs_duckdb.py</code> (<a href="https://github.com/alpibrusl/cancho-table/blob/main/scripts/threads_vs_duckdb.py">the script</a>, <a href="assets/threads-vs-duckdb.json">every value as JSON</a>).</p>
 <p class="fine">The benchmarks page has this on every machine it was run on, and the questions where DuckDB is ahead: <a href="benchmarks.html#floats">benchmarks, floats</a>.</p>
 <!-- /gen:sbs -->
+</div></section>
+
+<section id="stories"><div class="wrap">
+<!--stories-->
+<h2>Stories, from a first look to real questions</h2>
+<p class="lead">15 end-to-end stories, in increasing complexity, from an order export to medicine, physics, a survey, marketing and finance, each asking a little more of the tool. Every number and figure comes from a real run, and the page is regenerated and checked whenever the tool changes.</p>
+<div class="toc"><div class="tg"><a class="tn" href="stories.html#g-basics">Foundations</a><a href="stories.html#s1">1 &middot; First look</a><a href="stories.html#s2">2 &middot; A question</a><a href="stories.html#s3">3 &middot; Decimals</a><a href="stories.html#s4">4 &middot; Refusals</a><a href="stories.html#s5">5 &middot; By month</a><a href="stories.html#s6">6 &middot; A join</a><a href="stories.html#s7">7 &middot; Cores</a></div><div class="tg"><a class="tn" href="stories.html#g-medicine">Medicine and biology</a><a href="stories.html#s8">8 &middot; Plate</a><a href="stories.html#s9">9 &middot; Lots</a></div><div class="tg"><a class="tn" href="stories.html#g-physics">Chemistry and physics</a><a href="stories.html#s10">10 &middot; Titration</a><a href="stories.html#s11">11 &middot; Logger</a></div><div class="tg"><a class="tn" href="stories.html#g-social">Social science</a><a href="stories.html#s12">12 &middot; Survey</a></div><div class="tg"><a class="tn" href="stories.html#g-marketing">Marketing</a><a href="stories.html#s13">13 &middot; Channels</a><a href="stories.html#s14">14 &middot; Holdout</a></div><div class="tg"><a class="tn" href="stories.html#g-finance">Finance</a><a href="stories.html#s15">15 &middot; Ledger</a></div></div>
+<p class="cta" style="margin-top:1.2rem"><a class="btn primary" href="stories.html">Read the stories</a></p>
+<!--/stories-->
 </div></section>
 
 <section id="how"><div class="wrap">
