@@ -1,0 +1,241 @@
+order_id,customer_id,date,item,qty,price,status,note
+1,15,2026-02-19,vase,2,44.90,paid,leave at door
+2,13,2026-02-11,bowl,1,9.75,paid,
+3,7,2026-06-18,teapot,3,32.00,paid,leave at door
+4,6,2026-02-05,bowl,1,8.78,paid,
+5,3,2026-04-21,cup set,3,27.45,paid,leave at door
+6,14,2026-02-11,cup set,1,27.45,paid,"gift, wrap please"
+7,2,2026-03-11,bowl,1,8.78,paid,
+8,11,2026-03-06,plate,1,13.09,paid,
+9,6,2026-05-12,plate,1,11.90,paid,
+10,13,2026-06-27,bowl,1,9.75,cancelled,
+11,15,2026-04-13,plate,1,11.90,paid,
+12,4,2026-02-07,cup set,1,27.45,paid,"gift, wrap please"
+13,2,2026-05-09,teapot,3,28.80,paid,
+14,2,2026-02-26,mug,2,13.05,paid,leave at door
+15,1,2026-04-12,bowl,2,9.75,paid,"gift, wrap please"
+16,10,2026-01-05,teapot,1,32.00,paid,"for ""Mama"""
+17,7,2026-06-06,plate,1,10.71,paid,
+18,7,2026-04-10,cup set,3,24.70,paid,
+19,5,2026-05-26,bowl,1,9.75,paid,
+20,13,2026-01-28,vase,1,40.41,paid,
+21,5,2026-03-07,plate,2,13.09,paid,"for ""Mama"""
+22,8,2026-01-16,bowl,1,10.73,paid,
+23,7,2026-02-13,teapot,1,28.80,paid,"gift, wrap please"
+24,7,2026-03-12,plate,1,13.09,paid,
+25,7,2026-05-23,mug,1,13.05,paid,"gift, wrap please"
+26,9,2026-04-02,cup set,1,27.45,paid,
+27,16,2026-03-13,mug,1,15.95,paid,
+28,8,2026-04-25,vase,1,44.90,cancelled,"for ""Mama"""
+29,5,2026-03-28,cup set,3,27.45,paid,
+30,12,2026-03-22,vase,2,49.39,paid,
+31,13,2026-05-08,teapot,1,32.00,paid,leave at door
+32,8,2026-01-28,cup set,1,30.20,cancelled,
+33,4,2026-03-08,vase,1,40.41,paid,
+34,2,2026-01-14,bowl,1,8.78,paid,"for ""Mama"""
+35,5,2026-04-26,mug,1,15.95,paid,"gift, wrap please"
+36,16,2026-06-27,cup set,1,30.20,cancelled,
+37,6,2026-03-02,mug,2,13.05,refunded,leave at door
+38,11,2026-02-14,vase,2,44.90,paid,
+39,15,2026-04-25,mug,2,15.95,paid,"gift, wrap please"
+40,8,2026-01-15,vase,1,49.39,paid,leave at door
+41,7,2026-04-08,plate,2,13.09,paid,"gift, wrap please"
+42,11,2026-04-27,bowl,3,10.73,paid,
+43,6,2026-03-27,cup set,1,27.45,refunded,
+44,4,2026-03-22,cup set,1,24.70,paid,
+45,3,2026-03-26,vase,1,40.41,refunded,"gift, wrap please"
+46,12,2026-04-05,plate,2,13.09,paid,
+47,10,2026-03-04,vase,1,44.90,paid,"for ""Mama"""
+48,6,2026-05-10,bowl,1,8.78,paid,"for ""Mama"""
+49,11,2026-06-03,vase,1,44.90,paid,
+50,5,2026-06-27,teapot,3,32.00,paid,"gift, wrap please"
+51,15,2026-04-17,plate,1,13.09,paid,leave at door
+52,13,2026-04-11,teapot,1,35.20,paid,
+53,7,2026-04-28,cup set,1,27.45,paid,
+54,4,2026-05-16,cup set,2,27.45,paid,leave at door
+55,3,2026-03-27,cup set,3,27.45,paid,
+56,2,2026-02-08,bowl,3,8.78,paid,"gift, wrap please"
+57,10,2026-03-13,vase,1,44.90,paid,
+58,13,2026-03-06,plate,3,13.09,paid,
+59,5,2026-06-24,teapot,1,35.20,refunded,
+60,8,2026-03-17,vase,2,44.90,paid,
+61,1,2026-02-07,cup set,3,27.45,paid,
+62,4,2026-04-08,bowl,1,9.75,paid,
+63,15,2026-02-09,cup set,1,30.20,paid,"gift, wrap please"
+64,11,2026-02-14,cup set,2,27.45,paid,
+65,15,2026-05-26,vase,1,40.41,paid,"gift, wrap please"
+66,3,2026-06-19,vase,3,40.41,cancelled,"gift, wrap please"
+67,1,2026-05-23,mug,1,13.05,paid,leave at door
+68,10,2026-01-15,teapot,1,28.80,paid,"for ""Mama"""
+69,8,2026-06-16,teapot,1,32.00,cancelled,"for ""Mama"""
+70,9,2026-03-09,bowl,1,9.75,paid,
+71,13,2026-04-22,teapot,1,28.80,paid,
+72,15,2026-03-26,cup set,2,30.20,paid,
+73,6,2026-03-09,vase,1,44.90,refunded,
+74,9,2026-01-22,vase,1,44.90,paid,
+75,15,2026-01-23,plate,1,10.71,paid,"for ""Mama"""
+76,2,2026-05-07,mug,1,14.50,paid,"gift, wrap please"
+77,3,2026-01-27,mug,1,13.05,paid,leave at door
+78,10,2026-03-27,bowl,1,9.75,paid,leave at door
+79,6,2026-04-08,teapot,3,32.00,paid,"for ""Mama"""
+80,1,2026-03-20,mug,3,14.50,paid,
+81,2,2026-05-19,teapot,1,32.00,paid,
+82,13,2026-03-03,cup set,3,24.70,paid,
+83,10,2026-05-13,cup set,3,27.45,paid,"gift, wrap please"
+84,2,2026-01-05,plate,1,11.90,paid,
+85,16,2026-06-12,plate,1,11.90,paid,
+86,11,2026-06-09,mug,1,15.95,paid,leave at door
+87,12,2026-02-03,plate,1,10.71,paid,"for ""Mama"""
+88,11,2026-05-05,cup set,1,27.45,refunded,"for ""Mama"""
+89,15,2026-06-02,cup set,1,30.20,paid,
+90,11,2026-03-12,vase,1,40.41,cancelled,"for ""Mama"""
+91,1,2026-05-07,cup set,3,30.20,cancelled,
+92,10,2026-04-01,bowl,1,8.78,paid,
+93,1,2026-05-24,mug,3,13.05,paid,"gift, wrap please"
+94,16,2026-03-24,teapot,3,32.00,paid,
+95,2,2026-01-07,plate,3,10.71,paid,"for ""Mama"""
+96,16,2026-05-06,cup set,1,27.45,paid,"for ""Mama"""
+97,8,2026-04-22,teapot,1,35.20,cancelled,
+98,6,2026-05-24,mug,1,15.95,paid,"gift, wrap please"
+99,5,2026-03-20,cup set,3,30.20,paid,
+100,1,2026-06-28,cup set,2,24.70,paid,"for ""Mama"""
+101,6,2026-05-22,vase,3,49.39,cancelled,
+102,15,2026-01-23,mug,2,15.95,paid,
+103,6,2026-05-14,cup set,1,27.45,paid,
+104,1,2026-01-02,plate,2,11.90,paid,leave at door
+105,10,2026-02-12,bowl,2,9.75,paid,
+106,13,2026-06-09,teapot,1,35.20,paid,
+107,13,2026-04-11,plate,1,10.71,paid,leave at door
+108,7,2026-06-10,plate,1,13.09,paid,leave at door
+109,9,2026-05-02,vase,1,44.90,paid,
+110,6,2026-05-16,plate,1,11.90,paid,"gift, wrap please"
+111,2,2026-01-12,mug,1,13.05,cancelled,leave at door
+112,2,2026-04-06,cup set,2,30.20,paid,leave at door
+113,10,2026-03-05,vase,2,49.39,paid,"for ""Mama"""
+114,5,2026-02-20,plate,3,10.71,paid,"for ""Mama"""
+115,13,2026-06-19,bowl,3,10.73,refunded,
+116,2,2026-06-03,teapot,2,35.20,cancelled,
+117,10,2026-03-05,cup set,2,30.20,cancelled,"gift, wrap please"
+118,1,2026-05-10,cup set,3,24.70,paid,
+119,2,2026-06-12,vase,3,44.90,refunded,
+120,8,2026-04-08,teapot,1,32.00,paid,
+121,4,2026-06-08,teapot,3,32.00,paid,"for ""Mama"""
+122,13,2026-04-06,teapot,1,35.20,paid,
+123,9,2026-01-13,bowl,1,9.75,paid,"for ""Mama"""
+124,15,2026-06-16,cup set,3,24.70,paid,
+125,16,2026-06-06,cup set,3,27.45,paid,
+126,6,2026-04-03,mug,2,14.50,paid,
+127,13,2026-06-23,vase,1,44.90,paid,"gift, wrap please"
+128,4,2026-06-12,teapot,1,32.00,paid,"for ""Mama"""
+129,3,2026-01-15,bowl,3,8.78,paid,
+130,1,2026-06-13,vase,1,44.90,paid,
+131,15,2026-04-23,vase,1,44.90,paid,
+132,15,2026-03-09,vase,1,44.90,paid,leave at door
+133,14,2026-03-01,mug,3,15.95,paid,leave at door
+134,14,2026-03-14,mug,1,14.50,paid,
+135,11,2026-01-14,bowl,3,9.75,paid,leave at door
+136,10,2026-04-23,teapot,2,28.80,cancelled,
+137,8,2026-06-19,plate,3,11.90,paid,
+138,13,2026-06-28,bowl,1,9.75,paid,
+139,11,2026-05-09,teapot,2,32.00,cancelled,"gift, wrap please"
+140,7,2026-03-21,plate,1,11.90,paid,
+141,12,2026-01-16,mug,1,13.05,paid,"for ""Mama"""
+142,5,2026-02-21,bowl,3,9.75,cancelled,
+143,7,2026-01-25,vase,1,40.41,paid,
+144,2,2026-04-01,plate,1,10.71,paid,
+145,4,2026-02-23,cup set,1,27.45,cancelled,"gift, wrap please"
+146,5,2026-02-12,mug,1,15.95,paid,"gift, wrap please"
+147,11,2026-06-14,teapot,3,28.80,paid,leave at door
+148,10,2026-01-19,vase,1,40.41,paid,
+149,1,2026-05-23,plate,1,10.71,cancelled,
+150,9,2026-03-23,plate,1,13.09,paid,
+151,12,2026-04-28,plate,1,13.09,paid,
+152,16,2026-03-11,teapot,1,32.00,paid,
+153,1,2026-01-06,teapot,1,35.20,paid,
+154,8,2026-04-19,plate,2,13.09,paid,
+155,7,2026-04-02,mug,1,15.95,paid,"for ""Mama"""
+156,5,2026-06-05,plate,3,11.90,paid,
+157,10,2026-02-11,cup set,3,27.45,paid,"gift, wrap please"
+158,14,2026-06-27,mug,1,13.05,paid,
+159,5,2026-01-01,plate,1,13.09,paid,
+160,16,2026-05-08,mug,1,14.50,paid,
+161,1,2026-04-21,bowl,3,9.75,refunded,
+162,5,2026-05-22,cup set,2,24.70,paid,
+163,7,2026-03-11,teapot,1,28.80,paid,
+164,14,2026-04-24,cup set,2,24.70,refunded,
+165,5,2026-04-28,cup set,1,27.45,paid,leave at door
+166,14,2026-06-19,bowl,1,9.75,paid,
+167,6,2026-01-27,teapot,1,28.80,paid,
+168,13,2026-06-21,bowl,1,9.75,paid,"gift, wrap please"
+169,12,2026-06-04,bowl,1,10.73,paid,
+170,11,2026-02-26,vase,1,44.90,paid,"gift, wrap please"
+171,16,2026-01-28,mug,3,13.05,refunded,
+172,16,2026-03-16,cup set,2,27.45,paid,"for ""Mama"""
+173,4,2026-05-23,cup set,1,27.45,paid,
+174,7,2026-01-24,vase,1,44.90,cancelled,
+175,6,2026-01-04,teapot,2,32.00,paid,leave at door
+176,3,2026-02-21,cup set,1,27.45,paid,"gift, wrap please"
+177,14,2026-01-11,mug,3,14.50,paid,
+178,12,2026-02-24,teapot,1,32.00,paid,
+179,4,2026-04-10,vase,3,40.41,paid,
+180,1,2026-05-05,cup set,1,24.70,paid,leave at door
+181,3,2026-05-01,teapot,1,28.80,paid,leave at door
+182,13,2026-03-14,plate,1,11.90,paid,"for ""Mama"""
+183,2,2026-06-15,bowl,1,9.75,paid,
+184,14,2026-06-14,teapot,1,28.80,paid,"for ""Mama"""
+185,5,2026-04-06,vase,3,49.39,paid,"gift, wrap please"
+186,3,2026-06-20,bowl,2,9.75,paid,"for ""Mama"""
+187,4,2026-05-28,plate,2,11.90,paid,
+188,7,2026-05-10,bowl,1,8.78,paid,
+189,7,2026-06-03,cup set,1,24.70,paid,leave at door
+190,16,2026-05-10,mug,1,14.50,paid,leave at door
+191,16,2026-02-09,teapot,3,35.20,paid,
+192,13,2026-06-01,cup set,2,27.45,paid,leave at door
+193,10,2026-03-14,teapot,2,35.20,paid,"gift, wrap please"
+194,2,2026-03-24,plate,2,11.90,paid,"for ""Mama"""
+195,2,2026-01-25,mug,1,14.50,paid,
+196,3,2026-06-13,cup set,1,27.45,paid,
+197,8,2026-02-26,cup set,1,30.20,paid,leave at door
+198,4,2026-02-25,teapot,1,35.20,paid,
+199,11,2026-04-15,teapot,2,35.20,paid,
+200,12,2026-02-06,cup set,1,27.45,paid,
+201,8,2026-03-17,vase,2,49.39,paid,"for ""Mama"""
+202,10,2026-03-15,vase,1,44.90,paid,"for ""Mama"""
+203,3,2026-04-28,vase,2,49.39,paid,
+204,6,2026-06-15,mug,1,13.05,paid,"gift, wrap please"
+205,5,2026-03-05,vase,2,49.39,paid,"gift, wrap please"
+206,8,2026-01-20,vase,1,44.90,paid,
+207,2,2026-05-10,mug,1,14.50,cancelled,"for ""Mama"""
+208,5,2026-06-21,plate,1,13.09,paid,leave at door
+209,13,2026-03-20,vase,2,44.90,paid,"gift, wrap please"
+210,9,2026-03-02,cup set,1,30.20,refunded,
+211,12,2026-02-14,cup set,1,27.45,paid,
+212,2,2026-05-04,teapot,3,32.00,paid,
+213,7,2026-02-16,vase,1,40.41,paid,"for ""Mama"""
+214,16,2026-03-26,teapot,2,32.00,paid,
+215,14,2026-03-12,vase,3,49.39,paid,
+216,3,2026-06-08,cup set,1,27.45,paid,
+217,15,2026-04-04,cup set,1,27.45,paid,
+218,3,2026-01-06,bowl,1,9.75,paid,"gift, wrap please"
+219,8,2026-01-12,mug,1,15.95,paid,"for ""Mama"""
+220,1,2026-06-12,vase,1,40.41,paid,leave at door
+221,10,2026-06-24,plate,1,13.09,paid,
+222,9,2026-05-11,cup set,2,27.45,paid,
+223,9,2026-05-22,plate,1,13.09,paid,"for ""Mama"""
+224,4,2026-05-21,bowl,3,8.78,paid,leave at door
+225,3,2026-06-12,bowl,1,9.75,paid,"for ""Mama"""
+226,9,2026-01-27,vase,3,44.90,paid,
+227,3,2026-02-17,cup set,3,24.70,paid,
+228,15,2026-03-05,mug,1,14.50,paid,leave at door
+229,9,2026-02-14,bowl,1,10.73,cancelled,
+230,2,2026-03-19,cup set,1,30.20,cancelled,
+231,2,2026-01-26,plate,1,11.90,paid,
+232,13,2026-06-05,cup set,3,27.45,paid,
+233,13,2026-03-04,plate,3,10.71,paid,"for ""Mama"""
+234,6,2026-03-12,cup set,1,27.45,paid,leave at door
+235,13,2026-03-15,vase,1,44.90,paid,leave at door
+236,11,2026-02-14,vase,3,40.41,paid,"gift, wrap please"
+237,8,2026-01-07,teapot,1,28.80,cancelled,"for ""Mama"""
+238,5,2026-01-16,mug,1,14.50,paid,
+239,7,2026-06-16,mug,1,13.05,paid,leave at door
+240,10,2026-06-11,plate,3,10.71,paid,

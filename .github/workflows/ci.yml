@@ -65,6 +65,11 @@ jobs:
         working-directory: table
         run: cancho build
 
+      # The stories page (docs/stories.html) is generated from real runs of the built program on the data of docs/stories/; the answers are the same bytes everywhere, so a stale page is a wrong page.
+      - name: The stories page is what the program prints
+        working-directory: table
+        run: python3 scripts/gen_stories.py --check
+
       # The six numeric modules (pow5, dec, flt, cellnum, facc, reader) are published as stores another repository pins (docs/numeric-package.md): a fresh publish with the pinned
       # compiler must give the committed .cancho-vcs byte for byte, and no published module may be the table's plan.
       - name: The committed numeric stores are what the sources publish
