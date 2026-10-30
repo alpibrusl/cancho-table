@@ -8,6 +8,8 @@
 
 **Status: early.** It works and is tested; what it cannot do yet is listed below.
 
+> **Kind:** cli · **Tier:** 1 · **Stage:** measured
+
 [![A terminal session of table, a video of about two minutes: a question answered exactly, a refusal with its repair, exact decimals, a plan, JSON lines, a join, a query, the same bytes on 1 and 4 cores, and a pipe. Click to watch it on the project page.](docs/assets/demo/table-demo-poster.png)](https://alpibrusl.github.io/cancho-table/#watch)
 
 *Watch it run (about two minutes, no sound):* [the video on the project page](https://alpibrusl.github.io/cancho-table/#watch), with a transcript. The typing is simulated; every command is run for real. The recording, the script that makes it and the golden transcript are in [scripts/demo](scripts/demo/README.md).
@@ -40,6 +42,16 @@ Most data tools optimise for flexibility. `table` optimises for predictability.
 * **Repair hints.** A refusal says how to fix the request: a `hint` in a sentence (every refusal in JSON has one; a failed write of standard output cannot, and is the line `table: io.write-failed: ...` on standard error) and a repair, which is a command to run, a choice of commands, or why there is none. [docs/refusals.md](docs/refusals.md)
 * **Capability introspection.** `table introspect` prints the flags, limits, rules and authority; `table skill` prints a guide for an agent. Both come from the tables the parser runs on.
 * **The same bytes on any number of cores.** `--threads N` gives the one-core answer, refusals included. [docs/parallel.md](docs/parallel.md)
+
+![One million additions of 0.1: the exact decimal and table's float sum give 100000.0, a loop of doubles gives 100000.00000133288.](docs/figures/million-tenths.svg)
+
+![The same grouping at 1, 2 and 4 threads: the same SHA-256 digest.](docs/figures/same-bytes.svg)
+
+## For humans, for agents
+
+| for humans | for agents |
+|---|---|
+| the [project page](https://alpibrusl.github.io/cancho-table/), the [stories](docs/stories.html) (by topic), the [benchmarks](docs/benchmarks.html) | `table skill`, `table introspect`, the [MCP server](docs/mcp.md), [AGENTS.md](AGENTS.md), [llms.txt](llms.txt) |
 
 ## Two-minute quick start
 
@@ -88,6 +100,10 @@ $ table --where "status = 200" --select Customer,bytes orders.csv
 <!-- /gen:qs -->
 
 ## What you can do now
+
+The sections below are the reference for each task (the commands and their output are printed by the binary when the README is generated). For whole cases with data, see the [stories](docs/stories.html): the ledger reconciled to the cent, the batch records of a tablet line, the holdout analysis table.
+
+![Lots out of specification by production line: line C has nine, line A four, line B one.](docs/figures/lots-out-of-spec.svg)
 
 Every example runs on the five-line file above, and the output is what the program prints.
 
@@ -428,6 +444,18 @@ $ table --where "bytes:int > 100" --select id orders.csv
 ## Built to be read by an agent
 
 `table introspect` and `table skill` are generated from the same tables the code parses its flags with, so they cannot disagree with the program. See [docs/refusals.md](docs/refusals.md) for how an agent should act on each kind of refusal, and [the project page](https://alpibrusl.github.io/cancho-table/#agent) for excerpts of both.
+
+## Compared with
+
+| | table | DuckDB | csvtk | where table is worse |
+|---|---|---|---|---|
+| answer | one JSON document, schema `table.v2`; refusals with a rule and a repair | a SQL result | text | no SQL beyond the small `--query` |
+| numbers | `:int`, `:dec(S)`, `:float` are explicit; a cell with more digits than the scale is refused | not compared here | not compared here | you must declare the types |
+| speed, 1,000,000-row CSV, 1 core | 0.046 s to filter, 0.057 s to count by a key (below) | 0.170 s and 0.132 s | 0.293 s and 0.181 s | **group-by with many distinct keys: 1.77 and 1.86 times DuckDB's unsorted time** (Linux, 6 threads) |
+| same answer on any number of cores | `--threads N` gives the one-core answer, refusals included | not claimed here | one core | |
+| authority | no network, no clock, nothing written to disk, derived by the compiler | not measured here | not measured here | |
+
+The speed row is the measurement of the next section, with its conditions: Apple-silicon Mac, best of five, every answer checked against a Python answer first, csvtk 0.38.0, DuckDB 1.5.6. Nothing else in the table is a claim about another tool.
 
 ## What it cannot do yet
 
