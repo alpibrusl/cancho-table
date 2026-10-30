@@ -171,6 +171,9 @@ def make_channels():
     return spend, sales
 
 
+BIG = {}  # data files above the 2,000-line limit of a committed file: regenerated on demand (`--data-out DIR`), never committed
+
+
 def shown(args, file):
     import re
     return "table " + " ".join(a if re.fullmatch(r"[\w.,:=/@+-]+", a) else "'%s'" % a for a in args) + " " + file
@@ -626,10 +629,10 @@ def build(binary):
              '<div class="read"><b>Reading it.</b> Dividing the second table by the first (the page does that arithmetic, on the printed numbers) gives the revenue credited per euro of spend: %s euros for email, %s for search, %s for display. Both files were recounted in Python&#8217;s <code>decimal</code> when this page was generated. One warning belongs next to the table: <em>credited</em> is not <em>caused</em>. Last click credits whoever the customer touched last, and a search ad is often the last thing touched by someone who had already decided; whether an ad earns money that would not have come anyway is the question of stories 12 to 14 of cancho-stats.</div>' % ("%.2f" % roas["email"], "%.2f" % roas["search"], "%.2f" % roas["display"])]))
         # 13 marketing: the holdout table ---------------------------------------------------------------------
         users, purchases = make_campaign()
-        files["campaign_users.csv"] = csv_of(["user_id", "arm"], users)
+        BIG["campaign_users.csv"] = csv_of(["user_id", "arm"], users)
         files["campaign_purchases.csv"] = csv_of(["purchase_id", "user_id", "date", "amount"], purchases)
-        for nm in ("campaign_users.csv", "campaign_purchases.csv"):
-            (folder / nm).write_text(files[nm])
+        (folder / "campaign_users.csv").write_text(BIG["campaign_users.csv"])
+        (folder / "campaign_purchases.csv").write_text(files["campaign_purchases.csv"])
         k1 = ["--group", "arm", "--agg", "count", "--sort", "arm"]
         k2 = ["--join", "campaign_users.csv", "--on", "user_id", "--where", "date:date >= 2026-09-01", "--group", "arm", "--agg", "count,distinct:user_id,sum:amount:dec(2)", "--sort", "arm"]
         h1_, r1_ = R.csv(k1, "campaign_users.csv")
@@ -678,7 +681,7 @@ def page(sections):
   <h1>Thirteen stories, from an order export to the lab.</h1>
   <p class="sub">Luc&#237;a sells ceramics online and asks her order file one question after another; each asks a little more of <code>table</code> than the last. Then four short ones from the sciences and two from marketing. Every number and every figure is drawn from a real run of <code>table</code> on the data you can download. The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
   <div class="toc">%s</div>
-  <p class="data">Data: <a href="stories/orders.csv">orders.csv</a>, <a href="stories/customers.csv">customers.csv</a>, <a href="stories/plate.csv">plate.csv</a>, <a href="stories/titration.csv">titration.csv</a>, <a href="stories/sensor.jsonl">sensor.jsonl</a>, <a href="stories/spend.csv">spend.csv</a>, <a href="stories/sales.csv">sales.csv</a>, <a href="stories/campaign_users.csv">campaign_users.csv</a>, <a href="stories/campaign_purchases.csv">campaign_purchases.csv</a>, <a href="stories/survey.csv">survey.csv</a>. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
+  <p class="data">Data: <a href="stories/orders.csv">orders.csv</a>, <a href="stories/customers.csv">customers.csv</a>, <a href="stories/plate.csv">plate.csv</a>, <a href="stories/titration.csv">titration.csv</a>, <a href="stories/sensor.jsonl">sensor.jsonl</a>, <a href="stories/spend.csv">spend.csv</a>, <a href="stories/sales.csv">sales.csv</a>, campaign_users.csv (8000 users, not committed: <code>python3 scripts/gen_stories.py --data-out DIR</code> writes it), <a href="stories/campaign_purchases.csv">campaign_purchases.csv</a>, <a href="stories/survey.csv">survey.csv</a>. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
 </div>
 %s
 <footer><div class="wrap">table &middot; EUPL-1.2 &middot; the data are invented; the runs, the digits and the figures are real &middot; <a href=".">overview</a></div></footer>
@@ -691,8 +694,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bin", default=str(ROOT / "build" / "table"))
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--data-out", help="also write the data files too large to commit into this directory")
     a = ap.parse_args()
     sections, files = build(a.bin)
+    if a.data_out:
+        pathlib.Path(a.data_out).mkdir(parents=True, exist_ok=True)
+        for name, text in BIG.items():
+            (pathlib.Path(a.data_out) / name).write_text(text)
     out = {DOCS / "stories.html": page(sections)}
     for name, text in files.items():
         out[DOCS / "stories" / name] = text
