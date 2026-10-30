@@ -20,7 +20,7 @@ from decimal import Decimal
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from storylib import W, STORY_CSS, arrange, base_css, claim, pretty, num, esc, axis, svg, wrap_cmd, term, story, fig_hashes  # noqa: E402
+from storylib import W, STORY_CSS, arrange, fill_stories, base_css, claim, pretty, num, esc, axis, svg, wrap_cmd, term, story, fig_hashes  # noqa: E402
 
 DOCS = ROOT / "docs"
 
@@ -796,6 +796,7 @@ def main():
         for name, text in BIG.items():
             (pathlib.Path(a.data_out) / name).write_text(text)
     out = {DOCS / "stories.html": page(sections)}
+    out[DOCS / "index.html"] = fill_stories((DOCS / "index.html").read_text(), out[DOCS / "stories.html"], "an order export")
     for name, text in files.items():
         out[DOCS / "stories" / name] = text
     if a.check:

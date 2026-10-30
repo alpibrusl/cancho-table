@@ -108,6 +108,27 @@ def arrange(sections, groups):
     return "\n".join(body), submenu, '<div class="toc">%s</div>' % "".join(toc)
 
 
+def stories_block(page_html, start="a bakery"):
+    """the home page's section on the stories: the page's own grouped table of contents, so the two cannot differ"""
+    toc = re.search(r'<div class="toc">(.*?)</div>\n', page_html, re.S)
+    groups = re.findall(r'<div class="tg"><a class="tn" href="#([^"]+)">([^<]+)</a>(.*?)</div>', page_html, re.S)
+    rows = []
+    for slug, name, chips in groups:
+        links = re.findall(r'<a href="#(s\d+)">([^<]+)</a>', chips)
+        rows.append('<div class="tg"><a class="tn" href="stories.html#%s">%s</a>%s</div>' % (slug, name, "".join('<a href="stories.html#%s">%s</a>' % (i, label) for i, label in links)))
+    n = len(re.findall(r'<section class="[^"]*story" id="s\d+"', page_html))
+    return ('<h2>Stories, from a first look to real questions</h2>\n'
+            '<p class="lead">%d end-to-end stories, in increasing complexity, from %s to medicine, physics, a survey, marketing and finance, each asking a little more of the tool. Every number and figure comes from a real run, and the page is regenerated and checked whenever the tool changes.</p>\n'
+            '<div class="toc">%s</div>\n<p class="cta" style="margin-top:1.2rem"><a class="btn primary" href="stories.html">Read the stories</a></p>' % (n, start, "".join(rows)))
+
+
+def fill_stories(home_html, page_html, start="a bakery"):
+    """the home page with the region between <!--stories--> and <!--/stories--> rewritten from the stories page"""
+    if "<!--stories-->" not in home_html:
+        raise SystemExit("storylib.fill_stories: the home page has no <!--stories--> region")
+    return re.sub(r"<!--stories-->.*?<!--/stories-->", lambda m: "<!--stories-->\n" + stories_block(page_html, start) + "\n<!--/stories-->", home_html, flags=re.S)
+
+
 def fig_hashes(rows):
     body = []
     for k, (label, h) in enumerate(rows):
