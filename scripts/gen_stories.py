@@ -20,7 +20,7 @@ from decimal import Decimal
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from storylib import W, STORY_CSS, base_css, claim, pretty, num, esc, axis, svg, wrap_cmd, term, story, fig_hashes  # noqa: E402
+from storylib import W, STORY_CSS, arrange, base_css, claim, pretty, num, esc, axis, svg, wrap_cmd, term, story, fig_hashes  # noqa: E402
 
 DOCS = ROOT / "docs"
 
@@ -169,6 +169,28 @@ def make_channels():
         c = r.choices(list(weights), list(weights.values()))[0]
         sales.append((k, c, "%.2f" % max(5, r.gauss(mean[c], 12))))
     return spend, sales
+
+
+def make_lots():
+    """300 production lots of a tablet over three lines and twelve weeks: the assay (percent of the labelled content, two decimals; specification 98.00 to 102.00) and the weight of a tablet in milligrams; line C drifts low"""
+    r = random.Random(77)
+    rows = []
+    for k in range(1, 301):
+        line = "ABC"[(k - 1) % 3]
+        wk = 1 + (k - 1) // 25
+        mean = {"A": 100.0, "B": 99.6, "C": 100.0 - 0.12 * wk}[line]
+        rows.append((k, line, "2026-%02d-%02d" % (1 + (wk - 1) // 4, 1 + ((wk - 1) % 4) * 7 + (k % 7)), "%.2f" % r.gauss(mean, 0.9), "%.1f" % r.gauss(250, 1.5)))
+    return rows
+
+
+def make_ledger():
+    """420 trades of a small fund in three months: desk, side, notional and fee in euros and cents"""
+    r = random.Random(88)
+    rows = []
+    for k in range(1, 421):
+        notional = round(r.lognormvariate(10.5, 0.8), 2)
+        rows.append((k, "2026-%02d-%02d" % (1 + (k - 1) // 140, 1 + r.randint(0, 27)), r.choice(["rates", "equity", "credit", "fx"]), r.choice(["buy", "sell"]), "%.2f" % notional, "%.2f" % round(notional * 0.0004 + 0.5, 2)))
+    return rows
 
 
 BIG = {}  # data files above the 2,000-line limit of a committed file: regenerated on demand (`--data-out DIR`), never committed
@@ -626,7 +648,7 @@ def build(binary):
              term(shown(m1 + ["--format", "csv"], "spend.csv"), "\n".join(",".join(r) for r in [h_s] + r_s)),
              term(shown(m2 + ["--format", "csv"], "sales.csv"), "\n".join(",".join(r) for r in [h_r] + r_r)),
              fig_hbars([(r[0], float(Decimal(r[2]) / Decimal(sp[1]))) for r, sp in zip(r_r, r_s)], " per euro", fmt="%.2f", label_w=70),
-             '<div class="read"><b>Reading it.</b> Dividing the second table by the first (the page does that arithmetic, on the printed numbers) gives the revenue credited per euro of spend: %s euros for email, %s for search, %s for display. Both files were recounted in Python&#8217;s <code>decimal</code> when this page was generated. One warning belongs next to the table: <em>credited</em> is not <em>caused</em>. Last click credits whoever the customer touched last, and a search ad is often the last thing touched by someone who had already decided; whether an ad earns money that would not have come anyway is the question of stories 12 to 14 of cancho-stats.</div>' % ("%.2f" % roas["email"], "%.2f" % roas["search"], "%.2f" % roas["display"])]))
+             '<div class="read"><b>Reading it.</b> Dividing the second table by the first (the page does that arithmetic, on the printed numbers) gives the revenue credited per euro of spend: %s euros for email, %s for search, %s for display. Both files were recounted in Python&#8217;s <code>decimal</code> when this page was generated. One warning belongs next to the table: <em>credited</em> is not <em>caused</em>. Last click credits whoever the customer touched last, and a search ad is often the last thing touched by someone who had already decided; whether an ad earns money that would not have come anyway is the question of the marketing stories of cancho-stats.</div>' % ("%.2f" % roas["email"], "%.2f" % roas["search"], "%.2f" % roas["display"])]))
         # 13 marketing: the holdout table ---------------------------------------------------------------------
         users, purchases = make_campaign()
         BIG["campaign_users.csv"] = csv_of(["user_id", "arm"], users)
@@ -653,22 +675,94 @@ def build(binary):
              term(shown(k1 + ["--format", "csv"], "campaign_users.csv"), "\n".join(",".join(r) for r in [h1_] + r1_)),
              term(shown(k2 + ["--format", "csv"], "campaign_purchases.csv"), "\n".join(",".join(r) for r in [h2_] + r2_)),
              fig_hbars([(r[0], float(r[2])) for r in r2_], " buyers", fmt="%.0f", label_w=70),
-             '<div class="read"><b>Reading it.</b> %s buyers among 4000 users shown the ad, %s among 4000 held out; revenue %s and %s euros. %d purchases in the file were made in August, before the start, and the <code>--where</code> left them out; counting them would have made both arms look better and the campaign look no different. These four numbers per arm are what the significance question needs: <code>stats ci prop</code> on the buyer counts, and <code>stats ci diff</code> or <code>resample perm</code> on the per-user revenue (see cancho-stats, story 12, for exactly this analysis). Producing a per-user file for it is one more <code>--group user_id</code>.</div>' % (r2_[0][2], r2_[1][2], r2_[0][3], r2_[1][3], pre)]))
+             '<div class="read"><b>Reading it.</b> %s buyers among 4000 users shown the ad, %s among 4000 held out; revenue %s and %s euros. %d purchases in the file were made in August, before the start, and the <code>--where</code> left them out; counting them would have made both arms look better and the campaign look no different. These four numbers per arm are what the significance question needs: <code>stats ci prop</code> on the buyer counts, and <code>stats ci diff</code> or <code>resample perm</code> on the per-user revenue (see the holdout story of cancho-stats for exactly this analysis). Producing a per-user file for it is one more <code>--group user_id</code>.</div>' % (r2_[0][2], r2_[1][2], r2_[0][3], r2_[1][3], pre)]))
+        # 14 medicine: batch records ----------------------------------------------------------------------------
+        lots = make_lots()
+        files["lots.csv"] = csv_of(["lot", "line", "date", "assay_pct", "weight_mg"], lots)
+        (folder / "lots.csv").write_text(files["lots.csv"])
+        p1 = ["--group", "line", "--agg", "count,min:assay_pct:dec(2),max:assay_pct:dec(2),mean:assay_pct:dec(2)@3", "--sort", "line"]
+        p2 = ["--where", "assay_pct:dec(2) < 98.00 or assay_pct:dec(2) > 102.00", "--group", "line", "--agg", "count", "--sort", "line"]
+        p3 = ["--where", "assay_pct:dec(2) < 98.00", "--select", "lot,line,date,assay_pct", "--order-by", "date", "--limit", "5"]
+        hp1, rp1 = R.csv(p1, "lots.csv")
+        hp2, rp2 = R.csv(p2, "lots.csv")
+        hp3, rp3 = R.csv(p3, "lots.csv")
+        by_line = {}
+        for _, line, _, a, _ in lots:
+            by_line.setdefault(line, []).append(Decimal(a))
+        claim({r[0]: (int(r[1]), Decimal(r[2]), Decimal(r[3])) for r in rp1} == {k: (len(v), min(v), max(v)) for k, v in by_line.items()}, "story 14: count, minimum and maximum per line equal a recount")
+        claim({r[0]: Decimal(r[4]) for r in rp1} == {k: (sum(v) / len(v)).quantize(Decimal("0.001"), rounding="ROUND_HALF_EVEN") for k, v in by_line.items()}, "story 14: the means are the exact means, rounded once, half to even")
+        oos = {r[0]: int(r[1]) for r in rp2}
+        exp_oos = {k: sum(1 for x in v if x < Decimal("98.00") or x > Decimal("102.00")) for k, v in by_line.items()}
+        claim(oos == {k: v for k, v in exp_oos.items() if v} and oos.get("C", 0) > oos.get("A", 0) + oos.get("B", 0), "story 14: out-of-specification lots by line equal a recount, and line C has more than the other two together")
+        S.append(story(14, "Which lots are out of specification?", "medicine: batch records and exact decimals", ["--where dec(2)", "min", "max", "mean:dec(2)@3"],
+            "&#8220;Three lines, twelve weeks, 300 lots. Which lines drift, and which lots do I have to explain to the regulator?&#8221; &#8212; a quality-control pharmacist",
+            ["<p>A batch record is a table of decimals with a declared precision (the assay to two places) and a specification (98.00 to 102.00). A comparison on <code>assay_pct:dec(2)</code> is a comparison of exact decimals, so a lot at 98.00 is in specification and one at 97.99 is not, with no rounding in between. First the lines side by side: how many lots, the smallest and the largest assay, and the mean, exact and rounded once to three places.</p>",
+             term(shown(p1 + ["--format", "csv"], "lots.csv"), "\n".join(",".join(r) for r in [hp1] + rp1)),
+             "<p>Then the count of lots outside 98.00 to 102.00, by line, and the first of the low ones, by date:</p>",
+             term(shown(p2 + ["--format", "csv"], "lots.csv"), "\n".join(",".join(r) for r in [hp2] + rp2)),
+             term(shown(p3 + ["--format", "csv"], "lots.csv"), "\n".join(",".join(r) for r in [hp3] + rp3)),
+             fig_hbars([(l, float(oos.get(l, 0))) for l in "ABC"], " lots", fmt="%.0f", label_w=70),
+             '<div class="read"><b>Reading it.</b> Line C has %d lots out of specification, against %d on A and %d on B, and its minimum is %s: its mean assay (%s) is the lowest of the three. Line C is the line to investigate, and the list of the low lots, with their dates, is where the investigation starts. All the sums and extremes are exact decimals, recounted in Python&#8217;s <code>decimal</code> when this page was generated.</div>' % (oos.get("C", 0), oos.get("A", 0), oos.get("B", 0), [r for r in rp1 if r[0] == "C"][0][2], [r for r in rp1 if r[0] == "C"][0][4])]))
+        # 15 finance: a ledger to the cent -----------------------------------------------------------------------
+        ledger = make_ledger()
+        files["ledger.csv"] = csv_of(["trade_id", "date", "desk", "side", "notional", "fee"], ledger)
+        files["desks.csv"] = csv_of(["desk", "region"], [("rates", "London"), ("equity", "New York"), ("credit", "London"), ("fx", "Singapore")])
+        for nm in ("ledger.csv", "desks.csv"):
+            (folder / nm).write_text(files[nm])
+        l1 = ["--group", "date:date@month,side", "--agg", "count,sum:notional:dec(2),sum:fee:dec(2)"]
+        l2 = ["--join", "desks.csv", "--on", "desk", "--group", "region", "--agg", "count,sum:notional:dec(2),sum:fee:dec(2)", "--sort", "region"]
+        hl1, rl1 = R.csv(l1, "ledger.csv")
+        hl2, rl2 = R.csv(l2, "ledger.csv")
+        exp_m, exp_r = {}, {}
+        reg = {"rates": "London", "equity": "New York", "credit": "London", "fx": "Singapore"}
+        for _, d, desk, side, n, f in ledger:
+            k = (d[:7], side)
+            c, sn, sf = exp_m.get(k, (0, Decimal(0), Decimal(0)))
+            exp_m[k] = (c + 1, sn + Decimal(n), sf + Decimal(f))
+            c, sn, sf = exp_r.get(reg[desk], (0, Decimal(0), Decimal(0)))
+            exp_r[reg[desk]] = (c + 1, sn + Decimal(n), sf + Decimal(f))
+        claim({(r[0][:7], r[1]): (int(r[2]), Decimal(r[3]), Decimal(r[4])) for r in rl1} == exp_m, "story 15: the monthly totals equal a recount in decimals")
+        claim({r[0]: (int(r[1]), Decimal(r[2]), Decimal(r[3])) for r in rl2} == exp_r, "story 15: the totals by region equal a recount in decimals")
+        tot_m = sum(Decimal(r[3]) for r in rl1)
+        tot_r = sum(Decimal(r[2]) for r in rl2)
+        fee_m = sum(Decimal(r[4]) for r in rl1)
+        fee_r = sum(Decimal(r[3]) for r in rl2)
+        claim(tot_m == tot_r == sum(Decimal(x[4]) for x in ledger) and fee_m == fee_r, "story 15: the two groupings add up to the same total and the same fees")
+        S.append(story(15, "Month end, to the cent", "finance: totals that must add up", ["--group date:date@month", "--join", "sum:COL:dec(2)"],
+            "&#8220;The ledger has to reconcile: by month and side for the accountants, by region for risk, and both have to add up to the same number.&#8221; &#8212; a fund controller, on the last day of March",
+            ["<p>Money is the case <code>:dec(2)</code> was made for. Each sum below is the exact sum of cents, and a notional with a third decimal would be refused, never rounded. First by month and side (<code>date:date@month</code> turns each date into its month), then, joining the desk table, by region:</p>",
+             term(shown(l1 + ["--format", "csv"], "ledger.csv"), "\n".join(",".join(r) for r in [hl1] + rl1)),
+             term(shown(l2 + ["--format", "csv"], "ledger.csv"), "\n".join(",".join(r) for r in [hl2] + rl2)),
+             fig_hbars([(r[0], float(r[2])) for r in rl2], " euros", fmt="%.2f", label_w=100),
+             '<div class="read"><b>Reading it.</b> The six monthly totals add up to %s euros of notional and %s of fees; the three regional totals add up to the same %s and %s, to the cent: not close, equal, because every figure is a sum of cents and not a sum of binary fractions. The page recounts both groupings in Python&#8217;s <code>decimal</code> when it is generated. A reconciliation that differs by a cent is a finding about the data; with exact sums it can only be that.</div>' % (tot_m, fee_m, tot_r, fee_r)]))
     return S, files
+
+GROUPS = [
+    ("Foundations", "g-basics", "An online shop's order file: what is in it, one exact question, why decimals, a refusal that tells you what to type, dates, a join, and the same bytes on any number of cores.",
+     [(1, "First look"), (2, "A question"), (3, "Decimals"), (4, "Refusals"), (5, "By month"), (6, "A join"), (7, "Cores")]),
+    ("Medicine and biology", "g-medicine", "A growth plate and the batch records of a tablet line: replicates, declared precision, specifications.",
+     [(8, "Plate"), (14, "Lots")]),
+    ("Chemistry and physics", "g-physics", "A titration and a day of temperature readings.",
+     [(9, "Titration"), (10, "Logger")]),
+    ("Social science", "g-social", "Counts and duplicates in a survey.",
+     [(11, "Survey")]),
+    ("Marketing", "g-marketing", "Spend and revenue by channel in exact money, and the table behind a holdout analysis.",
+     [(12, "Channels"), (13, "Holdout")]),
+    ("Finance", "g-finance", "A ledger that has to add up to the cent.",
+     [(15, "Ledger")]),
+]
 
 
 def page(sections):
     css = base_css("#0b7a75", "#4fd1c5", "#ffffff", "#06201e") + STORY_CSS + EXTRA_CSS
-    nav = " ".join('<a class="opt" href="#s%d">%d</a>' % (i, i) for i in range(1, 14))
-    names = ("First look", "A question", "Decimals", "Refusals", "By month", "A join", "Cores", "Plate", "Titration", "Logger", "Survey", "Channels", "Holdout")
-    toc = "".join('<a href="#s%d">%d &middot; %s</a>' % (i, i, esc(nm)) for i, nm in enumerate(names, 1))
+    body, nav, toc = arrange(sections, GROUPS)
     return """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>table: thirteen stories, from an order export to the lab</title>
-<meta name="description" content="Thirteen end-to-end examples of the table command, in increasing complexity: an online shop, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
+<title>table: fifteen stories, from an order export to the lab</title>
+<meta name="description" content="Fifteen end-to-end examples of the table command, in increasing complexity: an online shop, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
 <meta name="color-scheme" content="light dark">
 <style>%s</style>
 </head>
@@ -678,8 +772,8 @@ def page(sections):
   <nav>%s<a href=".">Overview</a><a href="https://github.com/alpibrusl/cancho-table">GitHub</a></nav>
 </div></header>
 <div class="wrap hero small">
-  <h1>Thirteen stories, from an order export to the lab.</h1>
-  <p class="sub">Luc&#237;a sells ceramics online and asks her order file one question after another; each asks a little more of <code>table</code> than the last. Then four short ones from the sciences and two from marketing. Every number and every figure is drawn from a real run of <code>table</code> on the data you can download. The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
+  <h1>Fifteen stories, from an order export to the lab.</h1>
+  <p class="sub">Luc&#237;a sells ceramics online and asks her order file one question after another; each asks a little more of <code>table</code> than the last. Then the same tool on other fields, grouped by topic (use the <b>Stories</b> menu): medicine and biology, chemistry and physics, a social survey, marketing and finance. Every number and every figure is drawn from a real run of <code>table</code> on the data you can download. The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
   <div class="toc">%s</div>
   <p class="data">Data: <a href="stories/orders.csv">orders.csv</a>, <a href="stories/customers.csv">customers.csv</a>, <a href="stories/plate.csv">plate.csv</a>, <a href="stories/titration.csv">titration.csv</a>, <a href="stories/sensor.jsonl">sensor.jsonl</a>, <a href="stories/spend.csv">spend.csv</a>, <a href="stories/sales.csv">sales.csv</a>, campaign_users.csv (8000 users, not committed: <code>python3 scripts/gen_stories.py --data-out DIR</code> writes it), <a href="stories/campaign_purchases.csv">campaign_purchases.csv</a>, <a href="stories/survey.csv">survey.csv</a>. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
 </div>
@@ -687,7 +781,7 @@ def page(sections):
 <footer><div class="wrap">table &middot; EUPL-1.2 &middot; the data are invented; the runs, the digits and the figures are real &middot; <a href=".">overview</a></div></footer>
 </body>
 </html>
-""" % (css, nav, toc, "\n".join(sections))
+""" % (css, nav, toc, body)
 
 
 def main():

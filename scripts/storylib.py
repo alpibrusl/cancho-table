@@ -75,6 +75,39 @@ def story(n, title, level, verbs, said, parts):
     return '<section class="%s story" id="s%d"><div class="wrap"><h2>%d &middot; %s</h2><div class="badge">%s</div><p class="said">%s</p>%s</div></section>' % ("alt" if n % 2 == 0 else "", n, n, esc(title), badges, said, body)
 
 
+def arrange(sections, groups):
+    """Orders the stories by topic and numbers them again in that order.
+
+    `sections`: the html of every story (and of the old part dividers, which are dropped), as `story` made it, each numbered by its own stable key.
+    `groups`: [(name, slug, blurb, [(key, short name), ...]), ...] in the order they appear on the page.
+    Returns (html of the page body, html of the header submenu, html of the table of contents). A key not in any group is a mistake and stops the build."""
+    by_key = {}
+    for sec in sections:
+        m = re.search(r'<section class="[^"]*story" id="s(\d+)"', sec)
+        if m:
+            by_key[int(m.group(1))] = sec
+    used = [k for _, _, _, items in groups for k, _ in items]
+    if sorted(used) != sorted(by_key) or len(set(used)) != len(used):
+        raise SystemExit("storylib.arrange: the groups name stories %s and the page has %s" % (sorted(used), sorted(by_key)))
+    body, menu, toc = [], [], []
+    n = 0
+    for name, slug, blurb, items in groups:
+        body.append('<section class="grp" id="%s"><div class="wrap"><h2>%s</h2><p class="lead">%s</p></div></section>' % (slug, esc(name), blurb))
+        menu.append('<a class="gh" href="#%s">%s</a>' % (slug, esc(name)))
+        chips = []
+        for key, short in items:
+            n += 1
+            sec = by_key[key]
+            sec = sec.replace('id="s%d"' % key, 'id="s%d"' % n, 1).replace("<h2>%d &middot; " % key, "<h2>%d &middot; " % n, 1)
+            sec = re.sub(r'^<section class="(alt )?story"', '<section class="%sstory"' % ("alt " if n % 2 == 0 else ""), sec, count=1)
+            body.append(sec)
+            menu.append('<a href="#s%d">%d &middot; %s</a>' % (n, n, esc(short)))
+            chips.append('<a href="#s%d">%d &middot; %s</a>' % (n, n, esc(short)))
+        toc.append('<div class="tg"><a class="tn" href="#%s">%s</a>%s</div>' % (slug, esc(name), "".join(chips)))
+    submenu = '<details class="dd"><summary>Stories</summary><div class="menu">%s</div></details>' % "".join(menu)
+    return "\n".join(body), submenu, '<div class="toc">%s</div>' % "".join(toc)
+
+
 def fig_hashes(rows):
     body = []
     for k, (label, h) in enumerate(rows):
@@ -130,8 +163,23 @@ figure.fig svg { width: 100%; height: auto; display: block; background: var(--su
 .fig .lk { fill: #fff; font: 600 12px var(--font); }
 .part { padding: 2.5rem 0 .5rem; text-align: center; border-top: 1px solid var(--line); }
 .part h2 { text-align: center; }
-.toc { display: flex; flex-wrap: wrap; gap: .6rem; justify-content: center; margin-top: 1.2rem; }
-.toc a { text-decoration: none; border: 1px solid var(--line); border-radius: 99px; padding: .25rem .9rem; background: var(--surface); font-size: .9rem; }
+.toc { display: flex; flex-direction: column; gap: .7rem; align-items: center; margin-top: 1.2rem; }
+.tg { display: flex; flex-wrap: wrap; gap: .45rem; justify-content: center; align-items: center; }
+.tg a { text-decoration: none; border: 1px solid var(--line); border-radius: 99px; padding: .2rem .8rem; background: var(--surface); font-size: .88rem; }
+.tg a.tn { border: 0; background: none; font-weight: 700; color: var(--fg); padding-left: 0; }
+.grp { padding: 2.5rem 0 .2rem; text-align: center; border-top: 1px solid var(--line); background: var(--bg); }
+.grp h2 { text-align: center; margin: 0 0 .3rem; }
+.grp .lead { color: var(--muted); max-width: 40rem; margin: 0 auto; }
+details.dd { position: relative; }
+details.dd summary { white-space: nowrap; cursor: pointer; color: var(--muted); font-size: .93rem; list-style: none; padding: .3rem .2rem; }
+details.dd summary::-webkit-details-marker { display: none; }
+details.dd summary::after { content: " ▾"; }
+details.dd[open] summary { color: var(--fg); }
+details.dd .menu { position: absolute; right: 0; top: 2.2rem; z-index: 9; min-width: 15rem; max-height: 75vh; overflow: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: .4rem 0; box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+details.dd .menu a { display: block; padding: .25rem 1rem; color: var(--fg); }
+details.dd .menu a:hover { background: var(--soft); }
+@media (max-width: 40rem) { details.dd .menu { position: fixed; left: 8px; right: 8px; top: 3.6rem; max-height: 80vh; } }
+details.dd .menu a.gh { font-weight: 700; margin-top: .35rem; color: var(--accent); }
 .data { color: var(--muted); font-size: .9rem; text-align: center; margin-top: 1rem; }
 """
 
@@ -155,7 +203,7 @@ a { color: var(--accent); text-underline-offset: .15em; }
 .wrap { width: 100%; max-width: 64rem; margin: 0 auto; padding: 0 16px; }
 header.top { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
 header.top .wrap { display: flex; align-items: center; gap: 1.5rem; height: 3.4rem; }
-.brand { font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; }
+.brand { white-space: nowrap; font: 700 1rem var(--mono); color: var(--fg); text-decoration: none; }
 nav { display: flex; gap: 1.2rem; margin-left: auto; }
 nav a { color: var(--muted); text-decoration: none; font-size: .93rem; }
 nav a:hover { color: var(--fg); }
