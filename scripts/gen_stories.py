@@ -13,7 +13,7 @@ import json
 import math
 import pathlib
 import random
-import subprocess
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import sys
 import tempfile
 from decimal import Decimal
