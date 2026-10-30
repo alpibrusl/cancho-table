@@ -138,6 +138,39 @@ class Runner:
         return p.returncode, json.loads(p.stdout)["error"]
 
 
+def make_campaign():
+    """the autumn campaign: 8000 users (arm assigned by a coin, half held out) and their purchases around the start date; 6.2% of the shown and 5.0% of the held-out buy in the campaign window, a few of each bought in August too"""
+    r = random.Random(11)
+    users, purchases = [], []
+    pid = 0
+    for u in range(1, 8001):
+        arm = "ads" if u % 2 == 0 else "holdout"
+        users.append((u, arm))
+        if r.random() < (0.062 if arm == "ads" else 0.05):
+            for _ in range(1 + (r.random() < 0.15)):
+                pid += 1
+                purchases.append((pid, u, "2026-09-%02d" % r.randint(1, 28), "%.2f" % r.lognormvariate(3.7, 0.6)))
+        if r.random() < 0.03:
+            pid += 1
+            purchases.append((pid, u, "2026-08-%02d" % r.randint(1, 31), "%.2f" % r.lognormvariate(3.7, 0.6)))
+    purchases.sort(key=lambda p: (p[2], p[0]))
+    return users, [(i,) + p[1:] for i, p in enumerate(purchases, 1)]
+
+
+def make_channels():
+    """eight weeks of spend per channel (euros and cents) and 640 orders credited, by last click, to a channel"""
+    r = random.Random(41)
+    base = {"search": 900, "social": 1400, "email": 150, "display": 1100}
+    spend = [(w, c, "%.2f" % (b * r.uniform(0.85, 1.15))) for w in range(1, 9) for c, b in base.items()]
+    weights = {"search": 0.5, "social": 0.25, "email": 0.15, "display": 0.1}
+    mean = {"search": 52, "social": 48, "email": 61, "display": 40}
+    sales = []
+    for k in range(1, 641):
+        c = r.choices(list(weights), list(weights.values()))[0]
+        sales.append((k, c, "%.2f" % max(5, r.gauss(mean[c], 12))))
+    return spend, sales
+
+
 def shown(args, file):
     import re
     return "table " + " ".join(a if re.fullmatch(r"[\w.,:=/@+-]+", a) else "'%s'" % a for a in args) + " " + file
@@ -566,21 +599,73 @@ def build(binary):
              term(shown(a11 + ["--format", "csv"], "survey.csv"), "\n".join(o11.rstrip("\n").split("\n")[:7]) + "\n..."),
              fig_stack(groups),
              '<div class="read"><b>Reading it.</b> The file has %d rows but only %d respondents: %d people answered more than once, and a percentage of rows would count them twice. Among adults, Sur has the largest share of yes and Norte the largest of no (the bars). The next step, a test of whether the districts differ, is a job for <a href="https://alpibrusl.github.io/cancho-stats/">cancho-stats</a>, which reads the same CSV.</div>' % (n_rows, n_resp, n_rows - n_resp)]))
+        # 12 marketing: what did each channel cost and earn ----------------------------------------------------
+        spend, sales = make_channels()
+        files["spend.csv"] = csv_of(["week", "channel", "spend"], spend)
+        files["sales.csv"] = csv_of(["order_id", "channel", "revenue"], sales)
+        for nm in ("spend.csv", "sales.csv"):
+            (folder / nm).write_text(files[nm])
+        m1 = ["--group", "channel", "--agg", "sum:spend:dec(2)", "--sort", "channel"]
+        m2 = ["--group", "channel", "--agg", "count,sum:revenue:dec(2)", "--sort", "channel"]
+        h_s, r_s = R.csv(m1, "spend.csv")
+        h_r, r_r = R.csv(m2, "sales.csv")
+        exp_s, exp_r = {}, {}
+        for _, c, v in spend:
+            exp_s[c] = exp_s.get(c, Decimal(0)) + Decimal(v)
+        for _, c, v in sales:
+            exp_r[c] = exp_r.get(c, Decimal(0)) + Decimal(v)
+        claim({r[0]: Decimal(r[1]) for r in r_s} == exp_s and {r[0]: Decimal(r[2]) for r in r_r} == exp_r, "story 12: both groupings equal a recount in decimals")
+        roas = {r[0]: Decimal(r[2]) / Decimal(sp[1]) for r, sp in zip(r_r, r_s)}
+        claim(max(roas, key=roas.get) == "email" and min(roas, key=roas.get) == "display" and roas["email"] > roas["search"] > roas["social"] > roas["display"], "story 12: from the most to the least per euro: email, search, social, display")
+        S.append(story(12, "What did each channel cost, and earn?", "marketing: two files, exact money", ["--group", "sum:COL:dec(2)"],
+            "&#8220;Finance wants spend and revenue by channel, to the cent, and wants it to add up.&#8221; &#8212; a marketing analyst, on the first of the month",
+            ["<p>Two exports: the ad platforms&#8217; weekly spend (<code>spend.csv</code>) and the orders the shop credits to a channel by last click (<code>sales.csv</code>). Money is the case <code>:dec(2)</code> exists for: each sum is the exact sum of the cents, and a cell with a third decimal would be refused, never rounded.</p>",
+             term(shown(m1 + ["--format", "csv"], "spend.csv"), "\n".join(",".join(r) for r in [h_s] + r_s)),
+             term(shown(m2 + ["--format", "csv"], "sales.csv"), "\n".join(",".join(r) for r in [h_r] + r_r)),
+             fig_hbars([(r[0], float(Decimal(r[2]) / Decimal(sp[1]))) for r, sp in zip(r_r, r_s)], " per euro", fmt="%.2f", label_w=70),
+             '<div class="read"><b>Reading it.</b> Dividing the second table by the first (the page does that arithmetic, on the printed numbers) gives the revenue credited per euro of spend: %s euros for email, %s for search, %s for display. Both files were recounted in Python&#8217;s <code>decimal</code> when this page was generated. One warning belongs next to the table: <em>credited</em> is not <em>caused</em>. Last click credits whoever the customer touched last, and a search ad is often the last thing touched by someone who had already decided; whether an ad earns money that would not have come anyway is the question of stories 12 to 14 of cancho-stats.</div>' % ("%.2f" % roas["email"], "%.2f" % roas["search"], "%.2f" % roas["display"])]))
+        # 13 marketing: the holdout table ---------------------------------------------------------------------
+        users, purchases = make_campaign()
+        files["campaign_users.csv"] = csv_of(["user_id", "arm"], users)
+        files["campaign_purchases.csv"] = csv_of(["purchase_id", "user_id", "date", "amount"], purchases)
+        for nm in ("campaign_users.csv", "campaign_purchases.csv"):
+            (folder / nm).write_text(files[nm])
+        k1 = ["--group", "arm", "--agg", "count", "--sort", "arm"]
+        k2 = ["--join", "campaign_users.csv", "--on", "user_id", "--where", "date:date >= 2026-09-01", "--group", "arm", "--agg", "count,distinct:user_id,sum:amount:dec(2)", "--sort", "arm"]
+        h1_, r1_ = R.csv(k1, "campaign_users.csv")
+        h2_, r2_ = R.csv(k2, "campaign_purchases.csv")
+        arm_of = dict(users)
+        exp_buyers = {}
+        exp_rev = {}
+        for _, u, d, v in purchases:
+            if d >= "2026-09-01":
+                exp_buyers.setdefault(arm_of[u], set()).add(u)
+                exp_rev[arm_of[u]] = exp_rev.get(arm_of[u], Decimal(0)) + Decimal(v)
+        claim({r[0]: int(r[2]) for r in r2_} == {a: len(b) for a, b in exp_buyers.items()} and {r[0]: Decimal(r[3]) for r in r2_} == exp_rev, "story 13: buyers and revenue per arm equal a recount that drops purchases before September")
+        pre = sum(1 for p in purchases if p[2] < "2026-09-01")
+        claim(pre > 100 and [r[1] for r in r1_] == ["4000", "4000"] and int(r2_[0][2]) > int(r2_[1][2]), "story 13: some purchases predate the window, the arms are equal in size and the shown arm has more buyers")
+        S.append(story(13, "From the raw tables to the holdout analysis", "marketing: join, window, per-arm totals", ["--join", "--where date:date", "distinct:COL"],
+            "&#8220;The experiment tool gave me who was shown the ad and who was held out. The shop gave me purchases. I need, per arm: users, buyers, revenue.&#8221;",
+            ["<p>Two tables, and the counting rules matter more than the tool: purchases made <em>before</em> the campaign started do not belong to it, and a user who bought twice is one buyer. First the denominators, then one join of the purchases to the arm of each user, restricted to the campaign window, counting purchases, <em>distinct</em> buyers and the exact revenue:</p>",
+             term(shown(k1 + ["--format", "csv"], "campaign_users.csv"), "\n".join(",".join(r) for r in [h1_] + r1_)),
+             term(shown(k2 + ["--format", "csv"], "campaign_purchases.csv"), "\n".join(",".join(r) for r in [h2_] + r2_)),
+             fig_hbars([(r[0], float(r[2])) for r in r2_], " buyers", fmt="%.0f", label_w=70),
+             '<div class="read"><b>Reading it.</b> %s buyers among 4000 users shown the ad, %s among 4000 held out; revenue %s and %s euros. %d purchases in the file were made in August, before the start, and the <code>--where</code> left them out; counting them would have made both arms look better and the campaign look no different. These four numbers per arm are what the significance question needs: <code>stats ci prop</code> on the buyer counts, and <code>stats ci diff</code> or <code>resample perm</code> on the per-user revenue (see cancho-stats, story 12, for exactly this analysis). Producing a per-user file for it is one more <code>--group user_id</code>.</div>' % (r2_[0][2], r2_[1][2], r2_[0][3], r2_[1][3], pre)]))
     return S, files
 
 
 def page(sections):
     css = base_css("#0b7a75", "#4fd1c5", "#ffffff", "#06201e") + STORY_CSS + EXTRA_CSS
-    nav = " ".join('<a class="opt" href="#s%d">%d</a>' % (i, i) for i in range(1, 12))
-    names = ("First look", "A question", "Decimals", "Refusals", "By month", "A join", "Cores", "Plate", "Titration", "Logger", "Survey")
+    nav = " ".join('<a class="opt" href="#s%d">%d</a>' % (i, i) for i in range(1, 14))
+    names = ("First look", "A question", "Decimals", "Refusals", "By month", "A join", "Cores", "Plate", "Titration", "Logger", "Survey", "Channels", "Holdout")
     toc = "".join('<a href="#s%d">%d &middot; %s</a>' % (i, i, esc(nm)) for i, nm in enumerate(names, 1))
     return """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>table: eleven stories, from an order export to the lab</title>
-<meta name="description" content="Eleven end-to-end examples of the table command, in increasing complexity: an online shop, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
+<title>table: thirteen stories, from an order export to the lab</title>
+<meta name="description" content="Thirteen end-to-end examples of the table command, in increasing complexity: an online shop, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
 <meta name="color-scheme" content="light dark">
 <style>%s</style>
 </head>
@@ -590,10 +675,10 @@ def page(sections):
   <nav>%s<a href=".">Overview</a><a href="https://github.com/alpibrusl/cancho-table">GitHub</a></nav>
 </div></header>
 <div class="wrap hero small">
-  <h1>Eleven stories, from an order export to the lab.</h1>
-  <p class="sub">Luc&#237;a sells ceramics online and asks her order file one question after another; each asks a little more of <code>table</code> than the last. Then four short ones from the sciences. Every number and every figure is drawn from a real run of <code>table</code> on the data you can download. The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
+  <h1>Thirteen stories, from an order export to the lab.</h1>
+  <p class="sub">Luc&#237;a sells ceramics online and asks her order file one question after another; each asks a little more of <code>table</code> than the last. Then four short ones from the sciences and two from marketing. Every number and every figure is drawn from a real run of <code>table</code> on the data you can download. The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
   <div class="toc">%s</div>
-  <p class="data">Data: <a href="stories/orders.csv">orders.csv</a>, <a href="stories/customers.csv">customers.csv</a>, <a href="stories/plate.csv">plate.csv</a>, <a href="stories/titration.csv">titration.csv</a>, <a href="stories/sensor.jsonl">sensor.jsonl</a>, <a href="stories/survey.csv">survey.csv</a>. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
+  <p class="data">Data: <a href="stories/orders.csv">orders.csv</a>, <a href="stories/customers.csv">customers.csv</a>, <a href="stories/plate.csv">plate.csv</a>, <a href="stories/titration.csv">titration.csv</a>, <a href="stories/sensor.jsonl">sensor.jsonl</a>, <a href="stories/spend.csv">spend.csv</a>, <a href="stories/sales.csv">sales.csv</a>, <a href="stories/campaign_users.csv">campaign_users.csv</a>, <a href="stories/campaign_purchases.csv">campaign_purchases.csv</a>, <a href="stories/survey.csv">survey.csv</a>. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
 </div>
 %s
 <footer><div class="wrap">table &middot; EUPL-1.2 &middot; the data are invented; the runs, the digits and the figures are real &middot; <a href=".">overview</a></div></footer>

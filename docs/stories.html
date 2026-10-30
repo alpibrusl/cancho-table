@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>table: eleven stories, from an order export to the lab</title>
-<meta name="description" content="Eleven end-to-end examples of the table command, in increasing complexity: an online shop, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
+<title>table: thirteen stories, from an order export to the lab</title>
+<meta name="description" content="Thirteen end-to-end examples of the table command, in increasing complexity: an online shop, then biology, chemistry, physics and a social survey. Every number and figure is drawn from a real run.">
 <meta name="color-scheme" content="light dark">
 <style>
 :root {
@@ -112,13 +112,13 @@ figure.fig svg { width: 100%; height: auto; display: block; background: var(--su
 <body>
 <header class="top"><div class="wrap">
   <a class="brand" href=".">table</a>
-  <nav><a class="opt" href="#s1">1</a> <a class="opt" href="#s2">2</a> <a class="opt" href="#s3">3</a> <a class="opt" href="#s4">4</a> <a class="opt" href="#s5">5</a> <a class="opt" href="#s6">6</a> <a class="opt" href="#s7">7</a> <a class="opt" href="#s8">8</a> <a class="opt" href="#s9">9</a> <a class="opt" href="#s10">10</a> <a class="opt" href="#s11">11</a><a href=".">Overview</a><a href="https://github.com/alpibrusl/cancho-table">GitHub</a></nav>
+  <nav><a class="opt" href="#s1">1</a> <a class="opt" href="#s2">2</a> <a class="opt" href="#s3">3</a> <a class="opt" href="#s4">4</a> <a class="opt" href="#s5">5</a> <a class="opt" href="#s6">6</a> <a class="opt" href="#s7">7</a> <a class="opt" href="#s8">8</a> <a class="opt" href="#s9">9</a> <a class="opt" href="#s10">10</a> <a class="opt" href="#s11">11</a> <a class="opt" href="#s12">12</a> <a class="opt" href="#s13">13</a><a href=".">Overview</a><a href="https://github.com/alpibrusl/cancho-table">GitHub</a></nav>
 </div></header>
 <div class="wrap hero small">
-  <h1>Eleven stories, from an order export to the lab.</h1>
-  <p class="sub">Luc&#237;a sells ceramics online and asks her order file one question after another; each asks a little more of <code>table</code> than the last. Then four short ones from the sciences. Every number and every figure is drawn from a real run of <code>table</code> on the data you can download. The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
-  <div class="toc"><a href="#s1">1 &middot; First look</a><a href="#s2">2 &middot; A question</a><a href="#s3">3 &middot; Decimals</a><a href="#s4">4 &middot; Refusals</a><a href="#s5">5 &middot; By month</a><a href="#s6">6 &middot; A join</a><a href="#s7">7 &middot; Cores</a><a href="#s8">8 &middot; Plate</a><a href="#s9">9 &middot; Titration</a><a href="#s10">10 &middot; Logger</a><a href="#s11">11 &middot; Survey</a></div>
-  <p class="data">Data: <a href="stories/orders.csv">orders.csv</a>, <a href="stories/customers.csv">customers.csv</a>, <a href="stories/plate.csv">plate.csv</a>, <a href="stories/titration.csv">titration.csv</a>, <a href="stories/sensor.jsonl">sensor.jsonl</a>, <a href="stories/survey.csv">survey.csv</a>. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
+  <h1>Thirteen stories, from an order export to the lab.</h1>
+  <p class="sub">Luc&#237;a sells ceramics online and asks her order file one question after another; each asks a little more of <code>table</code> than the last. Then four short ones from the sciences and two from marketing. Every number and every figure is drawn from a real run of <code>table</code> on the data you can download. The data are invented; the runs are real, and the narration is checked against the numbers whenever the page is generated.</p>
+  <div class="toc"><a href="#s1">1 &middot; First look</a><a href="#s2">2 &middot; A question</a><a href="#s3">3 &middot; Decimals</a><a href="#s4">4 &middot; Refusals</a><a href="#s5">5 &middot; By month</a><a href="#s6">6 &middot; A join</a><a href="#s7">7 &middot; Cores</a><a href="#s8">8 &middot; Plate</a><a href="#s9">9 &middot; Titration</a><a href="#s10">10 &middot; Logger</a><a href="#s11">11 &middot; Survey</a><a href="#s12">12 &middot; Channels</a><a href="#s13">13 &middot; Holdout</a></div>
+  <p class="data">Data: <a href="stories/orders.csv">orders.csv</a>, <a href="stories/customers.csv">customers.csv</a>, <a href="stories/plate.csv">plate.csv</a>, <a href="stories/titration.csv">titration.csv</a>, <a href="stories/sensor.jsonl">sensor.jsonl</a>, <a href="stories/spend.csv">spend.csv</a>, <a href="stories/sales.csv">sales.csv</a>, <a href="stories/campaign_users.csv">campaign_users.csv</a>, <a href="stories/campaign_purchases.csv">campaign_purchases.csv</a>, <a href="stories/survey.csv">survey.csv</a>. Rebuild this page: <code>python3 scripts/gen_stories.py</code>.</p>
 </div>
 <section class=" story" id="s1"><div class="wrap"><h2>1 &middot; What is in the file?</h2><div class="badge"><span class="lvl">start here</span><span>table</span></div><p class="said">&#8220;I sell ceramics online. The shop exports every order as a CSV. Before I ask anything, what did it give me?&#8221; &#8212; Luc&#237;a</p><p>With no flags, <code>table</code> only reads the file: how many columns and rows, and what the header is. Nothing is guessed about types; every column is text until you say otherwise. The same call selects columns and prints CSV that another program can read, and a comma inside a quoted field stays inside it.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ table  orders.csv</span>
 {
@@ -475,6 +475,31 @@ Este,yes,39,39
 <rect class="lk3" x="460.562" y="164" width="43.1461" height="24"/><text class="lk" x="482.135" y="180" text-anchor="middle">8</text>
 <rect class="lk1" x="503.708" y="164" width="86.2921" height="24"/><text class="lk" x="546.854" y="180" text-anchor="middle">16</text>
 <text class="tk" x="110" y="18">yes</text><text class="tk" x="350" y="18" text-anchor="middle">unsure</text><text class="tk" x="590" y="18" text-anchor="end">no</text></svg></figure><div class="read"><b>Reading it.</b> The file has 400 rows but only 380 respondents: 20 people answered more than once, and a percentage of rows would count them twice. Among adults, Sur has the largest share of yes and Norte the largest of no (the bars). The next step, a test of whether the districts differ, is a job for <a href="https://alpibrusl.github.io/cancho-stats/">cancho-stats</a>, which reads the same CSV.</div></div></section>
+<section class="alt story" id="s12"><div class="wrap"><h2>12 &middot; What did each channel cost, and earn?</h2><div class="badge"><span class="lvl">marketing: two files, exact money</span><span>--group</span><span>sum:COL:dec(2)</span></div><p class="said">&#8220;Finance wants spend and revenue by channel, to the cent, and wants it to add up.&#8221; &#8212; a marketing analyst, on the first of the month</p><p>Two exports: the ad platforms&#8217; weekly spend (<code>spend.csv</code>) and the orders the shop credits to a channel by last click (<code>sales.csv</code>). Money is the case <code>:dec(2)</code> exists for: each sum is the exact sum of the cents, and a cell with a third decimal would be refused, never rounded.</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ table --group channel --agg &#x27;sum:spend:dec(2)&#x27; --sort channel --format csv spend.csv</span>
+channel,sum:spend
+display,9209.87
+email,1163.69
+search,7275.22
+social,11105.22</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ table --group channel --agg &#x27;count,sum:revenue:dec(2)&#x27; --sort channel --format csv \
+    sales.csv</span>
+channel,count,sum:revenue
+display,71,2783.84
+email,101,6365.93
+search,325,16775.71
+social,143,6828.12</pre></div><figure class="fig"><svg viewBox="0 0 640 168" role="img" aria-label="Bars"><text class="nm" x="62" y="31" text-anchor="end">display</text><rect class="pbar pa" x="70" y="16" width="24.8644" height="20" rx="3"/><text class="tk" x="102.864" y="31">0.30 per euro</text>
+<text class="nm" x="62" y="65" text-anchor="end">email</text><rect class="pbar pa" x="70" y="50" width="450" height="20" rx="3"/><text class="tk" x="528" y="65">5.47 per euro</text>
+<text class="nm" x="62" y="99" text-anchor="end">search</text><rect class="pbar pa" x="70" y="84" width="189.681" height="20" rx="3"/><text class="tk" x="267.681" y="99">2.31 per euro</text>
+<text class="nm" x="62" y="133" text-anchor="end">social</text><rect class="pbar pa" x="70" y="118" width="50.578" height="20" rx="3"/><text class="tk" x="128.578" y="133">0.61 per euro</text></svg></figure><div class="read"><b>Reading it.</b> Dividing the second table by the first (the page does that arithmetic, on the printed numbers) gives the revenue credited per euro of spend: 5.47 euros for email, 2.31 for search, 0.30 for display. Both files were recounted in Python&#8217;s <code>decimal</code> when this page was generated. One warning belongs next to the table: <em>credited</em> is not <em>caused</em>. Last click credits whoever the customer touched last, and a search ad is often the last thing touched by someone who had already decided; whether an ad earns money that would not have come anyway is the question of stories 12 to 14 of cancho-stats.</div></div></section>
+<section class=" story" id="s13"><div class="wrap"><h2>13 &middot; From the raw tables to the holdout analysis</h2><div class="badge"><span class="lvl">marketing: join, window, per-arm totals</span><span>--join</span><span>--where date:date</span><span>distinct:COL</span></div><p class="said">&#8220;The experiment tool gave me who was shown the ad and who was held out. The shop gave me purchases. I need, per arm: users, buyers, revenue.&#8221;</p><p>Two tables, and the counting rules matter more than the tool: purchases made <em>before</em> the campaign started do not belong to it, and a user who bought twice is one buyer. First the denominators, then one join of the purchases to the arm of each user, restricted to the campaign window, counting purchases, <em>distinct</em> buyers and the exact revenue:</p><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ table --group arm --agg count --sort arm --format csv campaign_users.csv</span>
+arm,count
+ads,4000
+holdout,4000</pre></div><div class="term"><div class="bar"><i></i><i></i><i></i> a real run</div><pre><span class="cm">$ table --join campaign_users.csv --on user_id --where &#x27;date:date &gt;= 2026-09-01&#x27; \
+    --group arm --agg &#x27;count,distinct:user_id,sum:amount:dec(2)&#x27; --sort arm --format \
+    csv campaign_purchases.csv</span>
+arm,count,distinct:user_id,sum:amount
+ads,285,250,13812.61
+holdout,228,196,11682.33</pre></div><figure class="fig"><svg viewBox="0 0 640 100" role="img" aria-label="Bars"><text class="nm" x="62" y="31" text-anchor="end">ads</text><rect class="pbar pa" x="70" y="16" width="450" height="20" rx="3"/><text class="tk" x="528" y="31">250 buyers</text>
+<text class="nm" x="62" y="65" text-anchor="end">holdout</text><rect class="pbar pa" x="70" y="50" width="352.8" height="20" rx="3"/><text class="tk" x="430.8" y="65">196 buyers</text></svg></figure><div class="read"><b>Reading it.</b> 250 buyers among 4000 users shown the ad, 196 among 4000 held out; revenue 13812.61 and 11682.33 euros. 229 purchases in the file were made in August, before the start, and the <code>--where</code> left them out; counting them would have made both arms look better and the campaign look no different. These four numbers per arm are what the significance question needs: <code>stats ci prop</code> on the buyer counts, and <code>stats ci diff</code> or <code>resample perm</code> on the per-user revenue (see cancho-stats, story 12, for exactly this analysis). Producing a per-user file for it is one more <code>--group user_id</code>.</div></div></section>
 <footer><div class="wrap">table &middot; EUPL-1.2 &middot; the data are invented; the runs, the digits and the figures are real &middot; <a href=".">overview</a></div></footer>
 </body>
 </html>
