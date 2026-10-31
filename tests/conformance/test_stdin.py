@@ -736,6 +736,11 @@ class Bulk(Source):
             # `read_file` is typed with is opened before standard input is read, and an open takes the lowest free descriptor, which is 0. The program reads
             # /dev/null and cannot know. (docs/readers.md 11.7; the fix is upstream, a `File` for descriptor 0.)
             p = self.refusal(pre)
+            if label == "a closed descriptor":
+                # compiler de4e52f: descriptor 0 closed is `read_bytes`'s `Failed(9)` (EBADF) now, an io.read-failed refusal, not the empty input
+                self.assertEqual(p.returncode, 1, label)
+                self.assertEqual(json.loads(p.stdout)["error"]["rule"], "io.read-failed", label)
+                continue
             self.assertEqual(p.returncode, 0, label)
             self.assertEqual(json.loads(p.stdout)["data"]["column_count"], 0, label)
 
