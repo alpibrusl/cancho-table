@@ -1,0 +1,14 @@
+# table
+
+> A deterministic data primitive for AI agents: query CSV, TSV and JSON lines files with explicit types, bounded resources and structured refusals that say how to fix the request. Written in cancho.
+
+Run `table skill` for a guide and `table introspect` for the flags, limits, rules and authority as one JSON document. Answers and refusals are one JSON line, schema `table.v2`; match on `error.rule`.
+
+## Docs
+
+- [README](README.md): the front door
+- [Agent guide](AGENTS.md): how an agent uses the tool
+- [Refusals](docs/refusals.md): every rule, with its exit code and repair
+- [MCP server](docs/mcp.md): one tool over MCP, derived from the binary
+- [Benchmarks](docs/benchmarks.html): what was timed, with machine, threads, load and minimum of N
+- [Stories](docs/stories.html): worked cases with data and figures, by topic

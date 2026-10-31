@@ -52,6 +52,32 @@ def svg(h, body, label):
     return '<figure class="fig"><svg viewBox="0 0 %d %d" role="img" aria-label="%s">%s</svg></figure>' % (W, h, esc(label), body)
 
 
+EXPORTED = {}   # name -> figure html, for the figures a README shows (docs/figures/NAME.svg)
+
+
+def export(name, fig_html):
+    """records a figure for export as a standalone SVG file and returns it unchanged, so it can wrap a call in the page"""
+    EXPORTED[name] = fig_html
+    return fig_html
+
+
+TOKENS = """:root { --bg: #fbfcfd; --fg: #14181a; --muted: #55606a; --line: #dfe5e7; --surface: #ffffff; --soft: #eff4f4; --accent: @ACCENT@; --good: #0f7b5f; --bad: #b42d27; --warn: #92400e; --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+@media (prefers-color-scheme: dark) { :root { --bg: #0b0f14; --fg: #e7ebec; --muted: #9aa8ae; --line: #212a2d; --surface: #131a1c; --soft: #172022; --accent: @ACCENT_DARK@; --good: #4fd1a5; --bad: #ff7b73; --warn: #f3c77a; } }"""
+
+
+def standalone_svg(fig_html, accent, accent_dark, extra_css=""):
+    """one figure as a file that stands alone: its styles inside, a light and a dark scheme, and a background of its own so that it reads on any page"""
+    m = re.search(r'<svg viewBox="0 0 (\d+) (\d+)" role="img" aria-label="([^"]*)">(.*)</svg>', fig_html, re.S)
+    if not m:
+        raise SystemExit("storylib.standalone_svg: not a figure of svg()")
+    w, h, label, inner = m.group(1), m.group(2), m.group(3), m.group(4)
+    rules = [ln for ln in (STORY_CSS + extra_css).split("\n") if ln.startswith(".fig ")]
+    css = TOKENS.replace("@ACCENT@", accent).replace("@ACCENT_DARK@", accent_dark) + "\n" + "\n".join(rules)
+    h = str(int(h) + 12)   # room under the axis label
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %s %s" width="%s" height="%s" role="img" aria-label="%s">\n<style>\n%s\n</style>\n'
+            '<rect width="%s" height="%s" rx="10" fill="var(--surface)" stroke="var(--line)"/>\n<g class="fig">%s</g>\n</svg>\n' % (w, h, w, h, label, css, w, h, inner))
+
+
 def wrap_cmd(command, width=84):
     out, line = [], ""
     for word in command.split(" "):
