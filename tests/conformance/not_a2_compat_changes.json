@@ -9200,22 +9200,6 @@
 "reading"
 ],
 [
-"where-96db7aedc1c6",
-"where",
-"#1 not in (1) or ( not <= ( and c in ('', 1) AND )",
-[
-"syntax",
-3,
-"an operator: = != < <= > >= contains in"
-],
-[
-"syntax",
-26,
-"a value"
-],
-"reading"
-],
-[
 "where-2d4820db6532",
 "where",
 "not (not (d:dec(2) = 10.00)\tand \n not\t(n:int in(007,-1,3)))",
@@ -10894,22 +10878,6 @@
 "reading"
 ],
 [
-"where-548ad510189b",
-"where",
-"not( b = ( and' not #1 != x Or not not c,ntains x or' b in (1) )",
-[
-"syntax",
-3,
-"an operator: = != < <= > >= contains in"
-],
-[
-"syntax",
-9,
-"a value"
-],
-"reading"
-],
-[
 "where-1969da66334e",
 "where",
 "and = 07 and not  ( \u00e9  and  not = 1 ) xor not ( id = ( )",
@@ -11046,22 +11014,6 @@
 ],
 [
 "ok"
-],
-"reading"
-],
-[
-"where-f914bde5d925",
-"where",
-"not  ( ( a = ( ) or ( not n)t not in x ) ) || ( a < x xor not( #1 = x ) )",
-[
-"syntax",
-5,
-"an operator: = != < <= > >= contains in"
-],
-[
-"syntax",
-13,
-"a value"
 ],
 "reading"
 ],
@@ -13757,22 +13709,6 @@
 "reading"
 ],
 [
-"where-0328d0e9936d",
-"where",
-"( not  ( ( a\\ b <= ( ) xor not contains 07 and' a\\ b not  contains and  not = or ) ) ",
-[
-"syntax",
-7,
-"an operator: = != < <= > >= contains in"
-],
-[
-"syntax",
-19,
-"a value"
-],
-"reading"
-],
-[
 "where-9c88c711c6fb",
 "where",
 "not ( not a >= 1 xor 'not' not contains '' or' c contains not = 1 )",
@@ -15271,22 +15207,6 @@
 "syntax",
 51,
 "an operator: = != < <= > >= contains in"
-],
-"reading"
-],
-[
-"where-3d592d8ab0f4",
-"where",
-"not( 'not' >= ( Or a or \\not or || b not in (x, 'y z', and) ) && not  ( not not not contains 1 )",
-[
-"syntax",
-3,
-"an operator: = != < <= > >= contains in"
-],
-[
-"syntax",
-14,
-"a value"
 ],
 "reading"
 ],
@@ -19456,22 +19376,6 @@
 ],
 [
 "ok"
-],
-"reading"
-],
-[
-"where-68ce383eddc4",
-"where",
-"not( contains > ( )",
-[
-"syntax",
-3,
-"an operator: = != < <= > >= contains in"
-],
-[
-"syntax",
-16,
-"a value"
 ],
 "reading"
 ],
@@ -33852,6 +33756,6 @@
 "reading"
 ]
 ],
-"count":2168,
-"same":3417
+"count":2162,
+"same":3423
 }

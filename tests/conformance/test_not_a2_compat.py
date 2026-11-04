@@ -41,7 +41,8 @@ def readings(expr):
     kind, text = expr
     if kind == "where":
         a = O.parse_result(lat(text))
-        b = N.parse_result(lat(text))
+        with N.a2_grammar():
+            b = N.parse_result(lat(text))
         return (a if a[0] != "ok" else ("ok",)), (b if b[0] != "ok" else ("ok",))
     return C1.reading_query(lat(text), query_ref_a1), C1.reading_query(lat(text), query_ref)
 
@@ -66,6 +67,8 @@ class Compat(unittest.TestCase):
         expr = C1.expression_of(argv)
         if C1.expr_b1(argv):
             return None                    # slice B1 reads it differently from slice A2: held by test_rename_b1_compat.py
+        if C1.expr_c0(argv):
+            return None                    # a column on the right (docs/column-comparison.md) is read differently from slice A2: held by test_column_comparison.py
         if C1.hint_moved(argv):
             self.assertEqual(row[:2], old[:2], cid)       # slice J3b rewrote the hint of the features join and subquery: held by test_join_j3b.py
             return None
@@ -136,7 +139,7 @@ class Compat(unittest.TestCase):
         became = []
         for cid, (kind, argv) in self.cases.items():
             g, row = golden[cid], self.now[cid]
-            if g[0] != 0 and row[1] == 0 and not C1.expr_b1(argv):
+            if g[0] != 0 and row[1] == 0 and not C1.expr_b1(argv) and not C1.expr_c0(argv):
                 expr = C1.expression_of(argv)
                 became.append(expr[1] if expr else None)
         self.assertGreater(len(became), 100)

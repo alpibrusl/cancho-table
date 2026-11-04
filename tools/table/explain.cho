@@ -605,7 +605,14 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
         } else {
             o = buffer.append(heap, o, op_text(query.cond_at(tree, k, 2)));
         }
-        o = buffer.append(heap, o, "\",\"values\":[");
+        if kind == 3 {
+            // a comparison of two columns: the right column in place of the values
+            o = buffer.append(heap, o, "\",\"against\":");
+            o = put_column(heap, o, tree, query.cond_at(tree, k, 4), resolved, cols, names, ends);
+            o = buffer.append(heap, o, ",\"values\":[");
+        } else {
+            o = buffer.append(heap, o, "\",\"values\":[");
+        }
         let first = query.cond_at(tree, k, 4);
         let many = query.cond_at(tree, k, 5);
         var l = 0;

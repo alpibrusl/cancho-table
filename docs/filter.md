@@ -29,13 +29,15 @@ EXPR   := ALL | ANY | UNIT
 ALL    := UNIT "and" UNIT { "and" UNIT }
 ANY    := UNIT "or" UNIT { "or" UNIT }
 UNIT   := COND | "(" EXPR ")" | "not" "(" EXPR ")"
-COND   := COLUMN OP VALUE | COLUMN "contains" VALUE | COLUMN "in" "(" VALUE { "," VALUE } ")"
+COND   := COLUMN OP VALUE | COLUMN OP "(" COLUMN ")" | COLUMN "contains" VALUE | COLUMN "in" "(" VALUE { "," VALUE } ")"
         | COLUMN "not" "contains" VALUE | COLUMN "not" "in" "(" VALUE { "," VALUE } ")"
 OP     := "=" | "!=" | "<" | "<=" | ">" | ">="
 COLUMN := WORD [":int" | ":dec(" N ")" | ":float" | ":date" | ":timestamp" | ":datetime"]     a header name, or #N the Nth column (1-based); N is a scale, 0 to 18
 VALUE  := WORD
 WORD   := bare | 'quoted'
 ```
+
+`COLUMN OP ( COLUMN )` compares two columns of the row ([column-comparison.md](column-comparison.md)): `--where "bid:int > (t_bid:int)"`. Both are written with the same type, the cells are read as that type, the left one first, and the comparison is the one against a value; it is refused in `--join-where` and is not pushed before a join. A `(` where a value goes was a refusal, so no expression that was valid reads differently.
 
 A bare word runs to whitespace or one of `' ( ) , = ! < >`; a backslash makes the next
 byte part of it, whatever it is. A quoted word is between single quotes with `''` for a

@@ -119,6 +119,7 @@
     "blanks",
     "blob_hi",
     "blob_lo",
+    "bool_int",
     "build_delim",
     "built",
     "bump",
@@ -296,6 +297,8 @@
     "has",
     "has",
     "has",
+    "has_between",
+    "has_columns",
     "has_dates",
     "has_dotdot",
     "has_positions",
@@ -318,6 +321,7 @@
     "hint_of",
     "hint_of",
     "holds",
+    "holds_columns",
     "holds_date",
     "holds_dec",
     "i_agg",
@@ -445,6 +449,7 @@
     "key_at$int",
     "key_bytes",
     "key_field",
+    "key_of",
     "key_value",
     "keyword",
     "keyword",
@@ -458,6 +463,7 @@
     "kinds",
     "l_lines",
     "largest",
+    "last_cond_kind",
     "lc",
     "ldexp",
     "le32",
@@ -533,6 +539,7 @@
     "order_count",
     "order_flags",
     "order_name",
+    "ordered",
     "p_base_line",
     "p_budget",
     "p_cap",
@@ -831,7 +838,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 346,
+  "folded_operators": 351,
   "folded_calls": 0,
-  "functions": 1390
+  "functions": 1400
 }

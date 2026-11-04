@@ -363,7 +363,13 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
         let gb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_join_where(), "join-where");
         borrow gb as &gr in {
             let given = buffer.bytes(gr);
-            let (t, what, at) = orparse.parse(heap, query.empty(heap), given);
+            let (t, what0, at) = orparse.parse(heap, query.empty(heap), given);
+            var what = what0;
+            borrow t as &tr in {
+                if what == 0 && query.has_between(tr) {
+                    what = 32;
+                }
+            }
             query.drop(heap, t);
             if what == orparse.mixed() {
                 var flag_at = 0 - 1;

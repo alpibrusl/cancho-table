@@ -31,9 +31,25 @@ COMPLEMENT = {"=": "!=", "!=": "=", "<": ">=", "<=": ">", ">": "<=", ">=": "<"}
 # ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 # The parser
 
-def leaf(s, i, number):
-    """The condition at i: (("leaf", cond, number, start, end, op_span), where it ends). `op_span` is the span of the operator, `not` included for `not in` and `not contains`."""
-    begins = i
+# docs/column-comparison.md (C0): the two sentences of expectation that slice adds, beside A2's
+EXPECTED[29] = "the same type on both columns of a comparison, written alike: (name:int) against name:int"
+EXPECTED[31] = ") after the column compared with"
+COLUMNS = True            # whether `COLUMN OP ( COLUMN )` is read; the reference of slice A2 is the same parser with it off (a2_grammar), which the compat tests of the earlier slices use
+
+
+class a2_grammar:
+    """`with a2_grammar():` reads as slice A2 did, before docs/column-comparison.md: a `(` where a value goes is `a value`, refused."""
+
+    def __enter__(self):
+        global COLUMNS
+        self.was, COLUMNS = COLUMNS, False
+
+    def __exit__(self, *exc):
+        global COLUMNS
+        COLUMNS = self.was
+
+def read_column(s, i):
+    """The column at i, with its suffix: (its name, where it ends, its type: None, "int", "float" or ("dec", N))."""
     text, j, quoted, status, first = word(s, i)
     if status == 1 and not quoted:
         raise Refused("syntax", i, 1)
@@ -57,6 +73,13 @@ def leaf(s, i, number):
             text = text[:-4]
         if text.endswith(":float"):
             typed, text = "float", text[:-6]
+    return text, j, typed
+
+
+def leaf(s, i, number):
+    """The condition at i: (("leaf", cond, number, start, end, op_span), where it ends). `op_span` is the span of the operator, `not` included for `not in` and `not contains`."""
+    begins = i
+    text, j, typed = read_column(s, i)
     cond = {"column": text, "int": typed == "int", "float": typed == "float", "dec": typed[1] if isinstance(typed, tuple) else None}
     if not cond["float"]:
         cond.pop("float")
@@ -135,6 +158,18 @@ def leaf(s, i, number):
             if closing:
                 break
         cond["lits"] = lits
+    elif COLUMNS and kind == "cmp" and skip(s, i) < len(s) and s[skip(s, i)] == "(":
+        # docs/column-comparison.md: `COLUMN OP ( COLUMN )`, both written with the same type (the reader of the column is slice A1's)
+        opened = skip(s, i)
+        other, j2, typed2 = read_column(s, skip(s, opened + 1))
+        if typed2 != typed:
+            raise Refused("syntax", opened + 1, 29)
+        i = skip(s, j2)
+        if i >= len(s) or s[i] != ")":
+            raise Refused("syntax", i, 31)
+        cond["against"] = other
+        cond["op"] = op
+        i += 1
     else:
         i = skip(s, i)
         w, k, q, st, _ = word(s, i)

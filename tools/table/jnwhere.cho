@@ -43,7 +43,7 @@ pub fn classify[&h, &q, &c, &u](heap: &!h Heap, tree: &q query.Query, cols: &c [
         while going && i < vec.size(units) / 4 {
             let kind = vec.get(units, 4 * i);
             let leaf = vec.get(units, 4 * i + 1);
-            if kind == 1 || query.cond_at(tree, leaf, 1) != 0 {
+            if kind == 1 || query.cond_at(tree, leaf, 1) != 0 || query.cond_at(tree, leaf, 0) == 3 {
                 going = false;
             } else {
                 let column = cols[query.cond_at(tree, leaf, 3)];

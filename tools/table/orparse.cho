@@ -175,6 +175,12 @@ fn level[&h, &s](heap: &!h Heap, q: query.Query, tr0: vec.Vec[int], src: &s [byt
                     leaf_kind = 5;
                     flowed = true;
                 }
+                borrow plan as &pr in {
+                    if query.last_cond_kind(pr) == 3 {
+                        // a comparison of two columns is run by the branch program, so the loop of a conjunction is the one that has always run
+                        flowed = true;
+                    }
+                }
                 tr = push4(heap, tr, leaf_kind, leaves, i, after);
                 leaves = leaves + 1;
                 i = after;
@@ -326,6 +332,12 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
         borrow t2 as &tr2 in {
             borrow mut flow as &!fw in {
                 emit(tr2, fw, node, 0 - 1, 0 - 2);
+            }
+        }
+        borrow plan as &pr in {
+            if query.has_between(pr) {
+                // a comparison of two columns: one element more, which `query.has_columns` reads
+                flow = vec.push(heap, flow, 0);
             }
         }
         borrow flow as &fr in {

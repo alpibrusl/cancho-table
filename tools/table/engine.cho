@@ -418,8 +418,14 @@ pub fn screen[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, cols
     if verdict < 2 {
         return (verdict, e2, kept);
     }
-    // A condition met a cell it cannot compare.
-    let column = cols[query.cond_at(tree, which, 3)];
+    // A condition met a cell it cannot compare. A comparison of two columns answers a negative `which` when the right cell was the one (-1 - the condition).
+    var cond = which;
+    var field = 3;
+    if which < 0 {
+        cond = 0 - 1 - which;
+        field = 4;
+    }
+    let column = cols[query.cond_at(tree, cond, field)];
     var code = 9 + verdict;
     if verdict >= 14 {
         // a date, a timestamp or a datetime that is not one (dtparse.cho): the abort is 1000 and the status
@@ -432,7 +438,7 @@ pub fn screen[&h, &q, &c, &d, &e, &a](heap: &!h Heap, tree: &q query.Query, cols
         code = 18 + verdict;
     }
     a[k_abort()] = code;
-    a[k_err_cond()] = which;
+    a[k_err_cond()] = cond;
     if verdict == 5 {
         var at = cells[3 * column + 1];
         var n = 0;
