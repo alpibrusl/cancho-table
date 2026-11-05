@@ -5,7 +5,7 @@ module expr;
 // `--where`: conditions, and what each says of a row. This module reads a condition (`parse_cond`) and decides one against a cell (`holds`); `orparse` reads the whole expression,
 //
 //     EXPR  := ALL | ANY | UNIT          ALL := UNIT "and" UNIT { "and" UNIT }          ANY := UNIT "or" UNIT { "or" UNIT }          UNIT := COND | "(" EXPR ")" | "not" "(" EXPR ")"
-//     COND  := COLUMN OP VALUE | COLUMN "contains" VALUE | COLUMN "not" "contains" VALUE
+//     COND  := COLUMN OP VALUE | COLUMN OP "(" COLUMN ")" | COLUMN "contains" VALUE | COLUMN "not" "contains" VALUE
 //            | COLUMN "in" "(" VALUE { "," VALUE } ")" | COLUMN "not" "in" "(" VALUE { "," VALUE } ")"
 //     OP    := "=" | "!=" | "<" | "<=" | ">" | ">="
 //     COLUMN:= WORD [":int" | ":float" | ":dec(" N ")" | ":date" | ":timestamp" | ":datetime"]     a name, or #N the Nth column; N is a scale, 0 to 18
@@ -18,6 +18,9 @@ module expr;
 // a quoted word is always a name or a value, never a position, and never has
 // the keyword meaning of and, or, not, in or contains. `and`, `or`, `not`, `in` and `contains` are
 // lower case. Nothing else is in the language: no expressions, no functions.
+//
+// `COLUMN OP ( COLUMN )` compares two columns of the row (docs/column-comparison.md): a `(` where a value is expected was a refusal before, so no expression that was valid
+// changes. Both columns are read as the same type, written alike; the condition is kind 3, its right column's name in the field a literal's place holds.
 //
 // A condition compares text, bytewise, unless the column is written `:int`, in
 // which case the cell is an exact integer and the literals are too, or `:dec(S)`, in
@@ -184,6 +187,15 @@ pub fn expected(what: int) -> [] &static [byte] {
     }
     if what == 28 {
         return "= != < <= > >= or in: contains compares text, and this column is :date, :timestamp or :datetime";
+    }
+    if what == 29 {
+        return "the same type on both columns of a comparison, written alike: (name:int) against name:int";
+    }
+    if what == 32 {
+        return "a value: --join-where compares a column with a value; a comparison of two columns goes in --where, after the join";
+    }
+    if what == 31 {
+        return ") after the column compared with";
     }
     return "a complete expression";
 }
@@ -469,6 +481,7 @@ pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: 
             first = query.lit_count(pr);
         }
         var values = 0;
+        var between = false;
         if what == 0 && kind == 2 {
             i = skip_space(src, i);
             if i < len(src) && int_of(src[i]) == '(' {
@@ -502,6 +515,29 @@ pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: 
                 what = 7;
                 at = i;
             }
+        } else if what == 0 && kind == 0 && skip_space(src, i) < len(src) && int_of(src[skip_space(src, i)]) == '(' {
+            // a column on the right: `COLUMN OP ( COLUMN )`, a condition of kind 3 whose field of the first literal is the right column's name
+            let open = skip_space(src, i);
+            let (p3, after_right, index2, typed2, w3, a3) = parse_column(heap, plan, src, skip_space(src, open + 1));
+            plan = p3;
+            what = w3;
+            at = a3;
+            i = after_right;
+            if what == 0 && typed2 != typed {
+                what = 29;
+                at = open + 1;
+            }
+            if what == 0 {
+                i = skip_space(src, i);
+                if i < len(src) && int_of(src[i]) == ')' {
+                    i = i + 1;
+                    between = true;
+                    plan = query.add_cond(heap, plan, 3, typed, op, index, index2, 0, begins);
+                } else {
+                    what = 31;
+                    at = i;
+                }
+            }
         } else if what == 0 {
             i = skip_space(src, i);
             let (p3, after_value, w3, a3) = parse_value(heap, plan, src, i, typed);
@@ -511,7 +547,7 @@ pub fn parse_cond[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte], from: 
             values = 1;
             i = after_value;
         }
-        if what == 0 {
+        if what == 0 && !between {
             plan = query.add_cond(heap, plan, kind, typed, op, index, first, values, begins);
         }
     }
@@ -922,6 +958,94 @@ pub fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
     return 0;
 }
 
+// The key a cell has when it is read as `typed` (1 :int, 2 + S :dec(S), 21 :float, 22 and more the dates), and 0, or the verdict `holds` answers for a cell that is not one (2 to 11, 14 and more).
+fn key_of[&c](typed: int, cell: &c [byte]) -> [] (int, int) {
+    if typed == 1 {
+        let (v, bad) = cellnum.parse_int(cell);
+        if bad == 1 {
+            return (0, 2);
+        }
+        if bad == 2 {
+            return (0, 3);
+        }
+        return (v, 0);
+    }
+    if typed >= 22 {
+        let (x, bad) = dtparse.parse(cell, typed);
+        return (x, bad);
+    }
+    if typed == 21 {
+        let (key, bad) = flt.parse_float(cell);
+        if bad != 0 {
+            return (0, bad - 2);
+        }
+        return (key, 0);
+    }
+    let (d, bad) = cellnum.parse_dec(cell, typed - 2);
+    if bad == 1 {
+        return (0, 4);
+    }
+    if bad == 3 {
+        return (0, 5);
+    }
+    if bad == 2 {
+        return (0, 6);
+    }
+    return (d, 0);
+}
+
+// Whether `a` OP `b` for the order `c` (-1, 0 or 1) of the two.
+fn ordered(op: int, c: int) -> [] bool {
+    if op == 0 {
+        return c == 0;
+    }
+    if op == 1 {
+        return c != 0;
+    }
+    if op == 2 {
+        return c < 0;
+    }
+    if op == 3 {
+        return c <= 0;
+    }
+    if op == 4 {
+        return c > 0;
+    }
+    return c >= 0;
+}
+
+// Condition `k`, of kind 3, against the cells of its two columns: answers the verdict as `holds` does and which cell was refused (0 the left, 1 the right). The left is read first, so a
+// bad left cell is the refusal whatever the right one holds. Both are read as the one type, and compared as the values they are.
+pub fn holds_columns[&q, &c, &d](plan: &q query.Query, k: int, a: &c [byte], b: &d [byte]) -> [] (int, int) {
+    let op = query.cond_at(plan, k, 2);
+    let typed = query.cond_at(plan, k, 1);
+    if typed == 0 {
+        return (bool_int(ordered(op, bytes.compare(a, b))), 0);
+    }
+    let (x, bad_a) = key_of(typed, a);
+    if bad_a != 0 {
+        return (bad_a, 0);
+    }
+    let (y, bad_b) = key_of(typed, b);
+    if bad_b != 0 {
+        return (bad_b, 1);
+    }
+    var c = 0;
+    if x < y {
+        c = 0 - 1;
+    } else if x > y {
+        c = 1;
+    }
+    return (bool_int(ordered(op, c)), 0);
+}
+
+fn bool_int(b: bool) -> [] int {
+    if b {
+        return 1;
+    }
+    return 0;
+}
+
 // Whether the record satisfies every condition. `cols` are the resolved
 // column numbers of the plan's names and `cells` the record's fields (see
 // `reader.fields`). Answers (verdict, which condition, scratch): verdict 1
@@ -929,6 +1053,9 @@ pub fn holds[&q, &c](plan: &q query.Query, k: int, cell: &c [byte]) -> [] int {
 // `holds`).
 pub fn eval[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer) -> [heap] (int, int, buffer.Buffer) {
     if query.flowed(plan) {
+        if query.has_columns(plan) {
+            return eval_program_columns(heap, plan, cols, record, cells, scratch);
+        }
         return eval_program(heap, plan, cols, record, cells, scratch);
     }
     var scr = scratch;
@@ -956,6 +1083,48 @@ pub fn eval[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: &c [
         k = k + 1;
     }
     return (1, 0, scr);
+}
+
+// Condition `k` of kind 3 against the row: the cell of each column, unquoted if it holds a quote. Answers as `holds_columns` does. The left cell is unquoted into `scratch`, the right into a
+// buffer of its own, only when it has a quote.
+fn between_columns[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, k: int, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer) -> [heap] (int, int, buffer.Buffer) {
+    var scr = scratch;
+    let left = cols[query.cond_at(plan, k, 3)];
+    let right = cols[query.cond_at(plan, k, 4)];
+    var verdict = 0;
+    var side = 0;
+    if cells[3 * left + 2] == 1 && index_of_byte(record[cells[3 * left]..cells[3 * left + 1]], byte_of(34)) >= 0 {
+        borrow mut scr as &!sw in {
+            buffer.clear(sw);
+        }
+        scr = query.unquote(heap, scr, record[cells[3 * left]..cells[3 * left + 1]]);
+        borrow scr as &sr in {
+            let (v, s) = against_right(heap, plan, k, buffer.bytes(sr), right, record, cells);
+            verdict = v;
+            side = s;
+        }
+    } else {
+        let (v, s) = against_right(heap, plan, k, record[cells[3 * left]..cells[3 * left + 1]], right, record, cells);
+        verdict = v;
+        side = s;
+    }
+    return (verdict, side, scr);
+}
+
+fn against_right[&h, &q, &a, &d, &e](heap: &!h Heap, plan: &q query.Query, k: int, a: &a [byte], right: int, record: &d [byte], cells: &e [int]) -> [heap] (int, int) {
+    if cells[3 * right + 2] == 1 && index_of_byte(record[cells[3 * right]..cells[3 * right + 1]], byte_of(34)) >= 0 {
+        var own = query.unquote(heap, buffer.empty(heap, 16), record[cells[3 * right]..cells[3 * right + 1]]);
+        var v = 0;
+        var s = 0;
+        borrow own as &orr in {
+            let (v2, s2) = holds_columns(plan, k, a, buffer.bytes(orr));
+            v = v2;
+            s = s2;
+        }
+        buffer.drop(heap, own);
+        return (v, s);
+    }
+    return holds_columns(plan, k, a, record[cells[3 * right]..cells[3 * right + 1]]);
 }
 
 // The evaluation of a plan that has an `or` (docs/or-and-columns.md section 4): the branch program of `query.flow`. A program counter starts at the first condition; the condition it names
@@ -993,6 +1162,53 @@ fn eval_program[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: 
             return (0, 0, scr);
         }
         k = next;
+    }
+    return (0, 0, scr);
+}
+
+// The same for a plan that holds a comparison of two columns (docs/column-comparison.md), which has its own function so that the program of a plan without one is the loop it was, with no test of
+// the kind of each condition. A refusal of the right cell answers a negative `which` (-1 less the condition).
+fn eval_program_columns[&h, &q, &c, &d, &e](heap: &!h Heap, plan: &q query.Query, cols: &c [int], record: &d [byte], cells: &e [int], scratch: buffer.Buffer) -> [heap] (int, int, buffer.Buffer) {
+    var scr = scratch;
+    var k = 0;
+    while k >= 0 {
+        let column = cols[query.cond_at(plan, k, 3)];
+        let first = cells[3 * column];
+        let last = cells[3 * column + 1];
+        var said = 0;
+        if query.cond_at(plan, k, 0) == 3 {
+            // two columns of the row (docs/column-comparison.md): a plan that has one always has a program, so the loop of `eval` never meets it
+            let (v3, side, s3) = between_columns(heap, plan, k, cols, record, cells, scr);
+            scr = s3;
+            if v3 >= 2 {
+                if side == 1 {
+                    return (v3, 0 - 1 - k, scr);
+                }
+                return (v3, k, scr);
+            }
+            said = v3;
+        } else if cells[3 * column + 2] == 1 && index_of_byte(record[first..last], byte_of(34)) >= 0 {
+            borrow mut scr as &!sw in {
+                buffer.clear(sw);
+            }
+            scr = query.unquote(heap, scr, record[first..last]);
+            borrow scr as &sr in {
+                said = holds(plan, k, buffer.bytes(sr));
+            }
+        } else {
+            said = holds(plan, k, record[first..last]);
+        }
+        if said >= 2 {
+            return (said, k, scr);
+        }
+        let after = query.flow_at(plan, k, 1 - said);
+        if after == 0 - 1 {
+            return (1, 0, scr);
+        }
+        if after == 0 - 2 {
+            return (0, 0, scr);
+        }
+        k = after;
     }
     return (0, 0, scr);
 }

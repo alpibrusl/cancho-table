@@ -243,6 +243,11 @@ pub fn flowed[&q](q: &q Query) -> [] bool {
     return vec.size(q.flow) != 0;
 }
 
+// Whether the program has a comparison of two columns: the program of such a plan has one element more than two for each condition (`orparse.parse`), so that the test is the parity of its length.
+pub fn has_columns[&q](q: &q Query) -> [] bool {
+    return vec.size(q.flow) % 2 == 1;
+}
+
 pub fn flow_at[&q](q: &q Query, k: int, which: int) -> [] int {
     return vec.get(q.flow, 2 * k + which);
 }
@@ -432,6 +437,23 @@ pub fn add_agg[&h](heap: &!h Heap, q: Query, function: int, name: int, kind: int
 
 pub fn cond_at[&q](q: &q Query, k: int, field: int) -> [] int {
     return vec.get(q.conds, 7 * k + field);
+}
+
+// The kind of the condition read last (3 is a comparison of two columns), for the reader that has just added one.
+pub fn last_cond_kind[&q](q: &q Query) -> [] int {
+    return vec.get(q.conds, vec.size(q.conds) - 7);
+}
+
+// Whether any condition compares two columns (kind 3).
+pub fn has_between[&q](q: &q Query) -> [] bool {
+    var k = 0;
+    while 7 * k < vec.size(q.conds) {
+        if vec.get(q.conds, 7 * k) == 3 {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
 }
 
 pub fn lit_at[&q](q: &q Query, l: int, field: int) -> [] int {

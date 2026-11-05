@@ -54,8 +54,9 @@ def reading_where(text, legacy):
 
 
 def reading_where_a2(text):
-    """The grammar now (slice A2, `not`): a case that this reading moves is the business of test_not_a2_compat.py, which lists it."""
-    r = N.parse_result(text.encode("utf-8").decode("latin-1"))
+    """The grammar of slice A2 (`not`): a case that this reading moves is the business of test_not_a2_compat.py, which lists it. (Slice C0, a column on the right, came after: expr_c0.)"""
+    with N.a2_grammar():
+        r = N.parse_result(text.encode("utf-8").decode("latin-1"))
     return r if r[0] != "ok" else ("ok",)
 
 
@@ -114,6 +115,18 @@ def tool_query(text, doc):
     return ("ok",)
 
 
+def expr_c0(argv):
+    """Whether the expression of a case is a `--where` that docs/column-comparison.md reads differently from slice A2: a `(` where a value goes. The goldens of the earlier slices hold every other case to
+    main's bytes, and test_column_comparison.py holds these to the reference."""
+    expr = expression_of(argv)
+    if expr is None or expr[0] != "where":
+        return False
+    text = expr[1].encode("utf-8").decode("latin-1")
+    with N.a2_grammar():
+        before = N.parse_result(text)
+    return before != N.parse_result(text)
+
+
 def expr_b1(argv):
     """Whether the expression of a case is a query that slice B1 reads differently from slice A2."""
     expr = expression_of(argv)
@@ -159,7 +172,7 @@ class Compat(unittest.TestCase):
             row = self.now[cid]
             expr = expression_of(argv)
             r_old = r_new = r_a2 = None
-            b1 = expr_b1(argv)
+            b1 = expr_b1(argv) or expr_c0(argv)       # slice B1, and a column on the right (docs/column-comparison.md): read differently from slice A2, held by their own tests
             if expr is not None and expr[0] == "where":
                 r_old, r_new = reading_where(expr[1], True), reading_where(expr[1], False)
             elif expr is not None:
