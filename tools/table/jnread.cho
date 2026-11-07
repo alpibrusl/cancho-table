@@ -73,8 +73,14 @@ pub fn s_simple() -> [] int {
     return 8;
 }
 
-pub fn s_size() -> [] int {
+// 1 for a full join (`jnrun.is_full`): probe_one marks the build rows a probe row matched, and the probe pass gives the others after the last probe row.
+pub fn s_full() -> [] int {
     return 9;
+}
+
+// The slots above; the matched marks of a full join follow them, one bit per held build row (row r is bit r mod 62 of the slot s_size() + r / 62).
+pub fn s_size() -> [] int {
+    return 10;
 }
 
 // What a pass counted, as `read_file` hands it to `finish.explain`.
@@ -527,6 +533,79 @@ pub fn probe_inner[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z](heap: &!h Heap, i
     return (rows2, scratch2, escr2, kept2, jrec2, kscr2);
 }
 
+// The matched mark of build row `row` (full join): bit row mod 62 of the slot s_size() + row / 62 of the probe's state (62 bits a slot keeps the slot positive).
+fn mark[&z](st: &!z [int], row: int) -> [] int {
+    let slot = s_size() + row / 62;
+    let bit = row % 62;
+    st[slot] = st[slot] | 1 << bit;
+    return 0;
+}
+
+fn marked[&z](st: &z [int], row: int) -> [] bool {
+    let slot = s_size() + row / 62;
+    let bit = row % 62;
+    let word = st[slot] >> bit & 1;
+    return word == 1;
+}
+
+// A full join's second phase (docs/join-redesign.md section 9): each held build row that no probe row matched, in build file order, as a joined record whose probe cells are all empty. The probe part of the
+// record is `np - 1` delimiters (`np` empty cells), then the delimiter and the build record as the build holds it, so the cells of the build columns are found as `probe_one` finds them. Stops with the page.
+pub fn build_only[&h, &i, &t, &q, &c, &s, &w, &x, &a, &z, &m](heap: &!h Heap, io: &!i Io, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], st: &!z [int], a: &!a [int], kmap: &m [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, max_join: int) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var rows2 = rows;
+    var scratch2 = scratch;
+    var escr2 = escr;
+    var kept2 = kept;
+    var jrec2 = jrec;
+    let nk = st[s_nk()];
+    let total = jtab.rows_of(jt);
+    var r = 0;
+    while r < total && a[engine.k_stop()] == 0 {
+        if !marked(st, r) {
+            borrow mut jrec2 as &!jw in {
+                buffer.clear(jw);
+            }
+            var c = 0;
+            while c + 1 < np {
+                jrec2 = buffer.push(heap, jrec2, byte_of(delim));
+                c = c + 1;
+            }
+            jrec2 = buffer.push(heap, jrec2, byte_of(delim));
+            let keep = np;
+            let brec = jtab.record(jt, r);
+            jrec2 = buffer.append(heap, jrec2, brec);
+            let (m, open, bad) = reader.fields(brec, delim, bcells, nb);
+            var p = 0;
+            while p < np {
+                cells[3 * p] = p;
+                cells[3 * p + 1] = p;
+                cells[3 * p + 2] = 0;
+                p = p + 1;
+            }
+            var k = 0;
+            while k < nk {
+                let col = kmap[k];
+                cells[3 * (np + k)] = bcells[3 * col] + keep;
+                cells[3 * (np + k) + 1] = bcells[3 * col + 1] + keep;
+                cells[3 * (np + k) + 2] = bcells[3 * col + 2];
+                k = k + 1;
+            }
+            borrow jrec2 as &jr in {
+                let (r2, s2, e2, k2) = emit_one(heap, io, tree, cols, sel, cells, buffer.bytes(jr), 0, st, a, rows2, scratch2, escr2, kept2, delim, as_csv, from, limit, budget, picked, max_join, 1, true, np);
+                rows2 = r2;
+                scratch2 = s2;
+                escr2 = e2;
+                kept2 = k2;
+            }
+            // the cells of the probe columns are the padding of this record: a refused read of one says so (`emit_one` says it of the build columns)
+            if a[engine.k_abort()] != 0 && a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] < np {
+                a[engine.k_err_fn()] = 98 + 1;
+            }
+        }
+        r = r + 1;
+    }
+    return (rows2, scratch2, escr2, kept2, jrec2);
+}
+
 // One probe record whose cells are in `cells` (its first `np`): look its key up, and give the engine what the join type says: one joined record for each build row of the key (inner, left), the
 // padded record when there is none (left), the probe record once when there is a build row (semi) or none (anti). The state is in `a` (the engine's tally), `st` (this module's), and the buffers it answers.
 pub fn probe_one[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z, &k, &m](heap: &!h Heap, io: &!i Io, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], prec: &d [byte], number: int, st: &!z [int], a: &!a [int], keys: &k [int], kmap: &m [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, kscr: buffer.Buffer, kbuf: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, max_join: int) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
@@ -623,6 +702,9 @@ pub fn probe_one[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z, &k, &m](heap: &!h H
     var x = chain;
     while x >= 0 {
         matches = 1 + matches;
+        if st[s_full()] == 1 {
+            mark(st, x);
+        }
         x = jtab.next_row(jt, x);
     }
     if st[s_max_matches()] < matches {
@@ -666,7 +748,7 @@ pub fn probe_one[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z, &k, &m](heap: &!h H
 }
 
 // The probe phase. Answers the reader, what was counted, and the buffers: the csv or json rows pending, the scratch of the writers, the escape scratch and the first bytes of a refused cell.
-pub fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], keys: &k [int], kmap: &m [int], pairs: int, simple: bool, jtype: int, nk: int, rows0: buffer.Buffer, scratch0: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, cap: int, most: int, max_join: int) -> [heap, file_read, io_read, io_write] (lines.Lines, finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+pub fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], keys: &k [int], kmap: &m [int], pairs: int, simple: bool, jtype: int, full: bool, nk: int, rows0: buffer.Buffer, scratch0: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, cap: int, most: int, max_join: int) -> [heap, file_read, io_read, io_write] (lines.Lines, finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
     var r = r0;
     var rows = rows0;
     var scratch = scratch0;
@@ -677,7 +759,11 @@ pub fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0
     var kbuf = buffer.empty(heap, 64);
     var rec = buffer.empty(heap, 256);
     var tally = box_slice(heap, engine.k_size(), 0);
-    var state = box_slice(heap, s_size(), 0);
+    var marks = 0;
+    if full {
+        marks = jtab.rows_of(jt) / 62 + 1;
+    }
+    var state = box_slice(heap, s_size() + marks, 0);
     // J1's path (an inner join of one pair of text, no column left out) has a probe of its own, `probe_inner`
     let fast = jtype == 0 && simple && nk == nb;
     let pkey = keys[0];
@@ -696,6 +782,9 @@ pub fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0
             st[s_pairs()] = pairs;
             if simple {
                 st[s_simple()] = 1;
+            }
+            if full {
+                st[s_full()] = 1;
             }
             while going {
                 var status = 9;
@@ -857,6 +946,15 @@ pub fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0
             if quoted && a[engine.k_abort()] == 0 {
                 a[engine.k_abort()] = 2;
                 a[engine.k_abort_line()] = opened;
+            }
+            // a full join's second phase, only when every probe row was read and nothing stopped the answer (a page that is full before the probe ends never gets here)
+            if full && a[engine.k_abort()] == 0 && a[engine.k_stop()] == 0 && a[engine.k_capped()] == 0 && a[engine.k_ragged()] == 0 {
+                let (r2, s2, e2, k2, j2) = build_only(heap, io, jt, tree, cols, sel, cells, bcells, st, a, kmap, rows, scratch, escr, kept, jrec, np, nb, delim, as_csv, from, limit, budget, picked, max_join);
+                rows = r2;
+                scratch = s2;
+                escr = e2;
+                kept = k2;
+                jrec = j2;
             }
             if a[engine.k_abort()] == 71 {
                 // the facts of the refusal ride in the tally's error fields: the probe row, its line, its matches and the most any probe row had

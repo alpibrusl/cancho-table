@@ -70,7 +70,7 @@ LOCAL = {
     "output.duplicate-column": (2, "never", "same name"),
     "output.not-representable": (2, "never", "UTF-8"),
     "join.column-collision": (2, "sometimes", "both files"),
-    "join.type-unsupported": (2, "never", "right or full"),
+    "join.type-unsupported": (2, "never", "right"),
     "limit.too-many-join-rows": (8, "never", "--max-join-rows"),
     "rename.syntax": (2, "never", "offset"),
     "rename.unknown-target": (3, "sometimes", "output column"),

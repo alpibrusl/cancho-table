@@ -213,3 +213,18 @@ A byte rather than a bit is a choice for a growth rule that is the existing one 
 * Whether `full` is worth its second pass over the held rows for the people who ask: it was asked for by the maintainer (issue #113) and by nothing in the evaluation of #100/#101.
 * How long the build of `F1a` is: the closest measured thing is J7's build change (22.6), a few hundred lines in `jnrun.cho` and `jnread.cho`; that is a comparison, not an estimate.
 * A bit instead of a byte (9.3), and `full outer join` as a spelling.
+
+### 9.7 F1a, built (2026-11-07), and where it differs from the design above
+
+`--join-type full` gives rows (`--select`, `--where`, `--limit`, `--from`, `--format` csv, json and jsonl output, `--explain`) over text or typed keys written as `--on PROBE=BUILD` pairs. It is a left join (`jnrun.jtype_of` answers 1 for `full`) with three additions: `jnread.probe_one` marks the build rows of a chain it walks, `jnread.probe_pass` calls `jnread.build_only` after the last probe row, and `jnwhere.classify` pushes nothing. Tests: `tests/conformance/test_join_full.py` (an oracle that shares no code with the tool, over 160 random tables), 27 mutants in `scripts/join_full_mutants.py`, all killed (two survived the first tests: a page that fills inside the second phase, and the second phase after a refusal; each now has a test).
+
+**Differences from sections 9.2 to 9.5, each decided while building:**
+
+* **The marks are not in the accounted bytes.** They are one bit per held build row, in the probe pass's own state array (`s_size()` slots, then `rows / 62 + 1` more), allocated after the build, so `--max-state-bytes` does not count them. They are at most 1/128 of the accounted bytes (a held row costs at least 16 accounted bytes and a mark 1/8 of a byte), which is why this is not a loophole. The design's "one byte per held row" (9.3) is dropped for this reason; the formula of 6.2 is unchanged for every join type, and nothing in the build or in J8's partitioned build is touched.
+* **The refusals are `args.conflict`, and there is no `join.where-with-full` rule.** `--join-where`, `--join-sorted`, `--group`, `--agg`, `--order-by`, `--sort`, `--top`, JSON lines on either side, and a shared-name key (`--on k`) are all conflicts with `--join-type full`, each with its own sentence and a repair in words. The first is a permanent one (9.2), the others are the slices that follow: grouping and ordering F1b, the shared-name key and its coalesce F1c, JSON lines and `--join-sorted` later. `--on k=k` with two columns of one name is `join.column-collision` as for every join, so a full join of files that share a column name needs `--join-prefix`.
+* **`--query` has no `full join` yet** (F1d): it is still `query.unsupported`.
+* **A refusal in the second phase names the last probe row and line 0**, not the build row: the held table keeps no line numbers. `detail.padded` is true when the refused cell is one of the probe columns. This is a limit of the detail, not of the answer.
+* **The second phase runs only when every probe row was read:** not after a refusal, a full page, the `--max-rows` cap or a ragged probe row. A paged call that stops in the first phase never reads the marks.
+* **The join type's kind** is `choice:inner/left/semi/anti/full`, so `introspect`, the MCP schema and the skill say it; `join.type-unsupported` (F0a) is for `right` alone.
+
+**Not measured:** the time and memory of a full join against a left join (the extra pass over the held rows and one array of `rows / 62` words are the only additions); no benchmark was run.
