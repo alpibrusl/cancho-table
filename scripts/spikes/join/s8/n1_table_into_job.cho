@@ -1,8 +1,9 @@
 edition 5;
 
-// SPIKE S8, negative (docs/joins.md section 24.2, reading 1): a worker that is lent a job by `&!` builds a table and puts it in the job, for the parent to use after the join.
-// Must NOT compile; the compiler's first error is what the gate (tests/conformance/test_join_j8.py `Premise`) pins:
-//     the value overwritten here is `res` (`JTab`), so it cannot be discarded; name the function that consumes it
+// SPIKE S8 (docs/joins.md section 24.2, reading 1): a worker that is lent a job by `&!` builds a table and puts it in the job, for the parent to use after the join.
+// With the compiler of e47d647 this did NOT compile: `the value overwritten here is `res` (`JTab`), so it cannot be discarded`.
+// [corrected] With the compiler of 119bcfe it compiles (the gate, tests/conformance/test_join_j8.py `Premise`, now asserts that it does). `main` spawns the worker, as
+// the program must for the compiler to reach `work` at all: a `main` that declares `[conc]` and never performs it is refused first (`effect-declared-not-performed`).
 
 import std.io;
 import jtab;
@@ -33,6 +34,18 @@ fn main(world: World) -> [conc] int {
     release(args);
     release(clock);
     release(io);
-    release(heap);
+    var hp = heap;
+    borrow mut hp as &!h in {
+        var job = Job { heap: fork_heap(h), tab: jtab.empty(h), n: 3 };
+        borrow mut job as &!kj in {
+            let body = work;
+            let th = spawn(kj, body);
+            let r = join(th);
+        }
+        let Job { heap, tab, n } = job;
+        release(heap);
+        jtab.drop(h, tab);
+    }
+    release(hp);
     return 0;
 }
