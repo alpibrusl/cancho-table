@@ -433,7 +433,7 @@ def strip_lines(doc):
     for e in doc.get("errors", []) + ([doc["error"]] if "error" in doc else []):
         e["detail"].pop("path", None)
         e["detail"].pop("line", None)
-        if e.get("repair") and e["repair"].get("argv"):
+        if e.get("repair") and (e["repair"].get("argv") or e["repair"].get("options")):
             e["repair"] = {"kind": e["repair"]["kind"]}
     return doc
 

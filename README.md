@@ -431,7 +431,7 @@ status,count
 
 ### See what a bad request looks like
 
-Every refusal has a fixed rule name, an exit status and, where one exists, a repair. A cell that is not a whole number, an empty one too, is refused with its row, line and column; there is no repair here, because what the cell was meant to be is not known.
+Every refusal has a fixed rule name, an exit status and, where one exists, a repair. A cell that is not a whole number, an empty one too, is refused with its row, line and column. For an empty cell the repair is the call with the guard `COLUMN != ''` in front of `--where` (the rows with such a cell are left out, which is what the hint says); for any other cell there is no repair, because what the cell was meant to be is not known.
 
 <!-- gen:t-refuse -->
 ```console
