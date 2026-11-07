@@ -154,3 +154,62 @@ Not required, unlike the inner swap: that the probe be the smaller file. The inn
 **Why, as far as the numbers say.** One partition costs 759 ms against 467: the routing (89 ms, sequential, and it grows with the keys), the copy of each share to its worker and the second table's construction are paid whatever the number of partitions. The parallel part scales (658, 306, 205, 195 ms at 1, 2, 4, 8) but not by the number of workers, and on 4 cores 8 partitions cannot do better than 4. What the spike did not model makes R1 look better than it would be in the tool: the keys are generated, not read and split out of csv, and the record is the key; a real join also reads quoted fields and writes the joined rows, which R1 would have to put back in probe order (the merge here puts back integers). A 16-core machine was not available, so how R1 scales past 4 cores is not measured.
 
 **What this leaves.** J8 stays as it is. `docs/joins.md` 15.2 stays the account of why a threaded probe needs the compiler: a shared read of the table gave 2.9 times at 4 threads on the probe alone (S0, another machine, an older `jtab`); R1 gives that up for the routing and does not reach the bar. F0a, F1 and F2 do not depend on it.
+
+## 9. F1: the `full` join, designed before any code (2026-11-07)
+
+Issue #113. This section is the design the issue asks for; nothing in it is built. Every rule below is taken from `docs/joins.md` (sections cited) and from SQL's meaning of `FULL JOIN`, and each place where `full` differs from `left` is a decision with its reason. **No cost of `full` has been measured**; the one number that follows from the formulas is the byte per held row of 9.3.
+
+### 9.1 What it answers
+
+`--join-type full` (and, in a query, `from 'a.csv' as a full join 'b.csv' as b on a.k = b.k`): the rows of the `left` join, in probe order, **then** each held build row that no probe row matched, in build file order, with every probe cell empty. The header is the `left` join's (the probe columns, then the build columns). Matching is the existing one (text or typed keys, up to eight pairs, 5.1 to 5.4 of `docs/joins.md`).
+
+### 9.2 Where `full` differs from `left` (each a decision)
+
+| point | decision | why |
+|---|---|---|
+| `--where` pushdown (8.1, refinement 1) | **none for `full`**: the whole `--where` is evaluated on the joined row, probe-side leading conditions included | a probe row removed before its key is read would never mark its build rows as matched, and they would come back in the second phase as unmatched rows: a wrong answer, not a slower one. `--explain` says `where.probe` and `where.build` are empty for `full` |
+| `--join-where` | **refused** with `full` (a rule and a hint: write the condition in `--where`, or use `left`) | in SQL the `ON` condition of a full join keeps the build rows it rejects, as unmatched, padded; `--join-where` drops them before they are held (8.1, refinement 2). Offering the second meaning under the first name is the trap this tool exists to refuse |
+| the shared-name key (`--on k`) | the one key column of the answer is `coalesce(probe key, build key)`: the probe's spelling for a matched row, the build's for an unmatched build row | the column cannot be empty for a row that has a key; for a typed shared-name key the spelling shown for a build-only row is the build file's (5.2 shows the probe's, which is empty here) |
+| padded cells | **both sides can be padded**: the build part of a probe-only row and the probe part of a build-only row. A typed condition or aggregate over a padded cell refuses as before (`value.not-integer` and the others) with `detail.padded: true`, and for a row of the second phase `detail.input: "build"` and the build row's number and line (6.4) | no null, so the padded cell is the empty text; the guard `col != '' and ...` is the repair a person is taught |
+| `--max-join-rows` | counts the rows of both phases | it bounds the rows produced (6.5) |
+| `--limit`, `--from`, `--top` | the page is a window over the sequence "phase 1 rows, then phase 2 rows"; `next.from` counts joined rows over both phases | one meaning of `--from` (8.2) |
+| phase 2 is lazy | when the page is full before the probe ends, **phase 2 never runs** and the matched marks are never completed | nothing in the page depends on them; this keeps a paged `full` as cheap as a paged `left` |
+| `--join-sorted` | refused with `full` (`args.conflict`) at first | the merge produces key order, and the unmatched rows of both files interleave in it: a different contract, a later slice |
+| standard input as the probe | allowed | phase 2 starts at its end |
+| threads | one core, as every join (7.2); `--explain` says why | nothing new |
+| `semi` and `anti` | not combined (they are types) | |
+
+### 9.3 State and the bound
+
+`full` holds the build rows (as `inner` and `left` do, 6.2) and **one byte per held row** for the matched mark, allocated as the rows are held:
+
+```
+accounted = sum over held rows (record_bytes + 17)  +  sum over distinct keys (key_bytes + 60)       (full only; inner and left keep 16)
+```
+
+A byte rather than a bit is a choice for a growth rule that is the existing one (a box that doubles) and for a gate that is one line; a bit would cost 1/8 of that and was not weighed further. The bound is checked at the first held row that would pass it, as 6.3 says, so the threshold stays one byte at every thread count. `--explain`'s upper bound on the build gains the same 1 per possible row. **The refusal `limit.state-too-large` for a `full` build offers no swap** (the swap repair is for `inner` only, 6.3).
+
+### 9.4 The surface that changes
+
+* `--join-type`'s kind becomes `choice:inner/left/semi/anti/full`: `introspect`, the MCP schema and the skill (all generated) change, and so do the tests that pin the four words (`test_join.py` and `test_join_j2.py`, 12 lines in all).
+* `join.type-unsupported` (F0a) keeps `right` and loses `full`; its hint loses the sentence about `full`; the rule's summary in `finish.extra()`, `docs/refusals.md` and the fixture of `test_rules.py` follow. A `--query` with `full join` stops being `query.unsupported` (feature `full join`); `full outer join` keeps being refused (the feature `outer join`), as `left outer join` is.
+* One new rule, say `join.where-with-full` (exit 2, no repair, hint as in 9.2), for `--join-where` or a query `on` condition on the second table beside `full`; and `args.conflict` for `--join-sorted`.
+
+### 9.5 Staging, each slice with its gates
+
+| slice | what | gates beyond the common ones |
+|---|---|---|
+| F1a | flag form, rows out, text keys, no `--group`/`--order-by`, the refusals of 9.2 | the oracle below; the matched mark under mutants |
+| F1b | `--group`, `--agg`, `--sort`, `--order-by`, `--top`, paging | the same bytes as the same question on the csv of the oracle's rows, piped into a second call |
+| F1c | typed keys, composite keys, the shared-name coalesce | the oracle with typed and empty keys; `1.0` against `1` as keys |
+| F1d | the query form | flags and query give the same bytes; `--explain` agrees (X1 of `docs/query.md`) |
+
+**Common gates (written before the code).** (1) Every existing join type's answers are unchanged: the corpus md5 of J1 to J9 and `scripts/query_corpus.py --require f1`. (2) **The oracle**: `full` equals the `left` join followed by the build rows that matched nothing, computed independently in Python (dict of lists, no use of the tool), on random tables with duplicate, empty, unmatched and quoted-newline keys, for text and typed keys, and each probe row's matches in build order. (3) The same bytes at every `--threads` and `--chunk-bytes` already gated for joins. (4) The bound is exact to one byte (accepted at N, refused at N - 1) with the extra byte per row. (5) A page that ends inside phase 1 never reads the rest of the build file past what the build needs, and a page that reaches phase 2 equals the corresponding window of the unpaged answer. (6) Every refusal has a rule and a hint; no input reaches a panic.
+
+**Mutants (each one defect, each must be killed).** The mark never set; always set; set only for the first row of a chain; set for a build row of the wrong key; cleared when a refusal is retried; phase 2 in reverse order; phase 2 omitted when the probe is empty; the probe-side pushdown left on; `--join-where` accepted; the shared key not coalesced; padded cells counted in the wrong side; the extra byte not counted; `--max-join-rows` not counting phase 2.
+
+### 9.6 What this design does not settle
+
+* Whether `full` is worth its second pass over the held rows for the people who ask: it was asked for by the maintainer (issue #113) and by nothing in the evaluation of #100/#101.
+* How long the build of `F1a` is: the closest measured thing is J7's build change (22.6), a few hundred lines in `jnrun.cho` and `jnread.cho`; that is a comparison, not an estimate.
+* A bit instead of a byte (9.3), and `full outer join` as a spelling.
