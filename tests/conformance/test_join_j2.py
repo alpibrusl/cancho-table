@@ -460,8 +460,27 @@ class Flags(unittest.TestCase):
     def test_join_type_takes_four_words(self):
         for t in JTYPES:
             self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t)[0], 0, t)
-        for t in ("right", "full", "cross", "LEFT", "outer", "left outer", ""):
+        for t in ("cross", "LEFT", "outer", "left outer", ""):
             self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t), (2, "args.bad-value"), t)
+
+    def test_right_and_full_are_refused_with_a_rule_that_says_what_to_write(self):
+        # docs/join-redesign.md F0a: the two words people mean are answered with their own rule, in both spellings of the flag, exit 2, no repair
+        for t, said in (("right", "left"), ("full", "anti")):
+            for argv in (("--join-type", t), ("--join-type=" + t,)):
+                r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", *argv, "p.csv")
+                self.assertEqual((r.status, r.first_rule()), (2, "join.type-unsupported"), argv)
+                err = r.error()
+                self.assertEqual((err["detail"]["flag"], err["detail"]["value"], err["detail"]["expected"]), ("--join-type", t, "inner/left/semi/anti"))
+                self.assertIn(said, err["hint"].split("For full")[0 if t == "right" else 1], argv)
+                self.assertEqual(err["repair"]["kind"], "none", argv)
+        # as csv it is a sentence on standard error with the rule, and the same status
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--join-type", "right", "--format", "csv", "p.csv")
+        self.assertEqual(r.status, 2)
+        self.assertIn(b"join.type-unsupported", r.stderr)
+        # a word after `--` is an operand, not the flag's value; and a value that is neither word keeps the generic rule
+        self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", "outer"), (2, "args.bad-value"))
+        r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--join-type", "left", "--", "right")
+        self.assertNotEqual(r.first_rule(), "join.type-unsupported")
 
     def test_join_type_is_in_introspect(self):
         f = {x["name"]: x for x in introspect()["flags"]}

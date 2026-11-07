@@ -131,6 +131,22 @@ fn stem_prefix[&h, &s](heap: &!h Heap, shown: &s [byte]) -> [heap] buffer.Buffer
     return buffer.push(heap, out, byte_of('_'));
 }
 
+// `join.type-unsupported`: `--join-type right` or `full` (docs/join-redesign.md, F0a). Raised in place of the generic `args.bad-value` of a word flag, so that the refusal says what to write. `word` is 1 for right, 2 for full. No repair
+// is offered: the exchanged call has the other file's rows first and the other file's columns first, so it is not the same answer, and the reader decides (F0b of the design is the repair, not built).
+pub fn type_unsupported[&h](heap: &!h Heap, word: int) -> [heap] fail.Errors {
+    var kind = "right";
+    if word == 2 {
+        kind = "full";
+    }
+    var o = fail.open_in(heap, finish.extra(), "join.type-unsupported", "this --join-type is not built: the join types are inner, left, semi and anti", "for right, write a left join with the two files exchanged (the --join file as FILE and FILE as --join, each --on pair read the other way, so the rows come in the other file's order and its columns first, and --select keeps the old column order). For full, which is not built (cancho-table#113), ask for the left join and, with the files exchanged and --join-type anti, for the rows of the --join file that match nothing");
+    o = fail.repair_none(heap, o, "the exchanged call is not the same answer (the other file's row order and column order), so it is not offered as a call: the hint says how to write it");
+    o = fail.detail_open(heap, o);
+    o = fail.detail_str(heap, o, "flag", "--join-type");
+    o = fail.detail_str(heap, o, "value", kind);
+    o = fail.detail_str(heap, o, "expected", "inner/left/semi/anti");
+    return fail.add(heap, fail.empty_in(heap, finish.extra()), o);
+}
+
 // `join.column-collision`: a name that both headers have, with the prefix given (or ""). Nothing is renamed. The repair is the invocation with `--join-prefix` and the stem of the build
 // file's name, offered only when no prefix was given and the result has no collision; otherwise there is none.
 pub fn collision[&h, &g, &p, &a, &b, &x, &y, &q, &s, &z](heap: &!h Heap, e: fail.Errors, args: &g Args, parsed: &p cli.Parsed, pnames: &a buffer.Buffer, pends: &b vec.Vec[int], bnames: &x buffer.Buffer, bends: &y vec.Vec[int], prefix: &q [byte], shown: &s [byte], given: bool, dropped: &z [int]) -> [heap, args] fail.Errors {
