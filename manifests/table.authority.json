@@ -142,6 +142,7 @@
     "c_start",
     "c_threads",
     "catalogue",
+    "ceil_int",
     "chunk_size",
     "civil_from_shifted",
     "class_text",
@@ -288,6 +289,7 @@
     "get_i64",
     "gkind_at",
     "gkind_raw_at",
+    "grisu",
     "groups",
     "guarantee_keys",
     "guarantees_has",
@@ -485,6 +487,7 @@
     "longest",
     "looks_like_document",
     "lower_eq",
+    "lsr",
     "magnitude_times",
     "mantissa",
     "max_depth",
@@ -505,6 +508,7 @@
     "most_nodes",
     "most_segments",
     "mul128",
+    "mul_f",
     "must_quote",
     "name_at",
     "name_at",
@@ -798,6 +802,7 @@
     "type_text",
     "typed_groups",
     "typed_mention",
+    "ult",
     "under",
     "uneven_neighbours",
     "unit_at",
@@ -838,7 +843,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 351,
+  "folded_operators": 364,
   "folded_calls": 0,
-  "functions": 1400
+  "functions": 1407
 }
