@@ -87,3 +87,31 @@ The 1.5 and 2 are choices, not measurements. S0 measured the *shared* read at 2.
 * **Measured:** the eight S0 refusals and the S8/S9 results above, on `119bcfe` (x86_64 Linux, 4 cores). The earlier numbers quoted (24.4, 15.2) are from their sections and machines.
 * **Not measured:** everything about R1's speed and memory; S9's time and memory; the leak behaviour of the overwrite; `full`'s cost. The 1.5 and 2 of section 3 are thresholds chosen before the spike, so that the spike cannot move them.
 * **Not decided here:** whether to file the request of 15.3 (it needs the maintainer's yes), and whether `full` is wanted at all; nothing in the issues asks for it.
+
+## 7. F0 in detail: the repair for `right` (written 2026-11-07, before any code)
+
+**What happens today (measured on the built tool, pin `119bcfe`).** `--join-type right` is `args.bad-value` (`detail.expected`: `inner/left/semi/anti`, `repair: null`); `full` is refused the same way. A `--query` with `right join` is `query.unsupported`, feature `right join`, hint "swap the two files and write left join", and `repair: {"kind":"none"}`. So the swap is told in words and never offered as a call. Section 4 called F0 small; it is not quite: the swap is only the same question when the call has none of the features below, which is the list the existing swap repair of the build bound (`tools/table/jnswap.cho`, `code_of`) already keeps. F0 reuses its pieces; it does not copy them.
+
+**What "the right join" means here.** The rows of `A right join B on k` are the rows of `B left join A on k` with the columns of `A` first again: for each row of `B`, in `B`'s order, the matching rows of `A` in `A`'s order, and a row of `B` with no match once, with the cells of `A` empty. This is the definition of docs/joins.md 2.2, whose row order is `B`'s. The repair is exactly that call: the operand and the `--join` file exchange places, each pair of `--on` is read the other way, the reader flags of the two files go with their files, and a `--select` with the original joined header keeps the columns in the original order (`jnswap.exchanged` does all of this for the inner swap).
+
+**When the repair is offered, and when nothing is** (each "nothing" has a code and a sentence in the hint, as `jnswap.reason_of` has):
+
+| condition of the call | offered? | why |
+|---|---|---|
+| `--join-type right` or `right join` in a `--query` | yes, if the rest holds | the case |
+| `--join-prefix` | no | it names the `--join` file's columns, which would then be the other file's |
+| `--join-where` | no | in a right join it would be a condition on the preserved side; in the swapped left join it filters the probe: a different question |
+| a column named by position (`#N`) | no | the positions move |
+| a typed shared-name key | no | it shows the probe's spelling of the key |
+| a name twice or none in the joined header | no | the columns cannot be kept in order by name |
+| a csv answer whose delimiter would change | no | as for the inner swap |
+| standard input as the probe | no | it cannot be held as the build side |
+| the probe file larger than `--max-state-bytes` allows as a build | no | an offer the next run refuses for the bound does not repair |
+| `--limit`, `--top`, `--from` | yes, with the order in the hint | there is no earlier right-join order to keep: the order is `B`'s by definition |
+| a `--query` | no argv is rewritten, but the hint carries the swapped query; the `repair` of a query refusal stays the flag form, as docs/query.md section 1 says | |
+
+Not required, unlike the inner swap: that the probe be the smaller file. The inner swap is offered only to relieve the bound; here the swap is the whole point, and the bound check above covers the cost.
+
+**Gates (to be written before the code).** (1) For random tables with duplicate, empty and unmatched keys, the rows of the repair's argv, run, equal the right join computed independently in Python (`rows of B left join A`, columns of `A` first), for text and typed keys. (2) Each "no" row of the table has a test that the refusal still has `repair: null` and a hint that names the reason. (3) The refusal of the flag form and of the query form keep their rule tags and exit status 2. (4) `docs/refusals.md` and `docs/joins.md` 2.2 say what the refusal now offers. (5) Mutants: key pair not reversed, reader flags not exchanged, header not restored, `--join-where` not refused.
+
+**Not decided, and cheap to decide wrongly:** whether `full` should get the same treatment (it cannot: a full join is not a swap of anything; F1 builds it).
