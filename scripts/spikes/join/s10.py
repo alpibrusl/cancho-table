@@ -5,12 +5,14 @@
 
 Builds scripts/spikes/join/s10/partition.cho with the Rust compiler (CANCHO_COMPILER=rust: the reference checks; the default compiler of cancho lets programs through that the
 language refuses, section 1 of the design), then for each size and number of partitions runs it three ways: both joins in one process (the timings and the check that R1's answer is
-the sequential one), the sequential join alone and R1 alone (the peak resident set of each, from wait4). Prints the minimum over --runs processes of the minimum over --reps repetitions.
+the sequential one), the sequential join alone and R1 alone (the peak resident set of each, from wait4 of a small launcher). Prints the minimum over --runs processes of the minimum over --reps repetitions.
 """
-import argparse, json, os, pathlib, platform, shutil, subprocess, sys
+import argparse, json, os, pathlib, platform, shutil, sys, tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 SIZES = ((100_000, 400_000), (1_000_000, 4_000_000))
 PARTS = (1, 2, 4, 8)
 
@@ -23,24 +25,25 @@ def build(cancho, out):
         sys.exit("cannot build the spike:\n" + p.stderr[-800:])
 
 
+def launcher():
+    out = os.path.join(tempfile.mkdtemp(prefix="maxrss-"), "maxrss")
+    subprocess.run(["cc", "-O1", "-o", out, str(ROOT / "tests" / "conformance" / "maxrss.c")], check=True)
+    return out
+
+
 def run(binary, argv):
-    r, w = os.pipe()
-    pid = os.fork()
-    if pid == 0:
-        os.dup2(w, 1)
-        os.close(r)
-        os.execv(str(binary), [str(binary)] + [str(a) for a in argv])
-    os.close(w)
-    out = b""
-    while True:
-        chunk = os.read(r, 4096)
-        if not chunk:
-            break
-        out += chunk
-    _, status, usage = os.wait4(pid, 0)
-    if status:
-        sys.exit("the spike failed: %r %r" % (argv, status))
-    return [int(x) for x in out.split()], usage.ru_maxrss // 1024  # Linux: kilobytes
+    """The numbers the spike prints."""
+    p = subprocess.run([str(binary)] + [str(a) for a in argv], capture_output=True, text=True, check=True, timeout=900)
+    return [int(x) for x in p.stdout.split()]
+
+
+def peak_mb(helper, binary, argv):
+    """The peak resident set of the program alone, from wait4 of a small launcher (a child forked from Python would start from Python's own mark: tests/conformance/maxrss.c)."""
+    p = subprocess.run([helper, str(binary)] + [str(a) for a in argv], capture_output=True, text=True, check=True, timeout=900)
+    kb, status = p.stdout.split()
+    if int(status):
+        sys.exit("the spike failed: %r" % (argv,))
+    return int(kb) // 1024 if sys.platform != "darwin" else int(kb) // (1024 * 1024)
 
 
 def main():
@@ -55,6 +58,7 @@ def main():
     work.mkdir(parents=True, exist_ok=True)
     binary = work / "partition"
     build(a.cancho, binary)
+    helper = launcher()
     ver = subprocess.run([a.cancho, "--version"], capture_output=True, text=True).stdout.strip()
     res = {"compiler": ver, "machine": platform.platform() + " " + platform.machine(), "cores": os.cpu_count(), "load_before": os.getloadavg(), "runs": a.runs, "reps": a.reps, "cells": []}
     print("compiler %s (CANCHO_COMPILER=rust)\nmachine %s, %d cores; load average before %s\n" % (ver, res["machine"], os.cpu_count(), res["load_before"]))
@@ -64,12 +68,12 @@ def main():
             best = None
             ok = 0
             for _ in range(a.runs):
-                v, _rss = run(binary, [nb, npr, parts, a.reps, 0])
+                v = run(binary, [nb, npr, parts, a.reps, 0])
                 ok += v[6]
                 best = v if best is None else [min(x, y) for x, y in zip(best, v)]
             sb, sp, rt, par, mg, tot, _ = best
-            rss_seq = min(run(binary, [nb, npr, parts, 1, 1])[1] for _ in range(a.runs))
-            rss_r1 = min(run(binary, [nb, npr, parts, 1, 2])[1] for _ in range(a.runs))
+            rss_seq = min(peak_mb(helper, binary, [nb, npr, parts, 1, 1]) for _ in range(a.runs))
+            rss_r1 = min(peak_mb(helper, binary, [nb, npr, parts, 1, 2]) for _ in range(a.runs))
             seq = sb + sp
             cell = {"build": nb, "probe": npr, "parts": parts, "seq_build": sb, "seq_probe": sp, "route": rt, "par": par, "merge": mg, "r1_total": tot, "speedup": round(seq / tot, 2) if tot else None,
                     "rss_seq_mb": rss_seq, "rss_r1_mb": rss_r1, "ok_runs": ok, "of": a.runs * a.reps}

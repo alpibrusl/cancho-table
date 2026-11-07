@@ -8,7 +8,7 @@
 |---|---|---|
 | J8 (partitioned build) as it is | **keep it** | it is built, gated and byte-identical, and its rationale (24.2, point 1) stands: a table cannot be handed back |
 | the threaded probe (J6) | **still blocked on the compiler**: `119bcfe` refuses all eight S0 negative programs | measured, section 1 |
-| a new J6 route, "R1": one job per partition that owns its table and its output | **not kept**: S10 measured 1.42 times at 4 partitions on a 1,000,000 x 4,000,000 join, under the 1.5 fixed in advance (section 8) | measured, section 8 |
+| a new J6 route, "R1": one job per partition that owns its table and its output | **not kept**: S10 measured 1.42 and 1.46 times at 4 partitions (two runs) on a 1,000,000 x 4,000,000 join, under the 1.5 fixed in advance (section 8) | measured, section 8 |
 | `right` and `full` | **`full` yes (F1), `right` stays a refusal with the swap repair** | `full` needs a bit per build row and a second phase; `right` is a left join with the files swapped |
 | a join of more than two files | **no**; pipe, with `--out` (cancho-table#108) | one plan per call is the rule |
 | `--report` over a join | **keep the refusal, make its repair the two-step command** | section 4 |
@@ -140,18 +140,18 @@ Not required, unlike the inner swap: that the probe be the smaller file. The inn
 
 | build x probe | parts | sequential build + probe | route | par | merge | R1 total | speed-up | rss sequential | rss R1 |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 100,000 x 400,000 | 1 | 13 + 15 = 28 | 7 | 45 | 0 | 53 | 0.53 | 23 | 41 |
-| | 2 | 13 + 16 = 29 | 5 | 29 | 0 | 37 | 0.78 | 23 | 41 |
-| | 4 | 13 + 15 = 28 | 6 | 12 | 0 | 19 | 1.47 | 23 | 41 |
-| | 8 | 11 + 12 = 23 | 5 | 10 | 0 | 16 | 1.44 | 23 | 32 |
-| 1,000,000 x 4,000,000 | 1 | 237 + 230 = 467 | 89 | 658 | 6 | 759 | 0.62 | 219 | 375 |
-| | 2 | 214 + 235 = 449 | 84 | 306 | 5 | 426 | 1.05 | 219 | 371 |
-| | **4** | 215 + 222 = 437 | 75 | 205 | 5 | **308** | **1.42** | 219 | 379 |
-| | 8 | 202 + 208 = 410 | 81 | 195 | 5 | 294 | 1.39 | 219 | 301 |
+| 100,000 x 400,000 | 1 | 11 + 12 = 23 | 6 | 36 | 0 | 44 | 0.52 | 23 | 41 |
+|  | 2 | 11 + 12 = 23 | 5 | 21 | 0 | 27 | 0.85 | 23 | 40 |
+|  | 4 | 10 + 11 = 21 | 5 | 12 | 0 | 19 | 1.11 | 23 | 41 |
+|  | 8 | 12 + 12 = 24 | 5 | 10 | 0 | 16 | 1.50 | 23 | 32 |
+| 1,000,000 x 4,000,000 | 1 | 233 + 227 = 460 | 87 | 588 | 5 | 695 | 0.66 | 219 | 375 |
+|  | 2 | 229 + 247 = 476 | 85 | 311 | 5 | 420 | 1.13 | 219 | 368 |
+|  | **4** | 219 + 242 = 461 | 81 | 221 | 6 | **316** | **1.46** | 219 | 348 |
+|  | 8 | 211 + 209 = 420 | 76 | 182 | 5 | 264 | 1.59 | 219 | 317 |
 
-**Verdict against the criterion fixed in section 3: not met.** At 4 partitions on the large join R1 is **1.42 times** the sequential join (build and probe together; against the probe alone it is slower: 308 ms against 222), under the 1.5 chosen in advance. Its resident set is 379 MB against 219 MB for the sequential join, **1.73 times**, within the 2 times; that comparison is with the sequential one-thread join of the same spike, since J8's resident set was not measured at this size (24.4 measured another shape). The small join gives 1.47 and misses too. So R1 is **not kept**, and the threaded probe waits for the compiler (the request of `docs/joins.md` 15.3, unfiled, needs the maintainer's yes).
+**Verdict against the criterion fixed in section 3: not met, by a margin the runs cannot settle.** At 4 partitions on the large join R1 is **1.46 times** the sequential join (build and probe together; against the probe alone it is slower: 316 ms against 242), under the 1.5 chosen in advance. An earlier run of the same program and the same machine, with the child processes started another way, gave 1.42 at 4 partitions (and 1.39 at 8); this run gives 1.59 at 8 partitions, which on 4 cores is oversubscribed and is not the case the criterion names. So the two runs differ by about 0.04 at 4 partitions and by 0.2 at 8: the distance to 1.5 (0.04 to 0.08) is within what the measurement varies by. Its resident set is 348 MB against 219 MB for the sequential join, **1.59 times**, within the 2 times; that comparison is with the sequential one-thread join of the same spike, since J8's resident set was not measured at this size (24.4 measured another shape). The small join gives 1.11 at 4 partitions and misses too. So R1 is **not kept** on the rule fixed in advance, which is what a pre-registered threshold is for; it is a close call, not a clear failure, and the threaded probe waits for the compiler (the request of `docs/joins.md` 15.3, unfiled, needs the maintainer's yes).
 
-**Why, as far as the numbers say.** One partition costs 759 ms against 467: the routing (89 ms, sequential, and it grows with the keys), the copy of each share to its worker and the second table's construction are paid whatever the number of partitions. The parallel part scales (658, 306, 205, 195 ms at 1, 2, 4, 8) but not by the number of workers, and on 4 cores 8 partitions cannot do better than 4. What the spike did not model makes R1 look better than it would be in the tool: the keys are generated, not read and split out of csv, and the record is the key; a real join also reads quoted fields and writes the joined rows, which R1 would have to put back in probe order (the merge here puts back integers). A 16-core machine was not available, so how R1 scales past 4 cores is not measured.
+**Why, as far as the numbers say.** One partition costs 695 ms against 460: the routing (about 80 to 90 ms, sequential, and it grows with the keys), the copy of each share to its worker and the second table's construction are paid whatever the number of partitions. The parallel part scales (588, 311, 221, 182 ms at 1, 2, 4, 8) but not by the number of workers, and on 4 cores 8 partitions cannot do better than 4 (the gain at 8 is the noise of the runs, or the extra workers hiding stalls: not told apart here). What the spike did not model makes R1 look better than it would be in the tool: the keys are generated, not read and split out of csv, and the record is the key; a real join also reads quoted fields and writes the joined rows, which R1 would have to put back in probe order (the merge here puts back integers). A 16-core machine was not available, so how R1 scales past 4 cores is not measured. The resident set was taken with the small launcher of `tests/conformance/maxrss.c`, as the other scripts do; a first version of the driver forked from Python and so started from Python's own mark, which only the small cells could show.
 
 **What this leaves.** J8 stays as it is. `docs/joins.md` 15.2 stays the account of why a threaded probe needs the compiler: a shared read of the table gave 2.9 times at 4 threads on the probe alone (S0, another machine, an older `jtab`); R1 gives that up for the routing and does not reach the bar. F0a, F1 and F2 do not depend on it.
 
