@@ -490,6 +490,7 @@
     "lsr",
     "magnitude_times",
     "mantissa",
+    "marked",
     "max_depth",
     "memo_size",
     "memory",
@@ -650,6 +651,7 @@
     "s_conds",
     "s_conds_end",
     "s_dry",
+    "s_full",
     "s_group_at",
     "s_group_count",
     "s_group_end",
@@ -843,7 +845,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 364,
+  "folded_operators": 365,
   "folded_calls": 0,
-  "functions": 1409
+  "functions": 1414
 }

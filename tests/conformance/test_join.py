@@ -418,13 +418,12 @@ class Flags(unittest.TestCase):
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--report", "types", "p.csv")
         self.assertIn("pipe", r.error()["hint"])
 
-    def test_right_full_and_cross_are_not_join_types(self):
+    def test_right_and_cross_are_not_join_types_and_full_is(self):
         for t in ("cross", "LEFT"):
             self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t), (2, "args.bad-value"), t)
-        # right and full are refused with a rule of their own since F0a of docs/join-redesign.md
-        for t in ("right", "full"):
-            self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t), (2, "join.type-unsupported"), t)
-        for t in ("inner", "left", "semi", "anti"):
+        # right is refused with a rule of its own since F0a of docs/join-redesign.md
+        self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", "right"), (2, "join.type-unsupported"))
+        for t in ("inner", "left", "semi", "anti", "full"):
             self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t)[0], 0, t)
 
     def test_max_join_rows_is_1_to_a_billion(self):
@@ -920,7 +919,7 @@ class Introspect(unittest.TestCase):
     def test_the_flags_and_limits_and_rules_are_in_introspect(self):
         d = introspect()
         names = {f["name"]: f for f in d["flags"]}
-        for flag, kind in (("--join", "path"), ("--on", "text"), ("--join-type", "choice:inner/left/semi/anti"), ("--join-prefix", "any"), ("--max-join-rows", "nat")):
+        for flag, kind in (("--join", "path"), ("--on", "text"), ("--join-type", "choice:inner/left/semi/anti/full"), ("--join-prefix", "any"), ("--max-join-rows", "nat")):
             self.assertEqual(names[flag]["kind"], kind, flag)
         self.assertEqual(names["--join"]["role"], "path-read")
         self.assertEqual(names["--join-type"]["default"], "inner")

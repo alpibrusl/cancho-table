@@ -30,10 +30,14 @@ import toolbox.fail;
 import toolbox.text;
 
 // The class of each condition of `tree` (`--where`): `cols` maps the plan's names to the columns of the joined header, whose first `np` are FILE's; `units` are `orparse.top_units`; `jtype` 0 inner, 1 left,
-// 2 semi, 3 anti. Entry `nw` is how many conditions are probe-side, `nw + 1` how many build-side.
+// 2 semi, 3 anti, 4 full (a left join that pushes nothing). Entry `nw` is how many conditions are probe-side, `nw + 1` how many build-side.
 pub fn classify[&h, &q, &c, &u](heap: &!h Heap, tree: &q query.Query, cols: &c [int], units: &u vec.Vec[int], np: int, jtype: int) -> [heap] Box[[int]] {
     let nw = query.count_of(tree, 1);
     var cls = box_slice(heap, nw + 2, 0);
+    if jtype == 4 {
+        // full (docs/join-redesign.md 9.2): the whole `--where` is evaluated on the joined row, so no condition is moved before the join
+        return cls;
+    }
     var i = 0;
     var going = true;
     var probe = 0;

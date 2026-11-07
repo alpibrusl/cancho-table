@@ -139,7 +139,7 @@ fn type_name[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buff
 }
 
 // The text of the `join` member. `jtype`: 0 inner, 1 left, 2 semi, 3 anti.
-fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte], reader_json: &y [byte], bjsonl: bool, foreign: bool, swap_json: &z [byte]) -> [heap, args] buffer.Buffer {
+fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte], stdin: bool, shown: &s [byte], shown_b: &t [byte], np: int, nk: int, keys: &k [int], pairs: int, bsize: int, bheader: int, known: bool, jtype: int, full: bool, nb: int, where_json: &w [byte], jw_json: &j [byte], shared: &static [byte], reader_json: &y [byte], bjsonl: bool, foreign: bool, swap_json: &z [byte]) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let on = jnflags.on_of(heap, args, parsed, jxs);
     let budget = cli.nat(args, parsed, table, "max-state-bytes");
@@ -163,7 +163,9 @@ fn join_doc[&h, &g, &p, &s, &t, &k, &w, &j, &x, &y, &z](heap: &!h Heap, args: &g
     }
     var o = buffer.empty(heap, 1024);
     o = buffer.append(heap, o, "{\"type\":");
-    if jtype == 1 {
+    if full {
+        o = buffer.append(heap, o, "\"full\"");
+    } else if jtype == 1 {
         o = buffer.append(heap, o, "\"left\"");
     } else if jtype == 2 {
         o = buffer.append(heap, o, "\"semi\"");
@@ -444,6 +446,7 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
     var jends = vec.empty(heap, 1, 0);
     var ok = false;
     var jtype = 0;
+    var full = false;
     let jw_on = jxsrc.has(parsed, jxs, jxsrc.s_join_where(), "join-where");
     var jwtree = query.empty(heap);
     let wordb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_type(), "join-type");
@@ -451,6 +454,9 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
         let word = buffer.bytes(wdr);
         if bytes.equal(word, "left") {
             jtype = 1;
+        } else if bytes.equal(word, "full") {
+            jtype = 1;
+            full = true;
         } else if bytes.equal(word, "semi") {
             jtype = 2;
         } else if bytes.equal(word, "anti") {
@@ -570,7 +576,11 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
                     unbox_slice(heap, cls);
                     borrow fcols as &fc in {
                         borrow wu as &wur in {
-                            cls = jnwhere.classify(heap, tq, contents(fc), wur, np, jtype);
+                            var ctype = jtype;
+                            if full {
+                                ctype = 4;
+                            }
+                            cls = jnwhere.classify(heap, tq, contents(fc), wur, np, ctype);
                         }
                     }
                 }
@@ -669,7 +679,7 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
                 borrow jw_json as &jjr in {
                     borrow reader_json as &rjr in {
                         borrow swap_json as &sjr in {
-                            doc = join_doc(heap, args, parsed, jxs, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, known, jtype, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared, buffer.bytes(rjr), fmt.b_jsonl, jnfmt.foreign(fmt, delim), buffer.bytes(sjr));
+                            doc = join_doc(heap, args, parsed, jxs, stdin, shown, buffer.bytes(sb), np, nk, contents(ky), pairs, bsize, bheader, known, jtype, full, nb, buffer.bytes(wjr), buffer.bytes(jjr), shared, buffer.bytes(rjr), fmt.b_jsonl, jnfmt.foreign(fmt, delim), buffer.bytes(sjr));
                         }
                     }
                 }

@@ -298,6 +298,31 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
         }
     }
     buffer.drop(heap, path);
+    // A full join (docs/join-redesign.md section 9, slice F1a): rows out, with --on PROBE=BUILD pairs; what is not built yet, or that means something else for a full join, is a conflict
+    var full = false;
+    let fword = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_type(), "join-type");
+    borrow fword as &fwr in {
+        full = bytes.equal(buffer.bytes(fwr), "full");
+    }
+    buffer.drop(heap, fword);
+    if full {
+        if jxsrc.has(parsed, jxs, jxsrc.s_join_where(), "join-where") {
+            e = flags.problem(heap, e, "args.conflict", "--join-where drops the --join rows it rejects before they are held, and the ON of a full join keeps them, as rows of their own", "write the condition in --where, or use --join-type left", "--join-type --join-where");
+        }
+        if cli.has(parsed, table, "join-sorted") {
+            e = flags.problem(heap, e, "args.conflict", "a full join is not built over --join-sorted yet (a merge gives the key order, and the rows nothing matched would have to be placed in it)", "drop --join-sorted", "--join-type --join-sorted");
+        }
+        if inp.has_group || inp.has_agg || inp.has_order || cli.has(parsed, table, "sort") || cli.has(parsed, table, "top") {
+            e = flags.problem(heap, e, "args.conflict", "a full join gives rows in this version: --group, --agg, --order-by, --sort and --top over it are not built yet", "write the join as --format csv and pipe it into a second call", "--join-type --group --agg --order-by --sort --top");
+        }
+        var jsonl_side = inp.jsonl;
+        if cli.has(parsed, table, "join-input-format") {
+            jsonl_side = jsonl_side || bytes.equal(cli.text(args, parsed, table, "join-input-format"), "jsonl") || bytes.equal(cli.text(args, parsed, table, "join-input-format"), "ndjson");
+        }
+        if jsonl_side {
+            e = flags.problem(heap, e, "args.conflict", "a full join is not built over JSON lines yet", "write the JSON lines as csv first", "--join-type --input-format --join-input-format");
+        }
+    }
     if !jxsrc.has(parsed, jxs, jxsrc.s_on(), "on") {
         e = flags.problem(heap, e, "args.required-flag", "--join needs --on: the column of FILE and the column of the --join file whose cells are equal", "--on user=id", "--join --on");
     } else {
@@ -336,6 +361,20 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
             }
             if ostatus != 0 {
                 e = flags.problem(heap, e, "args.bad-value", why, hint, "--on");
+            } else if full {
+                var shared = false;
+                borrow on as &onr2 in {
+                    var j = 0;
+                    while j < onr2.pairs {
+                        if vec.get(onr2.using, j) == 1 {
+                            shared = true;
+                        }
+                        j = j + 1;
+                    }
+                }
+                if shared {
+                    e = flags.problem(heap, e, "args.conflict", "a full join shows a key column that both files share once, and for a row of the --join file that nothing matched that column would have to hold the --join file's cell (not built yet)", "name both columns: --on user=user", "--join-type --on");
+                }
             }
             drop_on(heap, on);
         }
