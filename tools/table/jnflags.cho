@@ -306,7 +306,7 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
     }
     buffer.drop(heap, fword);
     if full {
-        if jxsrc.has(parsed, jxs, jxsrc.s_join_where(), "join-where") {
+        if cli.has(parsed, table, "join-where") {
             e = flags.problem(heap, e, "args.conflict", "--join-where drops the --join rows it rejects before they are held, and the ON of a full join keeps them, as rows of their own", "write the condition in --where, or use --join-type left", "--join-type --join-where");
         }
         if cli.has(parsed, table, "join-sorted") {

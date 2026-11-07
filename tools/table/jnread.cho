@@ -583,9 +583,10 @@ pub fn build_only[&h, &i, &t, &q, &c, &s, &w, &x, &a, &z, &m](heap: &!h Heap, io
             }
             var k = 0;
             while k < nk {
-                cells[3 * (np + k)] = bcells[3 * kmap[k]] + keep;
-                cells[3 * (np + k) + 1] = bcells[3 * kmap[k] + 1] + keep;
-                cells[3 * (np + k) + 2] = bcells[3 * kmap[k] + 2];
+                let col = kmap[k];
+                cells[3 * (np + k)] = bcells[3 * col] + keep;
+                cells[3 * (np + k) + 1] = bcells[3 * col + 1] + keep;
+                cells[3 * (np + k) + 2] = bcells[3 * col + 2];
                 k = k + 1;
             }
             borrow jrec2 as &jr in {
@@ -597,7 +598,7 @@ pub fn build_only[&h, &i, &t, &q, &c, &s, &w, &x, &a, &z, &m](heap: &!h Heap, io
             }
             // the cells of the probe columns are the padding of this record: a refused read of one says so (`emit_one` says it of the build columns)
             if a[engine.k_abort()] != 0 && a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] < np {
-                a[engine.k_err_fn()] = 99;
+                a[engine.k_err_fn()] = 98 + 1;
             }
         }
         r = r + 1;

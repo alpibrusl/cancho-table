@@ -48,7 +48,9 @@ fn jtype_of[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
     var kind = 0;
     borrow wordb as &wr in {
         let word = buffer.bytes(wr);
-        if bytes.equal(word, "left") || bytes.equal(word, "full") {
+        if bytes.equal(word, "left") {
+            kind = 1;
+        } else if bytes.equal(word, "full") {
             kind = 1;
         } else if bytes.equal(word, "semi") {
             kind = 2;
@@ -62,12 +64,12 @@ fn jtype_of[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed
 
 // Whether `--join-type` is full: a left join (`jtype_of` answers 1) that also gives the build rows nothing matched (docs/join-redesign.md section 9).
 pub fn is_full[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, jxs: &x [byte]) -> [heap, args] bool {
-    let wordb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_type(), "join-type");
+    let fwordb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_type(), "join-type");
     var full = false;
-    borrow wordb as &wr in {
-        full = bytes.equal(buffer.bytes(wr), "full");
+    borrow fwordb as &fwr in {
+        full = bytes.equal(buffer.bytes(fwr), "full");
     }
-    buffer.drop(heap, wordb);
+    buffer.drop(heap, fwordb);
     return full;
 }
 
