@@ -419,8 +419,11 @@ class Flags(unittest.TestCase):
         self.assertIn("pipe", r.error()["hint"])
 
     def test_right_full_and_cross_are_not_join_types(self):
-        for t in ("right", "full", "cross", "LEFT"):
+        for t in ("cross", "LEFT"):
             self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t), (2, "args.bad-value"), t)
+        # right and full are refused with a rule of their own since F0a of docs/join-redesign.md
+        for t in ("right", "full"):
+            self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t), (2, "join.type-unsupported"), t)
         for t in ("inner", "left", "semi", "anti"):
             self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t)[0], 0, t)
 
