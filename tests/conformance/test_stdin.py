@@ -730,26 +730,30 @@ class Bulk(Source):
                 os.close(fd)
 
     def test_nothing_to_read_is_not_a_failure_to_read(self):
-        for label, pre in (("/dev/null", lambda: os.dup2(os.open("/dev/null", os.O_RDONLY), 0)),
-                           ("a closed descriptor", lambda: os.close(0))):
-            # A closed descriptor 0 is the empty input, as before the bulk read and not as `read_bytes` alone would say (`Failed(9)`): the empty file that
-            # `read_file` is typed with is opened before standard input is read, and an open takes the lowest free descriptor, which is 0. The program reads
-            # /dev/null and cannot know. (docs/readers.md 11.7; the fix is upstream, a `File` for descriptor 0.)
-            p = self.refusal(pre)
-            self.assertEqual(p.returncode, 0, label)
-            self.assertEqual(json.loads(p.stdout)["data"]["column_count"], 0, label)
+        # /dev/null is an input that has ended: the empty table, success.
+        p = self.refusal(lambda: os.dup2(os.open("/dev/null", os.O_RDONLY), 0))
+        self.assertEqual(p.returncode, 0, "/dev/null")
+        self.assertEqual(json.loads(p.stdout)["data"]["column_count"], 0, "/dev/null")
+
+    def test_a_closed_descriptor_is_a_refusal_with_its_errno(self):
+        # [corrected, compiler 119bcfe] A closed descriptor 0 used to be the empty input by accident: the empty file that `read_file` is typed with (/dev/null) was
+        # opened first and took the lowest free descriptor, 0, which was then read. The pinned compiler moves a file it opens off the standard descriptors
+        # (`dup`, then `close(0)`), so descriptor 0 stays closed and the read fails with EBADF: the refusal of any descriptor that cannot be read (docs/readers.md 11.7).
+        p = self.refusal(lambda: os.close(0))
+        self.assertEqual(p.returncode, 1)
+        doc = json.loads(p.stdout)
+        self.assertEqual(doc["error"]["rule"], "io.read-failed")
+        self.assertEqual(doc["error"]["detail"], {"path": "-", "errno": 9})
 
     @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("strace"), "needs Linux and strace")
-    def test_strace_a_closed_descriptor_is_the_stand_in_that_is_read(self):
+    def test_strace_a_closed_descriptor_is_read_and_fails(self):
         d = tempfile.mkdtemp(prefix="table-")
         try:
             log = os.path.join(d, "trace")
-            subprocess.run(["strace", "-o", log, "-e", "trace=openat,read", binary()], stdin=None, preexec_fn=lambda: os.close(0), capture_output=True, timeout=60)
-            text = open(log).read()
-            self.assertRegex(text, r'openat\(AT_FDCWD, "/dev/null", O_RDONLY[^)]*\) = 0')
+            subprocess.run(["strace", "-o", log, "-e", "trace=read", binary()], stdin=None, preexec_fn=lambda: os.close(0), capture_output=True, timeout=60)
+            self.assertRegex(open(log).read(), r"read\(0, [^)]*\) += -1 EBADF")
         finally:
             shutil.rmtree(d, ignore_errors=True)
-
 
 class StreamLoop(unittest.TestCase):
     """`read_stream` is `read_file` made mechanically (scripts/stream.py): the loop of a file is not edited to serve a pipe, and the loop of a pipe is not edited by hand."""

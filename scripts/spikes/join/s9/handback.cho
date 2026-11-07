@@ -1,0 +1,61 @@
+edition 5;
+
+// SPIKE S9 (docs/join-redesign.md): a worker lent a job by `&!` builds a table with its own forked heap and leaves it in the job; the parent uses the table after the join
+// and drops it with the heap it was built from. Compiles with 119bcfe (it did not with e47d647, scripts/spikes/join/s8). The exit status is the number of rows the parent
+// finds in the table after the join, modulo 256: it must equal the number the worker added.
+
+import std.io;
+import jtab;
+
+res struct Job {
+    heap: Heap,
+    tab: jtab.JTab,
+    n: int,
+}
+
+fn work[&r](w: &!r Job) -> [heap] int {
+    var t = jtab.empty(w.heap);
+    var i = 0;
+    while i < w.n {
+        let (t2, ok) = jtab.add(w.heap, t, "k", "rec", 1000000000);
+        t = t2;
+        i = i + 1;
+    }
+    w.tab = t;
+    return 0;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    release(clock);
+    release(args);
+    release(io);
+    var hp = heap;
+    var code = 0;
+    borrow mut hp as &!h in {
+        var job = Job { heap: fork_heap(h), tab: jtab.empty(h), n: 200 };
+        borrow mut job as &!kj in {
+            let body = work;
+            let th = spawn(kj, body);
+            let r = join(th);
+        }
+        let Job { heap, tab, n } = job;
+        var fh = heap;
+        borrow mut fh as &!hh in {
+            borrow tab as &tt in {
+                if jtab.has(tt, "k") {
+                    code = jtab.rows_of(tt) - n;
+                } else {
+                    code = 99;
+                }
+            }
+            jtab.drop(hh, tab);
+        }
+        release(fh);
+    }
+    release(hp);
+    return code;
+}

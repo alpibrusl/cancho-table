@@ -2,7 +2,8 @@ edition 5;
 
 // SPIKE S8, negative (docs/joins.md section 24.2, reading 1): a worker returns the table it built, for the parent to take with `join`.
 // Must NOT compile; the compiler's first error is what the gate (tests/conformance/test_join_j8.py `Premise`) pins:
-//     `body` returns `JTab`, which cannot cross back from a real thread yet
+//     rule `thread-payload-type`: `spawn`'s payload and `body`'s return type must each cross to a real OS thread as one pointer-width value
+// (with the compiler of e47d647 the message was: `body` returns `JTab`, which cannot cross back from a real thread yet)
 
 import std.io;
 import jtab;
