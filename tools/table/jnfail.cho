@@ -375,7 +375,7 @@ pub fn typed_key[&h, &g, &p, &s, &n, &v, &a, &b](heap: &!h Heap, e: fail.Errors,
         }
         let key = jnguard.name_for(heap, gnames, gends, gcol);
         borrow key as &kr in {
-            let (o2, ok) = jnguard.guarded(heap, o, args, parsed, flag, buffer.bytes(kr));
+            let (o2, ok) = jnguard.guarded(heap, o, args, parsed, flag, buffer.bytes(kr), false);
             o = o2;
             guarded = ok;
         }

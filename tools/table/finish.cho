@@ -700,7 +700,7 @@ fn empty_guard[&h, &g, &p, &n, &d, &k](heap: &!h Heap, w: json.Writer, args: &g 
     if buffer.size(kept) == 0 && err_fn != 0 - 4 && err_fn < 90 && col >= 0 && !cli.has(parsed, spec.flag_table(), "query") {
         let key = jnguard.name_for(heap, names, hends, col);
         borrow key as &kr in {
-            let (o2, ok) = jnguard.guarded(heap, o, args, parsed, "--where", buffer.bytes(kr));
+            let (o2, ok) = jnguard.guarded(heap, o, args, parsed, "--where", buffer.bytes(kr), true);
             o = o2;
             done = ok;
         }
