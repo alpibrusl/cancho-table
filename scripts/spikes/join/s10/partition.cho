@@ -1,0 +1,399 @@
+edition 5;
+
+// SPIKE S10 (docs/join-redesign.md section 3, cancho-table#116): R1, a partitioned join in which each worker owns its partition's table and its own output.
+//
+//     partition BUILD_ROWS PROBE_ROWS PARTS REPS [MODE]     MODE 0 (default) runs both, 1 only the sequential join, 2 only R1 (no comparison), so that a peak resident set can be taken of each;
+//                                                  prints: seq_build seq_probe route par merge total ok   (milliseconds, the minimum of REPS; ok = REPS whose answer was the sequential one)
+//
+// The parent builds the whole table and probes every key (the sequential join: seq_build, seq_probe). Then R1: the parent routes the build keys and the probe keys by the hash of the key
+// into PARTS partitions with a counting sort (route); one worker per partition builds a table of its keys in a forked heap and probes its own probe keys, writing the build row each
+// found (or -1) into its own output box (par); the parent puts the outputs back in probe order and the answer is compared with the sequential one (merge). The probe keys cannot be
+// read by every worker (a shared reference and a worker's own state do not fit in one payload: docs/joins.md 15.2), so the parent copies each worker its share.
+
+import std.io;
+import jtab;
+
+pub fn key_of[&d](dst: &!d [byte], i: int) -> [] int {
+    var x = wrapping_mul(i + 1, 0x9e3779b9 << 32 | 0x7f4a7c15);
+    x = x ^ x >> 33 & 0x7fffffff;
+    x = wrapping_mul(x, 0xff51afd7 << 32 | 0xed558ccd);
+    x = x ^ x >> 33 & 0x7fffffff;
+    var d = 0;
+    while d < 16 {
+        let nib = x >> 4 * d & 15;
+        if nib < 10 {
+            dst[d] = byte_of(48 + nib);
+        } else {
+            dst[d] = byte_of(87 + nib);
+        }
+        d = d + 1;
+    }
+    return 0;
+}
+
+// The partition of a 16-byte key.
+fn part_of[&k](key: &k [byte], parts: int) -> [] int {
+    var h = 1469598103934665603;
+    var i = 0;
+    while i < 16 {
+        h = wrapping_mul(h ^ int_of(key[i]), 1099511628211);
+        i = i + 1;
+    }
+    return ((h >> 17) & 0x7fffffff) % parts;
+}
+
+fn keys_build[&h](heap: &!h Heap, rows: int) -> [heap] Box[[byte]] {
+    let out = box_slice(heap, rows * 16, byte_of(0));
+    var o = out;
+    borrow mut o as &!ow in {
+        let all = contents(ow);
+        var p = 0;
+        while p < rows {
+            key_of(all[p * 16..p * 16 + 16], p);
+            p = p + 1;
+        }
+    }
+    return o;
+}
+
+// probe row p asks for key_of((p * 7 + 3) mod 2n): a bit under half are in the build
+fn keys_probe[&h](heap: &!h Heap, rows: int, n: int) -> [heap] Box[[byte]] {
+    let out = box_slice(heap, rows * 16, byte_of(0));
+    var o = out;
+    borrow mut o as &!ow in {
+        let all = contents(ow);
+        var p = 0;
+        while p < rows {
+            key_of(all[p * 16..p * 16 + 16], (p * 7 + 3) % (2 * n));
+            p = p + 1;
+        }
+    }
+    return o;
+}
+
+// A counting sort of the rows by partition: `order` lists the rows, partition 0 first, rows in their own order within one; `start[k]` is where partition k begins (start[parts] = rows).
+fn route[&h, &q](heap: &!h Heap, keys: &q [byte], rows: int, parts: int) -> [heap] (Box[[int]], Box[[int]]) {
+    let start = box_slice(heap, parts + 1, 0);
+    let order = box_slice(heap, rows, 0);
+    let which = box_slice(heap, rows, 0);
+    var st = start;
+    var od = order;
+    var wh = which;
+    borrow mut st as &!sw in {
+        borrow mut od as &!ow in {
+            borrow mut wh as &!ww in {
+                let s = contents(sw);
+                let o = contents(ow);
+                let w = contents(ww);
+                var r = 0;
+                while r < rows {
+                    let k = part_of(keys[r * 16..r * 16 + 16], parts);
+                    w[r] = k;
+                    s[k + 1] = s[k + 1] + 1;
+                    r = r + 1;
+                }
+                var k = 0;
+                while k < parts {
+                    s[k + 1] = s[k + 1] + s[k];
+                    k = k + 1;
+                }
+                let fill = box_slice(heap, parts, 0);
+                var fl = fill;
+                borrow mut fl as &!fw in {
+                    let f = contents(fw);
+                    var r2 = 0;
+                    while r2 < rows {
+                        let k2 = w[r2];
+                        o[s[k2] + f[k2]] = r2;
+                        f[k2] = f[k2] + 1;
+                        r2 = r2 + 1;
+                    }
+                }
+                unbox_slice(heap, fl);
+            }
+        }
+    }
+    unbox_slice(heap, wh);
+    return (st, od);
+}
+
+res struct Job {
+    heap: Heap,
+    bk: Box[[byte]],
+    pk: Box[[byte]],
+    out: Box[[int]],
+    result: int,
+}
+
+// The worker builds the table of its partition in a local variable and probes it: the table never leaves the worker (a `res` value cannot be put in a job field by assignment: the
+// Rust compiler refuses `w.tab = t`, see docs/join-redesign.md 1), only the build row each probe key found goes to the job's output box.
+fn work[&r](w: &!r Job) -> [heap] int {
+    var t = jtab.empty(w.heap);
+    let nb = len(contents(w.bk)) / 16;
+    var i = 0;
+    while i < nb {
+        let key = contents(w.bk)[i * 16..i * 16 + 16];
+        let (t2, ok) = jtab.add(w.heap, t, key, key, 1000000000);
+        t = t2;
+        i = i + 1;
+    }
+    var matches = 0;
+    let keys = contents(w.pk);
+    let out = contents(w.out);
+    borrow t as &tt in {
+        var p = 0;
+        while p < len(out) {
+            let row = jtab.first(tt, keys[p * 16..p * 16 + 16]);
+            out[p] = row;
+            if row >= 0 {
+                matches = matches + 1;
+            }
+            p = p + 1;
+        }
+    }
+    jtab.drop(w.heap, t);
+    w.result = matches;
+    return 0;
+}
+
+// copy the keys of the rows order[lo..hi] of `keys`
+fn gather[&h, &q, &o](heap: &!h Heap, keys: &q [byte], order: &o [int], lo: int, hi: int) -> [heap] Box[[byte]] {
+    let out = box_slice(heap, (hi - lo) * 16, byte_of(0));
+    var ob = out;
+    borrow mut ob as &!ow in {
+        let to = contents(ow);
+        var j = lo;
+        while j < hi {
+            let r = order[j];
+            var c = 0;
+            while c < 16 {
+                to[(j - lo) * 16 + c] = keys[r * 16 + c];
+                c = c + 1;
+            }
+            j = j + 1;
+        }
+    }
+    return ob;
+}
+
+// One worker per partition, started by recursion. `answer` receives, for every probe row, the build row its key found (a row of the build, or -1).
+fn fan[&p, &b, &q, &bs, &bo, &ps, &po, &rs](parent: &!p Heap, bkeys: &b [byte], pkeys: &q [byte], bstart: &bs [int], border: &bo [int], pstart: &ps [int], porder: &po [int], answer: &!rs [int], k: int, parts: int) -> [heap, conc] int {
+    if k >= parts {
+        return 0;
+    }
+    var job = Job {
+        heap: fork_heap(parent),
+        bk: gather(parent, bkeys, border, bstart[k], bstart[k + 1]),
+        pk: gather(parent, pkeys, porder, pstart[k], pstart[k + 1]),
+        out: box_slice(parent, pstart[k + 1] - pstart[k], 0),
+        result: 0
+    };
+    var rest = 0;
+    borrow mut job as &!kj in {
+        let body = work;
+        let thread = spawn(kj, body);
+        rest = fan(parent, bkeys, pkeys, bstart, border, pstart, porder, answer, k + 1, parts);
+        join(thread);
+    }
+    let Job { heap, bk, pk, out, result } = job;
+    borrow out as &ov in {
+        var j = pstart[k];
+        while j < pstart[k + 1] {
+            // a worker's row numbers are those of its own table: the global build row is the one at that place of the partition
+            let local = contents(ov)[j - pstart[k]];
+            if local >= 0 {
+                answer[porder[j]] = border[bstart[k] + local];
+            } else {
+                answer[porder[j]] = 0 - 1;
+            }
+            j = j + 1;
+        }
+    }
+    release(heap);
+    unbox_slice(parent, bk);
+    unbox_slice(parent, pk);
+    unbox_slice(parent, out);
+    return result + rest;
+}
+
+fn parse_nat[&p](text: &p [byte]) -> [] int {
+    var n = 0;
+    var i = 0;
+    while i < len(text) {
+        n = n * 10 + int_of(text[i]) - 48;
+        i = i + 1;
+    }
+    return n;
+}
+
+fn main(world: World) -> [conc] int {
+    let Split { io, ffi, fs, heap, args, net, clock } = split(world);
+    release(ffi);
+    release(net);
+    release(fs);
+    var build_rows = 0;
+    var probe_rows = 0;
+    var parts = 1;
+    var reps = 1;
+    var mode = 0;
+    borrow args as &g in {
+        build_rows = parse_nat(arg(g, 1));
+        probe_rows = parse_nat(arg(g, 2));
+        parts = parse_nat(arg(g, 3));
+        reps = parse_nat(arg(g, 4));
+        if arg_count(g) > 5 {
+            mode = parse_nat(arg(g, 5));
+        }
+    }
+    release(args);
+    var seq_build = 1000000000;
+    var seq_probe = 1000000000;
+    var t_route = 1000000000;
+    var t_par = 1000000000;
+    var t_merge = 1000000000;
+    var t_total = 1000000000;
+    var ok = 0;
+    borrow mut heap as &!h in {
+        borrow clock as &c in {
+            let bkeys = keys_build(h, build_rows);
+            let pkeys = keys_probe(h, probe_rows, build_rows);
+            // the sequential join, and the answer R1 must give
+            let want = box_slice(h, probe_rows, 0);
+            var wn = want;
+            var r = 0;
+            while r < reps && mode != 2 {
+                var tab = jtab.empty(h);
+                let t0 = clock_ms(c);
+                borrow bkeys as &bk in {
+                    var i = 0;
+                    while i < build_rows {
+                        let key = contents(bk)[i * 16..i * 16 + 16];
+                        let (t2, ok2) = jtab.add(h, tab, key, key, 1000000000);
+                        tab = t2;
+                        i = i + 1;
+                    }
+                }
+                let t1 = clock_ms(c);
+                borrow mut wn as &!wm in {
+                    borrow pkeys as &pk in {
+                        borrow tab as &tt in {
+                            var p = 0;
+                            while p < probe_rows {
+                                contents(wm)[p] = jtab.first(tt, contents(pk)[p * 16..p * 16 + 16]);
+                                p = p + 1;
+                            }
+                        }
+                    }
+                }
+                let t2 = clock_ms(c);
+                jtab.drop(h, tab);
+                if t1 - t0 < seq_build {
+                    seq_build = t1 - t0;
+                }
+                if t2 - t1 < seq_probe {
+                    seq_probe = t2 - t1;
+                }
+                r = r + 1;
+            }
+            // R1
+            r = 0;
+            while r < reps && mode != 1 {
+                let a = clock_ms(c);
+                var bstart = box_slice(h, 1, 0);
+                var border = box_slice(h, 1, 0);
+                var pstart = box_slice(h, 1, 0);
+                var porder = box_slice(h, 1, 0);
+                borrow bkeys as &bk in {
+                    unbox_slice(h, bstart);
+                    unbox_slice(h, border);
+                    let (s1, o1) = route(h, contents(bk), build_rows, parts);
+                    bstart = s1;
+                    border = o1;
+                }
+                borrow pkeys as &pk in {
+                    unbox_slice(h, pstart);
+                    unbox_slice(h, porder);
+                    let (s2, o2) = route(h, contents(pk), probe_rows, parts);
+                    pstart = s2;
+                    porder = o2;
+                }
+                let b = clock_ms(c);
+                var got = box_slice(h, probe_rows, 0 - 1);
+                var matches = 0;
+                borrow mut got as &!gw in {
+                    borrow bkeys as &bk in {
+                        borrow pkeys as &pk in {
+                            borrow bstart as &bsr in {
+                                borrow border as &bor in {
+                                    borrow pstart as &psr in {
+                                        borrow porder as &por in {
+                                            matches = fan(h, contents(bk), contents(pk), contents(bsr), contents(bor), contents(psr), contents(por), contents(gw), 0, parts);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                let d = clock_ms(c);
+                var same = true;
+                borrow got as &gr in {
+                    borrow wn as &wr in {
+                        var p = 0;
+                        while p < probe_rows {
+                            if contents(gr)[p] != contents(wr)[p] {
+                                same = false;
+                            }
+                            p = p + 1;
+                        }
+                    }
+                }
+                let e = clock_ms(c);
+                if same || mode == 2 {
+                    ok = ok + 1;
+                }
+                if b - a < t_route {
+                    t_route = b - a;
+                }
+                if d - b < t_par {
+                    t_par = d - b;
+                }
+                if e - d < t_merge {
+                    t_merge = e - d;
+                }
+                if e - a < t_total {
+                    t_total = e - a;
+                }
+                unbox_slice(h, got);
+                unbox_slice(h, bstart);
+                unbox_slice(h, border);
+                unbox_slice(h, pstart);
+                unbox_slice(h, porder);
+                r = r + 1;
+            }
+            unbox_slice(h, bkeys);
+            unbox_slice(h, pkeys);
+            unbox_slice(h, wn);
+        }
+        borrow mut io as &!i in {
+            io.print_int(i, seq_build);
+            io.space(i);
+            io.print_int(i, seq_probe);
+            io.space(i);
+            io.print_int(i, t_route);
+            io.space(i);
+            io.print_int(i, t_par);
+            io.space(i);
+            io.print_int(i, t_merge);
+            io.space(i);
+            io.print_int(i, t_total);
+            io.space(i);
+            io.print_int(i, ok);
+            io.newline(i);
+        }
+    }
+    release(clock);
+    release(heap);
+    release(io);
+    return 0;
+}

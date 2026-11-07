@@ -1,9 +1,10 @@
 edition 5;
 
-// SPIKE S8 (docs/joins.md section 24.2, reading 1): a worker that is lent a job by `&!` builds a table and puts it in the job, for the parent to use after the join.
-// With the compiler of e47d647 this did NOT compile: `the value overwritten here is `res` (`JTab`), so it cannot be discarded`.
-// [corrected] With the compiler of 119bcfe it compiles (the gate, tests/conformance/test_join_j8.py `Premise`, now asserts that it does). `main` spawns the worker, as
-// the program must for the compiler to reach `work` at all: a `main` that declares `[conc]` and never performs it is refused first (`effect-declared-not-performed`).
+// SPIKE S8, negative (docs/joins.md section 24.2, reading 1): a worker that is lent a job by `&!` builds a table and puts it in the job, for the parent to use after the join.
+// Must NOT compile with the Rust compiler (CANCHO_COMPILER=rust): the gate (tests/conformance/test_join_j8.py `Premise`) pins its first error,
+//     the value overwritten here is `res` (`JTab`), so it cannot be discarded; name the function that consumes it
+// [corrected 2026-11-07] The compiler written in cancho, the default of 119bcfe, ACCEPTS this program: it lacks that check (docs/join-redesign.md section 1). `main` spawns the worker so that
+// the program is complete for either compiler: a `main` that declares [conc] and never performs it is refused first by the default one (`effect-declared-not-performed`).
 
 import std.io;
 import jtab;

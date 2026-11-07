@@ -1,8 +1,11 @@
 edition 5;
 
-// SPIKE S9 (docs/join-redesign.md): a worker lent a job by `&!` builds a table with its own forked heap and leaves it in the job; the parent uses the table after the join
-// and drops it with the heap it was built from. Compiles with 119bcfe (it did not with e47d647, scripts/spikes/join/s8). The exit status is the number of rows the parent
-// finds in the table after the join, modulo 256: it must equal the number the worker added.
+// SPIKE S9 (docs/join-redesign.md section 2): a worker lent a job by `&!` builds a table with its own forked heap and leaves it in the job; the parent uses the table after the join and drops it with
+// the heap it was built from. The exit status is the number of rows the parent finds in the table after the join minus the number the worker added: 0.
+//
+// [corrected 2026-11-07] THIS PROGRAM IS NOT LEGAL. It compiles with the default compiler of 119bcfe (the one written in cancho), which lacks the check that `w.tab = t` overwrites a `res` value;
+// the Rust compiler refuses it: `the value overwritten here is `res` (`JTab`), so it cannot be discarded`. That it ran correctly (and under valgrind) shows what that compiler's code does, not that
+// a worker may hand a table back. Kept as the record of the gap.
 
 import std.io;
 import jtab;

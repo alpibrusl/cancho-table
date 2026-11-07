@@ -864,21 +864,20 @@ class Unchanged(unittest.TestCase):
 
 
 class Premise(unittest.TestCase):
-    """A table cannot be handed back by a worker as the result of `spawn` (docs/joins.md section 24.2, reading 1): the program n2 of scripts/spikes/join/s8 does not compile with the pinned compiler, with the rule quoted there.
-    If a compiler accepts it, the partitions need not be copied back as integers and bytes, and the design can be reconsidered: this test then fails on purpose.
-    [corrected, compiler 119bcfe] The other program, n1 (a table put in a job lent by `&!`), compiled with 119bcfe, which e47d647 refused: the test records that it does, and fails if a compiler refuses it again or changes the rule for n2."""
+    """A table cannot be handed back by a worker (docs/joins.md section 24.2, reading 1): the two programs of scripts/spikes/join/s8 do not compile with the Rust compiler (CANCHO_COMPILER=rust, the reference
+    checks), with the messages quoted there. If it accepts one, the partitions need not be copied back as integers and bytes, and the design can be reconsidered: this test then fails on purpose.
+    [corrected, compiler 119bcfe] The default compiler, the one written in cancho, accepts n1 (it lacks the check that refuses `w.tab = t`): that is a gap of that compiler (docs/join-redesign.md section 1), not
+    a capability, so the gate asks the Rust compiler and does not pin what the default one does."""
 
     @unittest.skipUnless(shutil.which("cancho"), "needs the pinned compiler on PATH")
     def test_a_table_cannot_cross_back_from_a_thread(self):
         import tempfile
-        want = {"n1_table_into_job": None, "n2_table_as_result": "(rule `thread-payload-type`)"}
+        want = {"n1_table_into_job": "the value overwritten here is `res` (`JTab`), so it cannot be discarded", "n2_table_as_result": "`body` returns `JTab`, which cannot cross back from a real thread yet"}
+        env = dict(os.environ, CANCHO_COMPILER="rust")
         with tempfile.TemporaryDirectory() as d:
             for name, message in want.items():
                 p = subprocess.run(["cancho", "build", str(ROOT / "scripts" / "spikes" / "join" / "s8" / (name + ".cho")), str(ROOT / "tools" / "table" / "jtab.cho"), str(ROOT / "tools" / "table" / "gmap.cho"), "--std", "-o", os.path.join(d, name)],
-                                   capture_output=True, text=True, timeout=300)
-                if message is None:
-                    self.assertEqual(p.returncode, 0, "%s was refused: the compiler no longer accepts what the premise note of docs/joins.md 24.2 records\n%s" % (name, p.stderr[:400]))
-                    continue
+                                   capture_output=True, text=True, timeout=300, env=env)
                 self.assertNotEqual(p.returncode, 0, "%s compiled: the refusal it records is gone" % name)
                 self.assertIn(message, p.stdout + p.stderr, name)
 

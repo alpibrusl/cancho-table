@@ -1,14 +1,14 @@
 # Redesigning the join: what the pin `119bcfe` changes, and what new join features cost
 
-> **Status: design. Nothing in this document is built.** One spike ran (S9, section 2); every other claim is marked as measured, read from a document, or assumed. It follows the rules of `docs/numbers.md`: decisions with reasons, gates fixed before the build, measured claims separated from assumptions. It extends `docs/joins.md` (sections 7.2, 15, 24) and corrects nothing there that it does not name.
+> **Status: design, two spikes run (S9, section 2, which rests on a gap of the default compiler and is corrected there; S10, section 8, which decided against R1). Nothing is built except F0a (section 7.2).** Every claim is marked as measured, read from a document, or assumed. It follows the rules of `docs/numbers.md`: decisions with their reasons, gates fixed before the build, measured claims separated from assumptions. It extends `docs/joins.md` (sections 7.2, 15, 24). **[corrected 2026-11-07]** The first version of this document said a worker can hand a table back through a job on `119bcfe`; that was wrong (section 1).
 
 ## 0. The short version
 
 | decision | choice | why, in one line |
 |---|---|---|
-| J8 (partitioned build) as it is | **keep it** until S10 says otherwise | it is built, gated and byte-identical; its rationale (24.2, point 1) is weaker than written, not false |
+| J8 (partitioned build) as it is | **keep it** | it is built, gated and byte-identical, and its rationale (24.2, point 1) stands: a table cannot be handed back |
 | the threaded probe (J6) | **still blocked on the compiler**: `119bcfe` refuses all eight S0 negative programs | measured, section 1 |
-| a new J6 route, "R1": one job per partition that owns its table and its output | **spike S10 first**, with a kill criterion | it is expressible now (section 2) and nobody has measured it |
+| a new J6 route, "R1": one job per partition that owns its table and its output | **not kept**: S10 measured 1.42 times at 4 partitions on a 1,000,000 x 4,000,000 join, under the 1.5 fixed in advance (section 8) | measured, section 8 |
 | `right` and `full` | **`full` yes (F1), `right` stays a refusal with the swap repair** | `full` needs a bit per build row and a second phase; `right` is a left join with the files swapped |
 | a join of more than two files | **no**; pipe, with `--out` (cancho-table#108) | one plan per call is the rule |
 | `--report` over a join | **keep the refusal, make its repair the two-step command** | section 4 |
@@ -29,34 +29,34 @@ The eight negative programs of `scripts/spikes/join/s0/neg/` were built with `11
 
 `docs/thread-payloads.md` in the compiler checkout still says T-P1 (tuple payloads) is a design. So **J6 as option (b) of section 7.2 (a shared table and a worker's own output in one payload) is not buildable on `119bcfe`**, and the request drafted in `docs/joins.md` 15.3 (never filed) is still what unblocks it. The first line of `n1`'s message changed ; whether `Job[&f]` is nearer to being accepted is a question for cancho, not something this document measures.
 
-One thing did change: the S8 negative program `n1_table_into_job` (a worker builds a table and puts it in a job lent by `&!`) **compiles** (the repair of the join spike, cancho-table#112). Its other half, `n2_table_as_result` (the table as the result of `spawn`), is still refused.
+**[corrected] What did not change, and a gap of the default compiler.** The S8 negative program `n1_table_into_job` (a worker builds a table and puts it in a job lent by `&!`) compiles with the **default** compiler of `119bcfe`, the one written in cancho (`docs/bootstrap.md` of the compiler checkout). The **Rust compiler** (`CANCHO_COMPILER=rust`, the reference checks) refuses it with the message it always gave, `the value overwritten here is res (JTab), so it cannot be discarded`, and so does it refuse the S9 program of section 2. So the default compiler lets through a program the language refuses: that is a gap of that compiler, not a new capability, and this document's first version (and `docs/joins.md` 24.2, as first corrected in cancho-table#112) took it for one. The eight S0 negative programs are refused by both compilers. `n2_table_as_result` is refused by both (the sentence differs). The gate `test_join_j8.Premise` now asks the Rust compiler.
 
-## 2. S9: is handing a table back through a job usable? (run, 2026-11-07)
+## 2. S9: is handing a table back through a job usable? (run, 2026-11-07; **its premise is false, see section 1**)
 
 `scripts/spikes/join/s9/handback.cho`: the parent forks a heap, makes a `Job { heap, tab, n }`, lends it by `&!` to one worker that builds a `JTab` of `n` rows with the job's heap and assigns it to `job.tab`; after the join the parent reads the table (`has`, `rows_of`) and drops it with the heap it was built from.
 
-* **Compiles** with `119bcfe`.
+* **Compiles** with the default compiler of `119bcfe` only. **The Rust compiler refuses it** (`the value overwritten here is res (JTab), so it cannot be discarded`), so the program is not legal and nothing below is a basis for a design.
 * **Correct:** the exit status is `rows_of(tab) - n`, and it is 0 at `n` = 200 and `n` = 1,000,000.
-* **valgrind** (`-q`, errors fail the run) reports nothing at `n` = 200. It was not run at 1,000,000.
+* **valgrind** (`-q`, errors fail the run) reported nothing at `n` = 200. It was not run at 1,000,000. It says what the default compiler's code does with the overwrite, not that the overwrite is allowed.
 * **Not measured:** time, resident memory, whether the overwritten empty table is released or leaked by the assignment (valgrind's leak summary was not read at a size that would show a leak), more than one worker, a table with the pruned columns of J7. None of this says the hand-back is *faster* than J8's copy; it says it is possible.
 
 ## 3. What that opens, and what it does not
 
 **It does not remove J8's assembly by itself.** The probe loops take one `JTab` (24.2, point 1). If each partition thread hands back its own table, the parent holds `P` tables, and probing `P` tables means either copies of the probe loops (about 850 lines, rejected in 24.2) or building one table from the parts, which is what J8 does with integers and bytes. The hand-back would replace the *encoding* of the copy, not the copy. Whether it is cheaper is an assumption.
 
-**It does make option (c) of 7.2 expressible** (a partitioned join): worker `k` is lent a `Job_k` that owns partition `k` of the build *and* its own output box. That is the case `s0_copy.cho` already showed works; what was missing was a way to make the partition tables without copying, and S9 is that.
+**Option (c) of 7.2 (a partitioned join) was expressible before the pin and is now measured (section 8).** Worker `k` is lent a `Job_k` that owns its share of the keys and its own output box, builds the table of its partition in a **local variable**, probes it and drops it; only the build row each probe key found leaves the worker, in the box. That is the shape `s0_copy.cho` showed works, and it needs no hand-back of a table (S9 is not needed and is not legal).
 
 ### R1, the design to test
 
-1. J8's build threads leave each partition's table in their job (S9), where today they hand back integers and bytes.
-2. Worker `k` keeps its job. It reads the probe file in ranges (the speculative range scan of `docs/parallel.md`), takes **only the probe rows whose key hashes to `k`**, probes its own table and writes `(probe row number, joined record)` into its output box.
-3. The parent merges the `P` boxes by probe row number. The output is the sequential output: same bytes at every thread count, refusals included (the J6 gates of `docs/joins.md` section 10, TH).
+1. Each worker builds the table of its partition, from the keys the parent routed to it, in a local variable (where J8's build threads hand back integers and bytes to be put together into one table).
+2. Worker `k` probes its own table with the probe keys the parent routed to it and writes the build row each found into its output box. (A worker cannot read every probe key itself: a shared reference and the worker's own state do not fit in one payload, `docs/joins.md` 15.2. So the parent routes the probe keys, as it routes the build keys, with a counting sort by the hash of the key.)
+3. The parent puts the `P` outputs back in probe order. The output must be the sequential output: same bytes at every thread count, refusals included (the J6 gates of `docs/joins.md` section 10, TH).
 
-The cost nobody has measured: **every worker parses every probe row's key** (`P` times the key-reading work), and the merge is a `P`-way merge by row number.
+The cost to measure: **the parent's routing of both key sets** (sequential: it is not shared by the workers), the copy of each share to its worker, and the merge.
 
 ### S10, the spike, and its kill criterion
 
-Build R1 as a spike on the 1,000,000-row build and 4,000,000-key probe of S0, at 2, 4 and 8 threads, checking every answer against the sequential probe (as `s0.py` does).
+Build R1 as a spike on the 1,000,000-row build and 4,000,000-key probe of S0, at 2, 4 and 8 threads, checking every answer against the sequential probe (as `s0.py` does). **Run: section 8.**
 
 * **Keep R1** only if at 4 threads it is at least 1.5 times faster than the sequential probe, with a resident set no more than 2 times J8's at the same size (24.4 measured 1.8 to 2.7 times the sequential build).
 * **Kill it** otherwise, record the numbers in `docs/joins.md` 24 (corrected in place), and let J6 wait for the compiler (the request of 15.3).
@@ -77,15 +77,15 @@ The 1.5 and 2 are choices, not measurements. S0 measured the *shared* read at 2.
 
 ## 5. Order of work
 
-1. **F0** (the swap repair for `right`, a test and a line in `docs/refusals.md`), **S10** (a spike, no change to the tool). Independent.
+1. **F0** (done as F0a, section 7.2), **S10** (done, section 8: R1 not kept). Independent.
 2. **F1** (`full`), after a one-page design in this file's style: the formula, the order, the gates (every type's existing answers unchanged; `full` equals a `left` join followed by the unmatched build rows, computed independently in Python; the thread counts of J8).
 3. **F2** after `--out` exists.
-4. **R1 as J6b** only if S10 passes its criterion, with the TH gates.
+4. ~~R1 as J6b~~: S10 did not pass its criterion (section 8). The threaded probe waits for the compiler.
 
 ## 6. What was measured, and what was not
 
-* **Measured:** the eight S0 refusals and the S8/S9 results above, on `119bcfe` (x86_64 Linux, 4 cores). The earlier numbers quoted (24.4, 15.2) are from their sections and machines.
-* **Not measured:** everything about R1's speed and memory; S9's time and memory; the leak behaviour of the overwrite; `full`'s cost. The 1.5 and 2 of section 3 are thresholds chosen before the spike, so that the spike cannot move them.
+* **Measured:** the eight S0 refusals (by both compilers), the S8/S9 results (by both compilers: section 1) and S10 (section 8), on `119bcfe` (x86_64 Linux, 4 cores). The earlier numbers quoted (24.4, 15.2) are from their sections and machines.
+* **Not measured:** R1 past 4 cores or with a real csv read; `full`'s cost. The 1.5 and 2 of section 3 were thresholds chosen before the spike, so that the spike could not move them.
 * **Not decided here:** whether to file the request of 15.3 (it needs the maintainer's yes), and whether `full` is wanted at all; nothing in the issues asks for it.
 
 ## 7. F0 in detail: the repair for `right` (written 2026-11-07, before any code)
@@ -133,3 +133,24 @@ Not required, unlike the inner swap: that the probe be the smaller file. The inn
 **How it is raised.** The generic check of a word flag runs first and does not keep a flag whose value it refused, so `run` (tools/table/table.cho) reads the arguments again, up to `--`, but only when the parse already refused something, and replaces that parse's errors with this one. **A consequence, decided here:** when `--join-type right` comes with another refused flag, only this refusal is reported; the other is reported by the next call. The rule is in `finish.extra()`, in the tool's `rules:` list, in `docs/refusals.md` (generated), and has a fixture in `test_rules.py` and a test in `test_join_j2.Flags`.
 
 **Not done:** F0b, the repair argv, and the same hint for a `--query` (its `query.unsupported` hint already says to swap the files).
+
+## 8. S10, run (2026-11-07): R1 is not kept
+
+`scripts/spikes/join/s10/partition.cho`, driver `scripts/spikes/join/s10.py`, results `scripts/spikes/join/results/s10.txt` and `.json`. Built with the **Rust compiler** (`CANCHO_COMPILER=rust`; the default compiler also builds it and gives the same answers). Machine: `Linux-6.18.44-fc-v310-x86_64`, **4 cores**, load average 0.05 before and 1.1 after (a quiet machine, but a small one). Keys of 16 bytes, a record that is the key; the probe asks for `(p * 7 + 3) mod 2n`, so a bit under half of the keys are in the build. Each cell is the minimum of 3 processes of the minimum of 5 repetitions; milliseconds; resident set in MB from `wait4`, of the sequential join alone and of R1 alone. Every answer of R1 equalled the sequential one (the `ok` column: all repetitions).
+
+| build x probe | parts | sequential build + probe | route | par | merge | R1 total | speed-up | rss sequential | rss R1 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 100,000 x 400,000 | 1 | 13 + 15 = 28 | 7 | 45 | 0 | 53 | 0.53 | 23 | 41 |
+| | 2 | 13 + 16 = 29 | 5 | 29 | 0 | 37 | 0.78 | 23 | 41 |
+| | 4 | 13 + 15 = 28 | 6 | 12 | 0 | 19 | 1.47 | 23 | 41 |
+| | 8 | 11 + 12 = 23 | 5 | 10 | 0 | 16 | 1.44 | 23 | 32 |
+| 1,000,000 x 4,000,000 | 1 | 237 + 230 = 467 | 89 | 658 | 6 | 759 | 0.62 | 219 | 375 |
+| | 2 | 214 + 235 = 449 | 84 | 306 | 5 | 426 | 1.05 | 219 | 371 |
+| | **4** | 215 + 222 = 437 | 75 | 205 | 5 | **308** | **1.42** | 219 | 379 |
+| | 8 | 202 + 208 = 410 | 81 | 195 | 5 | 294 | 1.39 | 219 | 301 |
+
+**Verdict against the criterion fixed in section 3: not met.** At 4 partitions on the large join R1 is **1.42 times** the sequential join (build and probe together; against the probe alone it is slower: 308 ms against 222), under the 1.5 chosen in advance. Its resident set is 379 MB against 219 MB for the sequential join, **1.73 times**, within the 2 times; that comparison is with the sequential one-thread join of the same spike, since J8's resident set was not measured at this size (24.4 measured another shape). The small join gives 1.47 and misses too. So R1 is **not kept**, and the threaded probe waits for the compiler (the request of `docs/joins.md` 15.3, unfiled, needs the maintainer's yes).
+
+**Why, as far as the numbers say.** One partition costs 759 ms against 467: the routing (89 ms, sequential, and it grows with the keys), the copy of each share to its worker and the second table's construction are paid whatever the number of partitions. The parallel part scales (658, 306, 205, 195 ms at 1, 2, 4, 8) but not by the number of workers, and on 4 cores 8 partitions cannot do better than 4. What the spike did not model makes R1 look better than it would be in the tool: the keys are generated, not read and split out of csv, and the record is the key; a real join also reads quoted fields and writes the joined rows, which R1 would have to put back in probe order (the merge here puts back integers). A 16-core machine was not available, so how R1 scales past 4 cores is not measured.
+
+**What this leaves.** J8 stays as it is. `docs/joins.md` 15.2 stays the account of why a threaded probe needs the compiler: a shared read of the table gave 2.9 times at 4 threads on the probe alone (S0, another machine, an older `jtab`); R1 gives that up for the routing and does not reach the bar. F0a, F1 and F2 do not depend on it.
