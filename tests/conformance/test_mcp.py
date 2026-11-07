@@ -373,7 +373,7 @@ class JoinCalls(unittest.TestCase):
         props = r["result"]["tools"][0]["inputSchema"]["properties"]
         for p in ("join", "on", "join-type", "join-prefix", "join-where", "max-join-rows", "join-input-format", "join-fields", "join-delimiter"):
             self.assertIn(p, props, p)
-        self.assertEqual((props["join"]["type"], props["join-type"]["enum"], props["max-join-rows"]["maximum"]), ("string", ["inner", "left", "semi", "anti"], 1000000000))
+        self.assertEqual((props["join"]["type"], props["join-type"]["enum"], props["max-join-rows"]["maximum"]), ("string", ["inner", "left", "semi", "anti", "full"], 1000000000))
 
     def test_the_forms_of_a_path_for_join_are_the_forms_of_file(self):
         secret = str(fixtures() / "secret" / "outside.csv")

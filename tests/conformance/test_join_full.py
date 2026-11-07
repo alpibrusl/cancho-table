@@ -177,6 +177,15 @@ class Pages(Base):
         piped = self.full(stdin=(self.s.dir / "p.csv").read_bytes(), file=None)
         self.assertEqual(piped.stdout, want)
 
+    def test_a_page_that_is_full_inside_the_second_phase_stops_it(self):
+        # four build rows nothing matches: a page of one row starting at the first of them reads one more row to know that there is more, and no further one, so a bound that allows
+        # exactly that many rows holds (the rows after the page are not produced)
+        self.put([["1", "a", "p"]], [["a", "x"], ["q", "w"], ["r", "u"], ["s", "v"], ["t", "z"]])
+        first = 1
+        r = self.full("--from", first, "--limit", 1, "--max-join-rows", first + 2, fmt="json")
+        self.assertEqual(r.status, 0, r.stdout[:300])
+        self.assertEqual(json.loads(r.stdout)["data"]["rows"], [["", "", "", "q", "w"]])
+
     def test_max_join_rows_counts_both_phases_to_the_row(self):
         n = len(self.all)
         self.assertEqual(self.full("--max-join-rows", n).status, 0)
@@ -205,6 +214,19 @@ class Refusals(Base):
         self.s.write("b2.csv", "k,v\na,x\n")
         r = run("--root", str(self.s.dir), "--join", "b2.csv", "--on", "k", "--join-type", "full", "--format", "json", "p2.csv")
         self.assertEqual((r.status, r.first_rule()), (2, "args.conflict"))
+
+    def test_nothing_is_given_for_the_build_rows_after_a_refusal(self):
+        # a probe row of another width is a refusal of the whole answer: the build rows nothing matched are not given as if the probe had been read
+        self.s.write("rag.csv", "id,k,pv\n1,a,p\n2,b\n")
+        self.s.write("b.csv", "bk,v\na,x\nq,w\n")
+        r = self.full(file="rag.csv")
+        self.assertEqual(r.status, 8)
+        self.assertNotIn(b"q,w", r.stdout)
+        # the same when the probe is cut by --max-rows
+        self.put([["1", "a", "p"], ["2", "b", "p"], ["3", "c", "p"]], [["a", "x"], ["q", "w"]])
+        r = self.full("--max-rows", 2)
+        self.assertEqual(r.status, 8)
+        self.assertNotIn(b"q,w", r.stdout)
 
     def test_a_padded_probe_cell_read_as_a_number_is_refused_and_says_so(self):
         self.put([["1", "a", "p"]], [["a", "x"], ["q", "w"]])

@@ -216,7 +216,7 @@ A byte rather than a bit is a choice for a growth rule that is the existing one 
 
 ### 9.7 F1a, built (2026-11-07), and where it differs from the design above
 
-`--join-type full` gives rows (`--select`, `--where`, `--limit`, `--from`, `--format` csv, json and jsonl output, `--explain`) over text or typed keys written as `--on PROBE=BUILD` pairs. It is a left join (`jnrun.jtype_of` answers 1 for `full`) with three additions: `jnread.probe_one` marks the build rows of a chain it walks, `jnread.probe_pass` calls `jnread.build_only` after the last probe row, and `jnwhere.classify` pushes nothing. Tests: `tests/conformance/test_join_full.py` (an oracle that shares no code with the tool, over 160 random tables), 27 mutants in `scripts/join_full_mutants.py`.
+`--join-type full` gives rows (`--select`, `--where`, `--limit`, `--from`, `--format` csv, json and jsonl output, `--explain`) over text or typed keys written as `--on PROBE=BUILD` pairs. It is a left join (`jnrun.jtype_of` answers 1 for `full`) with three additions: `jnread.probe_one` marks the build rows of a chain it walks, `jnread.probe_pass` calls `jnread.build_only` after the last probe row, and `jnwhere.classify` pushes nothing. Tests: `tests/conformance/test_join_full.py` (an oracle that shares no code with the tool, over 160 random tables), 27 mutants in `scripts/join_full_mutants.py`, all killed (two survived the first tests: a page that fills inside the second phase, and the second phase after a refusal; each now has a test).
 
 **Differences from sections 9.2 to 9.5, each decided while building:**
 
