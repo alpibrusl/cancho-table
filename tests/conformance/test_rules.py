@@ -36,13 +36,13 @@ LOCAL = {
     "where.mixed-and-or": (2, "sometimes", "parentheses"),
     "agg.bad-spec": (2, "never", "count, sum:COL"),
     "sort.unknown-key": (2, "never", "no output column"),
-    "value.not-integer": (8, "never", "exact integer"),
+    "value.not-integer": (8, "sometimes", "exact integer"),
     "value.integer-overflow": (8, "never", "64 bits"),
-    "value.not-decimal": (8, "never", "decimal"),
+    "value.not-decimal": (8, "sometimes", "decimal"),
     "value.decimal-scale": (8, "sometimes", "fractional digits"),
     "value.decimal-too-wide": (8, "never", "18"),
     "column.type-conflict": (2, "never", "numeric type"),
-    "value.not-float": (8, "never", "float"),
+    "value.not-float": (8, "sometimes", "float"),
     "value.not-finite": (8, "never", "inf or nan"),
     "value.float-range": (8, "never", "double"),
     "limit.number-too-long": (8, "never", "1,100"),
@@ -117,6 +117,7 @@ class Rules(unittest.TestCase):
         s.write("rec.csv", 'a,b\n1,"' + "x\n" * 600 + '"\n')
         s.write("many.csv", "a\n1\n2\n3\n")
         s.write("text.csv", "a,b\n1,x\n")
+        s.write("emptyb.csv", "a,b\n1,\n")      # an empty cell: the typed-cell rules repair it with a guard in --where (#107)
         s.write("big.csv", "a\n99999999999999999999\n")
         s.write("ovf.csv", "a\n1e999\n")
         s.write("ovfsum.csv", "a\n1.7976931348623157e308\n1.7976931348623157e308\n")
@@ -186,13 +187,13 @@ class Rules(unittest.TestCase):
             ("where.mixed-and-or", root + ["--where", "a = 1 or b = 2 and a = 3", "ok.csv"], None),     # the one whose repair is a choose (slice A1)
             ("agg.bad-spec", root + ["--group", "a", "--agg", "avg:a", "ok.csv"], None),
             ("sort.unknown-key", root + ["--group", "a", "--sort", "zz", "ok.csv"], None),
-            ("value.not-integer", root + ["--where", "b:int > 0", "text.csv"], None),
+            ("value.not-integer", root + ["--where", "b:int > 0", "emptyb.csv"], None),
             ("value.integer-overflow", root + ["--where", "a:int > 0", "big.csv"], None),
-            ("value.not-decimal", root + ["--where", "b:dec(2) > 0", "text.csv"], None),
+            ("value.not-decimal", root + ["--where", "b:dec(2) > 0", "emptyb.csv"], None),
             ("value.decimal-scale", root + ["--where", "a:dec(1) > 0", "scale.csv"], None),
             ("value.decimal-too-wide", root + ["--where", "a:dec(2) > 0", "wide18.csv"], None),
             ("column.type-conflict", root + ["--where", "a:dec(2) > 0 and a:int > 0", "ok.csv"], None),
-            ("value.not-float", root + ["--where", "b:float > 0", "text.csv"], None),
+            ("value.not-float", root + ["--where", "b:float > 0", "emptyb.csv"], None),
             ("value.not-finite", root + ["--where", "a:float > 0", "nan.csv"], None),
             ("value.float-range", root + ["--where", "a:float > 0", "ovf.csv"], None),
             ("limit.number-too-long", root + ["--where", "a:float > 0", "long.csv"], None),

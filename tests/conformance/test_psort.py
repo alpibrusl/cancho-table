@@ -251,7 +251,7 @@ class PSortPlans(test_sort.Sort):
             self.assertNotIn(base.status, TRAPS, flags)
             for threads, chunk in SETTINGS[:5]:
                 got = run("--root", self.s.dir, *flags, *fmt, "--threads", threads, "--chunk-bytes", chunk, "--parallel-min-bytes", 0, "t.csv")
-                self.assertEqual((got.status, got.stdout, got.stderr), (base.status, base.stdout, base.stderr), (flags, fmt, threads, chunk, plan["data"][:300]))
+                self.assertEqual((got.status, test_sort.ECHO.sub(b"", got.stdout), got.stderr), (base.status, test_sort.ECHO.sub(b"", base.stdout), base.stderr), (flags, fmt, threads, chunk, plan["data"][:300]))
         return True
 
 

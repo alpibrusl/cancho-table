@@ -396,7 +396,7 @@ def rules_md(ctx):
 
 def examples(ctx):
     blocks = []
-    for key, kind in (("retry_bad", "retry"), ("flow_bad", "choose"), ("notint", "none")):
+    for key, kind in (("retry_bad", "retry"), ("flow_bad", "choose"), ("notint", "choose")):
         out, status = ctx["run"](shlex.split(DEMOS[key]))
         err = json.loads(out)["error"]
         if (err["repair"] or {}).get("kind") != kind:

@@ -24,6 +24,9 @@ from harness import TRAPS, Scratch, run, validate
 
 csv.field_size_limit(1 << 30)
 
+# a repair repeats the invocation, threads included: the answers at 1 and at 4 threads differ in those flags and in nothing else
+ECHO = re.compile(rb',"--(?:threads|chunk-bytes|parallel-min-bytes)","[0-9]+"')
+
 INTS = ["0", "1", "-1", "+5", "007", "-0", "42", "-42", "1000", "99999", "9223372036854775807", "-9223372036854775808", "12", "12", "-7", "3", "3"]
 TEXT = ["a", "b", "ab", "B", "", " x", "x y", "x,y", 'q"z', "it's", "l1\nl2", "a", "b", "\xe9", "Z", "10", "9", "a", "b"]
 
@@ -368,9 +371,9 @@ class Sort(unittest.TestCase):
             else:
                 got = run("--root", self.s.dir, *flags, *extra, "t.csv")
             if first is None:
-                first = (got.status, got.stdout)
+                first = (got.status, ECHO.sub(b"", got.stdout))
             else:
-                self.assertEqual((got.status, got.stdout), first, (flags, extra))
+                self.assertEqual((got.status, ECHO.sub(b"", got.stdout)), first, (flags, extra))
             if want[0] == "error":
                 self.assertEqual(got.status, 8, (flags, want, got))
                 if fmt == "csv":
@@ -477,7 +480,7 @@ class Sort(unittest.TestCase):
             self.assertNotIn(got.status, TRAPS, (flags, data))
             self.assertIn(got.status, (0, 2, 3, 8), (flags, data, got))
             again = run("--root", self.s.dir, *flags, "--threads", "4", "--chunk-bytes", "5", "--parallel-min-bytes", "0", "t.csv")
-            self.assertEqual((again.status, again.stdout), (got.status, got.stdout), (flags, data))
+            self.assertEqual((again.status, ECHO.sub(b"", again.stdout)), (got.status, ECHO.sub(b"", got.stdout)), (flags, data))
 
 
 if __name__ == "__main__":
