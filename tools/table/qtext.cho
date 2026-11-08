@@ -223,7 +223,7 @@ pub fn feature(code: int) -> [] &static [byte] {
         return "right join";
     }
     if code == 111 {
-        return "full join";
+        return "full outer join";
     }
     if code == 112 {
         return "cross join";
@@ -282,7 +282,7 @@ pub fn hint(code: int) -> [] &static [byte] {
         return "swap the two files and write left join";
     }
     if code == 111 {
-        return "write left join, and a second call with the files swapped and anti for the rows the first one leaves out";
+        return "write full join";
     }
     if code == 112 {
         return "a join needs its key: on a.k = b.k";
