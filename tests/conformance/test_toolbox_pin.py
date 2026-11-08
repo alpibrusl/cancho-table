@@ -117,7 +117,7 @@ class Hints(unittest.TestCase):
             r = self.go("--where", "", "--format", fmt, "f.csv")
             self.assertEqual(r.status, 2)
             self.assertEqual(r.stdout, b"")
-            lines = r.stderr.decode().splitlines()
+            lines = r.raw_stderr.decode().splitlines()
             self.assertTrue(lines[0].startswith("table: args.bad-value: "), lines)
             self.assertIn("  hint: " + BAD, lines)
             self.assertTrue(any(l.startswith("  detail: {") for l in lines), lines)

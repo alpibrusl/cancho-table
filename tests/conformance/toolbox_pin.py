@@ -30,8 +30,13 @@ _PATTERN = re.compile(r'("rule":"(?:%s)","message":"(?:[^"\\]|\\.)*","hint":)"(?
 _BYTES = re.compile(_PATTERN.pattern.encode())
 
 
+# Since the package of c7131fd (cancho-tools#60) a refusal in csv or text is its sentence and then its hint, repair and detail on indented lines; the earlier pin wrote the sentence alone.
+_LINES = re.compile(r"^  (?:hint|repair|no repair|detail): .*\n", re.M)
+_LINES_BYTES = re.compile(_LINES.pattern.encode(), re.M)
+
+
 def before(answer):
-    """The answer (text or bytes) as the tool at the earlier pin wrote it: the hints of HINTS are null again."""
+    """The answer (text or bytes) as the tool at the earlier pin wrote it: the hints of HINTS are null again, and a refusal in text has its sentence alone."""
     if isinstance(answer, bytes):
-        return _BYTES.sub(rb"\1null", answer)
-    return _PATTERN.sub(r"\1null", answer)
+        return _LINES_BYTES.sub(b"", _BYTES.sub(rb"\1null", answer))
+    return _LINES.sub("", _PATTERN.sub(r"\1null", answer))

@@ -34,6 +34,7 @@ import query_gen
 import query_ref
 from test_skill import SALES
 from harness import ROOT, TRAPS, Scratch, binary, introspect, run, validate
+from harness import without_repair_lines as harness_without_repair_lines
 
 CASES = int(os.environ.get("TABLE_QUERY_CASES", "150"))
 FUZZ = int(os.environ.get("TABLE_QUERY_FUZZ", "1500"))
@@ -72,7 +73,7 @@ def comparable(result):
         out = (json.dumps(d, sort_keys=True) + "\n").encode()
     if err.startswith((b"table: where.syntax:", b"table: query.syntax:")):
         return result.status, out, b"SYNTAX"
-    return result.status, out, err
+    return result.status, out, harness_without_repair_lines(err)
 
 
 class Base(unittest.TestCase):

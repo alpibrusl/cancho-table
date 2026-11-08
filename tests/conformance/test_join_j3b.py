@@ -32,6 +32,7 @@ import query_join_gen as G
 import query_join_oracle as O
 import query_ref
 from harness import ROOT, TRAPS, Scratch, binary, introspect, run, validate
+from harness import without_repair_lines as harness_without_repair_lines
 
 CASES = int(os.environ.get("TABLE_J3B_CASES", "3"))
 FUZZ = int(os.environ.get("TABLE_J3B_FUZZ", "1200"))
@@ -69,7 +70,7 @@ def comparable(result):
         out = (json.dumps(d, sort_keys=True) + "\n").encode()
     if err.startswith((b"table: where.syntax:", b"table: query.syntax:")):
         return result.status, out, b"SYNTAX"
-    return result.status, out, err
+    return result.status, out, harness_without_repair_lines(err)
 
 
 def write_case(d, case):

@@ -424,10 +424,11 @@ class Mcp(unittest.TestCase):
                 items = result["content"]
                 self.assertEqual(items[0]["text"].encode(), direct.stdout.decode("utf-8", "replace").encode())
                 self.assertEqual(items[0]["_meta"], {"stream": "stdout"})
-                if direct.stderr:
+                written = direct.raw_stderr if direct.raw_stderr is not None else direct.stderr
+                if written:
                     seen["stderr"] += 1
                     self.assertEqual(len(items), 2)
-                    self.assertEqual(items[1]["text"].encode(), direct.stderr)
+                    self.assertEqual(items[1]["text"].encode(), written)
                     self.assertEqual(items[1]["_meta"], {"stream": "stderr"})
                 else:
                     self.assertEqual(len(items), 1)
@@ -483,7 +484,8 @@ class Mcp(unittest.TestCase):
         self.assertTrue(r["isError"])
         self.assertEqual(r["_meta"]["exit_code"], 2)
         self.assertEqual(r["content"][0]["text"], "")
-        self.assertRegex(r["content"][1]["text"], r"^table: output\.duplicate-column: [^\n]+\n$")
+        # the sentence, and since the package of cancho-tools#60 its hint and detail on indented lines of their own
+        self.assertRegex(r["content"][1]["text"], r"^table: output\.duplicate-column: [^\n]+\n(  [^\n]+\n)*$")
         self.assertNotIn("structuredContent", r)
         r = M.one(self.root, {"file": "ragged.csv", "select": "a", "format": "jsonl"})["result"]
         self.assertEqual((r["isError"], r["_meta"]["exit_code"]), (True, 8))
