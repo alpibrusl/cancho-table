@@ -550,7 +550,19 @@ fn marked[&z](st: &z [int], row: int) -> [] bool {
 
 // A full join's second phase (docs/join-redesign.md section 9): each held build row that no probe row matched, in build file order, as a joined record whose probe cells are all empty. The probe part of the
 // record is `np - 1` delimiters (`np` empty cells), then the delimiter and the build record as the build holds it, so the cells of the build columns are found as `probe_one` finds them. Stops with the page.
-pub fn build_only[&h, &i, &t, &q, &c, &s, &w, &x, &a, &z, &m](heap: &!h Heap, io: &!i Io, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], st: &!z [int], a: &!a [int], kmap: &m [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, max_join: int) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+// Whether column `col` of the probe is the probe side of a pair whose key both files name alike (keys[3 * pairs] is the mask of those pairs, set by `jnhead.unite`).
+fn is_shared_key[&k](keys: &k [int], pairs: int, col: int) -> [] bool {
+    var j = 0;
+    while j < pairs {
+        if keys[3 * pairs] >> j & 1 == 1 && keys[3 * j] == col {
+            return true;
+        }
+        j = j + 1;
+    }
+    return false;
+}
+
+pub fn build_only[&h, &i, &t, &q, &c, &s, &w, &x, &a, &z, &m, &y](heap: &!h Heap, io: &!i Io, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], st: &!z [int], a: &!a [int], kmap: &m [int], keys: &y [int], rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, max_join: int) -> [heap, io_write] (buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
     var rows2 = rows;
     var scratch2 = scratch;
     var escr2 = escr;
@@ -589,6 +601,20 @@ pub fn build_only[&h, &i, &t, &q, &c, &s, &w, &x, &a, &z, &m](heap: &!h Heap, io
                 cells[3 * (np + k) + 2] = bcells[3 * col + 2];
                 k = k + 1;
             }
+            // a key column that both files share is shown once, and for this row it is the --join file's cell (the coalesce of docs/join-redesign.md section 4): the probe column reads the build record
+            let npairs = st[s_pairs()];
+            let shared = keys[3 * npairs];
+            var jj = 0;
+            while jj < npairs {
+                if shared >> jj & 1 == 1 {
+                    let pc = keys[3 * jj];
+                    let bc = keys[3 * jj + 1];
+                    cells[3 * pc] = bcells[3 * bc] + keep;
+                    cells[3 * pc + 1] = bcells[3 * bc + 1] + keep;
+                    cells[3 * pc + 2] = bcells[3 * bc + 2];
+                }
+                jj = jj + 1;
+            }
             borrow jrec2 as &jr in {
                 let (r2, s2, e2, k2) = emit_one(heap, io, tree, cols, sel, cells, buffer.bytes(jr), 0, st, a, rows2, scratch2, escr2, kept2, delim, as_csv, from, limit, budget, picked, max_join, 1, true, np);
                 rows2 = r2;
@@ -597,7 +623,7 @@ pub fn build_only[&h, &i, &t, &q, &c, &s, &w, &x, &a, &z, &m](heap: &!h Heap, io
                 kept2 = k2;
             }
             // the cells of the probe columns are the padding of this record: a refused read of one says so (`emit_one` says it of the build columns)
-            if a[engine.k_abort()] != 0 && a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] < np {
+            if a[engine.k_abort()] != 0 && a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] < np && !is_shared_key(keys, st[s_pairs()], a[engine.k_err_col()]) {
                 a[engine.k_err_fn()] = 98 + 1;
             }
         }
@@ -949,7 +975,7 @@ pub fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0
             }
             // a full join's second phase, only when every probe row was read and nothing stopped the answer (a page that is full before the probe ends never gets here)
             if full && a[engine.k_abort()] == 0 && a[engine.k_stop()] == 0 && a[engine.k_capped()] == 0 && a[engine.k_ragged()] == 0 {
-                let (r2, s2, e2, k2, j2) = build_only(heap, io, jt, tree, cols, sel, cells, bcells, st, a, kmap, rows, scratch, escr, kept, jrec, np, nb, delim, as_csv, from, limit, budget, picked, max_join);
+                let (r2, s2, e2, k2, j2) = build_only(heap, io, jt, tree, cols, sel, cells, bcells, st, a, kmap, keys, rows, scratch, escr, kept, jrec, np, nb, delim, as_csv, from, limit, budget, picked, max_join);
                 rows = r2;
                 scratch = s2;
                 escr = e2;

@@ -260,6 +260,10 @@ pub fn unite[&h, &g, &p, &a, &b, &c, &d, &s, &t, &x](heap: &!h Heap, args: &g Ar
                     borrow mut dropped as &!dw in {
                         contents(dw)[c2] = 1;
                     }
+                    // (the mask of the shared-name pairs, for the second phase of a full join: keys[3 * pairs])
+                    borrow mut keys as &!kw2 in {
+                        contents(kw2)[3 * pairs] = contents(kw2)[3 * pairs] + (1 << j);
+                    }
                 }
             }
         }
