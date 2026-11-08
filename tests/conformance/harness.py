@@ -54,6 +54,20 @@ class Result:
         return "<table %r -> %d %r>" % (self.argv[1:], self.status, self.stdout[:300])
 
 
+THREAD_FLAGS = ("--threads", "--chunk-bytes", "--parallel-min-bytes")
+# A repair repeats the invocation, and the flags that say how many threads read it are part of what it repeats: in a JSON document as items of the argv, in the text of csv and text
+# (contract package c7131fd, cancho-tools#60) as words of a command line. They say how the answer was read, never what it is, so a run that was given them is returned without them
+# in the repair: the answers at 1 and at 4 threads are then the bytes the tests compare.
+_ECHO_JSON = re.compile(rb',"--(?:threads|chunk-bytes|parallel-min-bytes)","[0-9]+"')
+_ECHO_TEXT = re.compile(rb" --(?:threads|chunk-bytes|parallel-min-bytes) [0-9]+")
+
+
+def without_thread_echo(args, stdout, stderr):
+    if not any(str(a) in THREAD_FLAGS for a in args):
+        return stdout, stderr
+    return _ECHO_JSON.sub(b"", _ECHO_TEXT.sub(b"", stdout)), _ECHO_TEXT.sub(b"", stderr)
+
+
 def run(*args, cwd=None, timeout=120, stdin=None):
     """One run of the tool. Standard input is empty unless `stdin` (bytes) is given: a test never inherits the runner's, since a run with no
     operand reads it (docs/readers.md section 3).
@@ -62,7 +76,8 @@ def run(*args, cwd=None, timeout=120, stdin=None):
     operand) must give the same answer but for the file's name where the answer says it (`detail.path` is `-`). Nothing else about a test changes."""
     argv = [binary(), *[str(a) for a in args]]
     p = subprocess.run(argv, capture_output=True, cwd=cwd, timeout=timeout, input=stdin if stdin is not None else b"")
-    result = Result(argv, p.returncode, p.stdout, p.stderr)
+    out, err = without_thread_echo(args, p.stdout, p.stderr)
+    result = Result(argv, p.returncode, out, err)
     if stdin is None and os.environ.get("TABLE_STDIN_DIFF"):
         via_stdin(args, result, cwd, timeout)
     return result
@@ -70,7 +85,8 @@ def run(*args, cwd=None, timeout=120, stdin=None):
 
 def run_argv(argv, cwd=None, timeout=120):
     p = subprocess.run(argv, capture_output=True, cwd=cwd, input=b"", timeout=timeout)
-    result = Result(argv, p.returncode, p.stdout, p.stderr)
+    out, err = without_thread_echo(argv[1:], p.stdout, p.stderr)
+    result = Result(argv, p.returncode, out, err)
     if os.environ.get("TABLE_STDIN_DIFF") and str(argv[0]) == binary():
         via_stdin(argv[1:], result, cwd, timeout)
     return result
