@@ -58,7 +58,7 @@ REFUSALS = [
     ("select a.b from 'f' where c = 'x", "syntax", ".", WHAT_BYTE),
     ("select a.b from 'join.csv' where c = 'x", "syntax", ".", WHAT_BYTE),
     ("select a.id from 'p.csv' as a right 'b.csv' as b on a.id = b.id", "unsupported", "right", Q.F_RIGHT),
-    ("select a.id from 'p.csv' as a full 'b.csv' as b on a.id = b.id", "unsupported", "full", Q.F_FULL),
+    ("select a.id from 'p.csv' as a full 'b.csv' as b on a.id = b.id", "syntax", "'b.csv'", Q.WHAT_JOIN_WORD),
     ("select a.id from 'p.csv' as a cross 'b.csv' as b on a.id = b.id", "unsupported", "cross", Q.F_CROSS),
     # the second table's alias is known from the head, whatever the join word
     ("select c.id from 'p.csv' as a left outer join 'b.csv' as b on a.id = b.id", "syntax", "c.id", Q.WHAT_UNKNOWN_ALIAS),
@@ -112,7 +112,7 @@ REFUSALS = [
     ("select a.id from 'p.csv' as a join", "syntax", END, Q.WHAT_FILE2),
     # the joins that are not offered
     ("select a.id from 'p.csv' as a right join 'b.csv' as b on a.id = b.id", "unsupported", "right", Q.F_RIGHT),
-    ("select a.id from 'p.csv' as a full join 'b.csv' as b on a.id = b.id", "unsupported", "full", Q.F_FULL),
+    ("select a.id from 'p.csv' as a full outer join 'b.csv' as b on a.id = b.id", "unsupported", "outer", Q.F_FULL),
     ("select a.id from 'p.csv' as a cross join 'b.csv' as b on a.id = b.id", "unsupported", "cross", Q.F_CROSS),
     ("select a.id from 'p.csv' as a left outer join 'b.csv' as b on a.id = b.id", "unsupported", "outer", Q.F_OUTER),
     ("select a.id from 'p.csv' as a right outer join 'b.csv' as b on a.id = b.id", "unsupported", "right", Q.F_RIGHT),
@@ -174,6 +174,15 @@ def offset_of(query, anchor):
 
 
 ACCEPTED = [
+    # a full join (F1d of docs/join-redesign.md): the prefix of the second table as for left, the rest of the clauses written as the flags are
+    ("select a.id, b.city from 'p.csv' as a full join 'b.csv' as b on a.id = b.id",
+     ["--join", "b.csv", "--on", "id=id", "--join-type", "full", "--join-prefix", "b.", "--select", "id,b.city"], ("file", "p.csv")),
+    ("select * from 'p.csv' as a full join 'b.csv' as b on a.id::int = b.id::int limit 3 offset 1",
+     ["--rows", "--join", "b.csv", "--on", "id=id:int", "--join-type", "full", "--join-prefix", "b.", "--limit", "3", "--from", "1"], ("file", "p.csv")),
+    ("select a.id from 'p.csv' as a full join 'b.csv' as b on a.id = b.id where b.city = 'x' and a.v::int > 5",
+     ["--join", "b.csv", "--on", "id=id", "--join-type", "full", "--join-prefix", "b.", "--select", "id", "--where", "b.city = 'x' and v:int > 5"], ("file", "p.csv")),
+    ("SELECT a.id FROM stdin AS a FULL JOIN 'b.csv' AS b ON a.id = b.id AND a.name = b.city",
+     ["--join", "b.csv", "--on", "id=id,name=city", "--join-type", "full", "--join-prefix", "b.", "--select", "id"], ("stdin", None)),
     ("select a.id, b.city from 'p.csv' as a join 'b.csv' as b on a.id = b.id",
      ["--join", "b.csv", "--on", "id=id", "--join-type", "inner", "--join-prefix", "b.", "--select", "id,b.city"], ("file", "p.csv")),
     ("select * from 'p.csv' as a left join 'b.csv' as b on a.id = b.id",

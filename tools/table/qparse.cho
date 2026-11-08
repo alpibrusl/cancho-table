@@ -279,7 +279,7 @@ fn scan_head[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
         }
         if word_at(q, m, k + 1, "join") {
             jpos = k + 1;
-        } else if word_at(q, m, k, "left") && word_at(q, m, k + 1, "outer") && word_at(q, m, k + 2, "join") {
+        } else if (word_at(q, m, k, "left") || word_at(q, m, k, "full")) && word_at(q, m, k + 1, "outer") && word_at(q, m, k + 2, "join") {
             jpos = k + 2;
         }
     } else if (word_at(q, m, k, "semi") || word_at(q, m, k, "anti")) && word_at(q, m, k + 1, "join") {
@@ -1198,17 +1198,18 @@ fn join_head[&q, &m](q: &q [byte], m: &!m [int]) -> [] int {
     if is_word(q, m, 0, "right") {
         return qarena.fail(m, 2, 110, at);
     }
-    if is_word(q, m, 0, "full") {
-        return qarena.fail(m, 2, 111, at);
-    }
     if is_word(q, m, 0, "cross") {
         return qarena.fail(m, 2, 112, at);
     }
-    if is_word(q, m, 0, "inner") || is_word(q, m, 0, "left") || is_word(q, m, 0, "semi") || is_word(q, m, 0, "anti") {
+    if is_word(q, m, 0, "inner") || is_word(q, m, 0, "left") || is_word(q, m, 0, "full") || is_word(q, m, 0, "semi") || is_word(q, m, 0, "anti") {
         let left = is_word(q, m, 0, "left");
+        let full = is_word(q, m, 0, "full");
         step(m);
         if left && is_word(q, m, 0, "outer") {
             return qarena.fail(m, 2, 113, start_of(m, 0));
+        }
+        if full && is_word(q, m, 0, "outer") {
+            return qarena.fail(m, 2, 111, start_of(m, 0));
         }
     }
     if !eat_word(q, m, "join") {

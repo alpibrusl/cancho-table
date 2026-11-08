@@ -67,7 +67,7 @@ F_STAR, H_STAR = "table-star", "name the columns, or select * for every column o
 F_LEFT_IN_ON, H_LEFT_IN_ON = "a condition on the left table in on", "put it in where, which filters the left rows"
 F_RIGHT_OF_SEMI, H_RIGHT_OF_SEMI = "a column of the right table of a semi or anti join", "a semi or anti join gives the columns of the left table only: test the right table in on, on a.k = b.k and b.x = 1"
 F_RIGHT, H_RIGHT = "right join", "swap the two files and write left join"
-F_FULL, H_FULL = "full join", "write left join, and a second call with the files swapped and anti for the rows the first one leaves out"
+F_FULL, H_FULL = "full outer join", "write full join"
 F_CROSS, H_CROSS = "cross join", "a join needs its key: on a.k = b.k"
 F_OUTER, H_OUTER = "left outer join", "write left join"
 F_MORE, H_MORE = "more than one join", "pipe the first join's --format csv into the second: table ... | table --join c.csv ..."
@@ -232,7 +232,7 @@ class P:
             n1 = self.tok(i + 5)
             if n1[0] == "ID" and n1[1].lower() == "join":
                 jpos = i + 5
-            elif w == "left" and n1[0] == "ID" and n1[1].lower() == "outer" and self.tok(i + 6)[0] == "ID" and self.tok(i + 6)[1].lower() == "join":
+            elif w in ("left", "full") and n1[0] == "ID" and n1[1].lower() == "outer" and self.tok(i + 6)[0] == "ID" and self.tok(i + 6)[1].lower() == "join":
                 jpos = i + 6
         elif w in ("semi", "anti"):
             n1 = self.tok(i + 5)
@@ -647,14 +647,14 @@ class P:
         w = self.word()
         if w == "right":
             raise QueryError("unsupported", at, feature=F_RIGHT, hint=H_RIGHT)
-        if w == "full":
-            raise QueryError("unsupported", at, feature=F_FULL, hint=H_FULL)
         if w == "cross":
             raise QueryError("unsupported", at, feature=F_CROSS, hint=H_CROSS)
-        if w in ("inner", "left", "semi", "anti"):
+        if w in ("inner", "left", "full", "semi", "anti"):
             self.k += 1
             if w == "left" and self.word() == "outer":
                 raise QueryError("unsupported", self.peek()[2], feature=F_OUTER, hint=H_OUTER)
+            if w == "full" and self.word() == "outer":
+                raise QueryError("unsupported", self.peek()[2], feature=F_FULL, hint=H_FULL)
         if not self.eat_word("join"):
             raise QueryError("syntax", self.peek()[2], expected=WHAT_JOIN_WORD)
         t = self.take()
@@ -911,7 +911,7 @@ def on_name(name):
 def join_flags(j):
     on = ",".join("%s=%s%s" % (on_name(p[0]), on_name(p[1]), type_suffix(p[2])) for p in j["pairs"])
     out = ["--join", j["path"], "--on", on, "--join-type", j["type"]]
-    if j["type"] in ("inner", "left"):
+    if j["type"] in ("inner", "left", "full"):
         out += ["--join-prefix", j["b"] + "."]
     if j["jwh"]:
         out += ["--join-where", where_text(j["jwh"], own=True)]

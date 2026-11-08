@@ -951,6 +951,8 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
         let jt = m[qarena.s_jtype()];
         if jt == 1 {
             text = buffer.append(heap, text, "left");
+        } else if jt == 5 {
+            text = buffer.append(heap, text, "full");
         } else if jt == 2 {
             text = buffer.append(heap, text, "semi");
         } else if jt == 3 {
@@ -959,7 +961,7 @@ fn emit[&h, &q, &m](heap: &!h Heap, q: &q [byte], m: &!m [int], text0: buffer.Bu
             text = buffer.append(heap, text, "inner");
         }
         text = put_zero(heap, text);
-        if jt <= 1 {
+        if jt <= 1 || jt == 5 {
             let alias = decode_own(heap, q, m, m[qarena.s_alias_b()]);
             borrow alias as &ar in {
                 text = buffer.append(heap, text, buffer.bytes(ar));
