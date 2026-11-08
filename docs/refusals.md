@@ -163,7 +163,7 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 
 The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other cancho-tools; the rest are `table`'s own.
 
-The `io.*` rules that carry an operating-system error say, in `hint`, what the contract package (cancho-tools `d3fed0c`) writes for the errno; `detail.errno` is the code, and the catalogue above carries no hint for a package rule:
+The `io.*` rules that carry an operating-system error say, in `hint`, what the contract package (cancho-tools `c7131fd`) writes for the errno; `detail.errno` is the code, and the catalogue above carries no hint for a package rule:
 
 | rule | when | `hint` |
 |---|---|---|

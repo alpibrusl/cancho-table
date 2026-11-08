@@ -1,6 +1,6 @@
 # Making the common refusals fixable by an agent: #107, and what it leaves for #100
 
-> **Status: the first part (the empty-cell repair) is built; the second (`path.dotdot`) is not, and why is below.** Written 2026-11-07 for cancho-table#107, a slice of #100. It follows the rules of `docs/numbers.md`: what is measured is said as measured, the rest is a reading of the code or a judgement. **Nothing here measures an agent**: the evidence for the cost of the refusals is the audit quoted in #100 (5 of 27 refusals were an empty cell in a `:dec` column, n = 3 runs a cell, Haiku 4.5), which is not repeated and not re-run.
+> **Status: both parts are built: the empty-cell repair (section 1) and the `path.dotdot` hint through the contract package (section 2).** Written 2026-11-07 for cancho-table#107, a slice of #100. It follows the rules of `docs/numbers.md`: what is measured is said as measured, the rest is a reading of the code or a judgement. **Nothing here measures an agent**: the evidence for the cost of the refusals is the audit quoted in #100 (5 of 27 refusals were an empty cell in a `:dec` column, n = 3 runs a cell, Haiku 4.5), which is not repeated and not re-run.
 
 ## 1. An empty cell in a typed column: the repair is the guard, written
 
@@ -25,9 +25,9 @@
 
 **Declared in the catalogue.** The three rules were `never` repaired; they are `sometimes` now, in `finish.extra()`, `introspect` and `docs/refusals.md`. `test_rules` holds their fixtures to an empty cell, which has the repair, and `test_empty_guard` holds the cases without one.
 
-## 2. `path.dotdot`: not done here
+## 2. `path.dotdot`: done through the package (2026-11-08)
 
-The hint of `path.dotdot` ("name the file without `..`; the tool does not resolve it, because a symlink makes `a/link/../b` something other than `a/b`") is the **contract package's** (cancho-tools, installed as `toolbox.path`), and `tests/conformance/test_toolbox_pin.py` holds the tool to the package's wording. Adding "run in the CSV's directory, or give `--root`" means either a wording change in cancho-tools or a break of that pin. The first is not mine to file without the maintainer's yes, and the second is the divergence the pin exists to prevent. #107's second item therefore waits; the repair offered today is `retry` for an operand and none for the `--join` file (`docs/joins.md` 5.6), and the guidance for an agent is in the skill, not in the refusal.
+The hint of `path.dotdot` is the **contract package's** (cancho-tools, `toolbox.path`), and `tests/conformance/test_toolbox_pin.py` holds the tool to the package's wording, so the change was made there: cancho-tools#62 asked for it and cancho-tools#63 made it ("name the file without `..`: run the tool in the directory that holds it, or give --root DIR and name the file relative to DIR (the tool does not resolve `..`, ...)"). `cancho.toml` now pins `c7131fd`, the merge of #63, and `docs/architecture.md` has the paragraph for the move, which also brought in cancho-tools#60 (a text or csv refusal keeps its hint, repair and detail). Not measured: whether an agent saves a turn with it.
 
 ## 3. What was not measured
 
