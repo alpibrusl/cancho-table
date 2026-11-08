@@ -590,6 +590,7 @@
     "part_of",
     "partitions",
     "parts_size",
+    "plain_byte",
     "plain_end",
     "plausible",
     "point_width",
@@ -755,6 +756,7 @@
     "status",
     "stride_of",
     "stride_of",
+    "string_end",
     "string_equals",
     "string_length",
     "suffix_at",
@@ -847,5 +849,5 @@
   ],
   "folded_operators": 367,
   "folded_calls": 0,
-  "functions": 1415
+  "functions": 1419
 }

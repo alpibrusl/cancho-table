@@ -29,7 +29,8 @@ def binary():
 
 
 class Result:
-    def __init__(self, argv, status, stdout, stderr):
+    def __init__(self, argv, status, stdout, stderr, raw_stderr=None):
+        self.raw_stderr = stderr if raw_stderr is None else raw_stderr     # what the tool wrote; `stderr` is the sentence of a refusal in text (see TEXT_LINES)
         self.argv = argv
         self.status = status
         self.stdout = stdout
@@ -54,6 +55,30 @@ class Result:
         return "<table %r -> %d %r>" % (self.argv[1:], self.status, self.stdout[:300])
 
 
+THREAD_FLAGS = ("--threads", "--chunk-bytes", "--parallel-min-bytes")
+# A refusal in csv or text (contract package c7131fd, cancho-tools#60) is its sentence and then its hint, repair and detail on indented lines, and the repair line is the whole invocation written
+# again, the flags that say how many threads read it among them. They say how the answer was read, never what it is, so a run that was given them is returned without those words in the
+# text of standard error: the answers at 1 and at 4 threads are then the bytes the tests compare. (A JSON document keeps its repair as it is: tests that read the argv of a repair read all of it.)
+_ECHO_TEXT = re.compile(rb" --(?:threads|chunk-bytes|parallel-min-bytes) [0-9]+")
+_REPAIR_LINES = re.compile(rb"^  (?:no repair|repair): .*\n", re.M)
+
+
+# The lines after the sentence of a refusal in csv or text. The tests read the sentence (`Result.stderr`: `table: RULE: message`, as the earlier package wrote it alone) and keep what the tool
+# wrote in `Result.raw_stderr`; the hint, repair and detail lines are pinned where they are the subject (test_toolbox_pin) and by the JSON documents everywhere else.
+TEXT_LINES = re.compile(rb"^  (?:hint|repair|no repair|detail): .*\n", re.M)
+
+
+def without_thread_echo(args, stdout, stderr):
+    if not any(str(a) in THREAD_FLAGS for a in args):
+        return stdout, stderr
+    return stdout, _ECHO_TEXT.sub(b"", stderr)
+
+
+def without_repair_lines(stderr):
+    """A refusal in csv or text without its repair line: the flag form offers an invocation where a query says none (docs/query.md section 1), so the equivalence gates compare the rest."""
+    return _REPAIR_LINES.sub(b"", stderr)
+
+
 def run(*args, cwd=None, timeout=120, stdin=None):
     """One run of the tool. Standard input is empty unless `stdin` (bytes) is given: a test never inherits the runner's, since a run with no
     operand reads it (docs/readers.md section 3).
@@ -62,7 +87,8 @@ def run(*args, cwd=None, timeout=120, stdin=None):
     operand) must give the same answer but for the file's name where the answer says it (`detail.path` is `-`). Nothing else about a test changes."""
     argv = [binary(), *[str(a) for a in args]]
     p = subprocess.run(argv, capture_output=True, cwd=cwd, timeout=timeout, input=stdin if stdin is not None else b"")
-    result = Result(argv, p.returncode, p.stdout, p.stderr)
+    out, err = without_thread_echo(args, p.stdout, p.stderr)
+    result = Result(argv, p.returncode, out, TEXT_LINES.sub(b"", err), err)
     if stdin is None and os.environ.get("TABLE_STDIN_DIFF"):
         via_stdin(args, result, cwd, timeout)
     return result
@@ -70,7 +96,8 @@ def run(*args, cwd=None, timeout=120, stdin=None):
 
 def run_argv(argv, cwd=None, timeout=120):
     p = subprocess.run(argv, capture_output=True, cwd=cwd, input=b"", timeout=timeout)
-    result = Result(argv, p.returncode, p.stdout, p.stderr)
+    out, err = without_thread_echo(argv[1:], p.stdout, p.stderr)
+    result = Result(argv, p.returncode, out, TEXT_LINES.sub(b"", err), err)
     if os.environ.get("TABLE_STDIN_DIFF") and str(argv[0]) == binary():
         via_stdin(argv[1:], result, cwd, timeout)
     return result

@@ -26,6 +26,7 @@ import query_gen
 import query_ref
 import rename_b1 as R
 from harness import TRAPS, Scratch, introspect, run, run_argv, validate
+from harness import without_repair_lines as harness_without_repair_lines
 
 SOUPS = int(os.environ.get("RENAME_B1_SOUPS", "1500"))
 PLANS = int(os.environ.get("RENAME_B1_PLANS", "300"))
@@ -588,7 +589,7 @@ def comparable(res):
         out = (json.dumps(d, sort_keys=True) + "\n").encode()
     if err.startswith((b"table: where.syntax:", b"table: query.syntax:")):
         return res.status, out, b"SYNTAX"
-    return res.status, out, err
+    return res.status, out, harness_without_repair_lines(err)
 
 
 class Equivalence(unittest.TestCase):

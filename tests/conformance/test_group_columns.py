@@ -140,8 +140,10 @@ def refusal(got):
         except Exception:
             return None, problems + ["no tagged refusal on standard output: %r" % got.stdout[:200]]
     else:
-        # (csv and JSON lines may have written the rows before the bound was reached: the refusal is the last line of standard error)
-        m = REFUSAL.match(got.stderr.decode("utf-8", "replace").rstrip("\n").split("\n")[-1])
+        # (csv and JSON lines may have written the rows before the bound was reached: the refusal is the last sentence of standard error, the line `table: RULE: message`; since the package
+        # of cancho-tools#60 its hint, repair and detail follow it on indented lines)
+        sentences = [l for l in got.stderr.decode("utf-8", "replace").rstrip("\n").split("\n") if l.startswith("table: ")]
+        m = REFUSAL.match(sentences[-1] if sentences else "")
         if not m:
             return None, ["status %d with no tagged refusal: stdout %r stderr %r" % (got.status, got.stdout[:100], got.stderr[:200])]
         rule, problems = m.group(1), []

@@ -25,6 +25,7 @@ import procs as subprocess
 
 import datetime_ref as ref
 from harness import ROOT, Scratch, introspect, run, run_argv, validate
+from harness import without_repair_lines as harness_without_repair_lines
 from test_datetime import csv_text, SUFFIX
 
 DT3_PLANS = int(os.environ.get("DT3_PLANS", "60"))
@@ -142,7 +143,7 @@ def flags_and_query(p, calibrate, rng):
 
 
 def comparable(r):
-    return (r.status, r.stdout, r.stderr)
+    return (r.status, r.stdout, harness_without_repair_lines(r.stderr))
 
 
 class QueryEquivalence(unittest.TestCase):

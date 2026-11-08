@@ -110,13 +110,17 @@ class Hints(unittest.TestCase):
             if e["rule"] == "args.duplicate-flag":
                 self.assertEqual(e["hint"], "give each flag once")
 
-    def test_csv_and_text_do_not_carry_hints(self):
+    def test_csv_and_text_carry_the_hint_on_a_line_of_their_own(self):
+        # [corrected, pin c7131fd] cancho-tools#60: a refusal in csv or text is the sentence `table: RULE: message` and then its hint, repair and detail on indented lines.
+        # With the earlier pin (d3fed0c) the sentence stood alone and this test said the hint was not there.
         for fmt in ("csv", "text"):
             r = self.go("--where", "", "--format", fmt, "f.csv")
             self.assertEqual(r.status, 2)
             self.assertEqual(r.stdout, b"")
-            self.assertIn(b"args.bad-value", r.stderr)
-            self.assertNotIn(BAD.encode(), r.stderr)
+            lines = r.raw_stderr.decode().splitlines()
+            self.assertTrue(lines[0].startswith("table: args.bad-value: "), lines)
+            self.assertIn("  hint: " + BAD, lines)
+            self.assertTrue(any(l.startswith("  detail: {") for l in lines), lines)
 
     def test_the_hints_are_the_ones_of_the_helper_of_the_goldens(self):
         # toolbox_pin.before(answer) is the answer of the earlier pin: the seven hints null again, every other byte alone

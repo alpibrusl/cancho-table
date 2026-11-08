@@ -299,10 +299,11 @@ class Differential(unittest.TestCase):
                 items = result["content"]
                 self.assertEqual(items[0]["text"].encode(), direct.stdout.decode("utf-8", "replace").encode())    # byte for byte, bytes that are text
                 self.assertEqual(items[0]["_meta"], {"stream": "stdout"})
-                if direct.stderr:
+                written = direct.raw_stderr if direct.raw_stderr is not None else direct.stderr
+                if written:
                     seen_stderr += 1
                     self.assertEqual(len(items), 2)
-                    self.assertEqual(items[1]["text"].encode(), direct.stderr)
+                    self.assertEqual(items[1]["text"].encode(), written)
                     self.assertEqual(items[1]["_meta"], {"stream": "stderr"})
                 else:
                     self.assertEqual(len(items), 1)
@@ -350,7 +351,8 @@ class Differential(unittest.TestCase):
     def test_standard_error_is_kept_beside_standard_output(self):
         r = one(root(), {"file": "data.csv", "where": "nope=1", "format": "csv"})["result"]
         self.assertEqual(r["content"][0]["text"], "")
-        self.assertEqual(r["content"][1]["text"], "table: column.unknown: the plan names a column the header does not have\n")
+        # the refusal sentence first, then the indented hint, repair and detail lines the package writes under it
+        self.assertTrue(r["content"][1]["text"].startswith("table: column.unknown: the plan names a column the header does not have\n  hint: "), r["content"][1]["text"])
         self.assertTrue(r["isError"])
         self.assertEqual(r["_meta"]["exit_code"], 3)
 

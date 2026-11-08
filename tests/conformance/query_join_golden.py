@@ -85,7 +85,7 @@ def cases(randoms=None):
 def digest(binary, p):
     """The md5 of (status, standard output, standard error; the answer read as the tool at the earlier pin wrote it, toolbox_pin.before), the path of the binary (a repair offers the invocation back, argv[0] first) written {BIN}."""
     b = binary.encode()
-    return hashlib.md5(repr((p.returncode, toolbox_pin.before(p.stdout.replace(b, b"{BIN}")), p.stderr.replace(b, b"{BIN}"))).encode()).hexdigest()
+    return hashlib.md5(repr((p.returncode, toolbox_pin.before(p.stdout.replace(b, b"{BIN}")), toolbox_pin.before(p.stderr.replace(b, b"{BIN}")))).encode()).hexdigest()
 
 
 def random_cases():
