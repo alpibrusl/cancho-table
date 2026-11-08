@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_join_full.Shared", "test_join_full.Refusals", "test_join_full.Where", "test_join_full.Oracle", "test_join_full.Pages", "test_join_j2.Flags", "test_rules"]
+TESTS = ["test_join_full.Grouped", "test_join_full.Shared", "test_join_full.Refusals", "test_join_full.Where", "test_join_full.Oracle", "test_join_full.Pages", "test_join_j2.Flags", "test_rules"]
 
 MUTANTS = [
     ("a probe row matching a build row does not mark it", "jnread.cho", "        if st[s_full()] == 1 {\n            mark(st, x);\n        }", "        if st[s_full()] == 7 {\n            mark(st, x);\n        }"),
@@ -38,6 +38,16 @@ MUTANTS = [
     ("the coalesce takes the build column of the next pair", "jnread.cho", "                    let bc = keys[3 * jj + 1];", "                    let bc = keys[3 * jj + 4];"),
     ("the coalesce writes the column of the build key, not the probe's", "jnread.cho", "                    cells[3 * pc] = bcells[3 * bc] + keep;", "                    cells[3 * np - 3] = bcells[3 * bc] + keep;"),
     ("the coalesce forgets the quote flag of the cell", "jnread.cho", "                    cells[3 * pc + 2] = bcells[3 * bc + 2];", "                    cells[3 * pc + 2] = 0;"),
+    ("a grouped full join does not mark the build rows it matched", "jn3pass.cho", "        if st[jnread.s_full()] == 1 {\n            jnread.mark(st, x);\n        }", "        if st[jnread.s_full()] == 7 {\n            jnread.mark(st, x);\n        }"),
+    ("a grouped full join has no marks", "jn3pass.cho", "        marks = jtab.rows_of(jt) / 62 + 1;", "        marks = 0;"),
+    ("a grouped full join is not told it is one", "jn3pass.cho", "            if full {\n                st[jnread.s_full()] = 1;\n            }", "            if full && np < 0 {\n                st[jnread.s_full()] = 1;\n            }"),
+    ("a grouped full join has no second phase", "jn3pass.cho", "            if full && a[engine.k_abort()] == 0 && a[engine.k_stop()] == 0 && a[engine.k_capped()] == 0 && a[engine.k_ragged()] == 0 {\n                let (g2, e2, k2, j2) = build_only_g(", "            if full && np < 0 && a[engine.k_abort()] == 0 && a[engine.k_stop()] == 0 && a[engine.k_capped()] == 0 && a[engine.k_ragged()] == 0 {\n                let (g2, e2, k2, j2) = build_only_g("),
+    ("a grouped full join counts every build row as unmatched", "jn3pass.cho", "        if !jnread.marked(st, r) {\n            borrow mut jrec2", "        if true {\n            borrow mut jrec2"),
+    ("a grouped full join's build-only record has one probe cell too few", "jn3pass.cho", "            while p < np {\n                if p > 0 {", "            while p + 1 < np {\n                if p > 0 {"),
+    ("a grouped full join does not coalesce the shared key", "jn3pass.cho", "                    if shared >> j & 1 == 1 && keys[3 * j] == p {", "                    if shared >> j & 1 == 7 && keys[3 * j] == p {"),
+    ("a grouped full join's padded probe cell is not said to be padding", "jn3pass.cho", "a[engine.k_err_col()] < np && !jnread.is_shared_key(keys, npairs, a[engine.k_err_col()]) {\n                a[engine.k_err_fn()] = a[engine.k_err_fn()] + 100;", "a[engine.k_err_col()] < 0 && !jnread.is_shared_key(keys, npairs, a[engine.k_err_col()]) {\n                a[engine.k_err_fn()] = a[engine.k_err_fn()] + 100;"),
+    ("a grouped full join is read by the pass that has no second phase", "jnrun.cho", "contents(gr), top, full);", "contents(gr), top, false);"),
+    ("the pruned build of a full join drops the shared key column", "jnprune.cho", "        if full {\n            i = 0;", "        if full && pairs < 0 {\n            i = 0;"),
     ("the mask of shared pairs is not kept", "jnhead.cho", "contents(kw2)[3 * pairs] = contents(kw2)[3 * pairs] + (1 << j);", "contents(kw2)[3 * pairs] = 0;"),
     ("the mask of shared pairs holds only the last", "jnhead.cho", "contents(kw2)[3 * pairs] = contents(kw2)[3 * pairs] + (1 << j);", "contents(kw2)[3 * pairs] = 1 << j;"),
     ("a full join does not mark: the flag is not given to the pass", "jnread.cho", "            if full {\n                st[s_full()] = 1;\n            }", "            if full && np < 0 {\n                st[s_full()] = 1;\n            }"),
@@ -47,7 +57,6 @@ MUTANTS = [
     ("the word full is not a left join", "jnrun.cho", "        } else if bytes.equal(word, \"full\") {\n            kind = 1;", "        } else if bytes.equal(word, \"full-never\") {\n            kind = 1;"),
     ("a --join-where is taken by a full join", "jnflags.cho", "        if cli.has(parsed, table, \"join-where\") {\n            e = flags.problem(heap, e, \"args.conflict\", \"--join-where drops", "        if cli.has(parsed, table, \"join-where\") && !full {\n            e = flags.problem(heap, e, \"args.conflict\", \"--join-where drops"),
     ("a --join-sorted is taken by a full join", "jnflags.cho", "        if cli.has(parsed, table, \"join-sorted\") {\n            e = flags.problem(heap, e, \"args.conflict\", \"a full join is not built over --join-sorted", "        if cli.has(parsed, table, \"join-sorted\") && !full {\n            e = flags.problem(heap, e, \"args.conflict\", \"a full join is not built over --join-sorted"),
-    ("a --group over a full join is taken", "jnflags.cho", "        if inp.has_group || inp.has_agg || inp.has_order || cli.has(parsed, table, \"sort\") || cli.has(parsed, table, \"top\") {", "        if inp.has_agg || inp.has_order || cli.has(parsed, table, \"sort\") || cli.has(parsed, table, \"top\") {"),
     ("an --explain says the join is a left join", "jnexplain.cho", "    if full {\n        o = buffer.append(heap, o, \"\\\"full\\\"\");", "    if false {\n        o = buffer.append(heap, o, \"\\\"full\\\"\");"),
     ("an --explain moves the conditions of a full join before the join", "jnexplain.cho", "                            if full {\n                                ctype = 4;\n                            }", "                            if false {\n                                ctype = 4;\n                            }"),
 ]

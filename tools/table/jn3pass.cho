@@ -500,6 +500,9 @@ pub fn probe_g[&h, &t, &q, &c, &w, &x, &d, &a, &z, &k, &m](heap: &!h Heap, jt: &
     let keep = len(prec) + 1;
     x = chain;
     while x >= 0 {
+        if st[jnread.s_full()] == 1 {
+            jnread.mark(st, x);
+        }
         let brec = jtab.record(jt, x);
         borrow mut jrec2 as &!jw in {
             jw.used = keep;
@@ -555,10 +558,88 @@ pub fn probe_g[&h, &t, &q, &c, &w, &x, &d, &a, &z, &k, &m](heap: &!h Heap, jt: &
     return (groups2, escr2, kept2, jrec2, kscr2, kbuf2);
 }
 
+// `jnread.build_only` for a plan that groups or sorts: each held build row that no probe row matched goes to the groups or the sorter as a record of `np` probe cells (empty, but for the column of a
+// key both files name alike, which holds the build row's cell: the sorter holds the record and splits it again, so the cell is in the record) and the columns of the build row the answer shows.
+pub fn build_only_g[&h, &t, &q, &c, &w, &x, &a, &z, &k, &m](heap: &!h Heap, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], cells: &!w [int], bcells: &!x [int], st: &!z [int], a: &!a [int], keys: &k [int], kmap: &m [int], groups: agg.Groups, escr: buffer.Buffer, kept: buffer.Buffer, jrec: buffer.Buffer, np: int, nb: int, nk: int, delim: int, max_groups: int, max_distinct: int, gstate: int, filtering: bool, fast_ok: bool, max_join: int) -> [heap] (agg.Groups, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var groups2 = groups;
+    var escr2 = escr;
+    var kept2 = kept;
+    var jrec2 = jrec;
+    let total = jtab.rows_of(jt);
+    let npairs = st[s_pairs()];
+    let shared = keys[3 * npairs];
+    var r = 0;
+    while r < total && a[engine.k_stop()] == 0 {
+        if !jnread.marked(st, r) {
+            borrow mut jrec2 as &!jw in {
+                buffer.clear(jw);
+            }
+            let brec = jtab.record(jt, r);
+            let (m, open, bad) = reader.fields(brec, delim, bcells, nb);
+            var p = 0;
+            while p < np {
+                if p > 0 {
+                    jrec2 = buffer.push(heap, jrec2, byte_of(delim));
+                }
+                var at = 0;
+                borrow jrec2 as &jr0 in {
+                    at = buffer.size(jr0);
+                }
+                cells[3 * p] = at;
+                cells[3 * p + 1] = at;
+                cells[3 * p + 2] = 0;
+                var j = 0;
+                while j < npairs {
+                    if shared >> j & 1 == 1 && keys[3 * j] == p {
+                        let bc = keys[3 * j + 1];
+                        let first = bcells[3 * bc];
+                        let last = bcells[3 * bc + 1];
+                        let quoted = bcells[3 * bc + 2];
+                        jrec2 = buffer.append(heap, jrec2, brec[first - quoted..last + quoted]);
+                        cells[3 * p] = at + quoted;
+                        cells[3 * p + 1] = at + quoted + last - first;
+                        cells[3 * p + 2] = quoted;
+                    }
+                    j = j + 1;
+                }
+                p = p + 1;
+            }
+            var k = 0;
+            while k < nk {
+                let first = bcells[3 * kmap[k]];
+                let last = bcells[3 * kmap[k] + 1];
+                let quoted = bcells[3 * kmap[k] + 2];
+                jrec2 = buffer.push(heap, jrec2, byte_of(delim));
+                var at = 0;
+                borrow jrec2 as &jr1 in {
+                    at = buffer.size(jr1);
+                }
+                jrec2 = buffer.append(heap, jrec2, brec[first - quoted..last + quoted]);
+                cells[3 * (np + k)] = at + quoted;
+                cells[3 * (np + k) + 1] = at + quoted + last - first;
+                cells[3 * (np + k) + 2] = quoted;
+                k = k + 1;
+            }
+            borrow jrec2 as &jr in {
+                let (g2, e2, k2) = emit_g(heap, groups2, escr2, kept2, tree, cols, cells, buffer.bytes(jr), 0, st, a, max_groups, max_distinct, gstate, filtering, fast_ok, max_join, 1, false, np);
+                groups2 = g2;
+                escr2 = e2;
+                kept2 = k2;
+            }
+            // the cells of the probe columns are the padding of this record: a refused read of one says so (`emit_g` says it of the build columns)
+            if a[engine.k_abort()] != 0 && a[engine.k_err_fn()] < 100 && a[engine.k_err_col()] < np && !jnread.is_shared_key(keys, npairs, a[engine.k_err_col()]) {
+                a[engine.k_err_fn()] = a[engine.k_err_fn()] + 100;
+            }
+        }
+        r = r + 1;
+    }
+    return (groups2, escr2, kept2, jrec2);
+}
+
 // The probe phase of a join with the filters and the groups of J3 (a copy of `jnread.probe_pass`, which is not changed): the leading run of `--where` is applied to the probe row before its key is read, and the joined
 // rows go to the groups or the sorter when the plan has them. `g` is: 0 max groups (or sort rows), 1 max distinct, 2 the bytes left for the groups, 3 filtering, 4 fast_ok, 5 sort field, 6 sort slot, 7 sort descending.
 // Answers the reader, what was counted, and the buffers: the csv or json rows pending, the scratch of the writers, the escape scratch and the first bytes of a refused cell.
-pub fn probe_pass3[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m, &l, &z](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], keys: &k [int], kmap: &m [int], pairs: int, simple: bool, jtype: int, nk: int, rows0: buffer.Buffer, scratch0: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, cap: int, most: int, max_join: int, cls: &l [int], push_p: bool, grouping: bool, mode: int, groups0: agg.Groups, g: &z [int], top: int) -> [heap, file_read, io_read, io_write] (lines.Lines, finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+pub fn probe_pass3[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m, &l, &z](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, jt: &t jtab.JTab, tree: &q query.Query, cols: &c [int], sel: &s [int], cells: &!w [int], bcells: &!x [int], keys: &k [int], kmap: &m [int], pairs: int, simple: bool, jtype: int, nk: int, rows0: buffer.Buffer, scratch0: buffer.Buffer, np: int, nb: int, delim: int, as_csv: bool, from: int, limit: int, budget: int, picked: int, cap: int, most: int, max_join: int, cls: &l [int], push_p: bool, grouping: bool, mode: int, groups0: agg.Groups, g: &z [int], top: int, full: bool) -> [heap, file_read, io_read, io_write] (lines.Lines, finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
     var r = r0;
     var rows = rows0;
     var scratch = scratch0;
@@ -572,7 +653,12 @@ pub fn probe_pass3[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m, &l, &z](heap: &!h
     let filtering = g[3] == 1;
     let fast_ok = g[4] == 1;
     var tally = box_slice(heap, engine.k_size(), 0);
-    var state = box_slice(heap, s_size(), 0);
+    // a full join keeps one mark for each held build row after the slots (`jnread.mark`)
+    var marks = 0;
+    if full {
+        marks = jtab.rows_of(jt) / 62 + 1;
+    }
+    var state = box_slice(heap, s_size() + marks, 0);
     // J1's path (an inner join of one pair of text, no column left out) has a probe of its own, `probe_inner`
     let fast = jtype == 0 && simple && nk == nb;
     let pkey = keys[0];
@@ -594,6 +680,9 @@ pub fn probe_pass3[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m, &l, &z](heap: &!h
             st[s_pairs()] = pairs;
             if simple {
                 st[s_simple()] = 1;
+            }
+            if full {
+                st[jnread.s_full()] = 1;
             }
             while going {
                 var status = 9;
@@ -801,6 +890,14 @@ pub fn probe_pass3[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m, &l, &z](heap: &!h
             if quoted && a[engine.k_abort()] == 0 {
                 a[engine.k_abort()] = 2;
                 a[engine.k_abort_line()] = opened;
+            }
+            // a full join's second phase (`jnread.build_only` for a plan that groups or sorts): only when every probe row was read and nothing stopped the answer
+            if full && a[engine.k_abort()] == 0 && a[engine.k_stop()] == 0 && a[engine.k_capped()] == 0 && a[engine.k_ragged()] == 0 {
+                let (g2, e2, k2, j2) = build_only_g(heap, jt, tree, cols, cells, bcells, st, a, keys, kmap, groups, escr, kept, jrec, np, nb, nk, delim, g[0], g[1], g[2], filtering, fast_ok, max_join);
+                groups = g2;
+                escr = e2;
+                kept = k2;
+                jrec = j2;
             }
             if a[engine.k_abort()] == 71 {
                 // the facts of the refusal ride in the tally's error fields: the probe row, its line, its matches and the most any probe row had

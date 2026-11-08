@@ -534,14 +534,14 @@ pub fn probe_inner[&h, &i, &t, &q, &c, &s, &w, &x, &d, &a, &z](heap: &!h Heap, i
 }
 
 // The matched mark of build row `row` (full join): bit row mod 62 of the slot s_size() + row / 62 of the probe's state (62 bits a slot keeps the slot positive).
-fn mark[&z](st: &!z [int], row: int) -> [] int {
+pub fn mark[&z](st: &!z [int], row: int) -> [] int {
     let slot = s_size() + row / 62;
     let bit = row % 62;
     st[slot] = st[slot] | 1 << bit;
     return 0;
 }
 
-fn marked[&z](st: &z [int], row: int) -> [] bool {
+pub fn marked[&z](st: &z [int], row: int) -> [] bool {
     let slot = s_size() + row / 62;
     let bit = row % 62;
     let word = st[slot] >> bit & 1;
@@ -551,7 +551,7 @@ fn marked[&z](st: &z [int], row: int) -> [] bool {
 // A full join's second phase (docs/join-redesign.md section 9): each held build row that no probe row matched, in build file order, as a joined record whose probe cells are all empty. The probe part of the
 // record is `np - 1` delimiters (`np` empty cells), then the delimiter and the build record as the build holds it, so the cells of the build columns are found as `probe_one` finds them. Stops with the page.
 // Whether column `col` of the probe is the probe side of a pair whose key both files name alike (keys[3 * pairs] is the mask of those pairs, set by `jnhead.unite`).
-fn is_shared_key[&k](keys: &k [int], pairs: int, col: int) -> [] bool {
+pub fn is_shared_key[&k](keys: &k [int], pairs: int, col: int) -> [] bool {
     var j = 0;
     while j < pairs {
         if keys[3 * pairs] >> j & 1 == 1 && keys[3 * j] == col {

@@ -325,7 +325,7 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
             borrow sel as &sr in {
                 borrow kmap as &kmr in {
                     borrow keys as &kyr in {
-                        pmask = jnprune.mask_of(heap, query.name_count(tree), contents(kr), contents(sr), picked, np, nb, contents(kmr), contents(kyr), pairs);
+                        pmask = jnprune.mask_of(heap, query.name_count(tree), contents(kr), contents(sr), picked, np, nb, contents(kmr), contents(kyr), pairs, full);
                     }
                 }
             }
@@ -899,7 +899,7 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
                                                         kept = kept2;
                                                     }
                                                 } else {
-                                                    let (rp2, pc, rows2, scratch2, kept2) = jn3pass.probe_pass3(heap, rp, pfile, io, stdin, tr, tree, contents(kr), contents(sr), contents(cw), contents(bw), contents(ky), contents(km), pairs, simple, jtype, nk, out_rows, spare, np, nb, delim, as_csv, from, limit, budget, picked, cap, most, max_join, contents(clr), push_p, row_grouping, mode, groups, contents(gr), top);
+                                                    let (rp2, pc, rows2, scratch2, kept2) = jn3pass.probe_pass3(heap, rp, pfile, io, stdin, tr, tree, contents(kr), contents(sr), contents(cw), contents(bw), contents(ky), contents(km), pairs, simple, jtype, nk, out_rows, spare, np, nb, delim, as_csv, from, limit, budget, picked, cap, most, max_join, contents(clr), push_p, row_grouping, mode, groups, contents(gr), top, full);
                                                     rp = rp2;
                                                     c = pc;
                                                     out_rows = rows2;

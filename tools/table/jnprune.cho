@@ -23,7 +23,7 @@ import query;
 // The mask of a join of `np` probe columns and `nb` build columns, for the plan whose names `cols` map to columns of the joined row (`names` of them) and whose answer shows the first `picked` entries of
 // `sel` (0 when the plan groups): `kmap` has, for the k-th build column the joined row shows, the column of the `--join` file; `keys` has the pairs of `--on` (three integers each: the probe's column, the build's, the type).
 // See `compile` for what the mask is.
-pub fn mask_of[&h, &c, &s, &k, &y](heap: &!h Heap, names: int, cols: &c [int], sel: &s [int], picked: int, np: int, nb: int, kmap: &k [int], keys: &y [int], pairs: int) -> [heap] Box[[int]] {
+pub fn mask_of[&h, &c, &s, &k, &y](heap: &!h Heap, names: int, cols: &c [int], sel: &s [int], picked: int, np: int, nb: int, kmap: &k [int], keys: &y [int], pairs: int, full: bool) -> [heap] Box[[int]] {
     var named = box_slice(heap, nb + 1, 0);
     borrow mut named as &!nw in {
         let m = contents(nw);
@@ -40,6 +40,16 @@ pub fn mask_of[&h, &c, &s, &k, &y](heap: &!h Heap, names: int, cols: &c [int], s
                 m[kmap[sel[i] - np]] = 1;
             }
             i = i + 1;
+        }
+        // a full join shows the --join file's cell for a key both files name alike when no probe row matched (keys[3 * pairs] is the mask of those pairs), so that column is held
+        if full {
+            i = 0;
+            while i < pairs {
+                if keys[3 * pairs] >> i & 1 == 1 {
+                    m[keys[3 * i + 1]] = 1;
+                }
+                i = i + 1;
+            }
         }
     }
     var mask = box_slice(heap, 1, 0);
