@@ -193,6 +193,93 @@ class Pages(Base):
         self.assertEqual((r.status, r.first_rule()), (8, "limit.too-many-join-rows"))
 
 
+class Shared(Base):
+    """F1c: a key column that both files name alike (`--on k`) is shown once; for a build-only row it holds the --join file's cell (the coalesce of docs/join-redesign.md section 4)."""
+
+    PH2 = ["id", "k", "pv"]
+    BH2 = ["k", "v"]
+
+    def put2(self, prows, brows):
+        self.s.write("p.csv", encode(self.PH2, prows))
+        self.s.write("b.csv", encode(self.BH2, brows))
+
+    def joined(self, *extra, on="k", fmt="csv"):
+        return run("--root", str(self.s.dir), "--join", "b.csv", "--on", on, "--join-type", "full", "--format", fmt, *[str(x) for x in extra], "p.csv")
+
+    @staticmethod
+    def definition(prows, brows):
+        """The answer's columns are id, k, pv, v: the left join in probe order, then each build row nothing matched, its key in the one key column."""
+        out, hit = [], set()
+        for p in prows:
+            m = [j for j, b in enumerate(brows) if b[0] == p[1]]
+            for j in m:
+                out.append(p + [brows[j][1]])
+                hit.add(j)
+            if not m:
+                out.append(p + [""])
+        for j, b in enumerate(brows):
+            if j not in hit:
+                out.append(["", b[0], "", b[1]])
+        return out
+
+    def test_the_key_is_shown_once_and_a_build_only_row_holds_the_build_cell(self):
+        self.put2([["1", "a", "p"], ["2", "b", "q"]], [["a", "x"], ["d", "y"]])
+        r = self.joined()
+        self.assertEqual(r.status, 0, r.stderr[:300])
+        self.assertEqual(parse(r.stdout), [["id", "k", "pv", "v"], ["1", "a", "p", "x"], ["2", "b", "q", ""], ["", "d", "", "y"]])
+
+    def test_random_tables_equal_the_definition(self):
+        rng = random.Random(1311)
+        for case in range(120):
+            prows = table(rng, self.PH2, rng.randrange(0, 9), [1])
+            brows = table(rng, self.BH2, rng.randrange(0, 9), [0])
+            self.put2(prows, brows)
+            r = self.joined()
+            self.assertEqual(r.status, 0, (case, r.stderr[:200]))
+            self.assertEqual(parse(r.stdout), [["id", "k", "pv", "v"]] + self.definition(prows, brows), case)
+
+    def test_a_typed_key_shows_the_build_spelling_for_a_build_only_row(self):
+        self.put2([["1", "7", "p"]], [["007", "b1"], ["10", "b2"]])
+        r = self.joined(on="k:int")
+        self.assertEqual(r.status, 0, r.stderr[:300])
+        self.assertEqual(parse(r.stdout), [["id", "k", "pv", "v"], ["1", "7", "p", "b1"], ["", "10", "", "b2"]])
+
+    def test_a_shared_pair_beside_a_pair_with_two_names(self):
+        self.s.write("p.csv", encode(["k", "m", "pv"], [["a", "1", "p"], ["b", "2", "q"]]))
+        self.s.write("b.csv", encode(["k", "n", "v"], [["a", "1", "x"], ["a", "9", "y"], ["z", "2", "w"]]))
+        r = run("--root", str(self.s.dir), "--join", "b.csv", "--on", "k,m=n", "--join-type", "full", "--format", "csv", "p.csv")
+        self.assertEqual(r.status, 0, r.stderr[:300])
+        self.assertEqual(parse(r.stdout), [["k", "m", "pv", "n", "v"], ["a", "1", "p", "1", "x"], ["b", "2", "q", "", ""], ["a", "", "", "9", "y"], ["z", "", "", "2", "w"]])
+
+    def test_two_shared_pairs_are_both_coalesced(self):
+        self.s.write("p.csv", encode(["k", "j", "pv"], [["a", "1", "p"]]))
+        self.s.write("b.csv", encode(["k", "j", "v"], [["a", "1", "x"], ["d", "4", "y"]]))
+        r = run("--root", str(self.s.dir), "--join", "b.csv", "--on", "k,j", "--join-type", "full", "--format", "csv", "p.csv")
+        self.assertEqual(r.status, 0, r.stderr[:300])
+        self.assertEqual(parse(r.stdout), [["k", "j", "pv", "v"], ["a", "1", "p", "x"], ["d", "4", "", "y"]])
+
+    def test_where_sees_the_coalesced_key(self):
+        self.put2([["1", "a", "p"]], [["a", "x"], ["d", "y"], ["e", "z"]])
+        r = self.joined("--where", "k = d")
+        self.assertEqual(parse(r.stdout), [["id", "k", "pv", "v"], ["", "d", "", "y"]])
+        # the key cell of a build-only row is not padding: a typed read of it that fails is not said to be
+        self.put2([["1", "7", "p"]], [["7", "x"], ["q", "y"]])
+        r = self.joined("--where", "k:int > 0", fmt="json")
+        self.assertEqual(r.status, 8)
+        self.assertFalse(r.error()["detail"].get("padded"), r.stdout[:300])
+
+    def test_pages_and_threads_keep_the_bytes(self):
+        rng = random.Random(1312)
+        prows = table(rng, self.PH2, 30, [1])
+        brows = table(rng, self.BH2, 30, [0])
+        self.put2(prows, brows)
+        whole = self.joined().stdout
+        self.assertEqual(self.joined("--threads", 4, "--parallel-min-bytes", 0).stdout, whole)
+        data = parse(whole)[1:]
+        page = parse(self.joined("--limit", 7, "--from", len(data) - 6).stdout)
+        self.assertEqual(page[1:], data[len(data) - 6:][:7])
+
+
 class Refusals(Base):
     def setUp(self):
         super().setUp()
@@ -209,11 +296,6 @@ class Refusals(Base):
         self.assertEqual(self.rule("--agg", "count"), (2, "args.conflict"))
         self.assertEqual(self.rule("--order-by", "id"), (2, "args.conflict"))
         self.assertEqual(self.rule("--input-format", "jsonl", "--fields", "k"), (2, "args.conflict"))
-        # a key column that both files share would be shown once, and for a build-only row it would have to hold the build's cell
-        self.s.write("p2.csv", "id,k\n1,a\n")
-        self.s.write("b2.csv", "k,v\na,x\n")
-        r = run("--root", str(self.s.dir), "--join", "b2.csv", "--on", "k", "--join-type", "full", "--format", "json", "p2.csv")
-        self.assertEqual((r.status, r.first_rule()), (2, "args.conflict"))
 
     def test_nothing_is_given_for_the_build_rows_after_a_refusal(self):
         # a probe row of another width is a refusal of the whole answer: the build rows nothing matched are not given as if the probe had been read

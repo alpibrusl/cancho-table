@@ -384,6 +384,7 @@
     "is_paged",
     "is_position",
     "is_scale",
+    "is_shared_key",
     "is_sym",
     "is_tail",
     "is_upper",
@@ -849,5 +850,5 @@
   ],
   "folded_operators": 367,
   "folded_calls": 0,
-  "functions": 1419
+  "functions": 1420
 }

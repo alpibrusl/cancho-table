@@ -361,20 +361,6 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
             }
             if ostatus != 0 {
                 e = flags.problem(heap, e, "args.bad-value", why, hint, "--on");
-            } else if full {
-                var shared = false;
-                borrow on as &onr2 in {
-                    var j = 0;
-                    while j < onr2.pairs {
-                        if vec.get(onr2.using, j) == 1 {
-                            shared = true;
-                        }
-                        j = j + 1;
-                    }
-                }
-                if shared {
-                    e = flags.problem(heap, e, "args.conflict", "a full join shows a key column that both files share once, and for a row of the --join file that nothing matched that column would have to hold the --join file's cell (not built yet)", "name both columns: --on user=user", "--join-type --on");
-                }
             }
             drop_on(heap, on);
         }

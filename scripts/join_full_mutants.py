@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_join_full.Refusals", "test_join_full.Where", "test_join_full.Oracle", "test_join_full.Pages", "test_join_j2.Flags", "test_rules"]
+TESTS = ["test_join_full.Shared", "test_join_full.Refusals", "test_join_full.Where", "test_join_full.Oracle", "test_join_full.Pages", "test_join_j2.Flags", "test_rules"]
 
 MUTANTS = [
     ("a probe row matching a build row does not mark it", "jnread.cho", "        if st[s_full()] == 1 {\n            mark(st, x);\n        }", "        if st[s_full()] == 7 {\n            mark(st, x);\n        }"),
@@ -32,7 +32,14 @@ MUTANTS = [
     ("the probe part of a second-phase record has one cell too few", "jnread.cho", "            while c + 1 < np {\n                jrec2 = buffer.push(heap, jrec2, byte_of(delim));", "            while c + 2 < np {\n                jrec2 = buffer.push(heap, jrec2, byte_of(delim));"),
     ("the build cells of a second-phase record are found one byte early", "jnread.cho", "            let keep = np;\n            let brec = jtab.record(jt, r);", "            let keep = np - 1;\n            let brec = jtab.record(jt, r);"),
     ("the probe cells of a second-phase record are not empty", "jnread.cho", "                cells[3 * p + 1] = p;\n                cells[3 * p + 2] = 0;", "                cells[3 * p + 1] = p + 1;\n                cells[3 * p + 2] = 0;"),
-    ("a padded probe cell is not said to be padding", "jnread.cho", "            if a[engine.k_abort()] != 0 && a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] < np {\n                a[engine.k_err_fn()] = 98 + 1;", "            if a[engine.k_abort()] != 0 && a[engine.k_err_fn()] == 0 - 1 && a[engine.k_err_col()] < 0 {\n                a[engine.k_err_fn()] = 98 + 1;"),
+    ("a padded probe cell is not said to be padding", "jnread.cho", "a[engine.k_err_col()] < np && !is_shared_key(keys, st[s_pairs()], a[engine.k_err_col()]) {\n                a[engine.k_err_fn()] = 98 + 1;", "a[engine.k_err_col()] < 0 && !is_shared_key(keys, st[s_pairs()], a[engine.k_err_col()]) {\n                a[engine.k_err_fn()] = 98 + 1;"),
+    ("the shared key cell is said to be padding", "jnread.cho", "a[engine.k_err_col()] < np && !is_shared_key(keys, st[s_pairs()], a[engine.k_err_col()]) {", "a[engine.k_err_col()] < np && !is_shared_key(keys, st[s_pairs()], 0 - 1) {"),
+    ("a build-only row does not coalesce the shared key", "jnread.cho", "                if shared >> jj & 1 == 1 {", "                if shared >> jj & 1 == 7 {"),
+    ("the coalesce takes the build column of the next pair", "jnread.cho", "                    let bc = keys[3 * jj + 1];", "                    let bc = keys[3 * jj + 4];"),
+    ("the coalesce writes the column of the build key, not the probe's", "jnread.cho", "                    cells[3 * pc] = bcells[3 * bc] + keep;", "                    cells[3 * np - 3] = bcells[3 * bc] + keep;"),
+    ("the coalesce forgets the quote flag of the cell", "jnread.cho", "                    cells[3 * pc + 2] = bcells[3 * bc + 2];", "                    cells[3 * pc + 2] = 0;"),
+    ("the mask of shared pairs is not kept", "jnhead.cho", "contents(kw2)[3 * pairs] = contents(kw2)[3 * pairs] + (1 << j);", "contents(kw2)[3 * pairs] = 0;"),
+    ("the mask of shared pairs holds only the last", "jnhead.cho", "contents(kw2)[3 * pairs] = contents(kw2)[3 * pairs] + (1 << j);", "contents(kw2)[3 * pairs] = 1 << j;"),
     ("a full join does not mark: the flag is not given to the pass", "jnread.cho", "            if full {\n                st[s_full()] = 1;\n            }", "            if full && np < 0 {\n                st[s_full()] = 1;\n            }"),
     ("the marks have no room", "jnread.cho", "        marks = jtab.rows_of(jt) / 62 + 1;", "        marks = 0;"),
     ("a full join pushes the leading conditions of --where", "jnwhere.cho", "    if jtype == 4 {", "    if jtype == 9 {"),
@@ -41,7 +48,6 @@ MUTANTS = [
     ("a --join-where is taken by a full join", "jnflags.cho", "        if cli.has(parsed, table, \"join-where\") {\n            e = flags.problem(heap, e, \"args.conflict\", \"--join-where drops", "        if cli.has(parsed, table, \"join-where\") && !full {\n            e = flags.problem(heap, e, \"args.conflict\", \"--join-where drops"),
     ("a --join-sorted is taken by a full join", "jnflags.cho", "        if cli.has(parsed, table, \"join-sorted\") {\n            e = flags.problem(heap, e, \"args.conflict\", \"a full join is not built over --join-sorted", "        if cli.has(parsed, table, \"join-sorted\") && !full {\n            e = flags.problem(heap, e, \"args.conflict\", \"a full join is not built over --join-sorted"),
     ("a --group over a full join is taken", "jnflags.cho", "        if inp.has_group || inp.has_agg || inp.has_order || cli.has(parsed, table, \"sort\") || cli.has(parsed, table, \"top\") {", "        if inp.has_agg || inp.has_order || cli.has(parsed, table, \"sort\") || cli.has(parsed, table, \"top\") {"),
-    ("a shared-name key beside a full join is taken", "jnflags.cho", "                if shared {\n                    e = flags.problem(heap, e, \"args.conflict\", \"a full join shows", "                if shared && !full {\n                    e = flags.problem(heap, e, \"args.conflict\", \"a full join shows"),
     ("an --explain says the join is a left join", "jnexplain.cho", "    if full {\n        o = buffer.append(heap, o, \"\\\"full\\\"\");", "    if false {\n        o = buffer.append(heap, o, \"\\\"full\\\"\");"),
     ("an --explain moves the conditions of a full join before the join", "jnexplain.cho", "                            if full {\n                                ctype = 4;\n                            }", "                            if false {\n                                ctype = 4;\n                            }"),
 ]
