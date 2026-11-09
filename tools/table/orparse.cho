@@ -308,7 +308,8 @@ fn emit[&n, &p](tr: &n vec.Vec[int], flow: &!p vec.Vec[int], node: int, t: int, 
 
 // The expression read into the plan. Answers the plan and, for what and the offset, 0 and 0 when it is whole, else what was expected (`expr.expected`; `mixed()` for `and` mixed with `or`) and
 // where, as a byte offset into the expression. A plan that holds an `or` carries its branch program.
-pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (query.Query, int, int) {
+pub fn parse[&h, &s](heap: &!h Heap, q0: query.Query, src: &s [byte]) -> [heap] (query.Query, int, int) {
+    let q = query.with_where_text(heap, q0, src);
     var tr = vec.empty(heap, 64, 0);
     let (p, t2, after, leaves, node, w, a, flowed) = level(heap, q, tr, src, 0, 0, 0, false, false);
     var plan = p;
@@ -347,6 +348,14 @@ pub fn parse[&h, &s](heap: &!h Heap, q: query.Query, src: &s [byte]) -> [heap] (
     }
     vec.drop(heap, t2);
     return (plan, what, at);
+}
+
+// The expression read into a plan of its own, for a reader that renders it: the plan (its conditions numbered as in the leaves of the tree), the tree, its root, and whether the text is whole and has no mix of
+// `and` with `or` (docs/query.md section 16: the SQL of a plan).
+pub fn read_tree[&h, &s](heap: &!h Heap, src: &s [byte]) -> [heap] (query.Query, vec.Vec[int], int, bool) {
+    let (p, t2, after, leaves, node, w, a, flowed) = level(heap, query.empty(heap), vec.empty(heap, 64, 0), src, 0, 0, 0, false, false);
+    var whole = w == 0 && expr.skip_space(src, after) >= len(src);
+    return (p, t2, node, whole);
 }
 
 // The units of the top level of `src` for the split of a join's `--where` (docs/joins.md section 18), four integers for each in order: what it is (0 a bare condition, 5 a negated one, 1
@@ -400,11 +409,11 @@ fn trimmed[&s](src: &s [byte], start: int, end: int) -> [] int {
 // ---- the two readings of a mix ------------------------------------------------------------------------------------------------
 
 // The unit `j` of the level at `at` (the node), and the connective before it.
-fn unit_at[&n](tr: &n vec.Vec[int], at: int, j: int) -> [] int {
+pub fn unit_at[&n](tr: &n vec.Vec[int], at: int, j: int) -> [] int {
     return vec.get(tr, at + 2 * j + 1);
 }
 
-fn conn_at[&n](tr: &n vec.Vec[int], at: int, j: int) -> [] int {
+pub fn conn_at[&n](tr: &n vec.Vec[int], at: int, j: int) -> [] int {
     return vec.get(tr, at + 2 * j);
 }
 

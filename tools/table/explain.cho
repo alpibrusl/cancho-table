@@ -12,6 +12,7 @@ module explain;
 import std.buffer;
 import std.bytes;
 import std.vec;
+import qsql;
 import dtbucket;
 import dtfail;
 import dtparse;
@@ -318,6 +319,19 @@ fn note[&h, &d](heap: &!h Heap, o: buffer.Buffer, first: bool, sentence: &d [byt
 
 // The document, `{"explain": {...}}`, for a plan whose header (when it has been read) has been resolved. `resolved` says that `cols` holds, for each name of the plan, the
 // column it is; `head` is the json array of the answer's columns when the plan names columns (`frame.prepare`), and `names` and `ends` the header.
+// `"sql":"..." or null, "sql_flags":[...]`: the statement, and the flags of the call that it leaves out.
+fn put_sql[&h, &t, &f](heap: &!h Heap, o: buffer.Buffer, text0: &t buffer.Buffer, flags0: &f buffer.Buffer, why: int) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, o, "\"sql\":");
+    if why != 0 {
+        b = buffer.append(heap, b, "null");
+    } else {
+        b = text.append_json(heap, b, buffer.bytes(text0));
+    }
+    b = buffer.append(heap, b, ",\"sql_flags\":[");
+    b = buffer.append(heap, b, buffer.bytes(flags0));
+    return buffer.push(heap, b, byte_of(']'));
+}
+
 pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer, jn: &j [byte]) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let reporting = query.reporting(tree);
@@ -915,6 +929,27 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             o = note(heap, o, first_note, "--threads has no effect on standard input: it is read on one core, in blocks");
         }
     }
+    // the plan as a statement (docs/query.md section 16): from the flags, or the query as it was given
+    var sql_text = buffer.empty(heap, 1);
+    var sql_flags = buffer.empty(heap, 1);
+    var sql_why = 0;
+    let (t0, f0, w0) = qsql.render(heap, args, parsed, tree, mode, joining, stdin, shown, sort, from, limit, top, as_csv);
+    buffer.drop(heap, sql_text);
+    buffer.drop(heap, sql_flags);
+    sql_text = t0;
+    sql_flags = f0;
+    sql_why = w0;
+    if sql_why != 0 {
+        var sentence = buffer.append(heap, buffer.empty(heap, 128), "sql.");
+        sentence = buffer.append(heap, sentence, qsql.reason_id(sql_why));
+        sentence = buffer.append(heap, sentence, ": no query is shown for this plan: ");
+        sentence = buffer.append(heap, sentence, qsql.reason_text(sql_why));
+        borrow sentence as &sr in {
+            o = note(heap, o, first_note, buffer.bytes(sr));
+        }
+        buffer.drop(heap, sentence);
+        first_note = false;
+    }
     if class == 3 && wanted == 0 {
         var sentence = buffer.append(heap, buffer.empty(heap, 128), "--order-by holds all the rows it keeps, up to --max-sort-rows (");
         sentence = buffer.push_nat(heap, sentence, max_sort);
@@ -954,12 +989,28 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             }
             first_note = false;
         }
-        o = buffer.append(heap, o, "],\"join\":");
+        o = buffer.append(heap, o, "],");
+        borrow sql_text as &sxr in {
+            borrow sql_flags as &sfr in {
+                o = put_sql(heap, o, sxr, sfr, sql_why);
+            }
+        }
+        o = buffer.append(heap, o, ",\"join\":");
         o = buffer.append(heap, o, jn);
         o = buffer.append(heap, o, "}}");
+        buffer.drop(heap, sql_text);
+        buffer.drop(heap, sql_flags);
         return o;
     }
-    o = buffer.append(heap, o, "]}}");
+    o = buffer.append(heap, o, "],");
+    borrow sql_text as &sxr in {
+        borrow sql_flags as &sfr in {
+            o = put_sql(heap, o, sxr, sfr, sql_why);
+        }
+    }
+    o = buffer.append(heap, o, "}}");
+    buffer.drop(heap, sql_text);
+    buffer.drop(heap, sql_flags);
     return o;
 }
 
