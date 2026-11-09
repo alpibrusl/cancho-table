@@ -160,9 +160,9 @@ An MCP response goes into a model's context. The server bounds it and says what 
 
 * **stdio**, newline-delimited JSON-RPC 2.0. A line is read with `getchar` up to `\n`; a line over 4 MiB is
   read to its end, dropped and answered `mcp.line-too-long`, and nothing but responses goes to standard output.
-* **`initialize`** answers `protocolVersion` `2025-06-18` with `capabilities: {"tools": {"listChanged": false}}`
-  and `serverInfo` `cancho-table`. **`notifications/*`** and any request without an `id` are not answered.
-  **`ping`**: `{}`. **`tools/list`**: the generated result. **Anything else**: `-32601`, `mcp.unknown-method`.
+* **`initialize`** answers `protocolVersion` `2025-06-18` with `capabilities: {"tools": {"listChanged": false}, "resources": {"subscribe": false, "listChanged": false}}`
+  (the `resources` entry only when the tool has long help texts, section 13) and `serverInfo` `cancho-table`. **`notifications/*`** and any request without an `id` are not answered.
+  **`ping`**: `{}`. **`tools/list`**: the generated result. **`resources/list`**, **`resources/read`**: section 13. **Anything else**: `-32601`, `mcp.unknown-method`.
   A line that is not JSON: `-32700`, `mcp.parse-error`, `id: null`. Not a JSON-RPC 2.0 request: `-32600`,
   `mcp.invalid-request`.
 * Every protocol refusal carries `error.data.rule`, a stable tag to match on, as the tool's errors do.
@@ -224,7 +224,8 @@ revision it was copied from.
 * every refusal of the server carries `data.rule`; the results of calls the server ended are in the tool's own
   error shape, with `hint` and `repair`, and `detail.limit`;
 * `mcp introspect`, the ceiling file, the fixed-point authority embedded in the generated module;
-* the output bound defaults to 2 MiB and names `limit`/`top`/`select` in the refusal (cancho-tools: 16 MiB).
+* the output bound defaults to 2 MiB and names `limit`/`top`/`select` in the refusal (cancho-tools: 16 MiB);
+* `resources/list` and `resources/read` for the long help texts, the `capabilities` fragment and the short texts of `server/short.json` (section 13).
 
 ## 8. How it is checked
 
@@ -497,3 +498,16 @@ for this tool (§12.1). The JSON parser of the server already refuses invalid UT
 docs/readers.md section 3.2, and that was not repeated here); an input whose decoded size is between the bound and the line limit on a slow client. The default
 of 1 MiB is a judgement.
 
+## 13. The long texts on demand (issue #106, 2026-11-09)
+
+**Measured before the change.** The `tools/list` response for the one tool `table` was **44,091 bytes** (about 11,000 tokens, read by an agent before its first call): the description 9,301 bytes (the 8.8 KB `summary` and the paragraph the generator adds) and 45 properties whose `description` is the flag's `help` from `introspect`, 31,239 bytes in all, the longest `--join` 2,829, `--query` 2,601, `--report` 2,209, `--where` 2,167.
+
+**What it is now.** `tools/list` is **12,926 bytes** (a 71% cut; a test holds it under 14,336). The description is a short text, and the property descriptions are short texts (at most 480 bytes) for every property whose help is longer than that; they are in `server/short.json`, written by hand and read by `scripts/mcp.py`. The full text of each one is a **resource**, `table://help/NAME` (`table://help/tool` for the full description), listed by `resources/list` (34 entries, 2,703 bytes, only when asked) and returned by `resources/read` as `{"contents": [{uri, mimeType: "text/plain", text}]}`. An unknown uri is `-32002`, `mcp.unknown-resource`. The server declares the `resources` capability only when the generated module has help texts, so a tool without `short.json` is served as before. The text of every resource is the tool's own `help` from `introspect`, unchanged: the long texts did not move, they left `tools/list`.
+
+**Why a resource, and the other ways.** (1) *A second tool* (`help`, with a topic) works for every client but makes a server of one tool a server of two, and the tests and the design (section 3) rest on there being one. (2) *An argument* of `table` (`help: "where"`) mixes a lookup into a call whose input is a file. (3) *A resource* is what MCP has for text a client reads when it needs it, and costs nothing in `tools/list` but the pointer in the description. The cost: a client that does not read resources never sees the long texts. The short texts are written to be enough to make a correct call (the grammar of `where`, the types, the empty-cell guard, the forms), and the refusals carry the rest as hints and repairs; this is a judgement and not a measurement.
+
+**Why hand-written short texts.** The issue allowed any mechanism. A cut of the first sentence would end in the middle of a list (`OP one of = != < <= ...`) and say something false. The generator instead holds the texts to the tool: a key of `short.json` that is no property, a text not shorter than the help, a text over 480 bytes, and a property whose help is over 480 bytes and has no short text are each an error (`test_mcp.Resources`, and mutants for each), so that a new long help cannot reach `tools/list` unseen, and a property whose help changes keeps its short text, which is a thing a reader has to re-read (the full text is the resource, so the two can be compared). **What is not checked:** that a short text is a true summary of its help; that is a human's.
+
+**What did not move: the default page.** The issue also asked for a default of about 50 rows over MCP only, where the tool's is 1000. It is not done here, and the reason is the design, not the effort: the server builds an argv from the properties it is given and does not know the tool's forms, and `--limit` is an error with the shape, with `--report` and with a `--query` that has its own `limit`. A server that added `--limit 50` to a call would have to know which forms take it, which is the tool's knowledge (`introspect` does not carry it, section 3). The ways forward are a flag of the tool (a default page that the server sets, with its own rule and a place in `introspect`) or a table of forms in `introspect`; each is a change to the tool's surface and its own issue. Until then an MCP call with no `limit` returns up to 1000 rows and says `data.next.from`, and the description names the 1000.
+
+**Not measured.** Whether an agent calls the tool correctly more often, or in fewer turns, with the short texts; whether it reads a resource when it needs a long text; the tokens a client counts (bytes divided by four here). The held-out re-test of #100 is the evidence for all three.

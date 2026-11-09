@@ -368,7 +368,7 @@ class Mcp(unittest.TestCase):
         self.assertEqual(prop["enum"], flag["kind"][len("choice:"):].split("/"))
         self.assertIn("jsonl", prop["enum"])
         self.assertNotIn("ndjson", prop["enum"])
-        self.assertEqual(prop["description"], flag["help"])
+        self.assertEqual(prop["description"], json.loads((ROOT / "server" / "short.json").read_text())["properties"]["format"])
 
     def test_a_call_with_jsonl_is_the_cli_byte_for_byte_and_text_only(self):
         M = self.M

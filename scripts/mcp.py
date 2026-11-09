@@ -115,8 +115,37 @@ def hints(props):
     return too_large, timeout
 
 
-def definition(d):
-    """The tool's `tools/list` entry, and the tables the server checks a call against."""
+SHORT = ROOT / "server" / "short.json"
+# A property whose help is longer than this must have a short text in server/short.json (docs/mcp.md section 13), so that a long help cannot slip into `tools/list` unseen.
+LONGEST_HELP = 480
+RESOURCE_PREFIX = "%s://help/"
+
+
+def shorten(d, entry, props, short):
+    """The short texts of `short` (the object of server/short.json) in place of the long ones, and the long ones as the resources a client reads on demand: `{name: full text}`.
+    The generator fails rather than say something false: a key that is no property, a short text that is not shorter, and a long help with no short text."""
+    helps = {}
+    for key, text in short.get("properties", {}).items():
+        if key not in props:
+            sys.exit("mcp: server/short.json has a text for `%s`, which is not a property of the tool" % key)
+        full = props[key]["description"]
+        if len(text) >= len(full):
+            sys.exit("mcp: the short text of `%s` is not shorter than its help" % key)
+        if len(text) > LONGEST_HELP:
+            sys.exit("mcp: the short text of `%s` is %d bytes, over %d" % (key, len(text), LONGEST_HELP))
+        helps[key] = full
+        props[key]["description"] = text
+    for key, schema in props.items():
+        if key not in helps and len(schema.get("description", "")) > LONGEST_HELP:
+            sys.exit("mcp: `%s` has %d bytes of help and no short text in server/short.json" % (key, len(schema["description"])))
+    if "description" in short:
+        helps["tool"] = entry["description"]
+        entry["description"] = short["description"] + DESCRIPTION_SUFFIX
+    return helps
+
+
+def definition(d, short=None):
+    """The tool's `tools/list` entry, and the tables the server checks a call against. With `short` (server/short.json) the long texts become resources: `table["helps"]`."""
     name = d["tool"]
     props, required, flags, operands = {}, [], [], []
     ceiling = ceilings(d)
@@ -178,7 +207,9 @@ def definition(d):
                         "idempotentHint": bool(d.get("guarantees", {}).get("idempotent")),
                         "openWorldHint": False},
     }
+    helps = shorten(d, entry, props, short) if short else {}
     return entry, {
+        "helps": helps,
         "name": name,
         "flags": ";".join("|".join(map(str, r)) for r in flags),
         "operands": ";".join("|".join(map(str, r)) for r in operands),
@@ -204,7 +235,31 @@ DESCRIPTION_SUFFIX = (
     "match on the rule.")
 
 
-def server_doc(d, props, authority, bin_dir, pin):
+def rules_of(d, too_large_input, timeout, too_large, table_has_helps):
+    rules = [
+        {"rule": "mcp.parse-error", "answer": "jsonrpc -32700", "summary": "the line is not one JSON value"},
+        {"rule": "mcp.invalid-request", "answer": "jsonrpc -32600", "summary": "not a JSON-RPC 2.0 request"},
+        {"rule": "mcp.line-too-long", "answer": "jsonrpc -32600", "summary": "a request line longer than max_line_bytes"},
+        {"rule": "mcp.unknown-method", "answer": "jsonrpc -32601", "summary": "a method other than initialize, ping, tools/list, tools/call%s" % (", resources/list, resources/read" if table_has_helps else "")},
+        {"rule": "mcp.unknown-tool", "answer": "jsonrpc -32602", "summary": "a tool name other than %s" % d["tool"]},
+        {"rule": "mcp.arguments-not-object", "answer": "jsonrpc -32602", "summary": "`arguments` is not an object"},
+        {"rule": "mcp.unknown-argument", "answer": "jsonrpc -32602", "summary": "a property the input schema does not have (data lists the real ones)"},
+        {"rule": "mcp.wrong-type", "answer": "jsonrpc -32602", "summary": "a property of the wrong type; every fault is listed in data.problems"},
+        {"rule": "mcp.nul-in-argument", "answer": "jsonrpc -32602", "summary": "a NUL byte in a string, which would arrive as two arguments"},
+        {"rule": "mcp.input-conflict", "answer": "jsonrpc -32602", "summary": "both `file` and `stdin` given: the call has one input (data.properties names them)"},
+        {"rule": "mcp.input-missing", "answer": "jsonrpc -32602", "summary": "neither `file` nor `stdin` given: the call has no input (data.properties names them)"},
+        {"rule": "mcp.input-too-large", "answer": "isError result", "summary": "the `stdin` text passed --max-input; " + too_large_input},
+        {"rule": "mcp.timeout", "answer": "isError result", "summary": "the call ran past --timeout-ms; " + timeout},
+        {"rule": "mcp.output-too-large", "answer": "isError result", "summary": "the output passed --max-output (or the error stream passed its bound); " + too_large},
+        {"rule": "mcp.signaled", "answer": "isError result", "summary": "the tool was ended by a signal"},
+        {"rule": "mcp.spawn", "answer": "isError result", "summary": "the tool could not be started or watched"},
+    ]
+    if table_has_helps:
+        rules.insert(5, {"rule": "mcp.unknown-resource", "answer": "jsonrpc -32002", "summary": "a resource uri that resources/list does not name"})
+    return rules
+
+
+def server_doc(d, props, authority, bin_dir, pin, table_has_helps=False):
     """What `mcp introspect` prints."""
     too_large, timeout = hints(props)
     too_large_input = HINT_INPUT
@@ -218,7 +273,7 @@ def server_doc(d, props, authority, bin_dir, pin):
         "usage": "mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N] | mcp introspect",
         "output": "stdio",
         "protocol": {"transport": "stdio, one JSON-RPC 2.0 message per line", "version": "2025-06-18",
-                     "methods": ["initialize", "ping", "tools/list", "tools/call"],
+                     "methods": ["initialize", "ping", "tools/list", "tools/call"] + (["resources/list", "resources/read"] if table_has_helps else []),
                      "notifications": "accepted and not answered",
                      "max_line_bytes": MAX_LINE},
         "serves": {"tool": d["tool"], "version": d["version"], "compiler": d["compiler"], "bin": bin_dir},
@@ -243,24 +298,7 @@ def server_doc(d, props, authority, bin_dir, pin):
             {"name": "stderr", "default": MAX_STDERR, "note": "fixed: the tool's standard error beyond it ends the call as mcp.output-too-large"},
             {"name": "line", "default": MAX_LINE, "note": "fixed: a request line beyond it is refused as mcp.line-too-long"},
         ],
-        "rules": [
-            {"rule": "mcp.parse-error", "answer": "jsonrpc -32700", "summary": "the line is not one JSON value"},
-            {"rule": "mcp.invalid-request", "answer": "jsonrpc -32600", "summary": "not a JSON-RPC 2.0 request"},
-            {"rule": "mcp.line-too-long", "answer": "jsonrpc -32600", "summary": "a request line longer than max_line_bytes"},
-            {"rule": "mcp.unknown-method", "answer": "jsonrpc -32601", "summary": "a method other than initialize, ping, tools/list, tools/call"},
-            {"rule": "mcp.unknown-tool", "answer": "jsonrpc -32602", "summary": "a tool name other than %s" % d["tool"]},
-            {"rule": "mcp.arguments-not-object", "answer": "jsonrpc -32602", "summary": "`arguments` is not an object"},
-            {"rule": "mcp.unknown-argument", "answer": "jsonrpc -32602", "summary": "a property the input schema does not have (data lists the real ones)"},
-            {"rule": "mcp.wrong-type", "answer": "jsonrpc -32602", "summary": "a property of the wrong type; every fault is listed in data.problems"},
-            {"rule": "mcp.nul-in-argument", "answer": "jsonrpc -32602", "summary": "a NUL byte in a string, which would arrive as two arguments"},
-            {"rule": "mcp.input-conflict", "answer": "jsonrpc -32602", "summary": "both `file` and `stdin` given: the call has one input (data.properties names them)"},
-            {"rule": "mcp.input-missing", "answer": "jsonrpc -32602", "summary": "neither `file` nor `stdin` given: the call has no input (data.properties names them)"},
-            {"rule": "mcp.input-too-large", "answer": "isError result", "summary": "the `stdin` text passed --max-input; " + too_large_input},
-            {"rule": "mcp.timeout", "answer": "isError result", "summary": "the call ran past --timeout-ms; " + timeout},
-            {"rule": "mcp.output-too-large", "answer": "isError result", "summary": "the output passed --max-output (or the error stream passed its bound); " + too_large},
-            {"rule": "mcp.signaled", "answer": "isError result", "summary": "the tool was ended by a signal"},
-            {"rule": "mcp.spawn", "answer": "isError result", "summary": "the tool could not be started or watched"},
-        ],
+        "rules": rules_of(d, too_large_input, timeout, too_large, table_has_helps),
         "confinement": {"root": "every path argument is the tool's, resolved by it beneath --root; the server passes --root first and "
                                 "once, flag values as one `--name=value` argument and operands after `--`, with no shell",
                         "exec": "the binary of the directory its Exec is narrowed to (baked at build time), by one fixed name"},
@@ -271,7 +309,7 @@ def server_doc(d, props, authority, bin_dir, pin):
 def tools_cho(entry, table, props, d, authority, bin_dir, pin):
     lit = manifest.literal
     too_large, timeout = hints(props)
-    doc = server_doc(d, props, authority, bin_dir, pin)
+    doc = server_doc(d, props, authority, bin_dir, pin, bool(table.get("helps")))
     out = ["""edition 5;
 
 module mcp.tools;
@@ -297,6 +335,33 @@ pub fn count() -> [] int {
     for field in ("name", "flags", "operands", "stdin", "output", "structured"):
         out.append("\npub fn %s(i: int) -> [] &static [byte] {\n" % field)
         out.append("    if i == 0 {\n        return %s;\n    }\n" % lit(table[field]))
+        out.append('    return "";\n}\n')
+    # The long texts, on demand (docs/mcp.md section 13): the resources a client lists and reads, `table://help/NAME`.
+    helps = table.get("helps", {})
+    names = (["tool"] if "tool" in helps else []) + sorted(k for k in helps if k != "tool")
+    uris = [RESOURCE_PREFIX % table["name"] + k for k in names]
+    listing = {"resources": [{"uri": u, "name": "%s help" % k, "mimeType": "text/plain"} for u, k in zip(uris, names)]}
+    out.append("""
+// What the server says it offers beyond tools: resources only when the tool has long help texts.
+pub fn capabilities() -> [] &static [byte] {
+    return %s;
+}
+
+// `resources/list`, and for resource `k` its uri and the `resources/read` result.
+pub fn resources_result() -> [] &static [byte] {
+    return %s;
+}
+
+pub fn help_count() -> [] int {
+    return %d;
+}
+""" % (lit('{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}}' if names else '{"tools":{"listChanged":false}}'),
+       lit(manifest.compact(listing)), len(names)))
+    for field, make in (("help_uri", lambda u, k: u),
+                        ("help_contents", lambda u, k: manifest.compact({"contents": [{"uri": u, "mimeType": "text/plain", "text": helps[k]}]}))):
+        out.append("\npub fn %s(i: int) -> [] &static [byte] {\n" % field)
+        for n, (u, k) in enumerate(zip(uris, names)):
+            out.append("    if i == %d {\n        return %s;\n    }\n" % (n, lit(make(u, k))))
         out.append('    return "";\n}\n')
     out.append("\n// The binary, beneath the directory the server's `Exec` is narrowed to.\npub fn path(i: int) -> [] &static [byte] {\n")
     out.append("    if i == 0 {\n        return %s;\n    }\n" % lit("%s/%s" % (bin_dir, table["name"])))
@@ -370,7 +435,7 @@ def generated(build_dir, bin_dir):
     pin = manifest.project()["package"]["cancho"]
     tool = manifest.project()["bin"][0]["name"]
     d = introspect(tool, build_dir)
-    entry, table, props = definition(d)
+    entry, table, props = definition(d, json.loads(SHORT.read_text()) if SHORT.exists() else None)
     server_text = baked(SERVER.read_text(), bin_dir)
     first = derive_server(server_text, tools_cho(entry, table, props, d, {}, bin_dir, pin))
     text = tools_cho(entry, table, props, d, first, bin_dir, pin)
