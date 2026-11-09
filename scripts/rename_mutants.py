@@ -58,7 +58,7 @@ MUTANTS = [
     ("the abort of a rename is the next rule's", "frame.cho", "return (labels, lends, 61 + why, at * 4096 + first);", "return (labels, lends, 62 + why, at * 4096 + first);"),
     ("the item at fault is decoded wrongly", "frame.cho", "return (labels, lends, 61 + why, at * 4096 + first);", "return (labels, lends, 61 + why, at * 4095 + first);"),
     # ---- the plan and the flag (query.cho, inputs.cho, table.cho)
-    ("the plan keeps no rename", "query.cho", "rename: buffer.append(heap, rename, text), jx: jx, wtext: wtext };", "rename: buffer.append(heap, rename, text[0..0]), jx: jx, wtext: wtext };"),
+    ("the plan keeps no rename", "query.cho", "rename: buffer.append(heap, rename, text), jx: jx, wtext: wtext, hold: hold };", "rename: buffer.append(heap, rename, text[0..0]), jx: jx, wtext: wtext, hold: hold };"),
     ("--rename is never looked up", "inputs.cho", "bytes.starts_with(a, \"--rename\")", "bytes.starts_with(a, \"--renamx\")"),
     ("--rename is never given", "inputs.cho", "has_rename: has_rename, select_text", "has_rename: false, select_text"),
     ("a rename is allowed with the shape", "table.cho", "e = relfail.check(heap, e, rename_t, mode == 0, reportflags.shown_kind(has_report, inp.report_text), inp.has_query);", "e = relfail.check(heap, e, rename_t, mode == 99, reportflags.shown_kind(has_report, inp.report_text), inp.has_query);"),
@@ -114,7 +114,7 @@ EQUIVALENT = [
      "the list reads a # in a new label as it is, with a backslash before it or without: only a leading # of a TARGET is a position, so the translation's escape of it (it writes what `--select` would) is not needed"),
     ("a rename of rows writes the labels twice for json lines", "frame.cho", "} else if !query.reporting(tree) && len(query.rename_text(tree)) > 0 {", "} else if !query.reporting(tree) && len(query.rename_text(tree)) > 99 {",
      "the labels of a selection are written once more after the rename's, but `jout.with_template` reads the first `named` (the places picked) of them, and the check of two equal keys reads the same ones: the extra labels are never looked at"),
-    ("the plan of a worker thread has no rename", "query.cho", "rename: copy_buffer(heap, plan.rename), jx: copy_buffer(heap, plan.jx), wtext: copy_buffer(heap, plan.wtext) };", "rename: buffer.empty(heap, 1), jx: copy_buffer(heap, plan.jx), wtext: copy_buffer(heap, plan.wtext) };",
+    ("the plan of a worker thread has no rename", "query.cho", "rename: copy_buffer(heap, plan.rename), jx: copy_buffer(heap, plan.jx), wtext: copy_buffer(heap, plan.wtext), hold: plan.hold };", "rename: buffer.empty(heap, 1), jx: copy_buffer(heap, plan.jx), wtext: copy_buffer(heap, plan.wtext), hold: plan.hold };",
      "`duplicate` gives a worker its own plan, and the labels are written once, by the parent, in `frame.prepare` before any worker is started; no thread reads the rename, so a copy that drops it is not seen"),
     ("the labels of a header the rename refused are not written", "frame.cho", "while m < ng + na && abort == 0 {", "while m < ng + na {",
      "when a rename is refused `abort` is set and the header is never used (the refusal is made from the labels as they were), so writing it from them or not is not seen"),

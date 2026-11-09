@@ -1,0 +1,239 @@
+edition 6;
+
+module outfile;
+
+// `--out FILE`: the answer is written to a file, whole, and put in place by a rename (docs/out.md). This module is everything the tool does to the file system besides reading: whether
+// the name is taken (before the run, so a call that cannot succeed does no work), the write (after it), and the receipt that standard output then carries.
+//
+// The write is `toolbox.atomic`'s: a sibling temporary made with `O_EXCL` in the directory that holds the file (opened beneath `--root` by `toolbox.place`, so no step follows a link),
+// written, synced, and renamed to the name: `create` for a name that must not exist (the kernel refuses a taken one), `replace` for `--overwrite`. No lock is taken: a replacement has no
+// precondition to keep between a look and a rename, and the sidecar of `atomic.acquire` would be a file left behind (docs/out.md section 10).
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import toolbox.atomic;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.place;
+import toolbox.text;
+import finish;
+
+// 0 the name is free, 1 something is there, else the errno of the step that failed (a parent that is not there, a link in the way). `rel` is the path as `--root` sees it and `full` the
+// path as it would be opened.
+pub fn taken[&f, &r, &p, &q](fs: &f Fs(""), root: &r [byte], rel: &p [byte], full: &q [byte]) -> [fs_read(""), dir_read] int {
+    let name = place.leaf(full);
+    if place.is_directory_name(name) {
+        return 21;
+    }
+    var found = 0;
+    match place.parent(fs, root, rel, full) {
+        DirOpened::Failed(reason) => {
+            found = reason;
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &d in {
+                match dir_open_read(d, name) {
+                    Opened::Ok(file) => {
+                        file_close(file);
+                        found = 1;
+                    }
+                    Opened::Failed(reason) => {
+                        if reason != 2 {
+                            found = reason;
+                        }
+                    }
+                }
+            }
+            dir_close(dir);
+        }
+    }
+    return found;
+}
+
+// The refusal for a name that is taken: the same call with `--overwrite`, and the same call with the first free name of the stem and a counter (`clean.csv` is `clean-1.csv`), as
+// `join.column-collision` offers a prefix. `at` is the index of the value of `--out` among the arguments, `free` a name that is free ("" when none of the first nine is).
+pub fn exists[&h, &g, &s, &n](heap: &!h Heap, e: fail.Errors, args: &g Args, at: int, shown: &s [byte], free: &n [byte]) -> [heap, args] fail.Errors {
+    var w = fail.open_in(heap, finish.extra(), "out.exists", "the file --out names is already there, and --overwrite is not given", "give --overwrite to replace it, or name another file");
+    var c = fail.choose_open(heap, w);
+    // the same call, with --overwrite
+    var o = fail.choose_option_open(heap, c);
+    var i = 0;
+    while i < arg_count(args) {
+        o = fail.choose_arg(heap, o, arg(args, i));
+        i = i + 1;
+    }
+    o = fail.choose_arg(heap, o, "--overwrite");
+    c = fail.choose_option_close(heap, o);
+    if len(free) > 0 {
+        c = fail.choose_option_replacing(heap, c, args, at, free);
+    }
+    w = fail.choose_close(heap, c);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_str(heap, w, "flag", "--out");
+    return fail.add(heap, e, w);
+}
+
+// The first of `NAME-1.EXT` to `NAME-9.EXT` that is free (the stem and the extension of the last component of `shown`), or "". The probes are `taken` and nothing else.
+pub fn free_name[&h, &f, &r, &p, &q](heap: &!h Heap, fs: &f Fs(""), root: &r [byte], rel: &p [byte], full: &q [byte]) -> [heap, fs_read(""), dir_read] buffer.Buffer {
+    let leaf = place.leaf(rel);
+    let dir = rel[0..len(rel) - len(leaf)];
+    // the extension starts at the last dot that is not the first byte of the leaf
+    var dot = len(leaf);
+    var k = len(leaf);
+    while k > 1 {
+        k = k - 1;
+        if int_of(leaf[k]) == '.' && dot == len(leaf) {
+            dot = k;
+        }
+    }
+    var n = 1;
+    while n < 10 {
+        var cand = buffer.empty(heap, len(rel) + 8);
+        cand = buffer.append(heap, cand, dir);
+        cand = buffer.append(heap, cand, leaf[0..dot]);
+        cand = buffer.push(heap, cand, byte_of('-'));
+        cand = buffer.push(heap, cand, byte_of(48 + n));
+        cand = buffer.append(heap, cand, leaf[dot..len(leaf)]);
+        var gone = false;
+        borrow cand as &cr in {
+            // the full path of the candidate: `full` with the leaf replaced
+            var whole = buffer.empty(heap, len(full) + 8);
+            whole = buffer.append(heap, whole, full[0..len(full) - len(leaf)]);
+            whole = buffer.append(heap, whole, buffer.bytes(cr)[len(dir)..len(buffer.bytes(cr))]);
+            borrow whole as &wr in {
+                gone = taken(fs, root, buffer.bytes(cr), buffer.bytes(wr)) == 0;
+            }
+            buffer.drop(heap, whole);
+        }
+        if gone {
+            let name = cand;
+            return name;
+        }
+        buffer.drop(heap, cand);
+        n = n + 1;
+    }
+    return buffer.empty(heap, 1);
+}
+
+// `out.write-failed`: the environment refused a step (no space, no permission, a read-only directory, a rename it will not do). The destination is as it was and the temporary is gone.
+pub fn write_failed[&h, &s](heap: &!h Heap, e: fail.Errors, shown: &s [byte], errno: int, step: int) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, finish.extra(), "out.write-failed", "the answer could not be written to the file --out names; the file is as it was", "the answer was not lost, so the same command can be run again once the cause (space, permissions, a read-only directory) is gone");
+    w = fail.repair_none(heap, w, "the cause is in the environment, and nothing in the call changes it");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", shown);
+    w = fail.detail_int(heap, w, "errno", errno);
+    if step == 1 {
+        w = fail.detail_str(heap, w, "step", "create-temporary");
+    } else if step == 2 {
+        w = fail.detail_str(heap, w, "step", "write");
+    } else if step == 3 {
+        w = fail.detail_str(heap, w, "step", "sync");
+    } else {
+        w = fail.detail_str(heap, w, "step", "rename");
+    }
+    return fail.add(heap, e, w);
+}
+
+// The hash the temporary's name is derived from: the content's, and on a system that has `/proc` the process's number, so that two writers of one name and one content do not share a temporary
+// (`toolbox.atomic` takes a temporary that is there for a stale one and removes it, which a lock-free writer must not do to another's: docs/out.md section 10). Where there is no `/proc`
+// it is the content's hash alone, and two simultaneous writers of the same name and the same bytes can meet in that temporary: not measured on such a system.
+fn temp_key[&h, &f, &c](heap: &!h Heap, fs: &f Fs(""), content: &c [byte]) -> [heap, fs_read(""), file_read] buffer.Buffer {
+    var key = atomic.sha256_hex(heap, content);
+    match open_read(fs, "/proc/self/stat") {
+        Opened::Failed(reason) => {
+        }
+        Opened::Ok(file) => {
+            let (text, errno, big) = atomic.read_all(heap, Opened::Ok(file), 4096, buffer.empty(heap, 64));
+            borrow text as &tr in {
+                var end = 0;
+                let all = buffer.bytes(tr);
+                while end < len(all) && int_of(all[end]) != 32 {
+                    end = end + 1;
+                }
+                if errno == 0 && !big && end > 0 {
+                    var salted = buffer.empty(heap, 96);
+                    borrow key as &kr in {
+                        salted = buffer.append(heap, salted, buffer.bytes(kr));
+                    }
+                    salted = buffer.push(heap, salted, byte_of('.'));
+                    salted = buffer.append(heap, salted, all[0..end]);
+                    buffer.drop(heap, key);
+                    borrow salted as &sr in {
+                        key = atomic.sha256_hex(heap, buffer.bytes(sr));
+                    }
+                    buffer.drop(heap, salted);
+                }
+            }
+            buffer.drop(heap, text);
+        }
+    }
+    return key;
+}
+
+// Write `content` to the file. `overwrite` replaces a file that is there; without it a name taken since `taken` looked (by a process that was quicker) is `out.exists`, from the kernel's
+// refusal of the rename. Answers the errors, with the refusal added when there is one.
+pub fn deliver[&h, &g, &f, &r, &p, &q, &c](heap: &!h Heap, args: &g Args, fs: &f Fs(""), root: &r [byte], rel: &p [byte], full: &q [byte], at: int, content: &c [byte], overwrite: bool, errs: fail.Errors) -> [heap, args, fs_read(""), dir_read, file_read, dir_write, file_write] fail.Errors {
+    var e = errs;
+    let name = place.leaf(full);
+    if place.is_directory_name(name) {
+        return fail.io_error(heap, e, 21, true, rel);
+    }
+    match place.parent(fs, root, rel, full) {
+        DirOpened::Failed(reason) => {
+            e = fail.io_error(heap, e, reason, true, rel);
+        }
+        DirOpened::Ok(opened) => {
+            var dir = opened;
+            borrow dir as &d in {
+                let hex = temp_key(heap, fs, content);
+                var failed = 0;
+                var step = 0;
+                borrow hex as &hr in {
+                    let temp = atomic.temp_path(heap, name, buffer.bytes(hr));
+                    borrow temp as &t in {
+                        if overwrite {
+                            let (errno2, step2) = atomic.replace(d, name, buffer.bytes(t), content);
+                            failed = errno2;
+                            step = step2;
+                        } else {
+                            let (errno2, step2) = atomic.create(d, name, buffer.bytes(t), content);
+                            failed = errno2;
+                            step = step2;
+                        }
+                    }
+                    buffer.drop(heap, temp);
+                }
+                buffer.drop(heap, hex);
+                if failed == 0 {
+                    atomic.sync_parent(d);
+                } else if !overwrite && step == 4 && failed == 17 {
+                    e = exists(heap, e, args, at, rel, "");
+                } else {
+                    e = write_failed(heap, e, rel, failed, step);
+                }
+            }
+            dir_close(dir);
+        }
+    }
+    return e;
+}
+
+// The receipt, `data` of the document standard output then carries: `{"out":{"path":…,"bytes":N,"rows":N}}`.
+pub fn receipt[&h, &s](heap: &!h Heap, shown: &s [byte], size: int, rows: int) -> [heap] buffer.Buffer {
+    var w = json.writer(heap, 96);
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "out");
+    w = json.begin_object(heap, w);
+    w = json.put_key(heap, w, "path");
+    w = text.put(heap, w, shown);
+    w = json.put_key(heap, w, "bytes");
+    w = json.put_int(heap, w, size);
+    w = json.put_key(heap, w, "rows");
+    w = json.put_int(heap, w, rows);
+    w = json.end_object(heap, w);
+    w = json.end_object(heap, w);
+    return json.finish(w);
+}

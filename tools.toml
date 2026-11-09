@@ -9,8 +9,13 @@
 #
 # `table` reads one file, or standard input when it is named `-` or there is no
 # file (io_read, approved 2026-10-07 for the standard-input stage, docs/readers.md
-# section 10 (a)), and writes one document: nothing written to disk (no
-# file_write, no dir_write). `conc` is the
+# section 10 (a)), and writes one document to standard output. With `--out FILE`
+# it also writes one file, whose name the caller gives, in a directory beneath
+# `--root`, never over an existing file unless `--overwrite` is given, and never
+# anything but the answer of the call (dir_write and file_write, approved by the
+# maintainer 2026-11-09, docs/out.md sections 2 and 10): `toolbox.atomic` makes a
+# sibling temporary through a directory handle and renames it, so no step follows
+# a link. Nothing else is written. `conc` is the
 # threads of `--threads` (spawn and join, which the language labels so): they hold
 # no capability the process did not already have -- a `File` opened by the same
 # path, a `Heap` forked from the parent's -- and no network, clock or foreign code.
@@ -18,4 +23,4 @@
 max_tools = 10
 
 [table]
-allow = ["args", "conc", "dir_read", "err_write", "file_read", "fs_read(\"\")", "heap", "io_read", "io_write"]
+allow = ["args", "conc", "dir_read", "dir_write", "err_write", "file_read", "file_write", "fs_read(\"\")", "heap", "io_read", "io_write"]

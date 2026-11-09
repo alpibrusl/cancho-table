@@ -525,7 +525,7 @@ class NoTrap(Source):
 
 
 class Authority(unittest.TestCase):
-    MAIN = {"args", "conc", "dir_read", "err_write", "file_read", "fs_read", "heap", "io_write"}
+    MAIN = {"args", "conc", "dir_read", "dir_write", "err_write", "file_read", "file_write", "fs_read", "heap", "io_write"}
 
     def test_the_row_grew_by_io_read_and_nothing_else(self):
         got = {l["name"] for l in introspect()["authority"]["labels"]}

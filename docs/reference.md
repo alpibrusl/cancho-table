@@ -90,8 +90,8 @@ status,count,sum:bytes
   `limit.record-too-large`, `limit.output-too-large`, `limit.too-many-rows`,
   `select.unknown-column`, `select.ambiguous-column`, and the `args.*`, `path.*` and
   `io.*` rules of the contract. The tool's own rules are in `extra_rules`;
-* an authority of `args, conc, dir_read, err_write, file_read, fs_read(""), heap,
-  io_read, io_write` (`conc` is `--threads`, `io_read` is standard input): no network, no foreign code, no clock, nothing written to disk,
+* an authority of `args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_read(""), heap,
+  io_read, io_write` (`conc` is `--threads`, `io_read` is standard input, `dir_write` and `file_write` are `--out`, docs/out.md): no network, no foreign code, no clock, one file written and only when `--out` names it,
   enforced by the ceiling in [`tools.toml`](../tools.toml) and
   `python3 scripts/manifest.py --check`;
 * `table introspect` and `table skill`, generated from the tables the parser

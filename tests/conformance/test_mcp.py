@@ -439,7 +439,7 @@ class Schema(unittest.TestCase):
         self.assertEqual(s["type"], "object")
         props = s["properties"]
         ceilings = {l["name"]: l["ceiling"] for l in d["limits"]}
-        flags = [f for f in d["flags"] if f["role"] != "root"]
+        flags = [f for f in d["flags"] if f["role"] != "root" and f["name"] not in mcp.WITHHELD_FLAGS]
         # Every flag but the server's `--root`, by kind, with its help and default; and nothing else but the operand.
         self.assertEqual(set(props), {f["name"][2:] for f in flags} | {"file", "stdin"})
         self.assertNotIn("root", props)
@@ -1190,6 +1190,28 @@ class Own(unittest.TestCase):
         self.assertEqual((got.returncode, got.stdout.count("!!")), (0, 0), got.stdout)
 
 
+
+class OutWithheld(unittest.TestCase):
+    """`--out` and `--overwrite` write a file; the server's authority stays a program that starts the one binary and returns its output (docs/out.md section 7)."""
+
+    def test_the_schema_has_no_out_and_no_overwrite(self):
+        [r], status = talk(root(), [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        self.assertEqual(status, 0)
+        props = r["result"]["tools"][0]["inputSchema"]["properties"]
+        self.assertNotIn("out", props)
+        self.assertNotIn("overwrite", props)
+        self.assertIn("out", {f["name"][2:] for f in introspect()["flags"]})
+
+    def test_a_call_that_names_them_is_refused_and_writes_nothing(self):
+        r = root()
+        before = sorted(p.name for p in pathlib.Path(r).iterdir())
+        for extra in ({"out": "x.csv"}, {"out": "x.csv", "overwrite": True}, {"overwrite": True}):
+            with self.subTest(extra=extra):
+                resp = one(r, {"file": "data.csv", "select": "id", "format": "csv", **extra})
+                self.assertTrue(resp.get("error") or resp["result"].get("isError"), resp)
+        self.assertEqual(sorted(p.name for p in pathlib.Path(r).iterdir()), before)
+
+
 class Resources(unittest.TestCase):
     """The long texts, on demand (docs/mcp.md section 13, issue #106): `tools/list` carries the short ones, and `resources/list` and `resources/read` the full help of each property that was shortened."""
 
@@ -1237,7 +1259,7 @@ class Resources(unittest.TestCase):
         names = {x["uri"][len("table://help/"):] for x in listing["result"]["resources"]}
         for f in introspect()["flags"]:
             name = f["name"][2:]
-            if name in SHORT["properties"] or name == "root":
+            if name in SHORT["properties"] or name == "root" or f["name"] in mcp.WITHHELD_FLAGS:
                 continue
             self.assertNotIn(name, names)
             self.assertLessEqual(len(f["help"]), mcp.LONGEST_HELP, name)

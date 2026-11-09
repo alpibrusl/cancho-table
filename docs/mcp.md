@@ -358,7 +358,7 @@ one-off, and what it found is below):
 
 ## 11. What the readers/query design needs from the server
 
-* **A table the server serves is under one root, read-only.** The server has `file_read` nowhere: a
+* **A table the server serves is under one root, read-only.** (`--out` and `--overwrite`, which write a file, are withheld from `tools/list`: `WITHHELD_FLAGS` in `scripts/mcp.py`, docs/out.md section 7; a client that wants a file asks for the csv and keeps it.) The server has `file_read` nowhere: a
   reader that must resolve a name (`table://...`, a set of files, a glob) cannot be added to the server without giving
   it `fs_read` or running another tool. Names stay the tool's: `file` is the tool's FILE under `--root`.
 * **Structured paging is already there** (`truncated`, `next: {"from": N}`), and the tool's own `max-bytes` page is

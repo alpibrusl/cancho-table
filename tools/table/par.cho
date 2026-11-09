@@ -621,7 +621,7 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                             held = buffer.size(rr);
                         }
                         if held >= 65536 {
-                            let (after, ok) = engine.flush(io, rows2);
+                            let (after, ok) = engine.flush(io, rows2, a);
                             rows2 = after;
                             if !ok {
                                 a[engine.k_abort()] = 9;
@@ -645,7 +645,7 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                         cur = x2;
                         again = false;
                         if st == 1 {
-                            let (after, ok) = engine.flush(io, rows2);
+                            let (after, ok) = engine.flush(io, rows2, a);
                             rows2 = after;
                             if !ok {
                                 a[engine.k_abort()] = 9;
@@ -706,7 +706,7 @@ pub fn run_ranges[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
             lines_before = lines_before + l3;
             cur = x3;
             if st3 == 1 {
-                let (after, ok) = engine.flush(io, rows2);
+                let (after, ok) = engine.flush(io, rows2, a);
                 rows2 = after;
                 if !ok {
                     a[engine.k_abort()] = 9;
@@ -1565,7 +1565,7 @@ pub fn run_groups[&h, &i, &f, &g, &x, &y, &z, &q, &c, &s, &w, &t, &v](heap: &!h 
                                 let at = contents(mr)[np + 1 + k];
                                 let len_k = agg.get_i64(contents(s2r), at + 8);
                                 rows2 = buffer.append(heap, rows2, contents(s2r)[at + hdr2()..at + hdr2() + len_k]);
-                                let (after, ok) = engine.flush(io, rows2);
+                                let (after, ok) = engine.flush(io, rows2, a);
                                 rows2 = after;
                                 if !ok {
                                     borrow mut ta as &!tw in {

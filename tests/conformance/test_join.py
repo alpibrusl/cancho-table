@@ -941,8 +941,8 @@ class Authority(unittest.TestCase):
 
     def test_the_row_is_unchanged(self):
         d = json.loads(subprocess.run([binary(), "introspect"], capture_output=True, check=True).stdout)
-        self.assertEqual(sorted(d["authority"]["effects"]), ["args", "conc", "dir_read", "err_write", "file_read", "fs_read", "heap", "io_read", "io_write"])
-        for forbidden in ("file_write", "dir_write", "net_out", "net_in", "exec", "ffi", "clock"):
+        self.assertEqual(sorted(d["authority"]["effects"]), ["args", "conc", "dir_read", "dir_write", "err_write", "file_read", "file_write", "fs_read", "heap", "io_read", "io_write"])
+        for forbidden in ("net_out", "net_in", "exec", "ffi", "clock"):
             self.assertNotIn(forbidden, d["authority"]["effects"])
 
     def test_manifest_check_passes(self):
