@@ -534,7 +534,8 @@ class Document(Base):
         self.assertEqual(x.status, 0, x.stdout)
         self.assertEqual(validate(x), [], x.stdout)
         e = explain_of(x)
-        self.assertEqual(list(e), ["source", "plan", "output", "work", "refusals", "notes"])
+        self.assertEqual(list(e), ["source", "plan", "output", "work", "refusals", "notes", "sql", "sql_flags"])
+        self.assertEqual((e["sql"], e["sql_flags"]), ("select customer, count(*), sum(bytes) from 'orders.csv' where bytes::int > 100 group by customer order by sum(bytes) desc limit 2", []))
         self.assertEqual(e["source"], {"kind": "file", "path": "orders.csv", "reader": "file", "block_bytes": 65536, "format": "csv", "delimiter": ",", "size": 58, "header_read": True,
                                        "columns": 4, "bytes_read": 58})
         p = e["plan"]
@@ -749,11 +750,12 @@ class Document(Base):
         self.assertTrue(x.doc()["ok"])
 
     def test_a_query_is_explained_without_its_text(self):
-        x = self.x("--query", "select b, count(*) group by b order by count(*) desc limit 2")
+        x = self.x("--query", "SELECT b, COUNT(*) group by b order by COUNT(*) desc limit 2")
         self.assertEqual(x.status, 0, x.stdout)
         p = explain_of(x)["plan"]
         self.assertEqual((p["form"], p["sort"], p["limit"]), ("groups", "-count", 2))
-        self.assertNotIn(b"select b", x.stdout)
+        # (the statement of the plan is in the document, `sql`, written as the plan has it and not as the query was spelled)
+        self.assertNotIn(b"SELECT", x.stdout)
         y = self.x("--group", "b", "--sort", "-count", "--limit", "2")
         self.assertEqual(x.stdout, y.stdout)
 
