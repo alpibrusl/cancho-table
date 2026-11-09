@@ -1230,9 +1230,14 @@ pub fn finish[&h, &i, &k](heap: &!h Heap, io: &!i Io, runs: Runs, pending: buffe
         unbox_slice(heap, cpar);
     }
     // the header, then the partitions in order
-    let (after, wrote) = engine.flush(io, pend);
-    pend = after;
-    ok = wrote;
+    // (the answer is never held here: `--out` reads on one core, and the partitions are made by more than one)
+    var written = box_slice(heap, engine.k_size(), 0);
+    borrow mut written as &!ww in {
+        let (after, wrote) = engine.flush(io, pend, contents(ww));
+        pend = after;
+        ok = wrote;
+    }
+    unbox_slice(heap, written);
     if parts > 0 {
         borrow outs as &ob in {
             borrow used as &ur in {

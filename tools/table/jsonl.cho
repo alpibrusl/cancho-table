@@ -44,7 +44,11 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     var max_groups = cli.nat(args, parsed, table, "max-groups");
     let max_distinct = cli.nat(args, parsed, table, "max-distinct");
     let max_state = cli.nat(args, parsed, table, "max-state-bytes");
-    let threads = cli.nat(args, parsed, table, "threads");
+    // (an answer that is held for `--out` is made on one core: the partitions of a parallel read are written as they are made, docs/out.md section 6)
+    var threads = cli.nat(args, parsed, table, "threads");
+    if query.hold_of(tree) > 0 {
+        threads = 1;
+    }
     let chunk = cli.nat(args, parsed, table, "chunk-bytes");
     let chunk_given = cli.has(parsed, table, "chunk-bytes");
     let min_bytes = cli.nat(args, parsed, table, "parallel-min-bytes");
@@ -106,6 +110,9 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     var labels = buffer.empty(heap, 1);
     var lends = vec.empty(heap, 1, 0);
     var tally = box_slice(heap, engine.k_size(), 0);
+    borrow mut tally as &!hq in {
+        contents(hq)[engine.k_hold()] = query.hold_of(tree);
+    }
     var out_rows = buffer.empty(heap, 1);
     var out_kept = buffer.empty(heap, 1);
     var tape = box_slice(heap, 3 * nodes, 0);
@@ -464,7 +471,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     }
     lines.drop(heap, r);
     if as_csv && c.abort != 9 {
-        let (after, ok) = engine.flush_last(io, out_rows);
+        let (after, ok) = engine.flush_last(io, out_rows, query.hold_of(tree));
         out_rows = after;
         if !ok {
             c = finish.Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: c.groups };

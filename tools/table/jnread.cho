@@ -785,6 +785,9 @@ pub fn probe_pass[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m](heap: &!h Heap, r0
     var kbuf = buffer.empty(heap, 64);
     var rec = buffer.empty(heap, 256);
     var tally = box_slice(heap, engine.k_size(), 0);
+    borrow mut tally as &!hq in {
+        contents(hq)[engine.k_hold()] = query.hold_of(tree);
+    }
     var marks = 0;
     if full {
         marks = jtab.rows_of(jt) / 62 + 1;

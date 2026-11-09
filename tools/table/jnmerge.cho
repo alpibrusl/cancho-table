@@ -611,6 +611,9 @@ pub fn merge_pass[&h, &f, &f2, &i, &t, &q, &c, &s, &w, &x, &k, &m, &l, &z, &d1, 
     var jkscr = buffer.empty(heap, 64);
     var kbuf = buffer.empty(heap, 64);
     var tally = box_slice(heap, engine.k_size(), 0);
+    borrow mut tally as &!hq in {
+        contents(hq)[engine.k_hold()] = query.hold_of(tree);
+    }
     var btally = box_slice(heap, engine.k_size(), 0);
     var state = box_slice(heap, jnread.s_size(), 0);
     var bstate = box_slice(heap, b_size(), 0);

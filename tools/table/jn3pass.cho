@@ -91,6 +91,9 @@ pub fn build_pass3[&h, &f, &k, &w, &j, &q, &c, &l, &m](heap: &!h Heap, r0: lines
     let dl = jnprune.delimiters(heap, dn, delim);
     let bkey = keys[1];
     var tally = box_slice(heap, engine.k_size(), 0);
+    borrow mut tally as &!hq in {
+        contents(hq)[engine.k_hold()] = query.hold_of(tree);
+    }
     var cellbox = box_slice(heap, 3 * (nb + 1), 0);
     var quoted = false;
     var seps = 0;
@@ -653,6 +656,9 @@ pub fn probe_pass3[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m, &l, &z](heap: &!h
     let filtering = g[3] == 1;
     let fast_ok = g[4] == 1;
     var tally = box_slice(heap, engine.k_size(), 0);
+    borrow mut tally as &!hq in {
+        contents(hq)[engine.k_hold()] = query.hold_of(tree);
+    }
     // a full join keeps one mark for each held build row after the slots (`jnread.mark`)
     var marks = 0;
     if full {

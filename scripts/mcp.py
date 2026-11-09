@@ -54,8 +54,9 @@ MAX_LINE = 4194304               # a request line longer than this is refused
 MAX_STDERR = 65536               # the tool's standard error, kept up to this much
 
 # Flags the server sets: `--root` is the server's (role `root`).
+# Flags it does not offer: `--out` and `--overwrite` write a file, and the server's authority stays a program that starts the one binary and returns its output (docs/out.md section 7).
 WITHHELD_ROLES = {"root"}
-WITHHELD_FLAGS = set()
+WITHHELD_FLAGS = {"--out", "--overwrite"}
 
 
 def introspect(tool, build_dir):
@@ -197,6 +198,10 @@ def definition(d, short=None):
     if fmt is not None and "json" in fmt.get("enum", []) and d["output"] == "document":
         selector = "format"
     effects = set(d["authority"]["effects"])
+    # The tool writes a file only through its `path-write` flags (`--out`); when the server offers none of them, a call through it writes nothing, whatever the tool's authority says (docs/out.md section 7)
+    writers = [f for f in d["flags"] if f["role"] == "path-write"]
+    if writers and all(f["role"] in WITHHELD_ROLES or f["name"] in WITHHELD_FLAGS for f in writers):
+        effects -= {"file_write", "dir_write"}
     read_only = not (effects & {"file_write", "dir_write", "net_out", "net_in", "exec", "ffi"})
     entry = {
         "name": name,

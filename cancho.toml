@@ -6,6 +6,11 @@ cancho = "119bcfe9b985ef5ebd9dafc3ff3b2bbd05f22653"   # the compiler these sourc
 # module, pinned to a commit. `toolbox.built` is not in the package; it is this
 # tool's own generated module (generated/table, written by scripts/manifest.py).
 
+[dependencies.atomic]
+git = "https://github.com/alpibrusl/cancho-tools"
+rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+path = ".cancho-vcs/toolbox.atomic"
+
 [dependencies.cli]
 git = "https://github.com/alpibrusl/cancho-tools"
 rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"

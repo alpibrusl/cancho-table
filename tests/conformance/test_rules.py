@@ -76,6 +76,8 @@ LOCAL = {
     "rename.unknown-target": (3, "sometimes", "output column"),
     "rename.ambiguous-target": (8, "never", "more than one output column"),
     "rename.repeated-target": (2, "never", "twice"),
+    "out.exists": (2, "sometimes", "already there"),
+    "out.write-failed": (1, "never", "could not be written"),
 }
 # rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
 VARIABLE_HINT = {"query.unsupported"}
@@ -114,6 +116,7 @@ class Rules(unittest.TestCase):
     def fixtures(self, s):
         """(rule, argv, preexec) for every rule."""
         s.write("ok.csv", "a,b\n1,2\n")
+        (s.dir / "adir").mkdir()
         s.write("rec.csv", 'a,b\n1,"' + "x\n" * 600 + '"\n')
         s.write("many.csv", "a\n1\n2\n3\n")
         s.write("text.csv", "a,b\n1,x\n")
@@ -226,6 +229,9 @@ class Rules(unittest.TestCase):
             ("rename.unknown-target", root + ["--select", "a", "--rename", "A=x", "ok.csv"], None),
             ("rename.ambiguous-target", root + ["--select", "a,a", "--rename", "a=x", "ok.csv"], None),
             ("rename.repeated-target", root + ["--select", "a", "--rename", "a=x,#1=y", "ok.csv"], None),
+            ("out.exists", root + ["--select", "a", "--format", "csv", "--out", "ok.csv", "ok.csv"], None),
+            # a directory where the file goes: the rename is refused by the file system, whoever runs it
+            ("out.write-failed", root + ["--select", "a", "--format", "csv", "--out", "adir", "--overwrite", "ok.csv"], None),
             ("limit.too-many-join-rows", root + ["--join", "jp.csv", "--on", "k=k", "--join-prefix", "r_", "--max-join-rows", "1", "jp.csv"], None),
             ("join.not-sorted", root + ["--join-sorted", "--join", "jus.csv", "--on", "k=k", "--join-prefix", "r_", "jus.csv"], None),
         ]

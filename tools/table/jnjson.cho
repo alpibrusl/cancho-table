@@ -161,6 +161,9 @@ pub fn build_passj[&h, &f, &k, &w, &j, &q, &c, &l, &x, &z](heap: &!h Heap, r0: l
     }
     let dl = jnprune.delimiters(heap, dn, delim);
     var tally = box_slice(heap, engine.k_size(), 0);
+    borrow mut tally as &!hq in {
+        contents(hq)[engine.k_hold()] = query.hold_of(tree);
+    }
     var cellbox = box_slice(heap, 3 * (nb + 1), 0);
     var tape = box_slice(heap, 3 * dc.nodes + 3, 0);
     var jst = box_slice(heap, 2, 0);
@@ -406,6 +409,9 @@ pub fn probe_passj[&h, &f, &i, &t, &q, &c, &s, &w, &x, &k, &m, &l, &z, &y](heap:
     let filtering = g[3] == 1;
     let fast_ok = g[4] == 1;
     var tally = box_slice(heap, engine.k_size(), 0);
+    borrow mut tally as &!hq in {
+        contents(hq)[engine.k_hold()] = query.hold_of(tree);
+    }
     var state = box_slice(heap, jnread.s_size(), 0);
     var tape = box_slice(heap, 3 * dc.nodes + 3, 0);
     var jst = box_slice(heap, 2, 0);

@@ -158,6 +158,11 @@ pub fn k_total() -> [] int {
     return 31;
 }
 
+// The answer is held and not written (`--out`, docs/out.md): 0 it is written as it is made, else the most bytes of it that may be held, plus 1. Set by each reader from the plan (query.hold_of).
+pub fn k_hold() -> [] int {
+    return 29;
+}
+
 pub fn k_size() -> [] int {
     return 32;
 }
@@ -181,8 +186,12 @@ pub fn count_row[&a](a: &!a [int], found: int, opened: int, from: int) -> [] boo
 }
 
 // Write what is pending, and keep the buffer; false when standard output took
-// less.
-pub fn flush[&i](io: &!i Io, pending: buffer.Buffer) -> [io_write] (buffer.Buffer, bool) {
+// less. When the answer is held (`--out`, `a[k_hold()]`) nothing is written: the pending bytes stay in the buffer, which grows to the whole answer, and a buffer past
+// the bound is the end of the read (abort 10, `limit.state-too-large` with holder output).
+pub fn flush[&i, &a](io: &!i Io, pending: buffer.Buffer, a: &!a [int]) -> [io_write] (buffer.Buffer, bool) {
+    if a[k_hold()] > 0 {
+        return (held_check(pending, a), true);
+    }
     var ok = true;
     var held = pending;
     borrow held as &r in {
@@ -192,6 +201,19 @@ pub fn flush[&i](io: &!i Io, pending: buffer.Buffer) -> [io_write] (buffer.Buffe
         buffer.clear(w);
     }
     return (held, ok);
+}
+
+// The answer held so far against the bound: past it the read stops, with abort 10.
+fn held_check[&a](pending: buffer.Buffer, a: &!a [int]) -> [] buffer.Buffer {
+    var size = 0;
+    borrow pending as &r in {
+        size = buffer.size(r);
+    }
+    if size > a[k_hold()] - 1 {
+        a[k_abort()] = 10;
+        a[k_stop()] = 1;
+    }
+    return pending;
 }
 
 // A row of the selection as a JSON line (jout.cho): a budget below 0 says so (`table.plan_body`; a page budget is never below 1, and csv never reads it), and `scratch` is made the text of the keys by the first row of each reader, thread and sorted run. A function of its own, so that
@@ -216,7 +238,10 @@ fn emit_jsonl[&h, &d, &c, &s, &a](heap: &!h Heap, rows: buffer.Buffer, scratch: 
 // The last write of a read: `flush`, but a JSON-lines answer's mark of the header line it does not have (jout.mark) is not written when it is all there is, which is when no row was written (the
 // rows that were, took the mark off before them: `emit_jsonl`, `finish_groups`, `par.run`). Written with the check in a function of its own and nothing but the call in `flush_last`: the other formulations measured
 // 2 to 19 instructions a row more in the read loops, which inline it (docs/readers.md section 13.2).
-pub fn flush_last[&i](io: &!i Io, pending: buffer.Buffer) -> [io_write] (buffer.Buffer, bool) {
+pub fn flush_last[&i](io: &!i Io, pending: buffer.Buffer, hold: int) -> [io_write] (buffer.Buffer, bool) {
+    if hold > 0 {
+        return (pending, true);
+    }
     var ok = true;
     var held = pending;
     borrow held as &r in {
@@ -324,7 +349,7 @@ pub fn emit_row[&h, &i, &d, &c, &s, &a](heap: &!h Heap, io: &!i Io, rows: buffer
     if held < 65536 {
         return (pending, row);
     }
-    let (after, ok) = flush(io, pending);
+    let (after, ok) = flush(io, pending, a);
     if !ok {
         a[k_abort()] = 9;
         a[k_stop()] = 1;
@@ -487,7 +512,7 @@ pub fn process_rows[&h, &i, &q, &c, &d, &e, &s, &a](heap: &!h Heap, io: &!i Io, 
     if held < 65536 {
         return (r3, s3, e2, k2);
     }
-    let (after, ok) = flush(io, r3);
+    let (after, ok) = flush(io, r3, a);
     if !ok {
         a[k_abort()] = 9;
         a[k_stop()] = 1;

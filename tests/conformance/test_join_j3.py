@@ -1074,7 +1074,7 @@ class Authority(unittest.TestCase):
 
     def test_the_row_is_unchanged(self):
         d = json.loads(subprocess.run([binary(), "introspect"], capture_output=True, check=True).stdout)
-        self.assertEqual(sorted(d["authority"]["effects"]), ["args", "conc", "dir_read", "err_write", "file_read", "fs_read", "heap", "io_read", "io_write"])
+        self.assertEqual(sorted(d["authority"]["effects"]), ["args", "conc", "dir_read", "dir_write", "err_write", "file_read", "file_write", "fs_read", "heap", "io_read", "io_write"])
 
 
 class Strace(unittest.TestCase):
