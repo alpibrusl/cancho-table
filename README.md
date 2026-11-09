@@ -40,7 +40,7 @@ Most data tools optimise for flexibility. `table` optimises for predictability.
 * **No implicit network access.** The authority row, derived by `cancho authority`, lists what the program can reach: no `net_out`, `net_in`, `ffi` or `clock`, and nothing written to disk. CI fails if the binary differs from the committed [`manifests/table.authority.json`](manifests/table.authority.json). [docs/architecture.md](docs/architecture.md)
 * **Machine-readable errors.** One JSON line against a schema (`table.v2`); a refusal is `{code, rule, message, hint, repair, detail}`. [docs/refusals.md](docs/refusals.md)
 * **Repair hints.** A refusal says how to fix the request: a `hint` in a sentence (every refusal in JSON has one; a failed write of standard output cannot, and is the line `table: io.write-failed: ...` on standard error) and a repair, which is a command to run, a choice of commands, or why there is none. [docs/refusals.md](docs/refusals.md)
-* **Capability introspection.** `table introspect` prints the flags, limits, rules and authority; `table skill` prints a guide for an agent. Both come from the tables the parser runs on.
+* **Capability introspection.** `table introspect` prints the flags, limits, rules and authority; `table skill` prints a compact guide for an agent (about 2 KB) and `table skill --full` the exhaustive one. `introspect` and `skill --full` come from the tables the parser runs on; the compact guide is written by hand and held to the tool by tests.
 * **The same bytes on any number of cores.** `--threads N` gives the one-core answer, refusals included. [docs/parallel.md](docs/parallel.md)
 
 ![One million additions of 0.1: the exact decimal and table's float sum give 100000.0, a loop of doubles gives 100000.00000133288.](docs/figures/million-tenths.svg)
@@ -443,7 +443,7 @@ $ table --where "bytes:int > 100" --select id orders.csv
 
 ## Built to be read by an agent
 
-`table introspect` and `table skill` are generated from the same tables the code parses its flags with, so they cannot disagree with the program. See [docs/refusals.md](docs/refusals.md) for how an agent should act on each kind of refusal, and [the project page](https://alpibrusl.github.io/cancho-table/#agent) for excerpts of both.
+`table introspect` and `table skill --full` are generated from the same tables the code parses its flags with, so they cannot disagree with the program; the compact `table skill` is written by hand, and its size, its flags and rules and its commands are checked against the tool (docs/agent-cost.md section 4). See [docs/refusals.md](docs/refusals.md) for how an agent should act on each kind of refusal, and [the project page](https://alpibrusl.github.io/cancho-table/#agent) for excerpts of both.
 
 ## Compared with
 

@@ -314,7 +314,7 @@ class Rules(unittest.TestCase):
 
     def test_the_skill_lists_the_local_rules_with_their_exit(self):
         import procs as subprocess
-        text = subprocess.run([binary(), "skill"], capture_output=True, check=True).stdout.decode()
+        text = subprocess.run([binary(), "skill", "--full"], capture_output=True, check=True).stdout.decode()
         for tag in LOCAL:
             self.assertIn(tag, text)
 

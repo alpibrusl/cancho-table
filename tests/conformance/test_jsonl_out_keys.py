@@ -239,7 +239,7 @@ class Surface(Gated):
         help_ = {f["name"]: f for f in introspect()["flags"]}["--format"]["help"]
         self.assertIn("a group key with a type (--group NAME:int, NAME:dec(S) or NAME:float)", help_)
         self.assertIn("JSON numbers", help_)
-        text = subprocess.run([binary(), "skill"], capture_output=True, check=True).stdout.decode()
+        text = subprocess.run([binary(), "skill", "--full"], capture_output=True, check=True).stdout.decode()
         self.assertIn("--format jsonl", text)
 
     def test_the_note_of_the_decision_is_in_the_docs(self):

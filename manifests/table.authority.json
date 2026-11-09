@@ -784,6 +784,7 @@
     "takes_value",
     "tape_len",
     "text",
+    "text",
     "time_shape",
     "time_status",
     "tk",
@@ -852,5 +853,5 @@
   ],
   "folded_operators": 369,
   "folded_calls": 0,
-  "functions": 1426
+  "functions": 1427
 }

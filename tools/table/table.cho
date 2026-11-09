@@ -83,6 +83,7 @@ import query;
 import reader;
 import report;
 import scan;
+import skillc;
 import sorter;
 import toolbox.built;
 import toolbox.cli;
@@ -1899,7 +1900,17 @@ fn unsupported_join_type[&g](args: &g Args) -> [args] bool {
 }
 
 fn run[&h, &g, &f, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io) -> [heap, args, fs_read(""), dir_read, io_read, io_write, err_write, conc] int {
+    // `table skill` is the compact profile and `table skill --full` the exhaustive text of the contract package (docs/agent-cost.md section 4)
+    if arg_count(args) == 2 && bytes.equal(arg(args, 1), "skill") {
+        if out.emit(io, skillc.text()) {
+            return 0;
+        }
+        return 1;
+    }
     let which = cli.subcommand(args);
+    if arg_count(args) == 3 && bytes.equal(arg(args, 1), "skill") && bytes.equal(arg(args, 2), "--full") {
+        return describe.answer(heap, io, 2, tool(), built());
+    }
     if which != 0 {
         return describe.answer(heap, io, which, tool(), built());
     }
