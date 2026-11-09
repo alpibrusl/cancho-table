@@ -4,6 +4,8 @@
 Each mutant is one defect: the flag not looked up, not applied, applied to a call that gives a page of its own (`--limit`, `--top`), to the shape, to the report, to csv, the value off by one, the range of a bad value
 moved. The tool is rebuilt from it and run against the tests. A mutant is killed when the build refuses it or a test fails. The server's half (`--page`, the argument it gives) is in scripts/mcp_mutants.py.
 
+Not mutated, because the result is the same: the page applied over `--limit` (the line that reads `--limit` comes after and sets the page again) and the page applied to the shape (the shape reads no page).
+
     python3 scripts/default_limit_mutants.py [--shard K/N] [name-substring ...]
 
 `--check` only verifies that every site still matches (no build; CI runs it). See mutlib.py.
@@ -21,9 +23,7 @@ MUTANTS = [
     ("the flag is not looked up", "inputs.cho", "bytes.starts_with(a, \"--overwrite\") || bytes.starts_with(a, \"--default-limit\")", "bytes.starts_with(a, \"--overwrite\") || bytes.starts_with(a, \"--default-limitx\")"),
     ("the flag is looked up and not read", "inputs.cho", "        if cli.has(parsed, table, \"default-limit\") {", "        if cli.has(parsed, table, \"overwrite\") && false {"),
     ("the page is never applied", "table.cho", APPLY, APPLY.replace("inp.default_limit > 0 &&", "inp.default_limit > 99999999 &&")),
-    ("the page is applied over --limit", "table.cho", APPLY, APPLY.replace(" && !inp.has_limit", "")),
     ("the page is applied over --top", "table.cho", APPLY, APPLY.replace(" && !inp.has_top", "")),
-    ("the page is applied to the shape", "table.cho", APPLY, APPLY.replace("mode > 0", "mode > -1")),
     ("the page is applied to the report", "table.cho", APPLY, APPLY.replace(" && !has_report", "")),
     ("the page is one over", "table.cho", APPLY, APPLY.replace("limit = inp.default_limit;", "limit = inp.default_limit + 1;")),
     ("the page is applied to csv and JSON lines", "table.cho", "    if !as_csv {\n        limit = 1000;\n        // `--default-limit`", "    if true {\n        limit = 1000;\n        // `--default-limit`"),

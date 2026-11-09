@@ -84,8 +84,10 @@ class DefaultLimit(unittest.TestCase):
         self.assertIn("args.bad-value", r.stderr.decode())
         r = self.go("--default-limit", "x", "--select", "id", "t.csv")
         self.assertEqual(r.status, 2)
-        r = self.go("--default-limit", "1000000", "--select", "id", "t.csv")
+        r = self.go("--default-limit", "1000000", "--explain", "--select", "id", "t.csv")
         self.assertEqual(r.status, 0)
+        d = r.data()["explain"]
+        self.assertEqual(d["plan"]["limit"] if "plan" in d else d["limit"], 1000000)
 
     def test_it_is_in_introspect_and_works_with_a_join_and_in_the_equals_spelling(self):
         from harness import introspect
