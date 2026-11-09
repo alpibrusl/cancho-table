@@ -1434,6 +1434,13 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7, &s8, &s9](he
     var limit = 1000000000000000;
     if !as_csv {
         limit = 1000;
+        // `--default-limit` (docs/mcp.md section 13): a smaller page for the callers of a program that sets it, and only for the forms that take a page and a call that gives none
+        if inp.default_limit > 0 && inp.default_limit <= 1000000 && !inp.has_limit && !inp.has_top && mode > 0 && !has_report {
+            limit = inp.default_limit;
+        }
+    }
+    if inp.default_limit > 1000000 {
+        e = flags.problem(heap, e, "args.bad-value", "--default-limit is from 1 to 1000000 (0 is the default of 1000)", "--default-limit 50", "--default-limit");
     }
     var from = 0;
     var top = 0;

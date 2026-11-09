@@ -30,6 +30,7 @@ import manifest  # noqa: E402
 import mcp  # noqa: E402
 
 SHORT = json.loads((ROOT / "server" / "short.json").read_text())
+PAGE = mcp.DEFAULT_PAGE     # the page the server gives every call that has none (docs/mcp.md section 13)
 
 BUILT = {}
 FIXTURES = {}
@@ -87,7 +88,7 @@ def argv_of(arguments):
 
 
 def cli(root, arguments):
-    return run_argv([str(BIN / "table"), "--root=%s" % root, *argv_of(arguments)])
+    return run_argv([str(BIN / "table"), "--root=%s" % root, "--default-limit=%d" % PAGE, *argv_of(arguments)])
 
 
 def fixtures():
@@ -616,16 +617,16 @@ class Confinement(unittest.TestCase):
     def test_the_argv_is_fixed_in_form(self):
         fb = fake()
         cases = [
-            ({"file": "a.csv"}, ["--root=%ROOT%", "--", "a.csv"]),
-            ({"file": "a.csv", "limit": 5, "select": "x,y"}, ["--root=%ROOT%", "--select=x,y", "--limit=5", "--", "a.csv"]),
-            ({"select": "x", "file": "a.csv", "limit": 5}, ["--root=%ROOT%", "--select=x", "--limit=5", "--", "a.csv"]),
-            ({"file": "a.csv", "where": "a = 'b c' and d:int > 3"}, ["--root=%ROOT%", "--where=a = 'b c' and d:int > 3", "--", "a.csv"]),
-            ({"file": "--root=/", "where": "--"}, ["--root=%ROOT%", "--where=--", "--", "--root=/"]),
-            ({"file": "-"}, ["--root=%ROOT%", "--", "-"]),
-            ({"file": "a b\nc.csv", "select": "$(touch x);`id`|&>"}, ["--root=%ROOT%", "--select=$(touch x);`id`|&>", "--", "a b\nc.csv"]),
-            ({"file": "a.csv", "from": 0, "max-bytes": 1048576, "format": "csv"}, ["--root=%ROOT%", "--from=0", "--max-bytes=1048576", "--format=csv", "--", "a.csv"]),
-            ({"file": "\u00e9\u20ac\U0001F600.csv", "delimiter": "\t"}, ["--root=%ROOT%", "--delimiter=\t", "--", "\u00e9\u20ac\U0001F600.csv"]),
-            ({"file": "a.csv", "limit": 18446744073709}, ["--root=%ROOT%", "--limit=18446744073709", "--", "a.csv"]),
+            ({"file": "a.csv"}, ["--root=%ROOT%", "--default-limit=50", "--", "a.csv"]),
+            ({"file": "a.csv", "limit": 5, "select": "x,y"}, ["--root=%ROOT%", "--default-limit=50", "--select=x,y", "--limit=5", "--", "a.csv"]),
+            ({"select": "x", "file": "a.csv", "limit": 5}, ["--root=%ROOT%", "--default-limit=50", "--select=x", "--limit=5", "--", "a.csv"]),
+            ({"file": "a.csv", "where": "a = 'b c' and d:int > 3"}, ["--root=%ROOT%", "--default-limit=50", "--where=a = 'b c' and d:int > 3", "--", "a.csv"]),
+            ({"file": "--root=/", "where": "--"}, ["--root=%ROOT%", "--default-limit=50", "--where=--", "--", "--root=/"]),
+            ({"file": "-"}, ["--root=%ROOT%", "--default-limit=50", "--", "-"]),
+            ({"file": "a b\nc.csv", "select": "$(touch x);`id`|&>"}, ["--root=%ROOT%", "--default-limit=50", "--select=$(touch x);`id`|&>", "--", "a b\nc.csv"]),
+            ({"file": "a.csv", "from": 0, "max-bytes": 1048576, "format": "csv"}, ["--root=%ROOT%", "--default-limit=50", "--from=0", "--max-bytes=1048576", "--format=csv", "--", "a.csv"]),
+            ({"file": "\u00e9\u20ac\U0001F600.csv", "delimiter": "\t"}, ["--root=%ROOT%", "--default-limit=50", "--delimiter=\t", "--", "\u00e9\u20ac\U0001F600.csv"]),
+            ({"file": "a.csv", "limit": 18446744073709}, ["--root=%ROOT%", "--default-limit=50", "--limit=18446744073709", "--", "a.csv"]),
         ]
         for arguments, expected in cases:
             with self.subTest(arguments=arguments):
@@ -1035,10 +1036,10 @@ class Own(unittest.TestCase):
         self.assertEqual(d["compiler"], manifest.project()["package"]["cancho"])
         self.assertEqual(d["serves"]["tool"], "table")
         self.assertEqual(d["serves"]["version"], introspect()["version"])
-        self.assertEqual({f["name"] for f in d["flags"]}, {"--root", "--timeout-ms", "--max-output", "--max-input"})
+        self.assertEqual({f["name"] for f in d["flags"]}, {"--root", "--timeout-ms", "--max-output", "--max-input", "--page"})
         self.assertEqual(d["protocol"]["max_line_bytes"], 4194304)
-        self.assertEqual({l["name"]: l["default"] for l in d["limits"]}, {"timeout-ms": 30000, "max-output": 2097152, "max-input": 1048576, "stderr": 65536, "line": 4194304})
-        self.assertEqual(d["usage"], "mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N] | mcp introspect")
+        self.assertEqual({l["name"]: l["default"] for l in d["limits"]}, {"timeout-ms": 30000, "max-output": 2097152, "page": 50, "max-input": 1048576, "stderr": 65536, "line": 4194304})
+        self.assertEqual(d["usage"], "mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N] [--page N] | mcp introspect")
 
     def test_every_rule_it_lists_is_one_it_says_and_every_one_it_says_is_listed(self):
         listed = {r["rule"] for r in self.introspect()["rules"]}
@@ -1210,6 +1211,65 @@ class OutWithheld(unittest.TestCase):
                 resp = one(r, {"file": "data.csv", "select": "id", "format": "csv", **extra})
                 self.assertTrue(resp.get("error") or resp["result"].get("isError"), resp)
         self.assertEqual(sorted(p.name for p in pathlib.Path(r).iterdir()), before)
+
+
+
+class PageDefault(unittest.TestCase):
+    """The page of a call that gives none (docs/mcp.md section 13, issue #130): the server gives the tool `--default-limit` with its own `--page`, and a caller cannot."""
+
+    def page_of(self, arguments, flags=()):
+        [r], status = talk(root(), [call(arguments)], flags=flags)
+        self.assertEqual(status, 0)
+        return json.loads(r["result"]["content"][0]["text"])
+
+    def test_a_call_with_no_limit_gets_the_servers_page_and_says_it_was_cut(self):
+        d = self.page_of({"file": "data.csv", "select": "id"})["data"]
+        self.assertEqual((d["row_count"], d["truncated"], d["next"]), (PAGE, True, {"from": PAGE}))
+        g = self.page_of({"file": "data.csv", "group": "id", "agg": "count"})["data"]
+        self.assertEqual((g["row_count"], g["truncated"]), (PAGE, True))
+        q = self.page_of({"file": "data.csv", "query": "select id"})["data"]
+        self.assertEqual(q["row_count"], PAGE)
+
+    def test_the_same_bytes_as_the_cli_with_the_flag_and_as_the_explicit_page(self):
+        a = one(root(), {"file": "data.csv", "select": "id,status"})["result"]["content"][0]["text"].encode()
+        b = one(root(), {"file": "data.csv", "select": "id,status", "limit": PAGE})["result"]["content"][0]["text"].encode()
+        self.assertEqual(a, b)
+        self.assertEqual(a, cli(root(), {"file": "data.csv", "select": "id,status"}).stdout)
+
+    def test_a_page_of_the_callers_is_as_it_was(self):
+        for arguments, rows in (({"limit": 100}, 100), ({"limit": 1000}, 1000), ({"limit": 5, "from": 10}, 5)):
+            with self.subTest(arguments):
+                d = self.page_of({"file": "data.csv", "select": "id", **arguments})["data"]
+                self.assertEqual(d["row_count"], rows)
+        d = self.page_of({"file": "data.csv", "select": "id", "order-by": "id:int", "top": 200})["data"]
+        self.assertEqual(d["row_count"], 200)
+        d = self.page_of({"file": "data.csv", "query": "select id limit 300"})["data"]
+        self.assertEqual(d["row_count"], 300)
+
+    def test_the_forms_that_take_no_page_are_not_given_one(self):
+        shape = self.page_of({"file": "data.csv"})
+        self.assertTrue(shape["ok"], shape)
+        self.assertEqual(shape["data"]["row_count"], 3000)
+        report = self.page_of({"file": "data.csv", "report": "types"})
+        self.assertTrue(report["ok"], report)
+        rows = one(root(), {"file": "data.csv", "select": "id", "format": "csv"})["result"]["content"][0]["text"]
+        self.assertEqual(len(rows.splitlines()), 3001)
+
+    def test_the_servers_flag_sets_the_page_and_zero_leaves_the_tools_own(self):
+        self.assertEqual(self.page_of({"file": "data.csv", "select": "id"}, flags=("--page", "7"))["data"]["row_count"], 7)
+        self.assertEqual(self.page_of({"file": "data.csv", "select": "id"}, flags=("--page", "0"))["data"]["row_count"], 1000)
+        for bad in ("x", "-1", "1000001", ""):
+            with self.subTest(bad):
+                p = subprocess.run([str(server()), "--root", str(root()), "--page", bad], input=b"", capture_output=True)
+                self.assertNotEqual(p.returncode, 0)
+
+    def test_a_caller_cannot_set_it_and_the_schema_does_not_show_it(self):
+        r = one(root(), {"file": "data.csv", "select": "id", "default-limit": 2000})
+        self.assertIn("error", r)
+        [t], _ = talk(root(), [{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        self.assertNotIn("default-limit", t["result"]["tools"][0]["inputSchema"]["properties"])
+        self.assertIn("default-limit", {f["name"][2:] for f in introspect()["flags"]})
+        self.assertIn("50", t["result"]["tools"][0]["description"])
 
 
 class Resources(unittest.TestCase):

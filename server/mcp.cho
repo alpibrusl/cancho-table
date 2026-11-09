@@ -10,7 +10,7 @@ import mcp.tools;
 // The MCP server for `table` (docs/mcp.md): one stdio connection,
 // newline-delimited JSON-RPC 2.0, and the one tool `table` as an MCP tool.
 //
-//     mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N]
+//     mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N] [--page N]
 //     mcp introspect
 //
 // Copied from cancho-tools' server/mcp.cho (rev 74411ee43c74a2741ed1bb37404844fcbb031753) and
@@ -57,6 +57,7 @@ pub struct Config {
     timeout: int,
     most: int,
     input: int,
+    page: int,
 }
 
 // The configuration, or a reason it is not one. `--root` is required, an
@@ -66,7 +67,8 @@ fn configure[&g](g: &g Args) -> [args] (Config, &static [byte]) {
     var timeout = tools.default_timeout();
     var most = tools.default_output();
     var input = tools.default_input();
-    let refused = Config { root: "", timeout: 0, most: 0, input: 0 };
+    var page = tools.default_page();
+    let refused = Config { root: "", timeout: 0, most: 0, input: 0, page: 0 };
     var k = 1;
     while k < arg_count(g) {
         let flag = arg(g, k);
@@ -94,15 +96,21 @@ fn configure[&g](g: &g Args) -> [args] (Config, &static [byte]) {
             if input <= 0 {
                 return (refused, "--max-input must be a positive number of bytes");
             }
+        } else if bytes.equal(flag, "--page") {
+            // (0 gives the tool no page: its own default stays)
+            page = nat_of(value);
+            if page < 0 || page > 1000000 {
+                return (refused, "--page must be from 0 to 1000000 rows");
+            }
         } else {
-            return (refused, "the flags are --root, --timeout-ms, --max-output and --max-input");
+            return (refused, "the flags are --root, --timeout-ms, --max-output, --max-input and --page");
         }
         k = k + 2;
     }
     if len(root) == 0 {
         return (refused, "--root DIR is required");
     }
-    return (Config { root: root, timeout: timeout, most: most, input: input }, "");
+    return (Config { root: root, timeout: timeout, most: most, input: input, page: page }, "");
 }
 
 // ---- reading and answering --------------------------------------------------
@@ -630,7 +638,7 @@ fn add_text[&h, &s, &t](heap: &!h Heap, entries: process.Argv, prefix: &static [
 
 // The argv for tool `tool` with the call's `arguments` node, in the tables'
 // order whatever order the keys came in, and the `Problem` (code 0 for none).
-fn argv_for[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], tool: int, given: int, root: &static [byte]) -> [heap] (process.Argv, Problem) {
+fn argv_for[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], tool: int, given: int, root: &static [byte], page: int) -> [heap] (process.Argv, Problem) {
     var entries = process.argv(heap, 256);
     if given >= 0 && !json.is_object(tape, given) {
         return (entries, Problem { code: 1, name: "arguments", expected: "an object", at: given });
@@ -676,6 +684,18 @@ fn argv_for[&h, &s, &t](heap: &!h Heap, src: &s [byte], tape: &t [int], tool: in
         entries = added;
     }
     buffer.drop(heap, with_root);
+    // The page of a call that gives none, for a tool that has the flag: the server's, and no caller's (the flag is not a property)
+    if page > 0 && len(tools.page_flag(tool)) > 0 {
+        var with_page = buffer.empty(heap, 40);
+        with_page = buffer.append(heap, with_page, tools.page_flag(tool));
+        with_page = buffer.push(heap, with_page, byte_of('='));
+        with_page = buffer.push_nat(heap, with_page, page);
+        borrow with_page as &pr in {
+            let (added, refused) = process.add(heap, entries, buffer.bytes(pr));
+            entries = added;
+        }
+        buffer.drop(heap, with_page);
+    }
 
     let flags = tools.flags(tool);
     var k = 0;
@@ -968,7 +988,7 @@ fn call[&h, &x, &c, &i, &s, &t](heap: &!h Heap, exec: &x Exec("/opt/cancho-table
     if found > 0 {
         return refused_status;
     }
-    let (entries, why) = argv_for(heap, src, tape, tool, json.get(src, tape, params, "arguments"), config.root);
+    let (entries, why) = argv_for(heap, src, tape, tool, json.get(src, tape, params, "arguments"), config.root, config.page);
     if why.code != 0 {
         process.drop(heap, entries);
         return refuse_problem(heap, io, src, tape, id, tool, why);

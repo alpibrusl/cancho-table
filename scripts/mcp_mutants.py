@@ -138,6 +138,16 @@ MUTANTS = [
     ("the gate lets the row be unbounded", "../scripts/mcp.py", "    if not authority.get(\"bounded\", False):", "    if False:"),
     ("a drifting authority is a fixed point", "../scripts/mcp.py", "    if second != first:", "    if False:"),
     ("a hint may name a flag that is gone", "../scripts/mcp.py", "        if p not in props:", "        if False:"),
+    # the page of a call that gives none (docs/mcp.md section 13, issue #130). Not mutated: the server gives `--default-limit=0` when `--page 0` (the tool reads 0 as its own default, so the bytes are the same)
+    ("the page is not given to the tool", "mcp.cho", "    if page > 0 && len(tools.page_flag(tool)) > 0 {", "    if page > 99999999 && len(tools.page_flag(tool)) > 0 {"),
+    ("the page is given to a tool that has no such flag", "mcp.cho", "    if page > 0 && len(tools.page_flag(tool)) > 0 {", "    if page > 0 {"),
+    ("the page is one over", "mcp.cho", "        with_page = buffer.push_nat(heap, with_page, page);", "        with_page = buffer.push_nat(heap, with_page, page + 1);"),
+    ("the page has no equals sign", "mcp.cho", "        with_page = buffer.push(heap, with_page, byte_of('='));", "        with_page = buffer.push(heap, with_page, byte_of(' '));"),
+    ("the flag of --page is another", "mcp.cho", "        } else if bytes.equal(flag, \"--page\") {", "        } else if bytes.equal(flag, \"--pages\") {"),
+    ("a page over the ceiling is accepted", "mcp.cho", "            if page < 0 || page > 1000000 {", "            if page < 0 || page > 100000000 {"),
+    ("a page that is not a number is accepted", "mcp.cho", "            if page < 0 || page > 1000000 {", "            if page < -5 || page > 1000000 {"),
+    ("the server's page is taken from the wrong default", "mcp.cho", "    var page = tools.default_page();", "    var page = 0;"),
+    ("the page flag is not withheld from the schema", "../scripts/mcp.py", "WITHHELD_FLAGS = {\"--out\", \"--overwrite\", PAGE_FLAG}", "WITHHELD_FLAGS = {\"--out\", \"--overwrite\"}"),
 ]
 
 
