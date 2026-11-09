@@ -98,6 +98,7 @@
     "decode",
     "default_input",
     "default_output",
+    "default_page",
     "default_timeout",
     "digit_of",
     "equal",
@@ -164,6 +165,7 @@
     "operands",
     "output",
     "output_token",
+    "page_flag",
     "parse_int",
     "path",
     "point_width",
@@ -196,5 +198,5 @@
   ],
   "folded_operators": 51,
   "folded_calls": 0,
-  "functions": 190
+  "functions": 192
 }

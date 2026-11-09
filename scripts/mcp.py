@@ -53,10 +53,13 @@ DEFAULT_MAX_INPUT = 1048576      # 1 MiB: the `stdin` text of one call (docs/mcp
 MAX_LINE = 4194304               # a request line longer than this is refused
 MAX_STDERR = 65536               # the tool's standard error, kept up to this much
 
+# The flag of the tool that sets the page of a call that gives none (`--default-limit`, docs/mcp.md section 13): the server gives it to every call of a tool that has it, with the value of its own `--page`, and a caller cannot set it.
+PAGE_FLAG = "--default-limit"
+DEFAULT_PAGE = 50
 # Flags the server sets: `--root` is the server's (role `root`).
 # Flags it does not offer: `--out` and `--overwrite` write a file, and the server's authority stays a program that starts the one binary and returns its output (docs/out.md section 7).
 WITHHELD_ROLES = {"root"}
-WITHHELD_FLAGS = {"--out", "--overwrite"}
+WITHHELD_FLAGS = {"--out", "--overwrite", PAGE_FLAG}
 
 
 def introspect(tool, build_dir):
@@ -275,7 +278,7 @@ def server_doc(d, props, authority, bin_dir, pin, table_has_helps=False):
         "summary": "An MCP server (stdio, JSON-RPC 2.0) that serves the tool `table` under one root: its input schema is "
                    "derived from the tool's `introspect`, a call is a fixed argv with no shell, the answer is the tool's "
                    "stdout, stderr and exit code unchanged, bounded in size and in time.",
-        "usage": "mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N] | mcp introspect",
+        "usage": "mcp --root DIR [--timeout-ms N] [--max-output N] [--max-input N] [--page N] | mcp introspect",
         "output": "stdio",
         "protocol": {"transport": "stdio, one JSON-RPC 2.0 message per line", "version": "2025-06-18",
                      "methods": ["initialize", "ping", "tools/list", "tools/call"] + (["resources/list", "resources/read"] if table_has_helps else []),
@@ -295,10 +298,13 @@ def server_doc(d, props, authority, bin_dir, pin, table_has_helps=False):
             {"name": "--max-input", "kind": "nat", "role": "none", "default": DEFAULT_MAX_INPUT,
              "help": "the most text of one call's `stdin` property, in decoded bytes: past it the call is refused before the tool starts, as "
                      "mcp.input-too-large"},
+            {"name": "--page", "kind": "nat", "role": "none", "default": DEFAULT_PAGE,
+             "help": "the page of a call that gives no `limit`, `top` or query limit, in rows or groups: the server gives the tool %s with it, and the answer says it was cut as ever (`truncated`, `next`); 0 leaves the tool's own default of 1000" % PAGE_FLAG},
         ],
         "limits": [
             {"name": "timeout-ms", "default": DEFAULT_TIMEOUT_MS},
             {"name": "max-output", "default": DEFAULT_MAX_OUTPUT},
+            {"name": "page", "default": DEFAULT_PAGE, "note": "rows or groups of a json answer when the call gives no page of its own; 0 is the tool's default"},
             {"name": "max-input", "default": DEFAULT_MAX_INPUT, "note": "the `stdin` text of a call, in decoded bytes; the request line (below) bounds it from above"},
             {"name": "stderr", "default": MAX_STDERR, "note": "fixed: the tool's standard error beyond it ends the call as mcp.output-too-large"},
             {"name": "line", "default": MAX_LINE, "note": "fixed: a request line beyond it is refused as mcp.line-too-long"},
@@ -384,6 +390,18 @@ pub fn default_input() -> [] int {
     return %d;
 }
 
+// The page the server gives a call that has none (its `--page`), and the flag of the tool that takes it ("" when the tool has none).
+pub fn default_page() -> [] int {
+    return %d;
+}
+
+pub fn page_flag(i: int) -> [] &static [byte] {
+    if i == 0 {
+        return %s;
+    }
+    return "";
+}
+
 pub fn longest_line() -> [] int {
     return %d;
 }
@@ -409,7 +427,7 @@ pub fn hint_input() -> [] &static [byte] {
 pub fn introspect() -> [] &static [byte] {
     return %s;
 }
-""" % (DEFAULT_TIMEOUT_MS, DEFAULT_MAX_OUTPUT, DEFAULT_MAX_INPUT, MAX_LINE, MAX_STDERR, lit(too_large), lit(timeout), lit(HINT_INPUT),
+""" % (DEFAULT_TIMEOUT_MS, DEFAULT_MAX_OUTPUT, DEFAULT_MAX_INPUT, DEFAULT_PAGE, lit(PAGE_FLAG if any(f["name"] == PAGE_FLAG for f in d["flags"]) else ""), MAX_LINE, MAX_STDERR, lit(too_large), lit(timeout), lit(HINT_INPUT),
        lit(manifest.compact(doc))))
     return "".join(out)
 

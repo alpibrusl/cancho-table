@@ -1112,7 +1112,7 @@ class Mcp(unittest.TestCase):
             for plan in plans:
                 with self.subTest(plan=plan):
                     r = MS.one(plan, directory=d)
-                    argv = [binary(), "--root=%s" % d] + MS.flag_argv({k: v for k, v in plan.items() if k != "file"}) + [plan["file"]]
+                    argv = [binary(), "--root=%s" % d, "--default-limit=%d" % MS.mcp.DEFAULT_PAGE] + MS.flag_argv({k: v for k, v in plan.items() if k != "file"}) + [plan["file"]]
                     p = subprocess.run(argv, capture_output=True, input=b"", timeout=60)
                     self.assertEqual(r["result"]["content"][0]["text"].encode(), p.stdout.decode("utf-8", "replace").encode())
                     self.assertEqual(r["result"]["_meta"]["exit_code"], p.returncode)
@@ -1122,7 +1122,7 @@ class Mcp(unittest.TestCase):
             for plan in ({"input-format": "jsonl", "fields": "id,v", "join": "j5c.csv", "join-input-format": "csv", "on": "id", "join-prefix": "d_", "format": "csv"},
                          {"input-format": "jsonl", "fields": "id,v", "join": "j5c.csv", "join-input-format": "csv", "on": "id", "join-prefix": "d_", "explain": True}):
                 r = MS.one({"stdin": text, **plan}, directory=d)
-                argv = [binary(), "--root=%s" % d] + MS.flag_argv(plan) + ["--", "-"]
+                argv = [binary(), "--root=%s" % d, "--default-limit=%d" % MS.mcp.DEFAULT_PAGE] + MS.flag_argv(plan) + ["--", "-"]
                 p = subprocess.run(argv, capture_output=True, input=text.encode(), timeout=60)
                 self.assertEqual((r["result"]["content"][0]["text"].encode(), r["result"]["_meta"]["exit_code"]), (p.stdout, p.returncode))
                 self.assertEqual(p.returncode, 0, p.stdout[:300])
