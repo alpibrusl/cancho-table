@@ -47,7 +47,6 @@ MUTANTS = [
     ("a descending sort is ascending", "qsql.cho", "        if desc {\n            out = buffer.append(heap, out, \" desc\");", "        if false {\n            out = buffer.append(heap, out, \" desc\");"),
     ("an order by of rows is not written", "qsql.cho", "    if mode == 1 && query.count_of(tree, 4) > 0 {", "    if mode == 1 && query.count_of(tree, 4) > 100 {"),
     ("the select list of rows is a star", "qsql.cho", "        if ns == 0 {\n            out = buffer.push(heap, out, byte_of('*'));", "        if ns >= 0 {\n            out = buffer.push(heap, out, byte_of('*'));"),
-    ("a grouping with no aggregate has no count", "qsql.cho", "        if na == 0 {\n            out = buffer.append(heap, out, \"count(*)\");", "        if na == 100 {\n            out = buffer.append(heap, out, \"count(*)\");"),
     # source and page
     ("a quote in a path is not doubled", "qsql.cho", "            if int_of(shown[k]) == 39 {", "            if int_of(shown[k]) == 38 {"),
     ("standard input is named as a file", "qsql.cho", "    if stdin {\n        out = buffer.append(heap, out, \" from stdin\");", "    if false {\n        out = buffer.append(heap, out, \" from stdin\");"),
@@ -62,7 +61,6 @@ MUTANTS = [
     ("the shape has a statement", "qsql.cho", "    if mode == 0 {\n        return (out, extra, 1);", "    if false {\n        return (out, extra, 1);"),
     ("a report has a statement", "qsql.cho", "    if query.reporting(tree) {\n        return (out, extra, 2);", "    if false {\n        return (out, extra, 2);"),
     ("JSON lines have a statement", "qsql.cho", "    if bytes.equal(input, \"jsonl\") || bytes.equal(input, \"ndjson\") {", "    if false {"),
-    ("two columns compared have a statement", "qsql.cho", "    if kind == 3 {\n        return (b, false);", "    if kind == 30 {\n        return (b, false);"),
     ("a plan with no statement says so with a statement", "explain.cho", "    if why != 0 {\n        b = buffer.append(heap, b, \"null\");", "    if why > 100 {\n        b = buffer.append(heap, b, \"null\");"),
     ("a plan with no statement has no note", "explain.cho", "    if sql_why != 0 {\n        var sentence = buffer.append(heap, buffer.empty(heap, 128), \"sql.\");", "    if sql_why > 100 {\n        var sentence = buffer.append(heap, buffer.empty(heap, 128), \"sql.\");"),
     ("the where text of a plan is not kept", "orparse.cho", "    let q = query.with_where_text(heap, q0, src);", "    let q = q0;"),

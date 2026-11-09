@@ -453,9 +453,6 @@ pub fn render[&h, &g, &p, &q, &s, &o](heap: &!h Heap, args: &g Args, parsed: &p 
             out = put_agg(heap, out, tree, j);
             j = j + 1;
         }
-        if na == 0 {
-            out = buffer.append(heap, out, "count(*)");
-        }
     }
     // the source
     if stdin {
@@ -553,10 +550,6 @@ pub fn render[&h, &g, &p, &q, &s, &o](heap: &!h Heap, args: &g Args, parsed: &p 
             }
             buffer.drop(heap, l);
             j = j + 1;
-        }
-        if !found && bytes.equal(label, "count") && na == 0 {
-            out = buffer.append(heap, out, " order by count(*)");
-            found = true;
         }
         j = 0;
         while j < ng && !found {

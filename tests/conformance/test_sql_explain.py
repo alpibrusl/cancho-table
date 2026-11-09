@@ -121,6 +121,19 @@ class Pinned(unittest.TestCase):
         r, e = explained("--where", "d:date >= 2026-01-02", "--select", "n", "t.csv", cwd=self.cwd)
         self.assertEqual(e["sql"], "select n from 't.csv' where d::date >= '2026-01-02'")
 
+    def test_negated_leaves_and_signs_give_the_same_bytes(self):
+        for flags in (["--where", "host not in (a, b) and host not contains z"], ["--where", "bytes:int = +512 or bytes:int in (+0, -0)"], ["--where", "not (host = a or host = b)"]):
+            r, e = explained(*flags, "sales.csv", cwd=self.cwd)
+            self.assertEqual(r.status, 0, (flags, r.stdout[:300]))
+            self.assertIsNotNone(e["sql"], flags)
+            a = run(*flags, "--format", "csv", "sales.csv", cwd=self.cwd)
+            b = run("--query", e["sql"], *e["sql_flags"], "--format", "csv", cwd=self.cwd)
+            self.assertEqual(comparable(a), comparable(b), (flags, e["sql"]))
+        r, e = explained("--where", "host not in (a, b) and host not contains z", "sales.csv", cwd=self.cwd)
+        self.assertEqual(e["sql"], "select * from 'sales.csv' where host not in ('a', 'b') and host not contains 'z'")
+        r, e = explained("--where", "bytes:int = +512", "sales.csv", cwd=self.cwd)
+        self.assertEqual(e["sql"], "select * from 'sales.csv' where bytes::int = 512")
+
     def test_a_path_with_a_quote_is_quoted(self):
         self.s.write("it's.csv", SALES)
         r, e = explained("--select", "host", "it's.csv", cwd=self.cwd)
