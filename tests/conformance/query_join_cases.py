@@ -181,6 +181,8 @@ ACCEPTED = [
      ["--rows", "--join", "b.csv", "--on", "id=id:int", "--join-type", "full", "--join-prefix", "b.", "--limit", "3", "--from", "1"], ("file", "p.csv")),
     ("select a.id from 'p.csv' as a full join 'b.csv' as b on a.id = b.id where b.city = 'x' and a.v::int > 5",
      ["--join", "b.csv", "--on", "id=id", "--join-type", "full", "--join-prefix", "b.", "--select", "id", "--where", "b.city = 'x' and v:int > 5"], ("file", "p.csv")),
+    ("select b.city, count(*) from 'p.csv' as a full join 'b.csv' as b on a.id = b.id group by b.city order by b.city desc limit 3",
+     ["--join", "b.csv", "--on", "id=id", "--join-type", "full", "--join-prefix", "b.", "--group", "b.city", "--agg", "count", "--sort", "-b.city", "--limit", "3"], ("file", "p.csv")),
     ("SELECT a.id FROM stdin AS a FULL JOIN 'b.csv' AS b ON a.id = b.id AND a.name = b.city",
      ["--join", "b.csv", "--on", "id=id,name=city", "--join-type", "full", "--join-prefix", "b.", "--select", "id"], ("stdin", None)),
     ("select a.id, b.city from 'p.csv' as a join 'b.csv' as b on a.id = b.id",

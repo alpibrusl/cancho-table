@@ -258,6 +258,14 @@ class Shared(Base):
         self.assertEqual(r.status, 0, r.stderr[:300])
         self.assertEqual(parse(r.stdout), [["k", "j", "pv", "v"], ["a", "1", "p", "x"], ["d", "4", "", "y"]])
 
+    def test_a_plan_that_names_only_the_key_still_gets_the_build_cell(self):
+        # the build holds only the columns the plan names; the shared key column is the one a build-only row needs whatever the plan says
+        self.put2([["1", "a", "p"]], [["a", "x"], ["d", "y"]])
+        r = self.joined("--select", "k")
+        self.assertEqual(parse(r.stdout), [["k"], ["a"], ["d"]])
+        r = self.joined("--select", "id", "--where", "k = d")
+        self.assertEqual(parse(r.stdout), [["id"], [""]])
+
     def test_where_sees_the_coalesced_key(self):
         self.put2([["1", "a", "p"]], [["a", "x"], ["d", "y"], ["e", "z"]])
         r = self.joined("--where", "k = d")
@@ -280,6 +288,86 @@ class Shared(Base):
         self.assertEqual(page[1:], data[len(data) - 6:][:7])
 
 
+class Grouped(Base):
+    """F1b: `--group`, `--agg`, `--sort`, `--top` and `--order-by` over a full join are the same question asked of the csv of its rows (docs/join-redesign.md section 9.5): the build rows nothing matched
+    are in the groups and in the order, as rows with empty probe cells."""
+
+    def second(self, joined_stdout, *flags):
+        self.s.write("j.csv", joined_stdout.decode("utf-8"))
+        return run("--root", str(self.s.dir), *[str(f) for f in flags], "--format", "csv", "j.csv")
+
+    def same(self, *flags, on="k=bk", note=None):
+        first = self.full(on=on)
+        self.assertEqual(first.status, 0, first.stderr[:200])
+        want = self.second(first.stdout, *flags)
+        got = self.full(*flags, on=on)
+        self.assertEqual((got.status, got.stdout), (want.status, want.stdout), (flags, note, got.stderr[:300], want.stderr[:300]))
+        return got
+
+    def test_random_tables_group_and_sort_as_the_csv_of_their_rows(self):
+        rng = random.Random(1321)
+        plans = [
+            ["--group", "k", "--agg", "count"],
+            ["--group", "bk", "--agg", "count,min:v,max:v"],
+            ["--group", "bk,k", "--agg", "count", "--sort", "-count"],
+            ["--group", "v", "--agg", "count,distinct:k", "--sort", "-count", "--top", 3],
+            ["--agg", "count,distinct:bk"],
+            ["--order-by", "bk,-v,id", "--select", "id,k,bk,v"],
+            ["--order-by", "-k,v", "--top", 4],
+            ["--order-by", "bk", "--limit", 3, "--from", 2],
+        ]
+        for case in range(60):
+            prows = table(rng, PH, rng.randrange(0, 9), [1])
+            brows = table(rng, BH, rng.randrange(0, 9), [0])
+            self.put(prows, brows)
+            for plan in plans:
+                self.same(*plan, note=case)
+
+    def test_the_build_rows_nothing_matched_are_in_the_groups(self):
+        self.put([["1", "a", "p"], ["2", "b", "q"]], [["a", "x"], ["d", "y"], ["e", "y"]])
+        r = self.full("--group", "v", "--agg", "count", "--sort", "-count")
+        self.assertEqual(parse(r.stdout), [["v", "count"], ["y", "2"], ["", "1"], ["x", "1"]])
+
+    def test_a_shared_name_key_is_one_column_in_a_group(self):
+        self.s.write("p.csv", encode(["id", "k", "pv"], [["1", "a", "p"], ["2", "b", "q"]]))
+        self.s.write("b.csv", encode(["k", "v"], [["a", "x"], ["d", "y"], ["d", "z"]]))
+        r = run("--root", str(self.s.dir), "--join", "b.csv", "--on", "k", "--join-type", "full", "--group", "k", "--agg", "count", "--sort", "-count", "--format", "csv", "p.csv")
+        self.assertEqual(parse(r.stdout), [["k", "count"], ["d", "2"], ["a", "1"], ["b", "1"]])
+        r = run("--root", str(self.s.dir), "--join", "b.csv", "--on", "k", "--join-type", "full", "--order-by", "k,v", "--select", "k,v", "--format", "csv", "p.csv")
+        self.assertEqual(parse(r.stdout), [["k", "v"], ["a", "x"], ["b", ""], ["d", "y"], ["d", "z"]])
+
+    def test_a_typed_read_of_a_padded_cell_is_refused_and_says_so(self):
+        self.put([["1", "5", "p"]], [["a", "x"]])
+        r = self.full("--group", "k", "--agg", "sum:id:int", fmt="json")
+        self.assertEqual(r.status, 8)
+        self.assertTrue(r.error()["detail"]["padded"], r.stdout[:300])
+        r = self.full("--order-by", "id:int", fmt="json")
+        self.assertEqual(r.status, 8)
+        self.assertTrue(r.error()["detail"]["padded"], r.stdout[:300])
+
+    def test_a_refusal_in_the_probe_is_not_overwritten_by_the_second_phase(self):
+        self.put([["1", "a", "5"], ["2", "b", "x"]], [["a", "u"], ["q", "w"]])
+        r = self.full("--group", "k", "--agg", "sum:pv:int", fmt="json")
+        self.assertEqual(r.status, 8)
+        detail = r.error()["detail"]
+        self.assertEqual((detail["row"], detail["value"]), (2, "x"), r.stdout[:400])
+        self.assertFalse(detail.get("padded"), r.stdout[:400])
+
+    def test_a_probe_that_ends_inside_a_quote_gives_no_second_phase(self):
+        self.s.write("p.csv", 'id,k,pv\n1,a,5\n2,"b,7\n')
+        self.s.write("b.csv", "bk,v\na,u\nq,w\n")
+        r = self.full("--group", "bk", "--agg", "count", fmt="json")
+        self.assertEqual(r.status, 8)
+        self.assertEqual(r.first_rule(), "parse.csv-unterminated-quote", r.stdout[:300])
+        self.assertNotIn(b'"q"', r.stdout)
+
+    def test_threads_give_the_same_bytes(self):
+        rng = random.Random(1322)
+        self.put(table(rng, PH, 40, [1]), table(rng, BH, 40, [0]))
+        one = self.full("--group", "bk", "--agg", "count", "--sort", "-count").stdout
+        self.assertEqual(self.full("--group", "bk", "--agg", "count", "--sort", "-count", "--threads", 4, "--parallel-min-bytes", 0).stdout, one)
+
+
 class Refusals(Base):
     def setUp(self):
         super().setUp()
@@ -292,9 +380,6 @@ class Refusals(Base):
     def test_what_a_full_join_does_not_take_is_a_conflict(self):
         self.assertEqual(self.rule("--join-where", "v = 'x'"), (2, "args.conflict"))
         self.assertEqual(self.rule("--join-sorted"), (2, "args.conflict"))
-        self.assertEqual(self.rule("--group", "id"), (2, "args.conflict"))
-        self.assertEqual(self.rule("--agg", "count"), (2, "args.conflict"))
-        self.assertEqual(self.rule("--order-by", "id"), (2, "args.conflict"))
         self.assertEqual(self.rule("--input-format", "jsonl", "--fields", "k"), (2, "args.conflict"))
 
     def test_nothing_is_given_for_the_build_rows_after_a_refusal(self):

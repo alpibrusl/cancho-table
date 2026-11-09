@@ -312,9 +312,6 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
         if cli.has(parsed, table, "join-sorted") {
             e = flags.problem(heap, e, "args.conflict", "a full join is not built over --join-sorted yet (a merge gives the key order, and the rows nothing matched would have to be placed in it)", "drop --join-sorted", "--join-type --join-sorted");
         }
-        if inp.has_group || inp.has_agg || inp.has_order || cli.has(parsed, table, "sort") || cli.has(parsed, table, "top") {
-            e = flags.problem(heap, e, "args.conflict", "a full join gives rows in this version: --group, --agg, --order-by, --sort and --top over it are not built yet", "write the join as --format csv and pipe it into a second call", "--join-type --group --agg --order-by --sort --top");
-        }
         var jsonl_side = inp.jsonl;
         if cli.has(parsed, table, "join-input-format") {
             jsonl_side = jsonl_side || bytes.equal(cli.text(args, parsed, table, "join-input-format"), "jsonl") || bytes.equal(cli.text(args, parsed, table, "join-input-format"), "ndjson");
