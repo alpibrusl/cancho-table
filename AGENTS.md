@@ -3,7 +3,7 @@
 `table` answers a question about a CSV, TSV or JSON lines file with one JSON document, or refuses with a rule and, where one exists, a repair. Ask the tool, not this file:
 
 ```console
-$ table skill        # a guide, in Markdown, from the binary
+$ table skill        # a compact guide (about 2 KB); `table skill --full` is the exhaustive one
 $ table introspect   # one JSON document: the flags, the limits, the refusal rules and the authority
 ```
 

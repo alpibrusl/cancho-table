@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
 import mutlib  # noqa: E402
 
-TESTS = ["test_skill", "test_rules", "test_describe"]
+TESTS = ["test_skill.Compact", "test_skill.Full", "test_skill", "test_rules", "test_describe"]
 
 # (name, file, the text replaced, its replacement): each `old` occurs exactly once in its file. The source holds
 # the strings escaped (a quote is \", a newline \n), and the patterns are written the same way.
@@ -70,6 +70,16 @@ MUTANTS = [
     ("a summary hints something the refusal does not", "finish.cho", "select.ambiguous-column|8|never|a name in --select that is the name of more than one column. Hint: name it by position, as #3 for the third column.", "select.ambiguous-column|8|never|a name in --select that is the name of more than one column. Hint: name it by position, as #3 for the fourth column."),
     ("the hint of where.syntax names a file again", "table.cho", "\"the grammar is in the help of --where: COLUMN OP VALUE joined by and\");", "\"see docs/filter.md for the grammar: COLUMN OP VALUE joined by and\");"),
     ("io.write-failed is not declared", "table.cho", "io.read-failed;io.write-failed;", "io.read-failed;"),
+    # the compact profile (tools/table/skillc.cho) and the words that choose it
+    ("the profile says a page is 100 rows", "skillc.cho", "A page is 1000 rows", "A page is 100 rows"),
+    ("the profile names a rule that does not exist", "skillc.cho", "A mix is args.conflict.", "A mix is args.conflicts."),
+    ("the profile names a flag that does not exist", "skillc.cho", "--join-prefix h_", "--join-prefixes h_"),
+    ("the profile guards the wrong cell", "skillc.cho", "n != '' and n:int > 5", "n = '' and n:int > 5"),
+    ("the profile's query is not a query", "skillc.cho", "table --query \\\"select host, count(*)", "table --query \\\"selec host, count(*)"),
+    ("the profile does not lead with the query", "skillc.cho", "Ask in SQL or in flags; both give the same bytes. On sales.csv (host,status,bytes,price):\\n\\n  table --query \\\"select host, count(*) from 'sales.csv' where status = 200 group by host order by count(*) desc limit 5\\\"\\n  table --select host,bytes", "Ask in SQL or in flags; both give the same bytes. On sales.csv (host,status,bytes,price):\\n\\n  table --select host,bytes"),
+    ("skill alone is the exhaustive text", "table.cho", "if arg_count(args) == 2 && bytes.equal(arg(args, 1), \"skill\") {\n        if out.emit(io, skillc.text())", "if arg_count(args) == 20 && bytes.equal(arg(args, 1), \"skill\") {\n        if out.emit(io, skillc.text())"),
+    ("skill --full is not the exhaustive text", "table.cho", "bytes.equal(arg(args, 2), \"--full\") {\n        return describe.answer(heap, io, 2,", "bytes.equal(arg(args, 2), \"--full\") {\n        return describe.answer(heap, io, 1,"),
+    ("skill with any word is the subcommand", "table.cho", "if arg_count(args) == 3 && bytes.equal(arg(args, 1), \"skill\") && bytes.equal(arg(args, 2), \"--full\")", "if arg_count(args) == 3 && bytes.equal(arg(args, 1), \"skill\")"),
 ]
 
 # Not here, and why: mutants that change nothing a test can see.

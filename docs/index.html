@@ -893,22 +893,22 @@ authority   args, conc, dir_read, err_write, file_read, fs_read(""), heap, io_re
     <div class="figure"><h3><code>table skill</code></h3>
 <!-- gen:skill -->
 <pre class="code" tabindex="0">$ table skill          # a guide in Markdown; the first lines, long lines cut
----
-name: table
-description: A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its sh…
----
-
 # table 0.3.0
 
-A CSV or TSV file as a table, read in one bounded streaming pass over an RFC 4180 reader: its shape, some col…
+A CSV, TSV or JSON-lines file as a table. One JSON line comes back (schema table.v2), or a refusal: error.rul…
 
-```
-shape:  table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--format json|text] [FI…
-rows:   table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] [--select NAMES] [--wher…
-groups: table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --group NAMES [--agg ITE…
-        (--agg alone, without --group, is one group of all the rows)
-all:    table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --rows [--rename LIST] […
-query:  table [--root DIR] [--delimiter ,|tab|;] [--max-rows N] [--max-line-bytes N] --query TEXT [--top N] […</pre>
+Ask in SQL or in flags; both give the same bytes. On sales.csv (host,status,bytes,price):
+
+  table --query "select host, count(*) from 'sales.csv' where status = 200 group by host order by count(*) de…
+  table --select host,bytes --where 'status = 200' --order-by -bytes:int --limit 5 sales.csv
+  table --group host --agg count,sum:bytes --sort -count --top 5 sales.csv
+  table --join hosts.csv --on host --join-type left --join-prefix h_ sales.csv
+  table --report types sales.csv
+  table --explain --select host sales.csv
+
+One form per call: the shape (FILE alone), rows (--select, --where, --order-by), groups (--group, --agg), a j…
+
+WHERE: COLUMN OP VALUE with OP one of = != &lt; &lt;= &gt; &gt;= contains; COLUMN in (a, b); not (...); and or or, never …</pre>
 <!-- /gen:skill -->
     </div>
   </div>

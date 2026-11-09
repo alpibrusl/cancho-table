@@ -108,6 +108,125 @@ def args_of(items):
     return out
 
 
+class Compact(unittest.TestCase):
+    """`table skill` is the compact profile (docs/agent-cost.md section 4, issue #105); `table skill --full` is the exhaustive text of the contract package. The compact text is written by hand, so each claim in it
+    is held to the tool here: its size, the flags and rules it names, the commands it shows, and the sentences about types and pages."""
+
+    BUDGET = 2048
+    FILES = {
+        "sales.csv": "host,status,bytes,price\na,200,512,1.50\nb,404,0,2.25\na,200,1024,1.5\nc,500,2048,10.00\nb,200,64,0.75\n",
+        "hosts.csv": "host,owner\na,x\nz,y\n",
+        "gaps.csv": "host,n\na,5\nb,\nc,9\n",
+    }
+
+    @classmethod
+    def compact(cls):
+        p = subprocess.run([binary(), "skill"], capture_output=True, check=True)
+        return p.stdout.decode()
+
+    def test_it_is_small_ascii_and_leads_with_the_query(self):
+        text = self.compact()
+        self.assertLessEqual(len(text.encode()), self.BUDGET)
+        self.assertGreater(len(text.encode()), 1000)
+        text.encode("ascii")
+        self.assertTrue(text.endswith("\n"))
+        commands = [l.strip() for l in text.splitlines() if l.strip().startswith("table ")]
+        self.assertTrue(commands[0].startswith("table --query"), commands[0])
+
+    def test_every_flag_it_names_exists(self):
+        names = {f["name"].lstrip("-") for f in introspect()["flags"]}
+        named = set(re.findall(r"--([a-z][a-z-]*)", self.compact()))
+        self.assertTrue({"query", "select", "where", "order-by", "limit", "from", "group", "agg", "sort", "top", "join", "on", "join-type", "join-prefix", "report", "explain", "full"} <= named | {"full"})
+        for name in named - {"full"}:
+            self.assertIn(name, names, name)
+
+    def test_every_rule_it_names_exists(self):
+        rules = {r["rule"] for r in introspect()["rules"]}
+        spaces = {r.split(".")[0] for r in rules}
+        named = {t for t in re.findall(r"\b([a-z]+\.[a-z][a-z-]*)\b", self.compact()) if t.split(".")[0] in spaces}
+        self.assertIn("args.conflict", named)
+        self.assertIn("value.not-integer", named)
+        for tag in named:
+            self.assertIn(tag, rules, tag)
+
+    def test_every_command_it_shows_runs(self):
+        s = Scratch()
+        try:
+            for name, body in self.FILES.items():
+                s.write(name, body)
+            commands = [l.strip() for l in self.compact().splitlines() if l.strip().startswith("table ")]
+            self.assertGreaterEqual(len(commands), 5)
+            for command in commands:
+                p = subprocess.run([binary(), *shlex.split(command)[1:]], capture_output=True, cwd=str(s.dir), input=b"")
+                self.assertEqual(p.returncode, 0, (command, p.stdout[:300], p.stderr[:300]))
+                self.assertEqual(json.loads(p.stdout)["ok"], True, command)
+        finally:
+            s.cleanup()
+
+    def test_the_forms_it_lists_are_the_forms_of_the_full_text(self):
+        full = subprocess.run([binary(), "skill", "--full"], capture_output=True, check=True).stdout.decode()
+        for form in ("shape:", "rows:", "groups:", "join:", "report:", "query:", "explain:"):
+            self.assertIn(form, full)
+
+    def test_the_guard_for_an_empty_cell_is_the_one_that_works(self):
+        s = Scratch()
+        try:
+            s.write("gaps.csv", self.FILES["gaps.csv"])
+            self.assertIn("--where \"n != '' and n:int > 5\"", self.compact())
+            p = subprocess.run([binary(), "--where", "n != '' and n:int > 5", "gaps.csv"], capture_output=True, cwd=str(s.dir), input=b"")
+            self.assertEqual((p.returncode, json.loads(p.stdout)["data"]["rows"]), (0, [["c", "9"]]))
+            p = subprocess.run([binary(), "--where", "n:int > 5", "gaps.csv"], capture_output=True, cwd=str(s.dir), input=b"")
+            self.assertEqual((p.returncode, json.loads(p.stdout)["error"]["rule"]), (8, "value.not-integer"))
+        finally:
+            s.cleanup()
+
+    def test_ten_sorts_before_nine_as_text_and_a_page_is_a_thousand_rows(self):
+        s = Scratch()
+        try:
+            s.write("t.csv", "k\n9\n10\n")
+            p = subprocess.run([binary(), "--order-by", "k", "t.csv"], capture_output=True, cwd=str(s.dir), input=b"")
+            self.assertEqual(json.loads(p.stdout)["data"]["rows"], [["10"], ["9"]])
+            p = subprocess.run([binary(), "--order-by", "k:int", "t.csv"], capture_output=True, cwd=str(s.dir), input=b"")
+            self.assertEqual(json.loads(p.stdout)["data"]["rows"], [["9"], ["10"]])
+        finally:
+            s.cleanup()
+        limits = {l["name"]: l for l in introspect()["limits"]}
+        self.assertEqual(limits["limit"]["default"], 1000)
+        self.assertIn("1000 rows", self.compact())
+
+    def test_the_types_it_lists_are_accepted(self):
+        s = Scratch()
+        try:
+            s.write("t.csv", "a\n1\n")
+            literals = {":int": "0", ":dec(2)": "0.00", ":float": "0", ":date": "'2026-01-01'", ":timestamp": "'2026-01-01T00:00:00Z'", ":datetime": "'2026-01-01 00:00:00'"}
+            for t, literal in literals.items():
+                self.assertIn(t.replace("(2)", "(S)"), self.compact(), t)
+                p = subprocess.run([binary(), "--where", "a%s > %s" % (t, literal), "t.csv"], capture_output=True, cwd=str(s.dir), input=b"")
+                self.assertNotEqual(json.loads(p.stdout).get("error", {}).get("rule"), "where.syntax", (t, p.stdout[:200]))
+        finally:
+            s.cleanup()
+
+
+class Full(unittest.TestCase):
+    """`table skill --full` is what `table skill` was before the compact profile: the contract package's text, byte for byte (a 88,627-byte text, sha256 3624c137... at the change, measured by building the commit before it)."""
+
+    def test_it_is_the_exhaustive_text(self):
+        full = subprocess.run([binary(), "skill", "--full"], capture_output=True, check=True).stdout.decode()
+        self.assertTrue(full.startswith("---\nname: table\ndescription: "))
+        self.assertIn("## Flags", full)
+        self.assertIn("## Authority", full)
+        for f in introspect()["flags"]:
+            self.assertIn("`" + f["name"], full)
+        compact = subprocess.run([binary(), "skill"], capture_output=True, check=True).stdout.decode()
+        self.assertGreater(len(full), 40 * len(compact))
+
+    def test_other_words_after_skill_are_not_the_subcommand(self):
+        p = subprocess.run([binary(), "skill", "extra"], capture_output=True, input=b"")
+        self.assertEqual(p.returncode, 2)
+        p = subprocess.run([binary(), "skill", "--fully"], capture_output=True, input=b"")
+        self.assertEqual(p.returncode, 2)
+
+
 class Usage(unittest.TestCase):
     def test_usage_names_every_flag_and_only_flags(self):
         forms, named = usage_lines()
@@ -267,7 +386,7 @@ class Examples(unittest.TestCase):
         s = Scratch()
         try:
             s.write("sales.csv", file)
-            skill = subprocess.run([binary(), "skill"], capture_output=True, check=True).stdout.decode()
+            skill = subprocess.run([binary(), "skill", "--full"], capture_output=True, check=True).stdout.decode()
             for command, printed in pairs:
                 self.assertIn("$ table " + command + "\n" + printed, skill)
                 p = subprocess.run([binary(), *shlex.split(command)], capture_output=True, cwd=str(s.dir), input=b"")

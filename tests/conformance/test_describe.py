@@ -19,7 +19,7 @@ class Describe(unittest.TestCase):
         self.assertFalse(d["guarantees"]["atomic"])
 
     def test_skill(self):
-        p = subprocess.run([binary(), "skill"], capture_output=True, check=True)
+        p = subprocess.run([binary(), "skill", "--full"], capture_output=True, check=True)
         text = p.stdout.decode()
         self.assertIn("table", text)
         self.assertIn("parse.csv-ragged-row", text)

@@ -204,7 +204,7 @@ class Surface(Gated):
         self.assertEqual(sum(1 for r in introspect()["rules"] if r["rule"] == "output.duplicate-column"), 1)
 
     def test_the_skill_mentions_the_format(self):
-        text = subprocess.run([binary(), "skill"], capture_output=True, check=True).stdout.decode()
+        text = subprocess.run([binary(), "skill", "--full"], capture_output=True, check=True).stdout.decode()
         self.assertIn("--format jsonl", text)
 
     def test_ndjson_is_not_a_value_of_format(self):

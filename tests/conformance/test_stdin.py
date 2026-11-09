@@ -359,7 +359,7 @@ class Operands(Source):
         self.assertIn("-", operand["help"])
         self.assertIn("standard input", d["summary"])
         self.assertIn("table [", d["usage"])
-        skill = subprocess.run([binary(), "skill"], capture_output=True, check=True, input=b"").stdout.decode()
+        skill = subprocess.run([binary(), "skill", "--full"], capture_output=True, check=True, input=b"").stdout.decode()
         self.assertIn("standard input", skill)
         self.assertNotIn("args.missing-operand", [r["rule"] for r in d["rules"]], "no operand is standard input now: the rule cannot be emitted")
 
