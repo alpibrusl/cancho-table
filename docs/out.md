@@ -1,6 +1,6 @@
 # `--out FILE`: write the answer to a file, atomically (issue #108): a design
 
-> **Status: a design, nothing built.** Written 2026-11-09 for cancho-table#108, the first slice of #101. It follows the rules of `docs/numbers.md`: what is measured is said as measured, the rest is a reading of the code or a judgement, and what only a person can decide is listed in section 9. **This design widens the tool's authority ceiling** (`tools.toml`), which until now says "nothing written to disk"; that is the one decision here that cannot be left to the tests, and it is first in section 9.
+> **Status: accepted by the maintainer on 2026-11-09 (section 9, decisions 1 to 5, all as proposed); building follows.** Written 2026-11-09 for cancho-table#108. The text below is the design as proposed, kept; where the build differs the difference is said in section 10 when there is one. (Original status: a design, nothing built.) Written 2026-11-09 for cancho-table#108, the first slice of #101. It follows the rules of `docs/numbers.md`: what is measured is said as measured, the rest is a reading of the code or a judgement, and what only a person can decide is listed in section 9. **This design widens the tool's authority ceiling** (`tools.toml`), which until now says "nothing written to disk"; that is the one decision here that cannot be left to the tests, and it is first in section 9.
 
 ## 1. What it is
 
@@ -61,3 +61,8 @@ All output goes through `io` (`write_bytes`), and cancho has no way to point sta
 5. **Whether `--out` is for the MCP server** (proposed: no).
 
 **Not measured:** the cost of holding the answer (no code yet), the size of answers people ask for as csv, whether agents prefer the receipt.
+
+## 10. Decided, 2026-11-09
+
+The maintainer answered "yes" to the ceiling and took the defaults for the four smaller choices: (1) `table` may write one named file beneath `--root` (`dir_write`, `file_write` added to the ceiling in `tools.toml`); (2) the receipt on standard output; (3) the held answer counted in `--max-state-bytes`; (4) `--overwrite` as a flag; (5) `--out` and `--overwrite` withheld from the MCP server. Issue #111 was decided the same day (option 2, `docs/backlog.md` item 14): `--out` is the glue between `table` and a separate cleaning tool.
+
