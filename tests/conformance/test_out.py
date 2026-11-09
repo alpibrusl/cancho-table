@@ -285,8 +285,8 @@ class Litter(Base):
         self.assertEqual(a.stdout, b.stdout)
 
     def test_a_flag_conflict_and_the_read_flags_that_do_not_run(self):
-        for flag in ("--explain", "--discover"):
-            got = self.out("e.json", ["--select", "id", "t.csv"], flag)
+        for flag, args in (("--explain", ["--select", "id", "t.csv"]), ("--discover", ["--input-format", "jsonl", "j.jsonl"])):
+            got = self.out("e.json", args, flag)
             self.assertEqual(got.status, 2, flag)
             self.assertEqual(got.error()["rule"], "args.conflict")
         self.assertEqual(listing(self.dir), sorted(["t.csv", "b.csv", "j.jsonl"]))
