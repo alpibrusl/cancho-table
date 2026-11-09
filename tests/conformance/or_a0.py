@@ -590,7 +590,18 @@ REPAIR_JSON = re.compile(r'"repair":\{.*?\}(?=,"detail":)')
 def normalise(stdout, stderr, directory, binary):
     """The answer with the scratch directory and the program's path replaced, as text."""
     text = (stdout + b"\n--stderr--\n" + stderr).decode("utf-8", "replace")
-    return text.replace(str(directory), "{DIR}").replace(str(binary), "{BIN}")
+    return before_sql(text.replace(str(directory), "{DIR}").replace(str(binary), "{BIN}"))
+
+
+# `--explain` gained `sql` and `sql_flags` (docs/query.md section 16, issue #104), and a note `sql.NAME` for a plan with no statement. The goldens are the answers of `main` before it, so the answer is read as
+# the tool wrote it then: the two members and the notes are taken out. (The statement has its own gates, test_sql_explain.)
+SQL_MEMBERS = re.compile(r',"sql":(?:null|"(?:[^"\\]|\\.)*"),"sql_flags":\[[^\]]*\]')
+SQL_NOTE = re.compile(r'"sql\.[a-z-]+: (?:[^"\\]|\\.)*",?')
+
+
+def before_sql(text):
+    text = SQL_MEMBERS.sub("", text)
+    return SQL_NOTE.sub("", text).replace(",]", "]")
 
 
 def blank_repair(text):

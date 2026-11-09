@@ -1,0 +1,601 @@
+edition 5;
+
+module qsql;
+
+// The plan as a `--query` statement (docs/query.md section 16, issue #104): the SQL that `--explain` shows beside the plan, so that a call written as flags can be read as a query. It is explanation, and it is
+// held to the tool: the statement run with `--query` (and the flags it leaves out, `sql_flags`) gives the same bytes as the flags. A plan the query dialect cannot say gets no statement, and the reason is a
+// note with a stable id (`sql.NAME`). The statement is written from the plan the flags filled and from the text of `--where`, whose conditions are written one by one in the dialect's spelling.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import orparse;
+import query;
+import qparse;
+import spec;
+import toolbox.cli;
+
+// Whether `name` is one of the space-separated words of `list`, whatever the case.
+fn word_in[&l, &n](list: &l [byte], name: &n [byte]) -> [] bool {
+    var i = 0;
+    while i < len(list) {
+        var j = i;
+        while j < len(list) && int_of(list[j]) != 32 {
+            j = j + 1;
+        }
+        if j - i == len(name) {
+            var same = true;
+            var k = 0;
+            while k < len(name) {
+                if bytes.to_lower(int_of(name[k])) != int_of(list[i + k]) {
+                    same = false;
+                }
+                k = k + 1;
+            }
+            if same {
+                return true;
+            }
+        }
+        i = j + 1;
+    }
+    return false;
+}
+
+fn is_bare[&n](name: &n [byte]) -> [] bool {
+    if len(name) == 0 {
+        return false;
+    }
+    var i = 0;
+    while i < len(name) {
+        let c = int_of(name[i]);
+        let letter = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_';
+        if !(letter || i > 0 && bytes.is_digit(c)) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return !word_in(qparse.reserved(), name) && !word_in(qparse.reserved_later(), name) && !word_in(qparse.functions(), name) && !bytes.equal(name, "stdin");
+}
+
+// Column `i` of the plan's names, as the dialect writes a column: `#N` for a position, else the name, bare when it can be and "double quoted" (a doubled quote is one) when not.
+fn put_name[&h, &q](heap: &!h Heap, o: buffer.Buffer, tree: &q query.Query, i: int) -> [heap] buffer.Buffer {
+    var b = o;
+    let position = query.kind_at(tree, i);
+    if position >= 0 {
+        b = buffer.push(heap, b, byte_of('#'));
+        return buffer.push_nat(heap, b, position);
+    }
+    let name = query.name_at(tree, i);
+    if is_bare(name) {
+        return buffer.append(heap, b, name);
+    }
+    b = buffer.push(heap, b, byte_of(34));
+    var k = 0;
+    while k < len(name) {
+        if int_of(name[k]) == 34 {
+            b = buffer.push(heap, b, byte_of(34));
+        }
+        b = buffer.push(heap, b, name[k]);
+        k = k + 1;
+    }
+    return buffer.push(heap, b, byte_of(34));
+}
+
+// `::int`, `::dec(S)`, ... for a type code of `query` (0 text writes nothing).
+fn put_type[&h](heap: &!h Heap, o: buffer.Buffer, t: int) -> [heap] buffer.Buffer {
+    if t == 0 {
+        return o;
+    }
+    var b = buffer.append(heap, o, "::");
+    if t == 1 {
+        return buffer.append(heap, b, "int");
+    }
+    if t == 21 {
+        return buffer.append(heap, b, "float");
+    }
+    if t == 22 {
+        return buffer.append(heap, b, "date");
+    }
+    if t == 23 {
+        return buffer.append(heap, b, "timestamp");
+    }
+    if t == 24 {
+        return buffer.append(heap, b, "datetime");
+    }
+    b = buffer.append(heap, b, "dec(");
+    b = buffer.push_nat(heap, b, t - 2);
+    return buffer.push(heap, b, byte_of(')'));
+}
+
+// A literal: text and the date types in single quotes (a doubled quote is one), a number as it is (without a leading plus). Answers false for a number the dialect would not read.
+fn put_value[&h, &d](heap: &!h Heap, o: buffer.Buffer, t: int, lit: &d [byte]) -> [heap] (buffer.Buffer, bool) {
+    var b = o;
+    let numeric = t == 1 || t >= 2 && t <= 20 || t == 21;
+    if !numeric {
+        b = buffer.push(heap, b, byte_of(39));
+        var k = 0;
+        while k < len(lit) {
+            if int_of(lit[k]) == 39 {
+                b = buffer.push(heap, b, byte_of(39));
+            }
+            b = buffer.push(heap, b, lit[k]);
+            k = k + 1;
+        }
+        return (buffer.push(heap, b, byte_of(39)), true);
+    }
+    var start = 0;
+    if len(lit) > 0 && int_of(lit[0]) == '+' {
+        start = 1;
+    }
+    if start >= len(lit) {
+        return (b, false);
+    }
+    var k = start;
+    while k < len(lit) {
+        let c = int_of(lit[k]);
+        if !(bytes.is_digit(c) || c == '-' && k == start || c == '.') {
+            return (b, false);
+        }
+        k = k + 1;
+    }
+    return (buffer.append(heap, b, lit[start..len(lit)]), true);
+}
+
+fn op_text(op: int) -> [] &static [byte] {
+    if op == 0 {
+        return "=";
+    }
+    if op == 1 {
+        return "!=";
+    }
+    if op == 2 {
+        return "<";
+    }
+    if op == 3 {
+        return "<=";
+    }
+    if op == 4 {
+        return ">";
+    }
+    return ">=";
+}
+
+// Condition `k` of `plan` (the plan of the text of `--where` alone), negated or not, in the dialect: `c = 'x'`, `c::int > 5`, `c contains 'x'`, `c in ('a', 'b')`, `c not in (...)`, `c not contains 'x'`.
+fn put_cond[&h, &q](heap: &!h Heap, o: buffer.Buffer, plan: &q query.Query, k: int, negated: bool) -> [heap] (buffer.Buffer, bool) {
+    var b = o;
+    let kind = query.cond_at(plan, k, 0);
+    let t = query.cond_at(plan, k, 1);
+    if kind == 3 {
+        return (b, false);
+    }
+    b = put_name(heap, b, plan, query.cond_at(plan, k, 3));
+    if kind == 1 {
+        if negated {
+            b = buffer.append(heap, b, " not");
+        }
+        b = buffer.append(heap, b, " contains ");
+        let (b2, ok) = put_value(heap, b, 0, query.lit_bytes(plan, query.cond_at(plan, k, 4)));
+        return (b2, ok);
+    }
+    b = put_type(heap, b, t);
+    if kind == 2 {
+        if negated {
+            b = buffer.append(heap, b, " not");
+        }
+        b = buffer.append(heap, b, " in (");
+        var v = 0;
+        while v < query.cond_at(plan, k, 5) {
+            if v > 0 {
+                b = buffer.append(heap, b, ", ");
+            }
+            let (b2, ok) = put_value(heap, b, t, query.lit_bytes(plan, query.cond_at(plan, k, 4) + v));
+            if !ok {
+                return (b2, false);
+            }
+            b = b2;
+            v = v + 1;
+        }
+        return (buffer.push(heap, b, byte_of(')')), true);
+    }
+    if negated {
+        return (b, false);
+    }
+    b = buffer.push(heap, b, byte_of(32));
+    b = buffer.append(heap, b, op_text(query.cond_at(plan, k, 2)));
+    b = buffer.push(heap, b, byte_of(32));
+    return put_value(heap, b, t, query.lit_bytes(plan, query.cond_at(plan, k, 4)));
+}
+
+// The units of the level `node` (1 and, 2 or), each as `put_unit` writes it, with the connective between them.
+fn put_level[&h, &q, &n](heap: &!h Heap, o: buffer.Buffer, plan: &q query.Query, tr: &n vec.Vec[int], node: int) -> [heap] (buffer.Buffer, bool) {
+    var b = o;
+    let kind = vec.get(tr, node);
+    let at = vec.get(tr, node + 1);
+    let count = vec.get(tr, node + 2);
+    var j = 0;
+    while j < count {
+        if j > 0 {
+            if kind == 1 {
+                b = buffer.append(heap, b, " and ");
+            } else {
+                b = buffer.append(heap, b, " or ");
+            }
+        }
+        let (b2, ok) = put_unit(heap, b, plan, tr, orparse.unit_at(tr, at, j), kind);
+        if !ok {
+            return (b2, false);
+        }
+        b = b2;
+        j = j + 1;
+    }
+    return (b, true);
+}
+
+// A unit of a level whose connective is `conn` (0 at the root): a leaf or a `not (...)` as it is, and a group in parentheses without them when the plan does not need them, so that `(a and b) and c` and
+// `a and b and c`, which the plan cannot tell apart, are one statement: the parentheses of a group whose level is the same connective, or a group of one unit, are dropped.
+fn put_unit[&h, &q, &n](heap: &!h Heap, o: buffer.Buffer, plan: &q query.Query, tr: &n vec.Vec[int], node: int, conn: int) -> [heap] (buffer.Buffer, bool) {
+    var b = o;
+    let kind = vec.get(tr, node);
+    if kind == 0 || kind == 5 {
+        return put_cond(heap, b, plan, vec.get(tr, node + 1), kind == 5);
+    }
+    if kind == 6 {
+        b = buffer.append(heap, b, "not (");
+        let (b2, ok) = put_unit(heap, b, plan, tr, vec.get(tr, node + 1), 0);
+        return (buffer.push(heap, b2, byte_of(')')), ok);
+    }
+    if kind == 3 {
+        return put_unit(heap, b, plan, tr, vec.get(tr, node + 1), conn);
+    }
+    if kind == 4 {
+        return (b, false);
+    }
+    if conn == 0 || conn == kind {
+        return put_level(heap, b, plan, tr, node);
+    }
+    b = buffer.push(heap, b, byte_of('('));
+    let (b2, ok) = put_level(heap, b, plan, tr, node);
+    return (buffer.push(heap, b2, byte_of(')')), ok);
+}
+
+fn function_word(f: int) -> [] &static [byte] {
+    if f == 1 {
+        return "sum";
+    }
+    if f == 2 {
+        return "min";
+    }
+    if f == 3 {
+        return "max";
+    }
+    return "distinct";
+}
+
+// Aggregate `k` as the dialect writes it: `count(*)`, `sum(c)`, `sum(c::dec(2))`, `mean(c, 2)`, `count(distinct c)`. A type is written when it is not the one the function reads without it (an integer, text for distinct).
+fn put_agg[&h, &q](heap: &!h Heap, o: buffer.Buffer, tree: &q query.Query, k: int) -> [heap] buffer.Buffer {
+    var b = o;
+    let f = query.agg_at(tree, k, 0);
+    if f == 0 {
+        return buffer.append(heap, b, "count(*)");
+    }
+    let t = query.agg_at(tree, k, 2);
+    let mean = query.agg_at(tree, k, 3);
+    if f == 4 {
+        b = buffer.append(heap, b, "count(distinct ");
+    } else if mean != 0 {
+        b = buffer.append(heap, b, "mean(");
+    } else {
+        b = buffer.append(heap, b, function_word(f));
+        b = buffer.push(heap, b, byte_of('('));
+    }
+    b = put_name(heap, b, tree, query.agg_at(tree, k, 1));
+    if f == 4 {
+        b = put_type(heap, b, t);
+    } else if t != 1 {
+        b = put_type(heap, b, t);
+    }
+    if mean != 0 && mean != 100 {
+        b = buffer.append(heap, b, ", ");
+        b = buffer.push_nat(heap, b, mean - 1);
+    }
+    return buffer.push(heap, b, byte_of(')'));
+}
+
+// The label the answer gives aggregate `k` (docs/numbers.md): `count`, or `sum:bytes`, `mean:price`, `distinct:path`, the column as the plan spelled it and no suffix.
+fn label_of[&h, &q](heap: &!h Heap, tree: &q query.Query, k: int) -> [heap] buffer.Buffer {
+    var b = buffer.empty(heap, 32);
+    let f = query.agg_at(tree, k, 0);
+    if f == 0 {
+        return buffer.append(heap, b, "count");
+    }
+    if f == 4 {
+        b = buffer.append(heap, b, "distinct");
+    } else if query.agg_at(tree, k, 3) != 0 {
+        b = buffer.append(heap, b, "mean");
+    } else {
+        b = buffer.append(heap, b, function_word(f));
+    }
+    b = buffer.push(heap, b, byte_of(':'));
+    let i = query.agg_at(tree, k, 1);
+    if query.kind_at(tree, i) >= 0 {
+        b = buffer.push(heap, b, byte_of('#'));
+        return buffer.push_nat(heap, b, query.kind_at(tree, i));
+    }
+    return buffer.append(heap, b, query.name_at(tree, i));
+}
+
+// Why a plan has no statement, by a code: the id of the note is `sql.` and the word.
+pub fn reason_id(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "shape";
+    }
+    if code == 2 {
+        return "report";
+    }
+    if code == 3 {
+        return "join";
+    }
+    if code == 4 {
+        return "jsonl";
+    }
+    if code == 5 {
+        return "rename";
+    }
+    if code == 6 {
+        return "typed-group";
+    }
+    if code == 7 {
+        return "columns-compared";
+    }
+    if code == 8 {
+        return "mixed";
+    }
+    if code == 9 {
+        return "sort-label";
+    }
+    if code == 10 {
+        return "value";
+    }
+    return "unsupported";
+}
+
+pub fn reason_text(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "the shape (FILE alone) is not a query: no select says it";
+    }
+    if code == 2 {
+        return "--report is not in the dialect of --query";
+    }
+    if code == 3 {
+        return "a join is not rendered as SQL yet (a query says it as from 'a.csv' as a join 'b.csv' as b on a.k = b.k)";
+    }
+    if code == 4 {
+        return "JSON lines are read by flags (--input-format, --fields) that a query has no word for";
+    }
+    if code == 5 {
+        return "--rename is the as of a select list, which this version does not write";
+    }
+    if code == 6 {
+        return "a typed --group column (and a period like @day) has no spelling in --query: group by takes plain columns";
+    }
+    if code == 7 {
+        return "a condition that compares two columns has no spelling in --query";
+    }
+    if code == 8 {
+        return "--where mixes and with or at one level, which --query refuses";
+    }
+    if code == 9 {
+        return "--sort names a label this version cannot write as an order by key";
+    }
+    if code == 10 {
+        return "a literal the query dialect would not read as the flags do";
+    }
+    return "this plan has no spelling in --query";
+}
+
+// The statement for a plan made of flags (`mode` 1 rows, 2 groups): its text, the flags it leaves to the call (`--top`, as the body of a JSON array), and why not (0 when there is a statement).
+pub fn render[&h, &g, &p, &q, &s, &o](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, mode: int, joining: bool, stdin: bool, shown: &s [byte], sort: &o [byte], from: int, limit: int, top: int, as_csv: bool) -> [heap, args] (buffer.Buffer, buffer.Buffer, int) {
+    let table = spec.flag_table();
+    var out = buffer.empty(heap, 128);
+    var extra = buffer.empty(heap, 16);
+    if joining {
+        return (out, extra, 3);
+    }
+    if query.reporting(tree) {
+        return (out, extra, 2);
+    }
+    if mode == 0 {
+        return (out, extra, 1);
+    }
+    let input = cli.text(args, parsed, table, "input-format");
+    if bytes.equal(input, "jsonl") || bytes.equal(input, "ndjson") {
+        return (out, extra, 4);
+    }
+    if len(query.rename_text(tree)) > 0 || cli.has(parsed, table, "rename") {
+        return (out, extra, 5);
+    }
+    let ns = query.count_of(tree, 0);
+    let nw = query.count_of(tree, 1);
+    let ng = query.count_of(tree, 2);
+    let na = query.agg_count(tree);
+    var j = 0;
+    while j < ng {
+        if query.gkind_raw_at(tree, j) != 0 {
+            return (out, extra, 6);
+        }
+        j = j + 1;
+    }
+    out = buffer.append(heap, out, "select ");
+    if mode == 1 {
+        if ns == 0 {
+            out = buffer.push(heap, out, byte_of('*'));
+        }
+        j = 0;
+        while j < ns {
+            if j > 0 {
+                out = buffer.append(heap, out, ", ");
+            }
+            out = put_name(heap, out, tree, j);
+            j = j + 1;
+        }
+    } else {
+        j = 0;
+        while j < ng {
+            out = put_name(heap, out, tree, ns + nw + j);
+            out = buffer.append(heap, out, ", ");
+            j = j + 1;
+        }
+        j = 0;
+        while j < na {
+            if j > 0 {
+                out = buffer.append(heap, out, ", ");
+            }
+            out = put_agg(heap, out, tree, j);
+            j = j + 1;
+        }
+    }
+    // the source
+    if stdin {
+        out = buffer.append(heap, out, " from stdin");
+    } else {
+        out = buffer.append(heap, out, " from '");
+        var k = 0;
+        while k < len(shown) {
+            if int_of(shown[k]) == 39 {
+                out = buffer.push(heap, out, byte_of(39));
+            }
+            out = buffer.push(heap, out, shown[k]);
+            k = k + 1;
+        }
+        out = buffer.push(heap, out, byte_of(39));
+    }
+    // where
+    if len(query.where_text(tree)) > 0 {
+        let (plan, tr, node, whole) = orparse.read_tree(heap, query.where_text(tree));
+        var ok = false;
+        var between = false;
+        var clause = buffer.append(heap, buffer.empty(heap, 64), " where ");
+        borrow plan as &pr in {
+            between = query.has_between(pr);
+            ok = whole && !between;
+            if ok {
+                borrow tr as &tw in {
+                    let (c2, ok2) = put_unit(heap, clause, pr, tw, node, 0);
+                    clause = c2;
+                    ok = ok2;
+                }
+            }
+        }
+        borrow clause as &cr in {
+            out = buffer.append(heap, out, buffer.bytes(cr));
+        }
+        buffer.drop(heap, clause);
+        query.drop(heap, plan);
+        vec.drop(heap, tr);
+        if !ok {
+            if between {
+                return (out, extra, 7);
+            }
+            if whole {
+                return (out, extra, 10);
+            }
+            return (out, extra, 8);
+        }
+    }
+    // group by
+    if mode == 2 && ng > 0 {
+        out = buffer.append(heap, out, " group by ");
+        j = 0;
+        while j < ng {
+            if j > 0 {
+                out = buffer.append(heap, out, ", ");
+            }
+            out = put_name(heap, out, tree, ns + nw + j);
+            j = j + 1;
+        }
+    }
+    // order by
+    if mode == 1 && query.count_of(tree, 4) > 0 {
+        out = buffer.append(heap, out, " order by ");
+        j = 0;
+        while j < query.order_count(tree) {
+            if j > 0 {
+                out = buffer.append(heap, out, ", ");
+            }
+            out = put_name(heap, out, tree, query.order_name(tree, j));
+            out = put_type(heap, out, query.order_flags(tree, j) / 2);
+            if query.order_flags(tree, j) % 2 == 1 {
+                out = buffer.append(heap, out, " desc");
+            }
+            j = j + 1;
+        }
+    }
+    if mode == 2 && len(sort) > 0 {
+        var label = sort;
+        var desc = false;
+        if len(label) > 0 && int_of(label[0]) == '-' {
+            desc = true;
+            label = label[1..len(label)];
+        }
+        var found = false;
+        j = 0;
+        while j < na && !found {
+            let l = label_of(heap, tree, j);
+            borrow l as &lr in {
+                if bytes.equal(buffer.bytes(lr), label) {
+                    out = buffer.append(heap, out, " order by ");
+                    out = put_agg(heap, out, tree, j);
+                    found = true;
+                }
+            }
+            buffer.drop(heap, l);
+            j = j + 1;
+        }
+        j = 0;
+        while j < ng && !found {
+            if bytes.equal(query.name_at(tree, ns + nw + j), label) && query.kind_at(tree, ns + nw + j) < 0 {
+                out = buffer.append(heap, out, " order by ");
+                out = put_name(heap, out, tree, ns + nw + j);
+                found = true;
+            }
+            j = j + 1;
+        }
+        if !found {
+            return (out, extra, 9);
+        }
+        if desc {
+            out = buffer.append(heap, out, " desc");
+        }
+    }
+    // the page: a query that has a limit or an offset of its own cannot be given --top (query.conflict), so with --top the page stays flags beside it, as the query leaves --top itself to the call.
+    // A limit is written when the call gave one, or, in a query, when it is not the page that is the default (1000 as json, none as csv).
+    let topped = top > 0;
+    let unbounded = limit >= 1000000000000000;
+    let asked = cli.has(parsed, table, "limit") || cli.has(parsed, table, "query") && !unbounded && (limit != 1000 || as_csv);
+    if topped {
+        extra = buffer.append(heap, extra, "\"--top\",\"");
+        extra = buffer.push_nat(heap, extra, top);
+        extra = buffer.push(heap, extra, byte_of(34));
+    }
+    if asked && !unbounded {
+        if topped {
+            extra = buffer.append(heap, extra, ",\"--limit\",\"");
+            extra = buffer.push_nat(heap, extra, limit);
+            extra = buffer.push(heap, extra, byte_of(34));
+        } else {
+            out = buffer.append(heap, out, " limit ");
+            out = buffer.push_nat(heap, out, limit);
+        }
+    }
+    if from > 0 {
+        if topped {
+            extra = buffer.append(heap, extra, ",\"--from\",\"");
+            extra = buffer.push_nat(heap, extra, from);
+            extra = buffer.push(heap, extra, byte_of(34));
+        } else {
+            out = buffer.append(heap, out, " offset ");
+            out = buffer.push_nat(heap, out, from);
+        }
+    }
+    return (out, extra, 0);
+}

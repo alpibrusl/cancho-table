@@ -172,6 +172,9 @@ def explain_document():
         }, required=["class", "reads", "bounds", "threads"]),
         "refusals": obj({"possible": {"type": "array", "items": RULE}}),
         "notes": {"type": "array", "items": TB},
+        # the plan as a `--query` statement, or null with a `sql.NAME` note (docs/query.md section 16), and the flags of the call that the statement leaves out
+        "sql": {"oneOf": [{"type": "null"}, TB]},
+        "sql_flags": {"type": "array", "items": TB},
         # a join (docs/joins.md section 8.4): the sides, the key, the columns, what the build can hold, the bound and the work
         "join": obj_optional(["probe_reader", "build_reader", "sorted"], {
             "type": {"enum": ["inner", "left", "semi", "anti"]},
@@ -203,7 +206,7 @@ def explain_document():
                                                   "partitions": obj({"count": {"type": "integer", "minimum": 2}, "build_data_bytes": {"type": "integer", "minimum": 1}, "range_bytes": {"type": "integer", "minimum": 1},
                                                                      "ranges": {"type": "integer", "minimum": 1}, "rule": {"type": "string"}, "declines": {"type": "string"}, "memory": {"type": "string"}})}),
         }),
-    }, required=["source", "plan", "output", "work", "refusals", "notes"])})
+    }, required=["source", "plan", "output", "work", "refusals", "notes", "sql", "sql_flags"])})
 
 
 def discover_document():

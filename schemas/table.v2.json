@@ -981,6 +981,22 @@
                     "$ref": "#/$defs/text_or_bytes"
                   }
                 },
+                "sql": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/$defs/text_or_bytes"
+                    }
+                  ]
+                },
+                "sql_flags": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/text_or_bytes"
+                  }
+                },
                 "join": {
                   "type": "object",
                   "properties": {
@@ -1402,7 +1418,9 @@
                 "output",
                 "work",
                 "refusals",
-                "notes"
+                "notes",
+                "sql",
+                "sql_flags"
               ],
               "additionalProperties": false
             }
