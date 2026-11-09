@@ -95,7 +95,7 @@ def flag_argv(flags):
 
 def cli(flags, text, directory=None):
     """The CLI's answer to the same plan with the text on standard input: the command a `stdin` call stands for."""
-    argv = [str(BIN / "table"), "--root=%s" % (directory or root()), *flag_argv(flags), "--", "-"]
+    argv = [str(BIN / "table"), "--root=%s" % (directory or root()), "--default-limit=%d" % mcp.DEFAULT_PAGE, *flag_argv(flags), "--", "-"]
     p = subprocess.run(argv, input=text.encode("utf-8"), capture_output=True, timeout=120)
     return p.returncode, p.stdout, p.stderr
 
@@ -279,10 +279,10 @@ class Surface(unittest.TestCase):
         fb = fake()
         fb.call({"stdin": "a,b\n1,2\n", "select": "x", "limit": 3})
         root_dir = str(fb.root)
-        self.assertEqual(fb.argv(), ["--root=%s" % root_dir, "--select=x", "--limit=3", "--", "-"])
+        self.assertEqual(fb.argv(), ["--root=%s" % root_dir, "--default-limit=50", "--select=x", "--limit=3", "--", "-"])
         # and a call with a file is `main`'s, argv for argv: no dash, and its standard input is empty
         fb.call({"file": "a.csv", "select": "x"})
-        self.assertEqual(fb.argv(), ["--root=%s" % root_dir, "--select=x", "--", "a.csv"])
+        self.assertEqual(fb.argv(), ["--root=%s" % root_dir, "--default-limit=50", "--select=x", "--", "a.csv"])
         self.assertEqual(fb.stdin(), b"")
 
     def test_the_rules_are_listed_and_the_flag_is_described(self):
