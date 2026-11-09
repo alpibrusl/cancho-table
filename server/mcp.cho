@@ -917,6 +917,28 @@ fn ended[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, src: &s [byte], tape: &t [i
     return send(heap, io, w);
 }
 
+// `resources/read`: the long help text of a property, by its uri (docs/mcp.md section 13). A uri the server did not list is `mcp.unknown-resource`, -32002 as the protocol has it.
+fn read_resource[&h, &i, &s, &t](heap: &!h Heap, io: &!i Io, src: &s [byte], tape: &t [int], id: int) -> [heap, io_write] int {
+    let params = json.get(src, tape, 0, "params");
+    let asked = json.get(src, tape, params, "uri");
+    var found = 0 - 1;
+    var k = 0;
+    while k < tools.help_count() {
+        if json.string_equals(src, tape, asked, tools.help_uri(k)) {
+            found = k;
+        }
+        k = k + 1;
+    }
+    if found < 0 {
+        return refuse(heap, io, src, tape, id, 0 - 32002, "mcp.unknown-resource", "unknown resource; resources/list names the help texts there are");
+    }
+    var w = opened(heap, src, tape, id);
+    w = json.put_key(heap, w, "result");
+    w = json.put_fragment(heap, w, tools.help_contents(found));
+    w = json.end_object(heap, w);
+    return send(heap, io, w);
+}
+
 fn call[&h, &x, &c, &i, &s, &t](heap: &!h Heap, exec: &x Exec("/opt/cancho-table/bin"), clock: &c Clock, io: &!i Io, src: &s [byte], tape: &t [int], id: int, config: Config) -> [heap, exec("/opt/cancho-table/bin"), clock, poll, io_write] int {
     let params = json.get(src, tape, 0, "params");
     let asked = json.get(src, tape, params, "name");
@@ -1044,7 +1066,7 @@ fn handle[&h, &x, &c, &i, &s](heap: &!h Heap, exec: &x Exec("/opt/cancho-table/b
                     w = json.put_key(heap, w, "protocolVersion");
                     w = json.put_string(heap, w, "2025-06-18");
                     w = json.put_key(heap, w, "capabilities");
-                    w = json.put_fragment(heap, w, "{\"tools\":{\"listChanged\":false}}");
+                    w = json.put_fragment(heap, w, tools.capabilities());
                     w = json.put_key(heap, w, "serverInfo");
                     w = json.put_fragment(heap, w, "{\"name\":\"cancho-table\",\"version\":\"0.1.0\"}");
                     w = json.end_object(heap, w);
@@ -1064,8 +1086,16 @@ fn handle[&h, &x, &c, &i, &s](heap: &!h Heap, exec: &x Exec("/opt/cancho-table/b
                     status = send(heap, io, w);
                 } else if json.string_equals(src, t, method, "tools/call") {
                     status = call(heap, exec, clock, io, src, t, id, config);
+                } else if tools.help_count() > 0 && json.string_equals(src, t, method, "resources/list") {
+                    var w = opened(heap, src, t, id);
+                    w = json.put_key(heap, w, "result");
+                    w = json.put_fragment(heap, w, tools.resources_result());
+                    w = json.end_object(heap, w);
+                    status = send(heap, io, w);
+                } else if tools.help_count() > 0 && json.string_equals(src, t, method, "resources/read") {
+                    status = read_resource(heap, io, src, t, id);
                 } else {
-                    status = refuse(heap, io, src, t, id, 0 - 32601, "mcp.unknown-method", "the methods are initialize, ping, tools/list and tools/call");
+                    status = refuse(heap, io, src, t, id, 0 - 32601, "mcp.unknown-method", "the methods are initialize, ping, tools/list and tools/call, and resources/list and resources/read when the tool has long help texts");
                 }
             }
         }

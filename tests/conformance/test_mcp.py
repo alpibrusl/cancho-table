@@ -29,6 +29,8 @@ import bench  # noqa: E402
 import manifest  # noqa: E402
 import mcp  # noqa: E402
 
+SHORT = json.loads((ROOT / "server" / "short.json").read_text())
+
 BUILT = {}
 FIXTURES = {}
 
@@ -430,7 +432,8 @@ class Schema(unittest.TestCase):
         tool = self.listed()
         d = introspect()
         self.assertEqual(tool["name"], d["tool"])
-        self.assertTrue(tool["description"].startswith(d["summary"]))
+        # the long text is a resource (docs/mcp.md section 13): the description is the short one, and the full one is `table://help/tool`
+        self.assertTrue(tool["description"].startswith(SHORT["description"]))
         s = tool["inputSchema"]
         self.assertFalse(s["additionalProperties"])
         self.assertEqual(s["type"], "object")
@@ -443,7 +446,7 @@ class Schema(unittest.TestCase):
         kinds_seen = set()
         for f in flags:
             p = props[f["name"][2:]]
-            self.assertEqual(p["description"], f["help"])
+            self.assertEqual(p["description"], SHORT["properties"].get(f["name"][2:], f["help"]))
             if f["default"] is not None:
                 self.assertEqual(p["default"], int(f["default"]) if f["kind"] == "nat" else f["default"])
             else:
@@ -470,12 +473,12 @@ class Schema(unittest.TestCase):
         # a call gives exactly one of the two, which the server checks, so neither is `required` in the schema.
         [operand] = d["operands"]
         self.assertEqual((operand["name"], operand["min"], operand["max"]), ("FILE", 0, 1))
-        self.assertEqual(props["file"], {"type": "string", "description": operand["help"] + " Give exactly one of `file` and `stdin`."})
+        self.assertEqual(props["file"], {"type": "string", "description": SHORT["properties"]["file"]})
         self.assertEqual(props["stdin"]["type"], "string")
         self.assertEqual(s["required"], [])
         # The strings the model has to write are documented from introspect's help, in the schema.
         for name in ("where", "select", "agg", "sort", "order-by", "group"):
-            self.assertEqual(props[name]["description"], next(f["help"] for f in flags if f["name"] == "--" + name))
+            self.assertEqual(props[name]["description"], SHORT["properties"][name])
             self.assertGreater(len(props[name]["description"]), 40)
         self.assertIn("COLUMN OP VALUE", props["where"]["description"])
         for word in ("sum", "mean", ":dec(S)", ":float", "@N"):
@@ -850,7 +853,7 @@ class Protocol(unittest.TestCase):
             {"jsonrpc": "2.0", "id": "two", "method": "ping"},
             {"jsonrpc": "2.0", "id": 3, "method": "tools/list"},
             {"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "table", "arguments": {"file": "data.csv"}}},
-            {"jsonrpc": "2.0", "id": 4, "method": "resources/list"},
+            {"jsonrpc": "2.0", "id": 4, "method": "prompts/list"},
             {"jsonrpc": "2.0", "id": 5, "method": "initialize", "params": {"protocolVersion": "1999-01-01"}},
         ]
         responses, status = talk(root(), lines)
@@ -858,7 +861,7 @@ class Protocol(unittest.TestCase):
         self.assertEqual([r["id"] for r in responses], [1, "two", 3, 4, 5])          # notifications are not answered, not even a call without an id
         init = responses[0]["result"]
         self.assertEqual(init["protocolVersion"], "2025-06-18")
-        self.assertEqual(init["capabilities"], {"tools": {"listChanged": False}})
+        self.assertEqual(init["capabilities"], {"tools": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}})
         self.assertEqual(init["serverInfo"]["name"], "cancho-table")
         self.assertEqual(responses[1]["result"], {})
         self.assertEqual([t["name"] for t in responses[2]["result"]["tools"]], ["table"])
@@ -1044,6 +1047,7 @@ class Own(unittest.TestCase):
         responses, _ = talk(root(), [b"nope", b"[]", {"jsonrpc": "2.0", "id": 1, "method": "x"}, call({}, name="sh"), call([]),
                                      call({"file": "a", "zz": 1}), call({"file": 5}), call({"file": "a\u0000"}),
                                      call({"file": "a", "stdin": "x"}), call({"select": "a"}),
+                                     {"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": "table://help/nope"}},
                                      b'{"jsonrpc":"2.0","id":1,"method":"ping","x":"' + b"a" * 4194304 + b'"}'])
         for r in responses:
             said.add(r["error"]["data"]["rule"])
@@ -1184,6 +1188,141 @@ class Own(unittest.TestCase):
     def test_the_mutants_still_apply(self):
         got = subprocess.run([sys.executable, str(ROOT / "scripts" / "mcp_mutants.py"), "--check"], capture_output=True, text=True)
         self.assertEqual((got.returncode, got.stdout.count("!!")), (0, 0), got.stdout)
+
+
+class Resources(unittest.TestCase):
+    """The long texts, on demand (docs/mcp.md section 13, issue #106): `tools/list` carries the short ones, and `resources/list` and `resources/read` the full help of each property that was shortened."""
+
+    BUDGET = 14336          # bytes of the whole `tools/list` response; it was 44,091 with every help in full
+
+    def rpc(self, *requests):
+        lines = [{"jsonrpc": "2.0", "id": n + 1, **r} for n, r in enumerate(requests)]
+        responses, status = talk(root(), lines)
+        self.assertEqual(status, 0)
+        return responses
+
+    def test_tools_list_is_within_its_budget_and_every_text_in_it_is_short(self):
+        [r] = self.rpc({"method": "tools/list"})
+        size = len(json.dumps(r, separators=(",", ":")))
+        self.assertLessEqual(size, self.BUDGET, size)
+        tool = r["result"]["tools"][0]
+        for name, schema in tool["inputSchema"]["properties"].items():
+            self.assertLessEqual(len(schema["description"]), mcp.LONGEST_HELP, name)
+        self.assertIn("table://help/", tool["description"])
+        self.assertIn("table://help/tool", tool["description"])
+
+    def test_every_shortened_property_has_its_full_help_as_a_resource(self):
+        [listing] = self.rpc({"method": "resources/list"})
+        uris = [x["uri"] for x in listing["result"]["resources"]]
+        self.assertEqual(uris[0], "table://help/tool")
+        self.assertEqual(uris[1:], sorted("table://help/" + k for k in SHORT["properties"]))
+        self.assertEqual(len(set(uris)), len(uris))
+        help_of = {f["name"][2:]: f["help"] for f in introspect()["flags"]}
+        help_of["file"] = introspect()["operands"][0]["help"] + " Give exactly one of `file` and `stdin`."
+        help_of["stdin"] = mcp.STDIN_HELP
+        reads = self.rpc(*[{"method": "resources/read", "params": {"uri": u}} for u in uris])
+        for u, r in zip(uris, reads):
+            with self.subTest(uri=u):
+                [c] = r["result"]["contents"]
+                self.assertEqual((c["uri"], c["mimeType"]), (u, "text/plain"))
+                name = u[len("table://help/"):]
+                if name == "tool":
+                    self.assertEqual(c["text"], introspect()["summary"] + mcp.DESCRIPTION_SUFFIX)
+                else:
+                    self.assertEqual(c["text"], help_of[name])
+                    self.assertGreater(len(c["text"]), len(SHORT["properties"][name]))
+
+    def test_a_property_that_is_short_already_has_no_resource(self):
+        [listing] = self.rpc({"method": "resources/list"})
+        names = {x["uri"][len("table://help/"):] for x in listing["result"]["resources"]}
+        for f in introspect()["flags"]:
+            name = f["name"][2:]
+            if name in SHORT["properties"] or name == "root":
+                continue
+            self.assertNotIn(name, names)
+            self.assertLessEqual(len(f["help"]), mcp.LONGEST_HELP, name)
+
+    def test_an_unknown_resource_is_refused_with_its_rule(self):
+        for uri in ("table://help/nope", "table://help/", "table://help/where/more", "file:///etc/passwd", "", "TABLE://help/where"):
+            with self.subTest(uri=uri):
+                [r] = self.rpc({"method": "resources/read", "params": {"uri": uri}})
+                self.assertEqual((r["error"]["code"], r["error"]["data"]["rule"]), (-32002, "mcp.unknown-resource"))
+        [r] = self.rpc({"method": "resources/read", "params": {}})
+        self.assertEqual(r["error"]["data"]["rule"], "mcp.unknown-resource")
+        [r] = self.rpc({"method": "resources/read", "params": {"uri": 5}})
+        self.assertEqual(r["error"]["data"]["rule"], "mcp.unknown-resource")
+
+    def test_the_resource_methods_are_the_only_ones_added(self):
+        [r] = self.rpc({"method": "resources/subscribe", "params": {"uri": "table://help/tool"}})
+        self.assertEqual(r["error"]["data"]["rule"], "mcp.unknown-method")
+        self.assertIn("resources/list", r["error"]["message"])
+
+    def test_a_server_built_without_short_texts_serves_no_resources_and_the_long_help(self):
+        # the generator reads server/short.json when it is there; a server built without it is the server of before section 13
+        real = mcp.SHORT
+        mcp.SHORT = pathlib.Path("/nonexistent/short.json")
+        out = pathlib.Path(tempfile.mkdtemp(prefix="mcp-noshort-"))
+        try:
+            mcp.build(str(BIN), str(BIN.resolve()), str(out / "mcp"))
+        finally:
+            mcp.SHORT = real
+        try:
+            data = b"".join(json.dumps(l).encode() + b"\n" for l in (
+                {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                {"jsonrpc": "2.0", "id": 2, "method": "resources/list"},
+                {"jsonrpc": "2.0", "id": 3, "method": "resources/read", "params": {"uri": "table://help/tool"}},
+                {"jsonrpc": "2.0", "id": 4, "method": "tools/list"}))
+            p = subprocess.run([str(out / "mcp"), "--root", str(root())], input=data, capture_output=True, timeout=120)
+            responses = [json.loads(x) for x in p.stdout.split(b"\n") if x]
+        finally:
+            shutil.rmtree(out, ignore_errors=True)
+        self.assertEqual(responses[0]["result"]["capabilities"], {"tools": {"listChanged": False}})
+        self.assertEqual(responses[1]["error"]["data"]["rule"], "mcp.unknown-method")
+        self.assertEqual(responses[2]["error"]["data"]["rule"], "mcp.unknown-method")
+        tool = responses[3]["result"]["tools"][0]
+        self.assertTrue(tool["description"].startswith(introspect()["summary"]))
+        self.assertGreater(len(json.dumps(responses[3])), 40000)
+
+    def test_a_server_for_a_tool_without_short_texts_has_no_resources(self):
+        d = json.loads(json.dumps(introspect()))
+        entry, tables, props = mcp.definition(d)
+        self.assertEqual(tables["helps"], {})
+        text = mcp.tools_cho(entry, tables, props, d, {}, mcp.DEFAULT_BIN, "pin")
+        self.assertIn("pub fn help_count() -> [] int {\n    return 0;", text)
+        self.assertNotIn('"resources":{', text)
+
+    def test_the_generator_refuses_what_would_be_false(self):
+        d = json.loads(json.dumps(introspect()))
+        short = json.loads(json.dumps(SHORT))
+        entry, tables, props = mcp.definition(d, short)
+        self.assertEqual(set(tables["helps"]), set(short["properties"]) | {"tool"})
+        # a text for something that is no property
+        bad = json.loads(json.dumps(short))
+        bad["properties"]["nope"] = "x"
+        with self.assertRaises(SystemExit) as caught:
+            mcp.definition(d, bad)
+        self.assertIn("nope", str(caught.exception))
+        # a short text that is not shorter than the help
+        bad = json.loads(json.dumps(short))
+        bad["properties"]["max-bytes"] = "x" * 400
+        with self.assertRaises(SystemExit):
+            mcp.definition(d, bad)
+        # a short text over the bound
+        bad = json.loads(json.dumps(short))
+        bad["properties"]["where"] = "x" * (mcp.LONGEST_HELP + 1)
+        with self.assertRaises(SystemExit):
+            mcp.definition(d, bad)
+        # a long help with no short text
+        help_of = {f["name"][2:]: f["help"] for f in d["flags"]}
+        help_of["file"] = d["operands"][0]["help"] + " Give exactly one of `file` and `stdin`."
+        help_of["stdin"] = mcp.STDIN_HELP
+        for gone in short["properties"]:
+            if len(help_of[gone]) <= mcp.LONGEST_HELP:
+                continue
+            bad = json.loads(json.dumps(short))
+            del bad["properties"][gone]
+            with self.assertRaises(SystemExit, msg=gone):
+                mcp.definition(d, bad)
 
 
 class Structured(unittest.TestCase):

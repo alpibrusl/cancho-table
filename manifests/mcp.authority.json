@@ -86,6 +86,7 @@
     "bit_length",
     "bit_length_of",
     "bytes",
+    "capabilities",
     "channels",
     "channels_with_errors",
     "child_token",
@@ -122,6 +123,9 @@
     "fits_int",
     "flags",
     "get",
+    "help_contents",
+    "help_count",
+    "help_uri",
     "hex4",
     "hex_digit",
     "hex_value",
@@ -167,6 +171,7 @@
     "read_again",
     "read_end",
     "read_too_much",
+    "resources_result",
     "rule_of",
     "running",
     "second_range",
@@ -189,7 +194,7 @@
     "width_of",
     "wrong"
   ],
-  "folded_operators": 49,
+  "folded_operators": 51,
   "folded_calls": 0,
-  "functions": 184
+  "functions": 190
 }
