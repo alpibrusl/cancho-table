@@ -1915,7 +1915,7 @@ fn run[&h, &g, &f, &i](heap: &!h Heap, args: &g Args, fs: &f Fs(""), io: &!i Io)
         if refused > 0 {
             if unsupported_join_type(args) {
                 fail.drop(heap, e);
-                e = jnfail.type_unsupported(heap);
+                e = jnfail.type_unsupported(heap, args, p, refused > 1);
             }
         }
         status = body(heap, args, p, fs, io, e);

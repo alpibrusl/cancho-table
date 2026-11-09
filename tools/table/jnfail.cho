@@ -14,6 +14,7 @@ import std.vec;
 import dtjoin;
 import finish;
 import jnguard;
+import jnright;
 import jnswap;
 import toolbox.cli;
 import toolbox.fail;
@@ -131,11 +132,25 @@ fn stem_prefix[&h, &s](heap: &!h Heap, shown: &s [byte]) -> [heap] buffer.Buffer
     return buffer.push(heap, out, byte_of('_'));
 }
 
-// `join.type-unsupported`: `--join-type right` (docs/join-redesign.md, F0a). Raised in place of the generic `args.bad-value` of a word flag, so that the refusal says what to write. (`full` is a join type since F1a.) No repair
-// is offered: the exchanged call has the other file's rows first and the other file's columns first, so it is not the same answer, and the reader decides (F0b of the design is the repair, not built).
-pub fn type_unsupported[&h](heap: &!h Heap) -> [heap] fail.Errors {
-    var o = fail.open_in(heap, finish.extra(), "join.type-unsupported", "this --join-type is not built: the join types are inner, left, semi, anti and full", "write a left join with the two files exchanged: the --join file as FILE and FILE as --join, each --on pair read the other way, so the rows come in the other file's order and its columns first, and --select keeps the old column order");
-    o = fail.repair_none(heap, o, "the exchanged call is not the same answer (the other file's row order and column order), so it is not offered as a call: the hint says how to write it");
+// `join.type-unsupported`: `--join-type right` (docs/join-redesign.md, F0a and F0b). Raised in place of the generic `args.bad-value` of a word flag, so that the refusal says what to write. (`full` is a join type
+// since F1a.) The repair is the call with the two files exchanged and `--join-type left` (`jnright`), offered when nothing in the call depends on the files or on which one is the probe; it is not the same
+// answer (the other file's rows first, in its order, and its columns first), and the hint says so. Otherwise there is none, and `repair.reason` says why.
+pub fn type_unsupported[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, others: bool) -> [heap, args] fail.Errors {
+    var o = fail.open_in(heap, finish.extra(), "join.type-unsupported", "this --join-type is not built: the join types are inner, left, semi, anti and full", "a right join is a left join with the two files exchanged: the --join file as FILE and FILE as --join, each --on pair read the other way. The rows come in the other file's order and its columns first (add --select to put the columns back in the old order). Where the call allows it, the repair is that call");
+    let code = jnright.code_of(heap, args, parsed, others);
+    var done = false;
+    if code == 0 {
+        let (o2, wrote) = jnright.retry(heap, o, args, parsed);
+        o = o2;
+        done = wrote;
+    }
+    if !done {
+        if code == 0 {
+            o = fail.repair_none(heap, o, "the exchanged call could not be written from the arguments: write it as the hint says");
+        } else {
+            o = fail.repair_none(heap, o, jnright.reason_of(code));
+        }
+    }
     o = fail.detail_open(heap, o);
     o = fail.detail_str(heap, o, "flag", "--join-type");
     o = fail.detail_str(heap, o, "value", "right");

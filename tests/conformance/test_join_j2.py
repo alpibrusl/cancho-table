@@ -464,14 +464,15 @@ class Flags(unittest.TestCase):
             self.assertEqual(self.rule("--join", "b.csv", "--on", "k=id", "--join-type", t), (2, "args.bad-value"), t)
 
     def test_right_is_refused_with_a_rule_that_says_what_to_write(self):
-        # docs/join-redesign.md F0a: the word people mean is answered with its own rule, in both spellings of the flag, exit 2, no repair
+        # docs/join-redesign.md F0a: the word people mean is answered with its own rule, in both spellings of the flag, exit 2
         for argv in (("--join-type", "right"), ("--join-type=right",)):
             r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", *argv, "p.csv")
             self.assertEqual((r.status, r.first_rule()), (2, "join.type-unsupported"), argv)
             err = r.error()
             self.assertEqual((err["detail"]["flag"], err["detail"]["value"], err["detail"]["expected"]), ("--join-type", "right", "inner/left/semi/anti/full"))
             self.assertIn("left", err["hint"], argv)
-            self.assertEqual(err["repair"]["kind"], "none", argv)
+            # (F0b: this call has a repair, the exchanged call; test_join_right.py holds the gates of it)
+            self.assertEqual(err["repair"]["kind"], "retry", argv)
         # as csv it is a sentence on standard error with the rule, and the same status
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--join-type", "right", "--format", "csv", "p.csv")
         self.assertEqual(r.status, 2)

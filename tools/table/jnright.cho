@@ -1,0 +1,187 @@
+edition 5;
+
+module jnright;
+
+// The repair of `join.type-unsupported` for `--join-type right` (F0b of docs/join-redesign.md): `A right join B` is `B left join A` with the columns of B first and the rows in B's order, so the repair is
+// the call with the operand and the `--join` file exchanged, each `--on` pair read the other way, and `--join-type left`. It is written from the arguments alone (the files are not opened: the refusal is
+// raised before they are), so it is offered only when nothing in the call depends on what the files hold or on which one is the probe.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import jnflags;
+import jnswap;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+
+// 0 when the exchanged call is the right join, else why not (the words are `reason_of`): 1 no operand (standard input, or more than one), 2 an operand written like a flag, 3 `--join` or `--on` missing or unusable,
+// 4 `--join-prefix`, 5 `--join-where`, 6 `--join-sorted`, 7 a reader flag for one of the files, 8 a position (`#`) in the plan, 9 a typed shared-name key, 10 another flag of the call refused too.
+pub fn code_of[&h, &g, &p](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, others: bool) -> [heap, args] int {
+    let table = spec.flag_table();
+    if others {
+        return 10;
+    }
+    if cli.operand_count(parsed) != 1 {
+        return 1;
+    }
+    let oi = cli.operand_index(parsed, 0);
+    if oi < 0 || len(arg(args, oi)) == 0 || int_of(arg(args, oi)[0]) == '-' {
+        return 2;
+    }
+    if !cli.has(parsed, table, "join") || !cli.has(parsed, table, "on") {
+        return 3;
+    }
+    var unusable = len(cli.text(args, parsed, table, "join")) == 0;
+    let on = jnflags.on_of(heap, args, parsed, "");
+    borrow on as &onr in {
+        unusable = unusable || onr.status != 0 || onr.pairs == 0;
+    }
+    jnflags.drop_on(heap, on);
+    if unusable {
+        return 3;
+    }
+    if cli.has(parsed, table, "join-prefix") {
+        return 4;
+    }
+    if cli.has(parsed, table, "join-where") {
+        return 5;
+    }
+    if cli.has(parsed, table, "join-sorted") {
+        return 6;
+    }
+    if cli.has(parsed, table, "input-format") || cli.has(parsed, table, "fields") || cli.has(parsed, table, "join-input-format") || cli.has(parsed, table, "join-fields") || cli.has(parsed, table, "join-delimiter") {
+        return 7;
+    }
+    var i = 0;
+    while i < arg_count(args) {
+        if i != oi && has_hash(arg(args, i)) {
+            return 8;
+        }
+        i = i + 1;
+    }
+    let (typed, using) = jnswap.on_facts(heap, args, parsed, "");
+    unbox_slice(heap, using);
+    if typed {
+        return 9;
+    }
+    return 0;
+}
+
+fn has_hash[&a](text: &a [byte]) -> [] bool {
+    var k = 0;
+    while k < len(text) {
+        if int_of(text[k]) == '#' {
+            return true;
+        }
+        k = k + 1;
+    }
+    return false;
+}
+
+pub fn reason_of(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "the probe is standard input or the call has no single FILE, and standard input cannot be the --join file of the exchanged call";
+    }
+    if code == 2 {
+        return "FILE is written like a flag, so it cannot be written as the value of --join";
+    }
+    if code == 3 {
+        return "the call has no --join or no --on, or one of them is empty or refused, so there is nothing to exchange";
+    }
+    if code == 4 {
+        return "--join-prefix names the --join file's columns, and the exchange would give the prefix to the other file's";
+    }
+    if code == 5 {
+        return "--join-where filters the --join file before it is held, and in the exchanged call that file is the probe";
+    }
+    if code == 6 {
+        return "--join-sorted declares which file is sorted how, and the exchange changes the sides";
+    }
+    if code == 7 {
+        return "a reader flag (--input-format, --fields, --join-input-format, --join-fields or --join-delimiter) belongs to one of the files, and this repair does not move them";
+    }
+    if code == 8 {
+        return "the plan has a # (a column by position, whose place the exchange changes)";
+    }
+    if code == 9 {
+        return "a typed shared-name key shows the probe file's spelling of the key, which the exchange would change";
+    }
+    return "another flag of the call is refused too, and the exchanged call would be refused for it: fix that flag first";
+}
+
+// The index of the argument holding the value `right` of `--join-type`, and whether the flag and the value are one argument (`--join-type=right`); -1 when there is none.
+fn type_at[&g](args: &g Args) -> [args] (int, bool) {
+    var i = 0;
+    while i < arg_count(args) {
+        let a = arg(args, i);
+        if bytes.equal(a, "--") {
+            return (0 - 1, false);
+        }
+        if bytes.equal(a, "--join-type=right") {
+            return (i, true);
+        }
+        if bytes.equal(a, "--join-type") && i + 1 < arg_count(args) && bytes.equal(arg(args, i + 1), "right") {
+            return (i + 1, false);
+        }
+        i = i + 1;
+    }
+    return (0 - 1, false);
+}
+
+// The repair as `retry`: the whole invocation, written again with the four places changed. Answers the writer holding it and true, or the writer as it was and false when a place is not found.
+pub fn retry[&h, &g, &p](heap: &!h Heap, w: json.Writer, args: &g Args, parsed: &p cli.Parsed) -> [heap, args] (json.Writer, bool) {
+    let table = spec.flag_table();
+    let oi = cli.operand_index(parsed, 0);
+    let ji = cli.value_index(parsed, table, "join");
+    let oni = cli.value_index(parsed, table, "on");
+    let (ti, t_whole) = type_at(args);
+    if oi < 0 || ji < 0 || oni < 0 || ti < 0 {
+        return (w, false);
+    }
+    let j_split = cli.value_is_whole(parsed, table, "join");
+    let on_split = cli.value_is_whole(parsed, table, "on");
+    let swapped_on = jnswap.on_exchanged(heap, args, parsed, "");
+    var o = fail.retry_open(heap, w);
+    var i = 0;
+    while i < arg_count(args) {
+        if i == oi {
+            o = json.put_string(heap, o, cli.text(args, parsed, table, "join"));
+        } else if i == ji {
+            if j_split {
+                o = json.put_string(heap, o, arg(args, oi));
+            } else {
+                var t = buffer.append(heap, buffer.empty(heap, 32), "--join=");
+                t = buffer.append(heap, t, arg(args, oi));
+                borrow t as &tr in {
+                    o = json.put_string(heap, o, buffer.bytes(tr));
+                }
+                buffer.drop(heap, t);
+            }
+        } else if i == oni {
+            borrow swapped_on as &sr in {
+                if on_split {
+                    o = json.put_string(heap, o, buffer.bytes(sr));
+                } else {
+                    var t2 = buffer.append(heap, buffer.empty(heap, 32), "--on=");
+                    t2 = buffer.append(heap, t2, buffer.bytes(sr));
+                    borrow t2 as &tr2 in {
+                        o = json.put_string(heap, o, buffer.bytes(tr2));
+                    }
+                    buffer.drop(heap, t2);
+                }
+            }
+        } else if i == ti {
+            if t_whole {
+                o = json.put_string(heap, o, "--join-type=left");
+            } else {
+                o = json.put_string(heap, o, "left");
+            }
+        } else {
+            o = json.put_string(heap, o, arg(args, i));
+        }
+        i = i + 1;
+    }
+    buffer.drop(heap, swapped_on);
+    return (fail.retry_close(heap, o), true);
+}
