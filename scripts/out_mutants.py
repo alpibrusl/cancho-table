@@ -11,7 +11,8 @@ against the tests. A mutant is killed when the build refuses it or a test fails.
 `--check` only verifies that every site still matches (no build; CI runs it). See mutlib.py.
 
 Not mutated, because no test of a machine that is not out of space can reach it: the names of the steps `write`, `sync` and `rename` in `out.write-failed` (the step `create-temporary` is reached by a read-only directory), the sync of
-the directory after the rename (durability is not observable by a reader), and the in-flight check at one byte under the bound, which the check at the end of the read makes equal (the same answers are refused).
+the directory after the rename (durability is not observable by a reader), and the in-flight check at one byte under the bound, which the check at the end of the read makes equal (the same answers are refused), `--overwrite` in the test for a race (a replacement is never refused with EEXIST, so
+the test `!overwrite` there is equivalent), and the directory-name test of `outfile.deliver` (the look before the run refuses a directory name first: the second is defence in depth), and the full path given to the write beside the relative one (with the `--root` that `--out` requires, the directory is opened by the relative path and the leaf is the same in both).
 """
 import sys
 
@@ -42,11 +43,9 @@ MUTANTS = [
     ("a replacement is made with create", "outfile.cho", "                        if overwrite {\n                            let (errno2, step2) = atomic.replace(", "                        if false {\n                            let (errno2, step2) = atomic.replace("),
     ("a creation is made with replace", "outfile.cho", "                        } else {\n                            let (errno2, step2) = atomic.create(", "                        } else if false {\n                            let (errno2, step2) = atomic.create("),
     ("a raced name is a write failure", "outfile.cho", "                } else if !overwrite && step == 4 && failed == 17 {", "                } else if !overwrite && step == 5 && failed == 17 {"),
-    ("a failure after replacing is a race", "outfile.cho", "                } else if !overwrite && step == 4 && failed == 17 {", "                } else if step == 4 && failed == 17 {"),
     ("two writers of one name share a temporary", "outfile.cho", "                if errno == 0 && !big && end > 0 {", "                if false {"),
     ("the errno of a failed step is lost", "outfile.cho", "    w = fail.detail_int(heap, w, \"errno\", errno);", "    w = fail.detail_int(heap, w, \"errno\", 0);"),
     ("the first step is called another", "outfile.cho", "        w = fail.detail_str(heap, w, \"step\", \"create-temporary\");", "        w = fail.detail_str(heap, w, \"step\", \"create\");"),
-    ("a directory name is writable", "outfile.cho", "    let name = place.leaf(full);\n    if place.is_directory_name(name) {\n        return fail.io_error(heap, e, 21, true, rel);", "    let name = place.leaf(full);\n    if false {\n        return fail.io_error(heap, e, 21, true, rel);"),
     # the receipt
     ("the receipt counts the rows as the bytes", "outfile.cho", "    w = json.put_int(heap, w, size);", "    w = json.put_int(heap, w, rows);"),
     ("the receipt counts the bytes as the rows", "outfile.cho", "    w = json.put_int(heap, w, rows);", "    w = json.put_int(heap, w, size);"),
@@ -59,7 +58,6 @@ MUTANTS = [
     ("a taken name is written over", "table.cho", "                        if there == 1 && !inp.overwrite {", "                        if there == 99999 && !inp.overwrite {"),
     ("an error of the look is ignored", "table.cho", "                        } else if there > 1 {", "                        } else if there > 99999 {"),
     ("--overwrite is not given to the write", "table.cho", "buffer.bytes(cc2), inp.overwrite, e);", "buffer.bytes(cc2), false, e);"),
-    ("the write is given another path", "table.cho", "buffer.bytes(or3), buffer.bytes(of3), inp.out_at, buffer.bytes(cc2)", "buffer.bytes(or3), buffer.bytes(or3), inp.out_at, buffer.bytes(cc2)"),
     ("a json answer is written without its newline", "table.cho", "                content = buffer.push(heap, content, byte_of(10));\n            }", "            }"),
     ("a text answer is written as the document", "table.cho", "            } else if text_mode {\n                borrow plain as &tc in {", "            } else if false {\n                borrow plain as &tc in {"),
     ("the empty answer of JSON lines holds its mark", "table.cho", "                    if !jout.is_mark(buffer.bytes(pc)) {", "                    if true {"),

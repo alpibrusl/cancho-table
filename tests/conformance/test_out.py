@@ -144,17 +144,34 @@ class Bytes(Base):
     def test_a_larger_answer_than_one_block_and_the_sorted_and_the_grouped_forms_of_it(self):
         n = 30000
         self.s.write("big.csv", encode(["id", "k", "v"], [[str(i), "k%d" % (i % 211), str((i * 7919) % 10007)] for i in range(n)]))
+        self.s.write("bigb.csv", encode(["k", "label"], [["k%d" % i, "L%d" % (i % 7)] for i in range(0, 250, 2)]))
+        self.s.write("big.jsonl", "".join(json.dumps({"id": i, "k": "k%d" % (i % 211), "v": (i * 7919) % 10007}) + "\n" for i in range(n)))
         for label, args in [
             ("rows", ["--select", "id,k,v", "--format", "csv", "big.csv"]),
             ("sorted", ["--order-by", "-v:int,id:int", "--format", "csv", "big.csv"]),
             ("grouped", ["--group", "k", "--agg", "count,sum:v", "--sort", "-sum:v", "--format", "csv", "big.csv"]),
             ("jsonl", ["--select", "id,k", "--format", "jsonl", "big.csv"]),
             ("threads", ["--select", "id,k", "--threads", "4", "--parallel-min-bytes", "1", "--chunk-bytes", "65536", "--format", "csv", "big.csv"]),
+            ("sorted threads", ["--order-by", "-v:int,id:int", "--threads", "4", "--parallel-min-bytes", "1", "--chunk-bytes", "65536", "--format", "csv", "big.csv"]),
+            ("grouped threads", ["--group", "k", "--agg", "count,sum:v", "--threads", "4", "--parallel-min-bytes", "1", "--chunk-bytes", "65536", "--format", "csv", "big.csv"]),
+            ("join", ["--join", "bigb.csv", "--on", "k", "--join-prefix", "r_", "--select", "id,k,r_label", "--format", "csv", "big.csv"]),
+            ("join left", ["--join", "bigb.csv", "--on", "k", "--join-prefix", "r_", "--join-type", "left", "--select", "id,k,r_label", "--format", "csv", "big.csv"]),
+            ("join full", ["--join", "bigb.csv", "--on", "k", "--join-prefix", "r_", "--join-type", "full", "--select", "id,k,r_label", "--format", "csv", "big.csv"]),
+            ("join sorted rows", ["--join", "bigb.csv", "--on", "k", "--join-prefix", "r_", "--order-by", "r_label,id:int", "--select", "id,k,r_label", "--format", "csv", "big.csv"]),
+            ("join grouped", ["--join", "bigb.csv", "--on", "k", "--join-prefix", "r_", "--group", "id", "--agg", "count", "--format", "csv", "big.csv"]),
+            ("jsonl input", ["--input-format", "jsonl", "--fields", "id,k,v", "--select", "id,k,v", "--format", "csv", "big.jsonl"]),
+            ("jsonl input threads", ["--input-format", "jsonl", "--fields", "id,k,v", "--select", "id,k", "--threads", "4", "--parallel-min-bytes", "1", "--chunk-bytes", "65536", "--format", "csv", "big.jsonl"]),
+            ("jsonl input sorted", ["--input-format", "jsonl", "--fields", "id,k,v", "--order-by", "-v:int,id:int", "--format", "csv", "big.jsonl"]),
+            ("jsonl input sorted threads", ["--input-format", "jsonl", "--fields", "id,k,v", "--order-by", "-v:int,id:int", "--threads", "4", "--parallel-min-bytes", "1", "--chunk-bytes", "65536", "--format", "csv", "big.jsonl"]),
+            ("jsonl input grouped threads", ["--input-format", "jsonl", "--fields", "id,k,v", "--group", "id", "--agg", "count", "--threads", "4", "--parallel-min-bytes", "1", "--chunk-bytes", "65536", "--format", "csv", "big.jsonl"]),
+            ("jsonl input grouped", ["--input-format", "jsonl", "--fields", "id,k,v", "--group", "id", "--agg", "count", "--format", "csv", "big.jsonl"]),
         ]:
             with self.subTest(label):
                 want = self.plain(args)
                 got = self.out("big_" + label, args)
                 self.assertEqual(got.status, 0, got.stderr)
+                if label not in ("grouped", "grouped threads"):
+                    self.assertGreater(len(want.stdout), 65536, "the answer must pass a block, or no flush is tested: " + label)
                 self.assertEqual(self.read("big_" + label), want.stdout)
         self.assertGreater(len(self.read("big_rows")), 65536 * 3)
 
@@ -181,7 +198,7 @@ class Overwrite(Base):
         self.assertEqual(len(opts), 2)
         self.assertEqual(opts[0][-1], "--overwrite")
         self.assertEqual(opts[1][opts[1].index("--out") + 1], "x-1.csv")
-        self.assertEqual(err["detail"]["path"], "x.csv")
+        self.assertEqual(err["detail"], {"path": "x.csv", "flag": "--out"})
         for argv in opts:
             r = run_argv(argv)
             self.assertEqual(r.status, 0, (argv, r.stderr))
@@ -231,6 +248,7 @@ class Overwrite(Base):
         self.assertEqual(got.status, 1, got.stderr)
         self.assertIn("out.write-failed", got.stderr.decode())
         self.assertIn('"step":"rename"', got.raw_stderr.decode())
+        self.assertIn('"errno":21', got.raw_stderr.decode())
         self.assertTrue((self.dir / "d").is_dir())
         self.assertEqual(listing(self.dir), sorted(["t.csv", "b.csv", "j.jsonl", "d"]))
 
@@ -328,24 +346,62 @@ class Confinement(Base):
         self.assertEqual(listing(self.dir), sorted(["t.csv", "b.csv", "j.jsonl", "sub"]))
 
     def test_a_read_only_directory_is_out_write_failed(self):
-        if os.geteuid() == 0:
-            self.skipTest("root writes into a read-only directory")
         ro = self.dir / "ro"
         ro.mkdir()
         os.chmod(ro, 0o555)
+        os.chmod(self.dir, 0o755)
+        os.chmod(self.dir / "t.csv", 0o644)
+
+        def as_nobody():
+            if os.geteuid() == 0:
+                os.setgid(65534)
+                os.setuid(65534)
+
         try:
-            got = self.out("ro/x.csv", self.ARGS)
-            self.assertEqual(got.status, 1, got.stderr)
-            self.assertIn("out.write-failed", got.stderr.decode())
-            self.assertIn('"step":"create-temporary"', got.raw_stderr.decode())
-            self.assertIn('"errno":13', got.raw_stderr.decode())
+            p = subprocess.run([str(BIN / "table"), "--root", str(self.dir), "--out", "ro/x.csv", *self.ARGS], capture_output=True, preexec_fn=as_nobody)
+            self.assertEqual(p.returncode, 1, p.stderr)
+            self.assertIn(b"out.write-failed", p.stderr)
             self.assertEqual(listing(ro), [])
+            j = subprocess.run([str(BIN / "table"), "--root", str(self.dir), "--out", "ro/x.csv", "--select", "id", "t.csv"], capture_output=True, preexec_fn=as_nobody)
+            self.assertEqual(j.returncode, 1, j.stderr)
+            detail = json.loads(j.stdout)["error"]["detail"]
+            self.assertEqual((detail["path"], detail["errno"], detail["step"]), ("ro/x.csv", 13, "create-temporary"))
         finally:
             os.chmod(ro, 0o755)
 
 
 def encode_expected(case):
     return case.read("t.csv")
+
+
+class Order(Base):
+    """The name is looked at before the run (docs/out.md section 11): a call that cannot succeed does no work, and says what is wrong with the output first."""
+
+    def test_a_missing_directory_is_said_before_a_refusal_of_the_run(self):
+        got = self.out("nodir/x.csv", ["--select", "nope", "--format", "csv", "t.csv"])
+        self.assertEqual(got.status, 3)
+        self.assertIn("io.not-found", got.stderr.decode())
+        self.assertNotIn("select.unknown-column", got.stderr.decode())
+
+    def test_a_directory_name_is_said_before_a_refusal_of_the_run(self):
+        (self.dir / "sub").mkdir(exist_ok=True)
+        for name, rule in ((".", "io.is-a-directory"), ("sub/", "out.exists"), ("sub", "out.exists")):
+            with self.subTest(name):
+                got = self.out(name, ["--select", "nope", "--format", "csv", "t.csv"])
+                self.assertIn(rule, got.stderr.decode(), name)
+                self.assertNotIn("select.unknown-column", got.stderr.decode(), name)
+
+    def test_a_taken_name_is_said_before_a_refusal_of_the_run(self):
+        self.s.write("x.csv", "old\n")
+        got = self.out("x.csv", ["--select", "nope", "--format", "csv", "t.csv"])
+        self.assertIn("out.exists", got.stderr.decode())
+        self.assertNotIn("select.unknown-column", got.stderr.decode())
+
+    def test_an_input_that_is_not_there_is_the_inputs_refusal(self):
+        got = self.out("fine.csv", ["--select", "id", "--format", "csv", "absent.csv"])
+        self.assertEqual(got.status, 3)
+        self.assertIn("io.not-found", got.stderr.decode())
+        self.assertFalse((self.dir / "fine.csv").exists())
 
 
 class Bound(Base):
