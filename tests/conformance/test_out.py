@@ -211,6 +211,19 @@ class Overwrite(Base):
         opts = [o["argv"] for o in err["repair"]["options"]]
         self.assertEqual(opts[1][opts[1].index("--out") + 1], "x-3.csv")
 
+    def test_the_equals_spelling_of_out(self):
+        got = run(*self.root, "--out=eq.csv", *self.ARGS)
+        self.assertEqual(got.status, 0, got.stderr)
+        self.assertEqual(got.doc()["data"]["out"]["path"], "eq.csv")
+        self.assertTrue((self.dir / "eq.csv").exists())
+        err = run(*self.root, "--out=eq.csv", "--select", "id", "t.csv").error()
+        opts = [o["argv"] for o in err["repair"]["options"]]
+        self.assertIn("--out=eq-1.csv", opts[1])
+        self.assertEqual(run_argv(opts[1]).status, 0)
+        self.assertTrue((self.dir / "eq-1.csv").exists())
+        bad = run(*self.root, "--out=../x.csv", *self.ARGS)
+        self.assertIn("path.dotdot", bad.stderr.decode())
+
     def test_no_free_name_among_the_first_nine_is_one_option(self):
         self.s.write("x.csv", "old\n")
         for n in range(1, 10):

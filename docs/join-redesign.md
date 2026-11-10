@@ -79,7 +79,7 @@ The 1.5 and 2 are choices, not measurements. S0 measured the *shared* read at 2.
 
 1. **F0** (done as F0a, section 7.2), **S10** (done, section 8: R1 not kept). Independent.
 2. **F1** (`full`), after a one-page design in this file's style: the formula, the order, the gates (every type's existing answers unchanged; `full` equals a `left` join followed by the unmatched build rows, computed independently in Python; the thread counts of J8).
-3. **F2** after `--out` exists.
+3. **F2** after `--out` exists. **Built (issue #115)**: docs/joins.md 8.5 says what it does and does not offer.
 4. ~~R1 as J6b~~: S10 did not pass its criterion (section 8). The threaded probe waits for the compiler.
 
 ## 6. What was measured, and what was not

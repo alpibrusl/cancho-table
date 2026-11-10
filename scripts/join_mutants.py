@@ -81,7 +81,7 @@ MUTANTS = [
     ("an escaped equals sign splits the pair", "jnflags.cho", "                if d == ',' || d == 92 || d == '=' || d == ':' || d == '#' {", "                if d == ',' || d == 92 || d == ':' || d == '#' {"),
     ("--on without --join is accepted", "jnflags.cho", '        if cli.has(parsed, table, "on") || cli.has(parsed, table, "join-prefix")', '        if cli.has(parsed, table, "on-never") || cli.has(parsed, table, "join-prefix")'),
     ("--join - is accepted", "jnflags.cho", '        if bytes.equal(buffer.bytes(pr), "-") {', '        if bytes.equal(buffer.bytes(pr), "--") {'),
-    ("a report over a join is accepted", "jnflags.cho", "    } else if inp.has_report {\n        e = flags.problem(heap, e, \"args.conflict\", \"--report types describes", "    } else if false {\n        e = flags.problem(heap, e, \"args.conflict\", \"--report types describes"),
+    ("a report over a join is accepted", "jnflags.cho", "    if inp.has_report {\n        var others = false;", "    if inp.has_report && false {\n        var others = false;"),
     ("--max-join-rows has no ceiling", "jnflags.cho", "        if n < 1 || n > 1000000000 {", "        if n < 1 {"),
     ("--max-join-rows is ignored", "jnrun.cho", '    let max_join = cli.nat(args, parsed, table, "max-join-rows");', "    let max_join = 10000000;"),
     ("a query beside a join is accepted", "table.cho", '    if inp.has_join {\n        clash = buffer.append(heap, clash, " --join");\n        clashed = true;\n    }', '    if inp.has_join && false {\n        clash = buffer.append(heap, clash, " --join");\n        clashed = true;\n    }'),

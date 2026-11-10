@@ -1633,18 +1633,19 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7, &s8, &s9](he
             outing = fail.count(er0) == 0;
         }
         if outing {
+            // (the path is checked from its text, as a query's `from` is: `--out=NAME` is one argument, and `path.operand` reads a whole argument)
             borrow root as &rr0 in {
-                let (target, checked) = path.operand(heap, args, buffer.bytes(rr0), inp.out_at, e);
+                let (full0, shown_at0, checked) = qpath.resolve(heap, buffer.bytes(rr0), inp.out_text, e);
                 e = checked;
-                borrow target as &tp0 in {
-                    if path.ok(tp0) {
-                        out_rel = buffer.append(heap, out_rel, path.shown(tp0));
-                        out_full = buffer.append(heap, out_full, path.full(tp0));
+                borrow full0 as &fr1 in {
+                    if shown_at0 >= 0 {
+                        out_full = buffer.append(heap, out_full, buffer.bytes(fr1));
+                        out_rel = buffer.append(heap, out_rel, buffer.bytes(fr1)[shown_at0..len(buffer.bytes(fr1))]);
                     } else {
                         outing = false;
                     }
                 }
-                path.drop(heap, target);
+                buffer.drop(heap, full0);
             }
         }
         if outing {
@@ -1655,7 +1656,7 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7, &s8, &s9](he
                         if there == 1 && !inp.overwrite {
                             let free = outfile.free_name(heap, fs, buffer.bytes(rr1), buffer.bytes(or1), buffer.bytes(of1));
                             borrow free as &fr0 in {
-                                e = outfile.exists(heap, e, args, inp.out_at, buffer.bytes(or1), buffer.bytes(fr0));
+                                e = outfile.exists(heap, e, args, inp.out_at, cli.value_is_whole(parsed, table, "out"), buffer.bytes(or1), buffer.bytes(fr0));
                             }
                             buffer.drop(heap, free);
                             outing = false;
@@ -1804,7 +1805,7 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7, &s8, &s9](he
                     borrow out_rel as &or3 in {
                         borrow out_full as &of3 in {
                             borrow content as &cc2 in {
-                                e = outfile.deliver(heap, args, fs, buffer.bytes(rr2), buffer.bytes(or3), buffer.bytes(of3), inp.out_at, buffer.bytes(cc2), inp.overwrite, e);
+                                e = outfile.deliver(heap, args, fs, buffer.bytes(rr2), buffer.bytes(or3), buffer.bytes(of3), inp.out_at, cli.value_is_whole(parsed, table, "out"), buffer.bytes(cc2), inp.overwrite, e);
                             }
                         }
                     }
