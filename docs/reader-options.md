@@ -1,6 +1,6 @@
 # Reader options for dirty exports: `--skip-lines`, `--skip-prefix`, `--na`, `--decimal`, `--thousands` (issue #109): a design
 
-> **Status: a design, nothing built.** Written 2026-11-10 for cancho-table#109, slice 2 of #101; #111 (decided 2026-11-09, `docs/backlog.md` item 14) says `table` takes **read-time rules only**, and these are those. It follows the rules of `docs/numbers.md`: what is measured is said as measured (here only counts of places in the code, by grep), the rest is a reading of the code or a judgement, and what only a person can decide is in section 7. Nothing here is a claim about speed: **every cost below is unmeasured**, and the gate for each slice is that the reader's cost without the options is the cost of `main` (section 6).
+> **Status: accepted by the maintainer on 2026-11-10 (section 7, decisions 1 to 6, all as proposed); building follows with O1 (section 8).** Written 2026-11-10 for cancho-table#109, slice 2 of #101; #111 (decided 2026-11-09, `docs/backlog.md` item 14) says `table` takes **read-time rules only**, and these are those. It follows the rules of `docs/numbers.md`: what is measured is said as measured (here only counts of places in the code, by grep), the rest is a reading of the code or a judgement, and what only a person can decide is in section 7. Nothing here is a claim about speed: **every cost below is unmeasured**, and the gate for each slice is that the reader's cost without the options is the cost of `main` (section 6).
 
 ## 1. What the options are
 
@@ -62,3 +62,7 @@ The rule tags (a new `parse.csv-no-header`, or the existing ones with a detail),
 6. **The order**: O1, O2, then O3 after its measure (proposed), or O3 first because the markers are what the evidence of #101 mostly shows.
 
 **Not measured:** every cost above, and whether the five options are the ones that dirty exports need (the evidence in #101 is three runs of one model on one task: it shows where agents leave the tool, not that all of the list belongs in `table`).
+
+## 8. Decided, 2026-11-10
+
+The maintainer answered "yes to all six, as proposed": (1) **no trailer** (`--skip-suffix-rows` is not built; a trailer is removed with `--where`, or by the cleaning tool of #111); (2) `--skip-prefix` acts **before the header only**; (3) `--na` reads a marker as the empty cell **everywhere, in the output too**; (4) the options apply to **FILE and the `--join` file alike**, with no `--join-` family yet; (5) a bad number is the existing **`value.not-decimal` / `value.not-float` with a `detail.syntax`**, no new tag; (6) the order is **O1, O2, then O3 after its cost is measured**. O4 (the trailer) is therefore dropped. O1 is next.
