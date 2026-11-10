@@ -191,6 +191,14 @@ class Rules(Base):
         r = run(*self.root, "--skip-lines", "1", "--join", "b.csv", "--on", "id", "--join-prefix", "r_", "p.csv")
         self.assertEqual(r.status, 3)      # the --join file has no title line, so its header went with the first line: that is what "both files alike" means
 
+    def test_a_blank_line_among_the_first_lines_of_a_join_file_is_counted(self):
+        self.put("p.csv", ["id", "name"], [["1", "ann"]], ["T", ""])
+        self.put("b.csv", ["id", "city"], [["1", "Oslo"]], ["C", ""])
+        d, skipped = self.data(run(*self.root, "--skip-lines", "2", "--join", "b.csv", "--on", "id", "--join-prefix", "r_", "p.csv"))
+        self.assertEqual((d["row_count"], skipped), (1, {"lines": 2, "join_lines": 2}))
+        e = run(*self.root, "--explain", "--skip-lines", "2", "--join", "b.csv", "--on", "id", "--join-prefix", "r_", "p.csv")
+        self.assertEqual(e.status, 0, e.stdout[:300])
+
     def test_a_json_lines_join_file_refuses_the_options(self):
         self.put("p.csv", ["id"], [["1"]], ["T"])
         self.s.write("b.jsonl", '{"id":1}\n')
