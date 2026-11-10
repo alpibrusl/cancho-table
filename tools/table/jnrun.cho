@@ -26,6 +26,7 @@ import jnjson;
 import jnmerge;
 import jnpart;
 import jnpbuild;
+import preamble;
 import jnprune;
 import jnread;
 import jnswap;
@@ -126,6 +127,12 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
     }
     var bdecl = jnjson.no_decl(heap);
     var pdecl = jnjson.no_decl(heap);
+    // `--skip-lines` and `--skip-prefix` (docs/reader-options.md) apply to both CSV files; the lines each dropped are counted in the answer
+    let skip_n = query.skip_of(tree);
+    let skip_prefix = preamble.prefix(args, query.skipp_of(tree));
+    let skip_on = skip_n > 0 || len(skip_prefix) > 0;
+    var skipped_p = -1;
+    var skipped_b = -1;
     var rb = lines.start(heap, cap);
     var hb = jnhead.no_head(heap);
     if fmt.b_jsonl {
@@ -136,8 +143,9 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
         jnhead.drop_head(heap, hb);
         hb = h1;
     } else {
-        let (rb1, hb1) = jnhead.head_of(heap, rb, bfile, io, false, cap, bdelim);
+        let (rb1, hb1, sb1) = jnhead.head_of(heap, rb, bfile, io, false, cap, bdelim, skip_n, skip_prefix);
         rb = rb1;
+        skipped_b = sb1;
         jnhead.drop_head(heap, hb);
         hb = hb1;
     }
@@ -157,8 +165,9 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
             jnhead.drop_head(heap, hp);
             hp = h2;
         } else {
-            let (rp1, hp1) = jnhead.head_of(heap, rp, pfile, io, stdin, cap, delim);
+            let (rp1, hp1, sp1) = jnhead.head_of(heap, rp, pfile, io, stdin, cap, delim, skip_n, skip_prefix);
             rp = rp1;
+            skipped_p = sp1;
             jnhead.drop_head(heap, hp);
             hp = hp1;
         }
@@ -277,7 +286,7 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
         sort_slot = fsort_slot;
         sort_desc = fdesc;
         if fabort != 0 {
-            c = finish.Counts { columns: ncols, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: fabort, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: fbad, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+            c = finish.Counts { columns: ncols, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: fabort, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: fbad, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0, skipped: -1, skipped_join: -1 };
             go = false;
         }
     }
@@ -940,7 +949,7 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
         let (after, ok) = engine.flush_last(io, out_rows, query.hold_of(tree));
         out_rows = after;
         if !ok {
-            c = finish.Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: c.groups };
+            c = finish.Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: c.groups, skipped: -1, skipped_join: -1 };
         }
     }
     // the refusal of the probe (or of the plan, at the header), if there is one
@@ -1020,6 +1029,9 @@ fn run[&h, &g, &p, &f, &b, &s, &t, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, a
     jnhead.drop_head(heap, hp);
     jnjson.drop_decl(heap, bdecl);
     jnjson.drop_decl(heap, pdecl);
+    if skip_on {
+        c = finish.with_skipped(c, skipped_p, skipped_b);
+    }
     return (c, head, out_rows, jnames, jends, e);
 }
 

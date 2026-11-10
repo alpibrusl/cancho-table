@@ -15,6 +15,7 @@ import explain;
 import finish;
 import frame;
 import jnfail;
+import preamble;
 import jnflags;
 import jnswap;
 import jnfmt;
@@ -362,7 +363,9 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
     } else if !stdin {
         borrow mut pfile as &!ph in {
             jnhead.drop_head(heap, hp);
-            hp = explain.read_head(heap, ph, cap, delim, 0);
+            borrow tree0 as &tq in {
+                hp = explain.read_head(heap, ph, cap, delim, 0, query.skip_of(tq), preamble.prefix(args, query.skipp_of(tq)));
+            }
             psize = size_of(ph);
         }
     }
@@ -400,7 +403,9 @@ pub fn settle[&h, &g, &p, &s, &rt, &fs, &x](heap: &!h Heap, args: &g Args, parse
                             jnjson.drop_decl(heap, bd);
                             hb = bh0;
                         } else {
-                            hb = explain.read_head(heap, bh, cap, bdelim, 0);
+                            borrow tree0 as &tq in {
+                                hb = explain.read_head(heap, bh, cap, bdelim, 0, query.skip_of(tq), preamble.prefix(args, query.skipp_of(tq)));
+                            }
                         }
                         bsize = size_of(bh);
                     }

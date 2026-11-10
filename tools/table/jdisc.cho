@@ -296,7 +296,7 @@ pub fn run[&h, &g, &p, &f, &s, &i](heap: &!h Heap, args: &g Args, parsed: &p cli
     var examined = 0;
     var complete = false;
     var going = true;
-    var c = finish.Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+    var c = finish.Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0, skipped: -1, skipped_join: -1 };
     borrow mut tally as &!tw in {
         let a = contents(tw);
         borrow mut tape as &!tpw in {
@@ -371,7 +371,7 @@ pub fn run[&h, &g, &p, &f, &s, &i](heap: &!h Heap, args: &g Args, parsed: &p cli
                 }
             }
         }
-        c = finish.Counts { columns: 0, records: a[engine.k_records()], ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: a[engine.k_abort()], abort_line: a[engine.k_abort_line()], long_length: a[engine.k_long()], emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: a[engine.k_err_fn()], err_row: a[engine.k_err_row()], err_line: a[engine.k_err_line()], err_cond: a[engine.k_err_cond()], err_digits: a[engine.k_err_digits()], groups: 0 };
+        c = finish.Counts { columns: 0, records: a[engine.k_records()], ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: a[engine.k_abort()], abort_line: a[engine.k_abort_line()], long_length: a[engine.k_long()], emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: a[engine.k_err_fn()], err_row: a[engine.k_err_row()], err_line: a[engine.k_err_line()], err_cond: a[engine.k_err_cond()], err_digits: a[engine.k_err_digits()], groups: 0, skipped: -1, skipped_join: -1 };
     }
     var errno = 0;
     borrow r as &rr in {

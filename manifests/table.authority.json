@@ -464,6 +464,7 @@
     "k_records",
     "k_records",
     "k_size",
+    "k_skipped",
     "k_sort_desc",
     "k_sort_field",
     "k_sort_slot",
@@ -774,7 +775,10 @@
     "size$int",
     "size_for",
     "skip",
+    "skip_of",
     "skip_space",
+    "skipp_of",
+    "skips",
     "slash",
     "slot_count",
     "slot_count",
@@ -864,6 +868,8 @@
     "width_of",
     "width_of",
     "with_hold",
+    "with_skip",
+    "with_skipped",
     "within",
     "word",
     "word_at",
@@ -889,5 +895,5 @@
   ],
   "folded_operators": 370,
   "folded_calls": 0,
-  "functions": 1492
+  "functions": 1500
 }

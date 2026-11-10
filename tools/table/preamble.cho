@@ -1,0 +1,27 @@
+edition 5;
+
+module preamble;
+
+// The lines above the header that `--skip-lines` and `--skip-prefix` drop (docs/reader-options.md, O1). The readers call `skips` for a line before the header only; a data line never reaches it.
+
+import std.bytes;
+
+// The text of `--skip-prefix`, from the argument that holds it: `ref` is 2 * index + 1 when the value is an argument of its own and 2 * index for `--skip-prefix=VALUE`. Empty when there is none.
+pub fn prefix[&g](args: &g Args, ref: int) -> [args] &g [byte] {
+    if ref < 0 {
+        return "";
+    }
+    let a = arg(args, ref / 2);
+    if ref % 2 == 1 {
+        return a;
+    }
+    return a[14..len(a)];
+}
+
+// Whether the line is one the options drop: it is among the first `lines` physical lines of the file (`lines` is N + 1 for `--skip-lines N`, 0 for none), or it starts with the prefix.
+pub fn skips[&l, &p](number: int, line: &l [byte], lines: int, prefix: &p [byte]) -> [] bool {
+    if lines > 0 && number < lines {
+        return true;
+    }
+    return len(prefix) > 0 && bytes.starts_with(line, prefix);
+}

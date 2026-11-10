@@ -426,7 +426,7 @@ fn place_all[&m, &s](meta: &m [int], slots: &!s [int], from: int, to: int) -> []
 }
 
 fn empty_counts(nb: int, records: int) -> [] finish.Counts {
-    return finish.Counts { columns: nb, records: records, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+    return finish.Counts { columns: nb, records: records, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0, skipped: -1, skipped_join: -1 };
 }
 
 // The build of the `--join` file by threads. Answers whether it was done, the table and what was counted: when it was not done (the build must be read by one thread) the table is an empty one and nothing else is to
