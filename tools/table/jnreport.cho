@@ -1,0 +1,162 @@
+edition 5;
+
+module jnreport;
+
+// The repair of `--report` over a join (F2 of docs/join-redesign.md, issue #115). A report over a join stays `args.conflict` (docs/joins.md 8.5: the joined row has padded cells and a key with two spellings, and a
+// report would count them as the cells of one file); what the caller can do is write the join to a file and report on that, which `--out` (docs/out.md) makes one call. The repair is that first call, the whole
+// invocation written again without `--report` and with `--format=csv --out=joined.csv`; the hint names the second call (`table --root DIR --report types joined.csv`) and says the first will not overwrite a file.
+// It is offered only when the call is the join and the report and nothing else that the two calls would have to share out: a flag of rows, groups or a page (`--select`, `--where`, `--limit`, ...) belongs to one of
+// them and the repair does not decide which; then there is none, and `repair.reason` says why.
+
+import std.buffer;
+import std.bytes;
+import std.json;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+
+// The file the first call writes, beneath `--root`.
+pub fn file_name() -> [] &static [byte] {
+    return "joined.csv";
+}
+
+// 0 when the first call can be written, else why not (`reason_of`): 1 no `--root` (`--out` needs one), 2 `--out` or `--format` given, 3 a flag of rows, groups or a page, 4 another flag of the call was refused too.
+pub fn code_of[&p](parsed: &p cli.Parsed, others: bool) -> [] int {
+    let table = spec.flag_table();
+    if others {
+        return 4;
+    }
+    if !cli.has(parsed, table, "root") {
+        return 1;
+    }
+    if cli.has(parsed, table, "out") || cli.has(parsed, table, "format") {
+        return 2;
+    }
+    if cli.has(parsed, table, "select") || cli.has(parsed, table, "where") || cli.has(parsed, table, "limit") || cli.has(parsed, table, "from") || cli.has(parsed, table, "max-bytes") {
+        return 3;
+    }
+    if cli.has(parsed, table, "group") || cli.has(parsed, table, "agg") || cli.has(parsed, table, "order-by") || cli.has(parsed, table, "sort") || cli.has(parsed, table, "top") {
+        return 3;
+    }
+    if cli.has(parsed, table, "rename") || cli.has(parsed, table, "rows") || cli.has(parsed, table, "query") {
+        return 3;
+    }
+    return 0;
+}
+
+pub fn reason_of(code: int) -> [] &static [byte] {
+    if code == 1 {
+        return "the first call writes a file, and --out needs --root: add --root DIR, and the file is written beneath it";
+    }
+    if code == 2 {
+        return "the call has --out or --format already, which the first call sets: write the join with them, then report on the file";
+    }
+    if code == 3 {
+        return "a flag of rows, groups or a page (--select, --where, --limit, --group, ...) belongs to the first call or to the second, and this repair does not decide which: write the join, then report on its file with the flags that are the report's";
+    }
+    return "another flag of the call is refused too, and the first call would be refused for it: fix that flag first";
+}
+
+// The index of the argument that is `--report` and the one that is its value, and whether they are two arguments; -1, -1 when there is none.
+fn report_at[&p](parsed: &p cli.Parsed) -> [] (int, bool) {
+    let table = spec.flag_table();
+    let vi = cli.value_index(parsed, table, "report");
+    if vi < 0 {
+        return (0 - 1, false);
+    }
+    return (vi, cli.value_is_whole(parsed, table, "report"));
+}
+
+// The first call as `retry`: every argument but `--report` and its value, then `--format=csv` and `--out=joined.csv` before a `--` if there is one. Answers the writer holding it and true.
+fn retry[&h, &g, &p](heap: &!h Heap, w: json.Writer, args: &g Args, parsed: &p cli.Parsed) -> [heap, args] (json.Writer, bool) {
+    let (vi, two) = report_at(parsed);
+    if vi < 0 {
+        return (w, false);
+    }
+    var stop = arg_count(args);
+    var k = 0;
+    while k < arg_count(args) {
+        if bytes.equal(arg(args, k), "--") {
+            stop = k;
+            k = arg_count(args);
+        }
+        k = k + 1;
+    }
+    var o = fail.retry_open(heap, w);
+    var i = 0;
+    while i < arg_count(args) {
+        if i == stop {
+            o = json.put_string(heap, o, "--format=csv");
+            o = json.put_string(heap, o, "--out=joined.csv");
+        }
+        var skipped = i == vi;
+        if two && i + 1 == vi {
+            skipped = true;
+        }
+        if !skipped {
+            o = json.put_string(heap, o, arg(args, i));
+        }
+        i = i + 1;
+    }
+    if stop == arg_count(args) {
+        o = json.put_string(heap, o, "--format=csv");
+        o = json.put_string(heap, o, "--out=joined.csv");
+    }
+    return (fail.retry_close(heap, o), true);
+}
+
+// The refusal: `args.conflict`, with the first call as its repair or the reason there is none. `kind` is the value of `--report`.
+pub fn refusal[&h, &g, &p, &k](heap: &!h Heap, e: fail.Errors, args: &g Args, parsed: &p cli.Parsed, kind: &k [byte], others: bool) -> [heap, args] fail.Errors {
+    let table = spec.flag_table();
+    let code = code_of(parsed, others);
+    var message = buffer.append(heap, buffer.empty(heap, 192), "--report ");
+    message = buffer.append(heap, message, kind);
+    message = buffer.append(heap, message, " describes the columns of one file, and the joined row has padded cells and a key with two spellings: it does not take a join");
+    var hint = buffer.empty(heap, 256);
+    if code == 0 {
+        hint = buffer.append(heap, hint, "write the join to a file and report on that file: the repair writes ");
+        hint = buffer.append(heap, hint, file_name());
+        hint = buffer.append(heap, hint, " (it overwrites nothing: a file of that name is out.exists, with its own repair), then run table --root ");
+        hint = buffer.append(heap, hint, cli.text(args, parsed, table, "root"));
+        if cli.has(parsed, table, "delimiter") {
+            hint = buffer.append(heap, hint, " --delimiter ");
+            hint = buffer.append(heap, hint, cli.text(args, parsed, table, "delimiter"));
+        }
+        hint = buffer.append(heap, hint, " --report ");
+        hint = buffer.append(heap, hint, kind);
+        hint = buffer.push(heap, hint, byte_of(' '));
+        hint = buffer.append(heap, hint, file_name());
+    } else {
+        hint = buffer.append(heap, hint, "write the join as --format csv (--out FILE with --root writes it to a file) and report on that file, or pipe the join into a second call that reports");
+    }
+    var out = e;
+    borrow message as &mr in {
+        borrow hint as &hr in {
+            out = write(heap, out, args, parsed, buffer.bytes(mr), buffer.bytes(hr), code);
+        }
+    }
+    buffer.drop(heap, message);
+    buffer.drop(heap, hint);
+    return out;
+}
+
+// The error, with its repair.
+fn write[&h, &g, &p, &m, &n](heap: &!h Heap, e: fail.Errors, args: &g Args, parsed: &p cli.Parsed, message: &m [byte], hint: &n [byte], code: int) -> [heap, args] fail.Errors {
+    var o = fail.open(heap, "args.conflict", message, hint);
+    var done = false;
+    if code == 0 {
+        let (o2, wrote) = retry(heap, o, args, parsed);
+        o = o2;
+        done = wrote;
+    }
+    if !done {
+        if code == 0 {
+            o = fail.repair_none(heap, o, "the first call could not be written from the arguments: write it as the hint says");
+        } else {
+            o = fail.repair_none(heap, o, reason_of(code));
+        }
+    }
+    o = fail.detail_open(heap, o);
+    o = fail.detail_str(heap, o, "flags", "--join --report");
+    return fail.add(heap, e, o);
+}

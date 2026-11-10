@@ -16,6 +16,7 @@ import finish;
 import flags;
 import inputs;
 import jnfmt;
+import jnreport;
 import jxsrc;
 import orparse;
 import qrefuse;
@@ -375,11 +376,6 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
             e = flags.problem(heap, e, "args.conflict", "a semi or anti join gives the probe columns only, so there is no column of the --join file for --join-prefix to name", "drop --join-prefix", "--join-type --join-prefix");
         }
     }
-    if inp.has_report && bytes.equal(inp.report_text, "dates") {
-        e = flags.problem(heap, e, "args.conflict", "--report dates describes the columns of one file, and the joined row has padded cells and a key with two spellings: it does not take a join", "write the join as --format csv and pipe it into a second call that reports", "--join --report");
-    } else if inp.has_report {
-        e = flags.problem(heap, e, "args.conflict", "--report types describes the columns of one file, and the joined row has padded cells and a key with two spellings: it does not take a join", "write the join as --format csv and pipe it into a second call that reports", "--join --report");
-    }
     if jxsrc.has(parsed, jxs, jxsrc.s_join_where(), "join-where") {
         // the expression is read here, before any file is opened; the names in it are resolved against the --join file's header with the key columns
         let gb = jxsrc.text(heap, args, parsed, jxs, jxsrc.s_join_where(), "join-where");
@@ -424,6 +420,14 @@ pub fn check[&h, &g, &p, &x](heap: &!h Heap, args: &g Args, parsed: &p cli.Parse
         if n < 1 || n > 1000000000 {
             e = flags.problem(heap, e, "args.bad-value", "--max-join-rows is from 1 to 1000000000", "--max-join-rows 10000000", "--max-join-rows");
         }
+    }
+    // `--report` over a join: last, so that the repair (the join written to a file, then the report on it) is offered only when no other check refused the call (docs/join-redesign.md, F2)
+    if inp.has_report {
+        var others = false;
+        borrow e as &er in {
+            others = fail.count(er) > 0;
+        }
+        e = jnreport.refusal(heap, e, args, parsed, inp.report_text, others);
     }
     return e;
 }

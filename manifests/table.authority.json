@@ -170,6 +170,7 @@
     "code_meaning",
     "code_name",
     "code_of",
+    "code_of",
     "collides",
     "collisions",
     "columns_of",
@@ -263,6 +264,7 @@
     "field",
     "field_of",
     "field_of",
+    "file_name",
     "find",
     "find",
     "find$int",
@@ -647,6 +649,7 @@
     "reason_of",
     "reason_of",
     "reason_of",
+    "reason_of",
     "reason_text",
     "reason_text",
     "rec_base_for",
@@ -658,6 +661,7 @@
     "rename_text",
     "repair_kind",
     "repairable_in",
+    "report_at",
     "report_kind",
     "reporting",
     "reserved",
@@ -883,7 +887,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 369,
+  "folded_operators": 370,
   "folded_calls": 0,
-  "functions": 1485
+  "functions": 1492
 }

@@ -416,7 +416,9 @@ class Flags(unittest.TestCase):
         self.s.write("j.jsonl", '{"k":"a"}\n')
         self.assertEqual(self.rule("--join", "b.csv", "--join-input-format", "csv", "--on", "k=id", "--input-format", "jsonl", "--fields", "k", file="j.jsonl")[0], 0)
         r = run("--root", self.s.dir, "--join", "b.csv", "--on", "k=id", "--report", "types", "p.csv")
-        self.assertIn("pipe", r.error()["hint"])
+        self.assertIn("joined.csv", r.error()["hint"])        # F2 (issue #115): the repair writes the join to a file, and the hint names the report on it
+        r = run("--join", "b.csv", "--on", "k=id", "--report", "types", str(self.s.dir / "p.csv"))
+        self.assertIn("pipe", r.error()["hint"])             # no --root: no file to write, and the pipe is what the hint says
 
     def test_right_and_cross_are_not_join_types_and_full_is(self):
         for t in ("cross", "LEFT"):
