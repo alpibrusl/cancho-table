@@ -19,6 +19,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 NAT = {"type": "integer", "minimum": 0}
+# the lines above the header that `--skip-lines` and `--skip-prefix` dropped (docs/reader-options.md), present only when an option was given; `join_lines` for the --join file of a join
+SKIPPED = {"type": "object", "properties": {"lines": {"type": "integer", "minimum": 0}, "join_lines": {"type": "integer", "minimum": 0}}, "required": ["lines"], "additionalProperties": False}
 CODES = ["GENERAL_ERROR", "INVALID_ARGS", "NOT_FOUND", "PERMISSION_DENIED",
          "CONFLICT", "PRECONDITION_FAILED"]
 
@@ -123,6 +125,9 @@ def explain_document():
             "block_bytes": NAT,
             "format": {"enum": ["csv", "jsonl"]},
             "delimiter": {"enum": [",", "\t", ";", None]},
+            # `--skip-lines` and `--skip-prefix` (docs/reader-options.md), present only when given, CSV only
+            "skip_lines": NAT,
+            "skip_prefix": TB,
             # JSON lines only (docs/readers.md section 12): the declared columns, what an absent path is, the tape's nodes
             "fields": {"type": "array", "items": TB},
             "absent": {"enum": ["refuse", "empty"]},
@@ -230,7 +235,8 @@ SCHEMAS = {
             "column_count": NAT,
             "row_count": NAT,
             "truncated": {"type": "boolean"},
-        }),
+            "skipped": SKIPPED,
+        }, required=["headers", "column_count", "row_count", "truncated"]),
         # `--select`, `--where` or `--group`: a page of rows, each the fields in the order
         # of `columns`; `next` resumes with `--from`; `group_count` is the number of
         # groups of a grouping, before `--top` and the page.
@@ -241,6 +247,7 @@ SCHEMAS = {
             "row_count": NAT,
             "truncated": {"type": "boolean"},
             "next": {"oneOf": [{"type": "null"}, obj({"from": NAT})]},
+            "skipped": SKIPPED,
         }, required=["columns", "rows", "row_count", "truncated", "next"]),
         # `--explain`: the plan, not its answer.
         explain_document(),

@@ -163,6 +163,11 @@ pub fn k_hold() -> [] int {
     return 29;
 }
 
+// The lines above the header that `--skip-lines` and `--skip-prefix` dropped, plus 1; 0 when neither was given (docs/reader-options.md). Set by the read of the header, in the main thread, before any range is handed out.
+pub fn k_skipped() -> [] int {
+    return 24;
+}
+
 pub fn k_size() -> [] int {
     return 32;
 }

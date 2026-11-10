@@ -70,6 +70,15 @@ pub struct Counts {
     err_cond: int,
     err_digits: int,
     groups: int,
+    // the lines `--skip-lines` and `--skip-prefix` dropped before the header; -1 when neither was given
+    skipped: int,
+    // the same for the --join file; -1 when the options were not given or the call is not a join
+    skipped_join: int,
+}
+
+// `c` with the lines dropped above the header of FILE and of the --join file (-1 for none).
+pub fn with_skipped(c: Counts, own: int, joined: int) -> [] Counts {
+    return Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: c.abort, abort_line: c.abort_line, long_length: c.long_length, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: c.err_col, err_fn: c.err_fn, err_row: c.err_row, err_line: c.err_line, err_cond: c.err_cond, err_digits: c.err_digits, groups: c.groups, skipped: own, skipped_join: joined };
 }
 
 // The tool's own rules, beside the contract's catalogue: tag, exit code,

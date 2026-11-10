@@ -30,6 +30,7 @@ import toolbox.fail;
 import toolbox.lines;
 import toolbox.text;
 import jout;
+import preamble;
 
 // The header of a file, read as `read_file` reads it, and nothing more. `abort` is the run's code for what went wrong with it (4 a line past the bound, 3 a header past it, 1 a
 // closing quote followed by something other than the delimiter, 2 a quote open at the end, 5 no header at all when the plan names columns), `consumed` the bytes up to the end of
@@ -46,7 +47,7 @@ pub res struct Head {
     bytes_read: int,
 }
 
-pub fn read_head[&h, &f](heap: &!h Heap, file: &!f File, cap: int, delim: int, mode: int) -> [heap, file_read] Head {
+pub fn read_head[&h, &f, &x](heap: &!h Heap, file: &!f File, cap: int, delim: int, mode: int, skip_n: int, skip_prefix: &x [byte]) -> [heap, file_read] Head {
     var names = buffer.empty(heap, 1);
     var ends = vec.empty(heap, 1, 0);
     var rec = buffer.empty(heap, 256);
@@ -85,8 +86,10 @@ pub fn read_head[&h, &f](heap: &!h Heap, file: &!f File, cap: int, delim: int, m
                 if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
                     line = line[0..len(line) - 1];
                 }
-                if !quoted && len(line) == 0 {
+                if !quoted && len(line) == 0 && number >= skip_n {
                     // A blank line before the header is not a record.
+                } else if !quoted && (skip_n > 0 || len(skip_prefix) > 0) && preamble.skips(number, line, skip_n, skip_prefix) {
+                    // A line above the header that an option drops (docs/reader-options.md).
                 } else {
                     if !quoted {
                         opened = number;
@@ -571,6 +574,15 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             o = buffer.push(heap, o, byte_of(delim));
             o = buffer.append(heap, o, "\"");
         }
+        // the preamble the options drop (docs/reader-options.md): the options, as given; the lines they drop are counted in the answer of the run
+        if query.skip_of(tree) > 0 {
+            o = buffer.append(heap, o, ",\"skip_lines\":");
+            o = buffer.push_nat(heap, o, query.skip_of(tree) - 1);
+        }
+        if query.skipp_of(tree) >= 0 {
+            o = buffer.append(heap, o, ",\"skip_prefix\":");
+            o = text.append_json(heap, o, preamble.prefix(args, query.skipp_of(tree)));
+        }
     }
     o = buffer.append(heap, o, ",\"size\":");
     if stdin || size < 0 {
@@ -1049,7 +1061,9 @@ pub fn settle[&h, &g, &p, &s](heap: &!h Heap, args: &g Args, parsed: &p cli.Pars
         vec.drop(heap, ends);
         let cap = cli.nat(args, parsed, table, "max-line-bytes");
         borrow mut file as &!handle in {
-            head = read_head(heap, handle, cap, delim, mode);
+            borrow tree0 as &tq0 in {
+                head = read_head(heap, handle, cap, delim, mode, query.skip_of(tq0), preamble.prefix(args, query.skipp_of(tq0)));
+            }
             match file_size(handle) {
                 Done::Ok(n) => {
                     size = n;
@@ -1099,7 +1113,7 @@ pub fn conclude[&h, &g, &p, &s, &j](heap: &!h Heap, args: &g Args, parsed: &p cl
     borrow ends as &er in {
         ncols = vec.size(er);
     }
-    let counted = finish.Counts { columns: ncols, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: abort_now, abort_line: abort_line, long_length: long_length, emitted: 0, more: false, next: 0, bad_name: bad, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+    let counted = finish.Counts { columns: ncols, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: abort_now, abort_line: abort_line, long_length: long_length, emitted: 0, more: false, next: 0, bad_name: bad, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0, skipped: -1, skipped_join: -1 };
     let none = buffer.empty(heap, 1);
     borrow tree0 as &tq in {
         borrow names as &nr in {

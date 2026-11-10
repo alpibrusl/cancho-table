@@ -243,6 +243,23 @@
             },
             "truncated": {
               "type": "boolean"
+            },
+            "skipped": {
+              "type": "object",
+              "properties": {
+                "lines": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "join_lines": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "lines"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -301,6 +318,23 @@
                   "additionalProperties": false
                 }
               ]
+            },
+            "skipped": {
+              "type": "object",
+              "properties": {
+                "lines": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "join_lines": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "lines"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -353,6 +387,13 @@
                         ";",
                         null
                       ]
+                    },
+                    "skip_lines": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "skip_prefix": {
+                      "$ref": "#/$defs/text_or_bytes"
                     },
                     "fields": {
                       "type": "array",

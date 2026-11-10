@@ -27,10 +27,10 @@ MUTANTS = [
     ("an open quote at the end is refused after a missing header", E, "    if quoted && abort == 0 {", "    if quoted {"),
     ("the byte order mark is not dropped", E, "if number == 1 && len(line) >= 3", "if number == 2 && len(line) >= 3"),
     ("the carriage return stays in the header", E, "                if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {", "                if false && len(line) > 0 && int_of(line[len(line) - 1]) == 13 {"),
-    ("a blank line before the header is the header", E, "                if !quoted && len(line) == 0 {", "                if false && len(line) == 0 {"),
+    ("a blank line before the header is the header", E, "                if !quoted && len(line) == 0 && number >= skip_n {", "                if false && len(line) == 0 && number >= skip_n {"),
     ("the bound of the line is --max-bytes", E, '        let cap = cli.nat(args, parsed, table, "max-line-bytes");', '        let cap = cli.nat(args, parsed, table, "max-bytes");'),
-    ("the file size is not asked for", E, "            head = read_head(heap, handle, cap, delim, mode);\n            match file_size(handle) {\n                Done::Ok(n) => {\n                    size = n;", "            head = read_head(heap, handle, cap, delim, mode);\n            match file_size(handle) {\n                Done::Ok(n) => {\n                    size = -1;"),
-    ("the delimiter is not given to the reader", E, "head = read_head(heap, handle, cap, delim, mode);", "head = read_head(heap, handle, cap, 44, mode);"),
+    ("the file size is not asked for", E, "                head = read_head(heap, handle, cap, delim, mode, query.skip_of(tq0), preamble.prefix(args, query.skipp_of(tq0)));\n            }\n            match file_size(handle) {\n                Done::Ok(n) => {\n                    size = n;", "                head = read_head(heap, handle, cap, delim, mode, query.skip_of(tq0), preamble.prefix(args, query.skipp_of(tq0)));\n            }\n            match file_size(handle) {\n                Done::Ok(n) => {\n                    size = -1;"),
+    ("the delimiter is not given to the reader", E, "head = read_head(heap, handle, cap, delim, mode, query.skip_of(tq0)", "head = read_head(heap, handle, cap, 44, mode, query.skip_of(tq0)"),
     # what the header makes of the plan
     ("the plan is not resolved", E, "    if got && mode != 0 {\n        frame.drop(heap, made);", "    if false && got && mode != 0 {\n        frame.drop(heap, made);"),
     ("a refusal of the plan is missed", E, "                abort_now = mr.fabort;", "                abort_now = abort_now;"),

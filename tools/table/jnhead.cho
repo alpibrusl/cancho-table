@@ -15,6 +15,7 @@ import finish;
 import jnfail;
 import jnflags;
 import jxsrc;
+import preamble;
 import query;
 import reader;
 import spec;
@@ -24,7 +25,7 @@ import toolbox.lines;
 
 // The header of an open input, read as `explain.read_head` reads it, from the reader `r0` that goes on to the rows afterwards (standard input has one pass and one reader, so the header
 // and the rows must come from the same one). `stdin` fills the reader from standard input and not from `file`. `abort` is the run's code for what went wrong with the header.
-pub fn head_of[&h, &f, &i](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, cap: int, delim: int) -> [heap, file_read, io_read] (lines.Lines, explain.Head) {
+pub fn head_of[&h, &f, &i, &x](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: &!i Io, stdin: bool, cap: int, delim: int, skip_n: int, skip_prefix: &x [byte]) -> [heap, file_read, io_read] (lines.Lines, explain.Head, int) {
     var names = buffer.empty(heap, 1);
     var ends = vec.empty(heap, 1, 0);
     var rec = buffer.empty(heap, 256);
@@ -37,6 +38,8 @@ pub fn head_of[&h, &f, &i](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: 
     var abort_line = 0;
     var long_length = 0;
     var going = true;
+    var skipped = 0;
+    let skip_on = skip_n > 0 || len(skip_prefix) > 0;
     while going {
         let (stepped, status) = lines.next(heap, r);
         r = stepped;
@@ -74,8 +77,11 @@ pub fn head_of[&h, &f, &i](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: 
                 if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
                     line = line[0..len(line) - 1];
                 }
-                if !quoted && len(line) == 0 {
+                if !quoted && len(line) == 0 && number >= skip_n {
                     // A blank line before the header is not a record.
+                } else if !quoted && skip_on && preamble.skips(number, line, skip_n, skip_prefix) {
+                    // A line above the header that an option drops (docs/reader-options.md), counted.
+                    skipped = skipped + 1;
                 } else {
                     if !quoted {
                         opened = number;
@@ -132,7 +138,7 @@ pub fn head_of[&h, &f, &i](heap: &!h Heap, r0: lines.Lines, file: &!f File, io: 
         errno = lines.failed(rr);
     }
     buffer.drop(heap, rec);
-    return (r, explain.Head { names: names, ends: ends, got: got, abort: abort, abort_line: abort_line, long_length: long_length, errno: errno, consumed: consumed, bytes_read: bytes_read });
+    return (r, explain.Head { names: names, ends: ends, got: got, abort: abort, abort_line: abort_line, long_length: long_length, errno: errno, consumed: consumed, bytes_read: bytes_read }, skipped);
 }
 
 pub fn no_head[&h](heap: &!h Heap) -> [heap] explain.Head {
@@ -151,7 +157,7 @@ pub fn head_refusal[&h, &g, &p, &q, &n, &s](heap: &!h Heap, args: &g Args, parse
     if hd.abort == 0 && hd.errno == 0 {
         return (errs, false);
     }
-    let counted = finish.Counts { columns: vec.size(hd.ends), records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: hd.abort, abort_line: hd.abort_line, long_length: hd.long_length, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0 };
+    let counted = finish.Counts { columns: vec.size(hd.ends), records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: hd.abort, abort_line: hd.abort_line, long_length: hd.long_length, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0, skipped: -1, skipped_join: -1 };
     let labels = buffer.empty(heap, 1);
     let kept = buffer.empty(heap, 1);
     let lends = vec.empty(heap, 1, 0);
