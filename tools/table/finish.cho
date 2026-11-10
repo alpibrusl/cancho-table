@@ -18,6 +18,7 @@ import expr;
 import frame;
 import jnguard;
 import jout;
+import numrow;
 import plan;
 import query;
 import reader;
@@ -391,6 +392,20 @@ pub fn over_limit[&h, &s](heap: &!h Heap, e: fail.Errors, rule: &static [byte], 
     w = fail.detail_text(heap, w, "path", shown);
     w = fail.detail_int(heap, w, "limit", bound);
     return fail.add(heap, e, w);
+}
+
+// `detail.syntax` of a refusal of a `:dec` or `:float` cell while a number syntax (`--decimal`, `--thousands`) is in force: which syntax it was refused in, whether the syntax rewrote the cell or it was no number in either.
+fn put_syntax[&h, &q, &k](heap: &!h Heap, w: json.Writer, tree: &q query.Query, kept: &k [byte]) -> [heap] json.Writer {
+    if query.syn_of(tree) == 0 {
+        return w;
+    }
+    let st = numrow.syntax_text(heap, query.syn_of(tree));
+    var out = w;
+    borrow st as &sr in {
+        out = fail.detail_text(heap, out, "syntax", buffer.bytes(sr));
+    }
+    buffer.drop(heap, st);
+    return out;
 }
 
 // `limit.state-too-large` for the answer a `--out` call holds before it writes the file (docs/out.md section 5): the bytes held reached --max-state-bytes. `holder` says what held them.
@@ -874,8 +889,9 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
         w = fail.detail_text(heap, w, "column", name_of(names, hends, c.err_col));
         w = fail.detail_int(heap, w, "row", c.err_row);
         w = fail.detail_int(heap, w, "line", c.err_line);
-        w = fail.detail_text(heap, w, "value", buffer.bytes(kept));
+        w = fail.detail_text(heap, w, "value", numrow.plain_value(buffer.bytes(kept)));
         w = fail.detail_bool(heap, w, "value_truncated", buffer.size(kept) >= 64);
+        w = put_syntax(heap, w, tree, buffer.bytes(kept));
         if status == 11 {
             w = fail.detail_str(heap, w, "direction", "overflow");
         } else if status == 12 {
@@ -943,8 +959,9 @@ pub fn explain[&h, &g, &p, &q, &n, &d, &l, &m, &k, &s](heap: &!h Heap, args: &g 
         w = fail.detail_text(heap, w, "column", name_of(names, hends, c.err_col));
         w = fail.detail_int(heap, w, "row", c.err_row);
         w = fail.detail_int(heap, w, "line", c.err_line);
-        w = fail.detail_text(heap, w, "value", buffer.bytes(kept));
+        w = fail.detail_text(heap, w, "value", numrow.plain_value(buffer.bytes(kept)));
         w = fail.detail_bool(heap, w, "value_truncated", buffer.size(kept) >= 64);
+        w = put_syntax(heap, w, tree, buffer.bytes(kept));
         w = fail.detail_int(heap, w, "scale", scale);
         if code == 23 {
             w = fail.detail_int(heap, w, "digits", digits);

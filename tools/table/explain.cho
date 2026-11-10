@@ -444,6 +444,8 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             }
         } else if stdin {
             why = "standard input is read on one core";
+        } else if query.syn_of(tree) != 0 || query.nam_of(tree) >= 0 {
+            why = "--decimal, --thousands and --na are read on one core";
         } else if mode == 0 {
             why = "the shape is counted on one core";
         } else if ordering && !reporting && !psortable {
