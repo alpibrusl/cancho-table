@@ -522,7 +522,6 @@
     "magnitude_times",
     "mantissa",
     "marked",
-    "marked",
     "mask32",
     "max_depth",
     "memo_size",
@@ -907,5 +906,5 @@
   ],
   "folded_operators": 388,
   "folded_calls": 0,
-  "functions": 1523
+  "functions": 1522
 }

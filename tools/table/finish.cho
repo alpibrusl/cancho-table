@@ -394,9 +394,9 @@ pub fn over_limit[&h, &s](heap: &!h Heap, e: fail.Errors, rule: &static [byte], 
     return fail.add(heap, e, w);
 }
 
-// `detail.syntax` of a refusal of a cell that the stated number syntax (`--decimal`, `--thousands`) refused: which syntax was in force. Nothing for a cell that was not marked.
+// `detail.syntax` of a refusal of a `:dec` or `:float` cell while a number syntax (`--decimal`, `--thousands`) is in force: which syntax it was refused in, whether the syntax rewrote the cell or it was no number in either.
 fn put_syntax[&h, &q, &k](heap: &!h Heap, w: json.Writer, tree: &q query.Query, kept: &k [byte]) -> [heap] json.Writer {
-    if !numrow.marked(kept) {
+    if query.syn_of(tree) == 0 {
         return w;
     }
     let st = numrow.syntax_text(heap, query.syn_of(tree));
