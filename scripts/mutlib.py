@@ -34,7 +34,8 @@ STREAM_END = "// END read_stream\n"
 
 # The regions of a source file that a pattern is not counted in, and not applied to, unless the mutant names the region (`file#stream`, `file#merge`): a stretch of code that repeats code of the file for another
 # purpose (the loop for standard input is made from the loop for a file; the merge join of `jnrun` repeats the groups' set-up and the build's refusals), so that the mutants written before it keep their patterns.
-REGIONS = {"stream": (STREAM_BEGIN, STREAM_END), "merge": ("// BEGIN merge:", "// END merge\n")}
+REGIONS = {"stream": (STREAM_BEGIN, STREAM_END), "merge": ("// BEGIN merge:", "// END merge\n"),
+           "fileopt": ("// BEGIN read_file_opt:", "// END read_file_opt\n"), "streamopt": ("// BEGIN read_stream_opt:", "// END read_stream_opt\n")}
 
 
 def region(text, name="stream"):

@@ -26,6 +26,7 @@ import std.buffer;
 import std.bytes;
 import std.vec;
 import agg;
+import numrow;
 import flt;
 import cellnum;
 import query;
@@ -381,7 +382,11 @@ fn put_first[&h](heap: &!h Heap, out: buffer.Buffer, v: int, as_csv: bool) -> [h
 // The cell kept for the first `other`, from its integers.
 fn cell_of[&h, &g](heap: &!h Heap, out: buffer.Buffer, g: &g agg.Groups, base: int) -> [heap] buffer.Buffer {
     var o = out;
-    let n = get(g, base + 20);
+    var n = get(g, base + 20);
+    // a cell that the stated number syntax refused ends in a byte that marks it (numrow.cho): the report shows the cell
+    if n > 0 && n <= 64 && get(g, base + 21 + (n - 1) / 7) >> 8 * ((n - 1) % 7) & 255 == numrow.sentinel() {
+        n = n - 1;
+    }
     var i = 0;
     while i < n && i < 64 {
         o = buffer.push(heap, o, byte_of(get(g, base + 21 + i / 7) >> 8 * (i % 7) & 255));

@@ -1,0 +1,346 @@
+edition 5;
+
+module numrow;
+
+// The row normalizer (docs/reader-options.md, O2 and O3): `--na` reads a marker as the empty cell, and `--decimal` and `--thousands` read a `:dec(S)` or `:float` cell written in another syntax as the plain number.
+// It acts on a row after its fields are split and before anything reads them, so that the filter, the aggregates, the sorter and the writer see one thing and nothing below it changes. A cell that is a marker is
+// repointed at an empty range of the same record; a typed cell in another syntax is written, in the plain form, into a copy of the row (`apply` answers whether the row is the copy), and the cells repointed at it.
+//
+// A typed cell that fits neither the plain syntax nor the stated one is made one the plain readers refuse, by a byte at its end that no number has (`sentinel`): the refusal shows the cell without it, and says which syntax
+// was in force (`finish.shown_value`).
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import query;
+
+// The byte that ends a cell the stated syntax refuses.
+pub fn sentinel() -> [] int {
+    return 31;
+}
+
+pub res struct Norm {
+    // whether any of this is in force
+    active: bool,
+    // 1 for a column the plan reads as `:dec(S)` or `:float`, 0 for the others
+    kinds: Box[[int]],
+    // the markers of `--na`, one after another, and where each ends
+    nabuf: buffer.Buffer,
+    naends: vec.Vec[int],
+    // the decimal and the thousands byte, -1 for none
+    dec: int,
+    thou: int,
+    ncols: int,
+}
+
+pub fn is_on[&n](n: &n Norm) -> [] bool {
+    return n.active;
+}
+
+pub fn none[&h](heap: &!h Heap) -> [heap] Norm {
+    return Norm { active: false, kinds: box_slice(heap, 1, 0), nabuf: buffer.empty(heap, 1), naends: vec.empty(heap, 1, 0), dec: 0 - 1, thou: 0 - 1, ncols: 0 };
+}
+
+pub fn drop[&h](heap: &!h Heap, n: Norm) -> [heap] int {
+    let Norm { active, kinds, nabuf, naends, dec, thou, ncols } = n;
+    unbox_slice(heap, kinds);
+    buffer.drop(heap, nabuf);
+    vec.drop(heap, naends);
+    return 0;
+}
+
+// The markers of `--na` from the text of the argument that holds them: `ref` is 2 * index + 1 when the value is an argument of its own and 2 * index for `--na=MARKERS`. A backslash escapes the next byte, which has to be a
+// comma or a backslash. Answers the markers one after another, where each ends, and whether the list is well formed (no marker is empty, none holds a quote or a line feed).
+pub fn markers[&h, &g](heap: &!h Heap, args: &g Args, ref: int) -> [heap, args] (buffer.Buffer, vec.Vec[int], bool) {
+    var out = buffer.empty(heap, 16);
+    var ends = vec.empty(heap, 4, 0);
+    var good = true;
+    if ref < 0 {
+        return (out, ends, good);
+    }
+    let a = arg(args, ref / 2);
+    var text = a;
+    if ref % 2 == 0 {
+        text = a[5..len(a)];
+    }
+    var i = 0;
+    var size = 0;
+    var start = 0;
+    while i <= len(text) {
+        if i == len(text) || int_of(text[i]) == ',' {
+            if size == start {
+                good = false;
+            }
+            ends = vec.push(heap, ends, size);
+            start = size;
+        } else {
+            var c = int_of(text[i]);
+            if c == 92 {
+                if i + 1 < len(text) && (int_of(text[i + 1]) == ',' || int_of(text[i + 1]) == 92) {
+                    i = i + 1;
+                    c = int_of(text[i]);
+                } else {
+                    good = false;
+                }
+            }
+            if c == 34 || c == 10 || c == 13 {
+                good = false;
+            }
+            out = buffer.push(heap, out, byte_of(c));
+            size = size + 1;
+        }
+        i = i + 1;
+    }
+    return (out, ends, good);
+}
+
+// The columns the plan reads as `:dec(S)` or `:float`: 1 for each, 0 for the rest. `cols` maps the names of the plan to columns (`frame.prepare`).
+fn typed_kinds[&h, &q, &c](heap: &!h Heap, tree: &q query.Query, cols: &c [int], ncols: int) -> [heap] Box[[int]] {
+    var kinds = box_slice(heap, ncols + 1, 0);
+    borrow mut kinds as &!kw in {
+        var column = 0;
+        while column < ncols {
+            let (t, at) = query.typed_mention(tree, cols, column, 0);
+            if t >= 2 && t <= 21 {
+                contents(kw)[column] = 1;
+            }
+            column = column + 1;
+        }
+    }
+    return kinds;
+}
+
+// The normalizer for a plan, once the header is read: `ncols` columns, `cols` as `frame.prepare` made it. Not active when neither `--na` nor the number syntax was given.
+pub fn make[&h, &g, &q, &c](heap: &!h Heap, args: &g Args, tree: &q query.Query, cols: &c [int], ncols: int) -> [heap, args] Norm {
+    let syn = query.syn_of(tree);
+    let nam = query.nam_of(tree);
+    if syn == 0 && nam < 0 {
+        return none(heap);
+    }
+    let (nabuf, naends, good) = markers(heap, args, nam);
+    var dec = 0 - 1;
+    var thou = 0 - 1;
+    var kinds = box_slice(heap, 1, 0);
+    if syn > 0 {
+        dec = syn / 256 % 256;
+        thou = syn % 256;
+        if thou == 0 {
+            thou = 0 - 1;
+        }
+        unbox_slice(heap, kinds);
+        kinds = typed_kinds(heap, tree, cols, ncols);
+    }
+    return Norm { active: true, kinds: kinds, nabuf: nabuf, naends: naends, dec: dec, thou: thou, ncols: ncols };
+}
+
+// Whether `text` is one of the markers.
+fn is_marker[&n, &e, &t](nabuf: &n buffer.Buffer, naends: &e vec.Vec[int], text: &t [byte]) -> [] bool {
+    var k = 0;
+    var from = 0;
+    while k < vec.size(naends) {
+        let to = vec.get(naends, k);
+        if to - from == len(text) && bytes.equal(buffer.bytes(nabuf)[from..to], text) {
+            return true;
+        }
+        from = to;
+        k = k + 1;
+    }
+    return false;
+}
+
+fn is_digit(c: int) -> [] bool {
+    return c >= 48 && c <= 57;
+}
+
+// Whether a typed cell's text has a byte that the stated syntax gives a meaning to, or a plain decimal point that it does not: then the cell is rewritten (or refused).
+fn needs[&t](text: &t [byte], dec: int, thou: int) -> [] bool {
+    var i = 0;
+    while i < len(text) {
+        let c = int_of(text[i]);
+        if dec >= 0 && c == dec && dec != 46 || thou >= 0 && c == thou || c == 46 && dec != 46 {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// `text`, a typed cell, in the plain form appended to `out`: a sign, the integer part without its groups, a point and the fraction, then the exponent as it was. A cell that is not in the stated syntax is appended as it
+// was, then the sentinel. `thou` is -1 for none.
+fn put_plain[&h, &t](heap: &!h Heap, out: buffer.Buffer, text: &t [byte], dec: int, thou: int) -> [heap] buffer.Buffer {
+    var o = out;
+    var i = 0;
+    var good = true;
+    var plain = buffer.empty(heap, len(text) + 2);
+    if i < len(text) && (int_of(text[i]) == 43 || int_of(text[i]) == 45) {
+        plain = buffer.push(heap, plain, text[i]);
+        i = i + 1;
+    }
+    // the exponent, which is the plain reader's: from the first e or E on
+    var end = len(text);
+    var k = i;
+    while k < len(text) {
+        if int_of(text[k]) == 101 || int_of(text[k]) == 69 {
+            end = k;
+            k = len(text);
+        }
+        k = k + 1;
+    }
+    // the integer part: up to the decimal byte
+    var seen_group = false;
+    var fraction = false;
+    var digits_in_group = 0;
+    while i < end && good {
+        let c = int_of(text[i]);
+        if c == dec && !fraction {
+            fraction = true;
+            if seen_group && digits_in_group != 3 {
+                good = false;
+            }
+            plain = buffer.push(heap, plain, byte_of(46));
+            digits_in_group = 0;
+        } else if is_digit(c) {
+            plain = buffer.push(heap, plain, text[i]);
+            digits_in_group = digits_in_group + 1;
+        } else if c == thou && !fraction {
+            // a group: the first of 1 to 3 digits, the others of exactly 3
+            if !seen_group {
+                if digits_in_group < 1 || digits_in_group > 3 {
+                    good = false;
+                }
+            } else if digits_in_group != 3 {
+                good = false;
+            }
+            seen_group = true;
+            digits_in_group = 0;
+        } else {
+            // a byte that the stated syntax does not know: a plain decimal point beside it, or anything else
+            good = false;
+        }
+        i = i + 1;
+    }
+    if good && seen_group && !fraction && digits_in_group != 3 {
+        good = false;
+    }
+    if good {
+        borrow plain as &pr in {
+            o = buffer.append(heap, o, buffer.bytes(pr));
+        }
+        o = buffer.append(heap, o, text[end..len(text)]);
+    } else {
+        o = buffer.append(heap, o, text);
+        o = buffer.push(heap, o, byte_of(sentinel()));
+    }
+    buffer.drop(heap, plain);
+    return o;
+}
+
+// The row after the normalizer: `cells` (first, last, quoted for each of the columns) are changed for a marker or a typed cell in the stated syntax, and then `row` holds the whole record again (the delimiters and the quotes
+// kept, the changed cells written in their new form), the cells pointing into it: whatever keeps the record (the sorter) keeps one that reads as the cells say. Answers `row` and whether the row to read is it; when no
+// cell changed it is the record, and `cells` are as the split made them.
+pub fn apply[&h, &n, &r, &c](heap: &!h Heap, row: buffer.Buffer, norm: &n Norm, record: &r [byte], cells: &!c [int], delim: int) -> [heap] (buffer.Buffer, bool) {
+    var ncols = norm.ncols;
+    var column = 0;
+    var touched = false;
+    if vec.size(norm.naends) > 0 {
+        while column < ncols {
+            let first = cells[3 * column];
+            let last = cells[3 * column + 1];
+            if last > first && is_marker(norm.nabuf, norm.naends, record[first..last]) && !(cells[3 * column + 2] != 0 && has_quote(record[first..last])) {
+                cells[3 * column + 1] = first;
+                cells[3 * column + 2] = 0;
+                touched = true;
+            }
+            column = column + 1;
+        }
+    }
+    var numbers = false;
+    if norm.dec >= 0 {
+        column = 0;
+        while column < ncols && !numbers {
+            if contents(norm.kinds)[column] == 1 && needs(record[cells[3 * column]..cells[3 * column + 1]], norm.dec, norm.thou) {
+                numbers = true;
+            }
+            column = column + 1;
+        }
+    }
+    if !touched && !numbers {
+        return (row, false);
+    }
+    var out = row;
+    borrow mut out as &!ow in {
+        buffer.clear(ow);
+    }
+    column = 0;
+    while column < ncols {
+        let first = cells[3 * column];
+        let last = cells[3 * column + 1];
+        let quoted = cells[3 * column + 2] != 0;
+        var rewrite = false;
+        if numbers && contents(norm.kinds)[column] == 1 && needs(record[first..last], norm.dec, norm.thou) {
+            rewrite = true;
+        }
+        if column > 0 {
+            out = buffer.push(heap, out, byte_of(delim));
+        }
+        if quoted && !rewrite {
+            out = buffer.push(heap, out, byte_of(34));
+        }
+        var start = 0;
+        borrow out as &orr in {
+            start = buffer.size(orr);
+        }
+        if rewrite {
+            out = put_plain(heap, out, record[first..last], norm.dec, norm.thou);
+            cells[3 * column + 2] = 0;
+        } else {
+            out = buffer.append(heap, out, record[first..last]);
+        }
+        var stop = 0;
+        borrow out as &orr2 in {
+            stop = buffer.size(orr2);
+        }
+        if quoted && !rewrite {
+            out = buffer.push(heap, out, byte_of(34));
+        }
+        cells[3 * column] = start;
+        cells[3 * column + 1] = stop;
+        column = column + 1;
+    }
+    return (out, true);
+}
+
+fn has_quote[&t](text: &t [byte]) -> [] bool {
+    var i = 0;
+    while i < len(text) {
+        if int_of(text[i]) == 34 {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// The cell as a refusal shows it: without the byte that marks a cell the stated syntax refused.
+pub fn plain_value[&k](v: &k [byte]) -> [] &k [byte] {
+    if len(v) > 0 && int_of(v[len(v) - 1]) == sentinel() {
+        return v[0..len(v) - 1];
+    }
+    return v;
+}
+
+// Whether the cell was marked.
+pub fn marked[&k](v: &k [byte]) -> [] bool {
+    return len(v) > 0 && int_of(v[len(v) - 1]) == sentinel();
+}
+
+// The syntax in force, as the refusal says it: `decimal , thousands .`.
+pub fn syntax_text[&h](heap: &!h Heap, syn: int) -> [heap] buffer.Buffer {
+    var o = buffer.append(heap, buffer.empty(heap, 32), "decimal ");
+    o = buffer.push(heap, o, byte_of(syn / 256 % 256));
+    if syn % 256 != 0 {
+        o = buffer.append(heap, o, " thousands ");
+        o = buffer.push(heap, o, byte_of(syn % 256));
+    }
+    return o;
+}

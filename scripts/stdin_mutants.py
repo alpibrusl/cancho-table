@@ -31,7 +31,7 @@ MUTANTS = [
     ("standard input is read and then the empty file's filler is called", "table.cho#stream", "r = bulk.fill_stdin(r, io);", "r = lines.fill_file(bulk.fill_stdin(r, io), file);"),
     ("standard input is told it is a file", "table.cho", 'opened, true, inp.jsonl, inp.has_join, "-", buffer.bytes(rr), "-", io, fs, delim', 'opened, false, inp.jsonl, inp.has_join, "-", buffer.bytes(rr), "-", io, fs, delim'),
     ("the file is told it is standard input", "table.cho", "opened, false, inp.jsonl, inp.has_join, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim", "opened, true, inp.jsonl, inp.has_join, path.shown(tp), buffer.bytes(rr), path.full(tp), io, fs, delim"),
-    ("the loop for standard input is not chosen", "table.cho", "    if stdin {\n        return read_stream(", "    if false {\n        return read_stream("),
+    ("the loop for standard input is not chosen", "table.cho", "    if stdin {\n        if optioned {", "    if false {\n        if optioned {"),
     ("the empty file that stands in is not opened for standard input", "table.cho", 'match open_read(fs, "/dev/null") {', 'match open_read(fs, "/dev/zero") {'),
     ("an open failure of the stand-in is ignored", "table.cho", 'Opened::Failed(reason) => {\n                    e = fail.io_error(heap, e, reason, false, "-");\n                }', "Opened::Failed(reason) => {\n                }"),
     # the bulk read (tools/table/bulk.cho: read_bytes of cancho #363)

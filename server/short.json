@@ -33,6 +33,11 @@
     "max-state-bytes": "The most bytes of group keys, distinct values, sorted rows or the join file kept (default 67108864, ceiling 1073741824), counted by a stated formula and not resident memory.",
     "threads": "How many threads read the file (1 to 64, default 1) for rows and groups, on a file of at least parallel-min-bytes. The answer is the same bytes for any count; stdin is always one thread.",
     "file": "The CSV file to read, a path relative to the server's root (absolute paths, `..` and symbolic links are refused); its first row is the header. Give exactly one of `file` and `stdin`.",
-    "stdin": "The table itself, as text, instead of `file`: give exactly one of the two. Read as `table -` reads standard input (a refusal names the path -); UTF-8 text, at most 1048576 bytes by default (--max-input), else mcp.input-too-large. A `query` must not name a source with `from` when this is given."
+    "stdin": "The table itself, as text, instead of `file`: give exactly one of the two. Read as `table -` reads standard input (a refusal names the path -); UTF-8 text, at most 1048576 bytes by default (--max-input), else mcp.input-too-large. A `query` must not name a source with `from` when this is given.",
+    "decimal": "Decimal point byte of cells read as :dec(S) or :float, e.g. ',' for 1.234,5 (with thousands '.'). A plain 12.34 beside it is refused (detail.syntax). CSV only.",
+    "thousands": "Digit-group byte of the cells decimal reads (groups of three). Needs decimal. CSV only.",
+    "na": "Markers read as the empty cell, comma-separated ('?,NA'), the output included. CSV only.",
+    "skip-lines": "Drop the first N physical lines before the header (a title block); the count is in data.skipped.lines. CSV only.",
+    "skip-prefix": "Drop the lines before the header that start with this text (comment lines); an unquoted header line is kept. CSV only."
   }
 }
