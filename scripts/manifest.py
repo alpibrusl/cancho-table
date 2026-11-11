@@ -172,7 +172,7 @@ def main():
     check = "--check" in argv
     against = None
     if "--against" in argv:
-        against = pathlib.Path(argv[argv.index("--against") + 1])
+        against = pathlib.Path(argv[argv.index("--against") + 1]).resolve()  # absolute: the compiler at 51524d2 cannot read a ../ path
     proj = project()
     pin = proj["package"]["cancho"]
     ceiling_file = pathlib.Path(argv[argv.index("--ceiling") + 1]) if "--ceiling" in argv else ROOT / "tools.toml"
