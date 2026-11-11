@@ -1,6 +1,6 @@
 [package]
 name = "table"
-cancho = "119bcfe9b985ef5ebd9dafc3ff3b2bbd05f22653"   # the compiler these sources were written for
+cancho = "51524d206283a5fec6e15e26a1b8d2825971e08a"   # the compiler these sources were written for
 
 # `contract` is not a directory here: it is cancho-tools' package, one store per
 # module, pinned to a commit. `toolbox.built` is not in the package; it is this
