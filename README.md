@@ -55,13 +55,13 @@ Most data tools optimise for flexibility. `table` optimises for predictability.
 
 ## Two-minute quick start
 
-You need `git`, Rust, `clang` and `python3`. The first build downloads the compiler's and the tool's dependencies, so allow a few minutes the first time.
+You need `git`, `clang` and `python3` (no Rust: the compiler is the one written in cancho, built from the committed seed). The first build downloads the compiler's and the tool's dependencies, so allow a few minutes the first time.
 
 ```sh
 git clone https://github.com/alpibrusl/cancho                           # the compiler
 git clone https://github.com/alpibrusl/cancho-table && cd cancho-table
 REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)        # the compiler these sources need
-(cd ../cancho && git fetch -q origin && git checkout "$REV" && cargo build --release -p cancho)
+(cd ../cancho && git fetch -q origin && git checkout "$REV" && sh scripts/build-standalone.sh --out target/release --rev "$REV")   # the compiler written in cancho, from the committed seed: clang, no Rust
 export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
 cancho build                                                            # builds build/table
 
