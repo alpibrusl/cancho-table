@@ -864,22 +864,48 @@ class Unchanged(unittest.TestCase):
 
 
 class Premise(unittest.TestCase):
-    """A table cannot be handed back by a worker (docs/joins.md section 24.2, reading 1): the two programs of scripts/spikes/join/s8 do not compile with the Rust compiler (CANCHO_COMPILER=rust, the reference
-    checks), with the messages quoted there. If it accepts one, the partitions need not be copied back as integers and bytes, and the design can be reconsidered: this test then fails on purpose.
-    [corrected, compiler 119bcfe] The default compiler, the one written in cancho, accepts n1 (it lacks the check that refuses `w.tab = t`): that is a gap of that compiler (docs/join-redesign.md section 1), not
-    a capability, so the gate asks the Rust compiler and does not pin what the default one does."""
+    """A table cannot be handed back by a worker (docs/joins.md section 24.2, reading 1): the two programs of scripts/spikes/join/s8 are not legal. If a compiler accepts one, the partitions
+    need not be copied back as integers and bytes, and the design can be reconsidered: these tests then fail on purpose.
+
+    The compiler is the one written in cancho, built from its seed, with no Rust (docs/seed.md of the compiler repository). It is the compiler these tests ask, and what it does with the two
+    programs was measured on 2026-11-13 at cancho `51524d2`:
+
+    * `n2_table_as_result` is refused, with a message of its own (`must each cross to a real OS thread as one pointer-width value`).
+    * `n1_table_into_job` is **accepted**. That is a gap of that compiler, not a capability (docs/join-redesign.md section 1): the Rust compiler refuses it, with `the value overwritten here is
+      res (JTab), so it cannot be discarded`. So the test for n1 has two forms. With a Rust-built `cancho` named by CANCHO_RUST (a maintainer's machine, and any CI that builds Rust) it is the
+      strong check of the premise, as it was before the compiler moved. Without one it pins the gap: it fails the day the compiler refuses n1, so that the refusal is then asserted
+      for real (delete the second form). It does not say that accepting n1 is right.
+    """
+
+    PROGRAMS = ("n1_table_into_job", "n2_table_as_result")
+
+    def build(self, name, cancho, env):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            return subprocess.run([cancho, "build", str(ROOT / "scripts" / "spikes" / "join" / "s8" / (name + ".cho")), str(ROOT / "tools" / "table" / "jtab.cho"), str(ROOT / "tools" / "table" / "gmap.cho"),
+                                   "--std", "-o", os.path.join(d, name)], capture_output=True, text=True, timeout=300, env=env)
 
     @unittest.skipUnless(shutil.which("cancho"), "needs the pinned compiler on PATH")
-    def test_a_table_cannot_cross_back_from_a_thread(self):
-        import tempfile
-        want = {"n1_table_into_job": "the value overwritten here is `res` (`JTab`), so it cannot be discarded", "n2_table_as_result": "`body` returns `JTab`, which cannot cross back from a real thread yet"}
-        env = dict(os.environ, CANCHO_COMPILER="rust")
-        with tempfile.TemporaryDirectory() as d:
-            for name, message in want.items():
-                p = subprocess.run(["cancho", "build", str(ROOT / "scripts" / "spikes" / "join" / "s8" / (name + ".cho")), str(ROOT / "tools" / "table" / "jtab.cho"), str(ROOT / "tools" / "table" / "gmap.cho"), "--std", "-o", os.path.join(d, name)],
-                                   capture_output=True, text=True, timeout=300, env=env)
-                self.assertNotEqual(p.returncode, 0, "%s compiled: the refusal it records is gone" % name)
-                self.assertIn(message, p.stdout + p.stderr, name)
+    def test_a_table_cannot_be_returned_by_a_thread(self):
+        p = self.build("n2_table_as_result", "cancho", dict(os.environ))
+        self.assertNotEqual(p.returncode, 0, "n2_table_as_result compiled: the refusal it records is gone")
+        self.assertIn("must each cross to a real OS thread as one pointer-width value", p.stdout + p.stderr)
+
+    @unittest.skipUnless(shutil.which("cancho"), "needs the pinned compiler on PATH")
+    def test_a_table_cannot_be_put_in_a_job_from_a_thread(self):
+        ref = os.environ.get("CANCHO_RUST")
+        if ref:
+            p = self.build("n1_table_into_job", ref, dict(os.environ, CANCHO_COMPILER="rust"))
+            self.assertNotEqual(p.returncode, 0, "n1_table_into_job compiled with the Rust compiler: the refusal it records is gone")
+            self.assertIn("the value overwritten here is `res` (`JTab`), so it cannot be discarded", p.stdout + p.stderr)
+            q = self.build("n2_table_as_result", ref, dict(os.environ, CANCHO_COMPILER="rust"))
+            self.assertNotEqual(q.returncode, 0)
+            self.assertIn("`body` returns `JTab`, which cannot cross back from a real thread yet", q.stdout + q.stderr)
+            return
+        p = self.build("n1_table_into_job", "cancho", dict(os.environ))
+        self.assertEqual(p.returncode, 0,
+                         "the compiler now refuses n1_table_into_job (%s): the gap of docs/join-redesign.md section 1 is closed. Assert the refusal for real here (its message is the rule), delete this "
+                         "pin, and keep CANCHO_RUST only for a reference that is still built." % (p.stdout + p.stderr).strip()[:200])
 
 
 # ---- I: no input reaches a panic ----------------------------------------------------------------------------------------------------------------------------------
