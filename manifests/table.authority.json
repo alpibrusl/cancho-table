@@ -127,7 +127,6 @@
     "bit_length",
     "bit_length",
     "bit_length_of",
-    "bit_of",
     "bits_of_key",
     "blank",
     "blanks",
@@ -511,6 +510,7 @@
     "length_at",
     "length_at",
     "limbs",
+    "limbs_of",
     "line",
     "line_ceiling",
     "linked",
@@ -937,6 +937,6 @@
     "y_star"
   ],
   "folded_operators": 399,
-  "folded_calls": 1,
-  "functions": 1583
+  "folded_calls": 0,
+  "functions": 1584
 }
