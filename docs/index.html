@@ -302,6 +302,28 @@ footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(-
 <!-- /gen:sbs -->
 </div></section>
 
+<section id="postgres"><div class="wrap">
+  <h2>Data that lives in Postgres</h2>
+  <p class="lead"><code>table</code> does not connect to a database: its authority row has no network, and CI fails if that changes. Export with <code>psql</code>, then ask. The numbers below are from a real run against PostgreSQL 16.</p>
+  <div class="narrowcol">
+<pre class="code" tabindex="0"><span class="c">$</span> psql --csv -c "select id, customer, status, amount from orders where placed = '2026-11-13' order by id" shop &gt; orders-pg.csv
+<span class="c">$</span> cat orders-pg.csv
+id,customer,status,amount
+1,"Doe, Jane",200,19.90
+2,Acme,404,
+3,"Doe, Jane",200,1250.00
+4,Acme,500,8.05
+<span class="c">$</span> table --where "status = 200" --group customer --agg "count,sum:amount:dec(2)" --format csv orders-pg.csv
+customer,count,sum:amount
+"Doe, Jane",2,1269.90
+<span class="c">$</span> table --group customer --agg "count,sum:amount:dec(2)" orders-pg.csv
+{"rule": "value.not-decimal", "detail": {"row": 2, "column": "amount", "value": ""}, "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "amount != ''", "--group", "customer", "--agg", "count,sum:amount:dec(2)", "orders-pg.csv"]}]}}
+<span class="r"># exit status 8; the rule, detail and repair of the JSON line it prints, the rest cut here</span></pre>
+  <p class="note" style="margin-top:.8rem">A SQL <code>NULL</code> comes out of <code>psql --csv</code> as an empty cell (row 2), and <code>table</code> refuses an empty cell in a <code>:dec</code> column instead of counting it as zero. The repair is the same question without that row. Declare <code>:dec(2)</code> so the sum is exact to the cent; without it the amounts are text.</p>
+  <p class="fine">No Postgres reader is built into <code>table</code> and none is planned inside it. A separate <code>pg-export</code>, which writes JSON lines that <code>table</code> reads, and the way <a href="https://github.com/alpibrusl/cancho-flow">cancho-flow</a> would record it, are a <a href="https://github.com/alpibrusl/cancho-pg/blob/main/docs/design.md#10-pg-export-rows-out-as-json-lines-for-table-and-for-a-recorded-step-design-nothing-built">design</a>, not a tool.</p>
+  </div>
+</div></section>
+
 <section id="stories"><div class="wrap">
 <!--stories-->
 <h2>Stories, from a first look to real questions</h2>

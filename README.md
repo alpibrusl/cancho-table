@@ -53,6 +53,19 @@ Most data tools optimise for flexibility. `table` optimises for predictability.
 |---|---|
 | the [project page](https://alpibrusl.github.io/cancho-table/), the [stories](docs/stories.html) (by topic), the [benchmarks](docs/benchmarks.html) | `table skill`, `table introspect`, the [MCP server](docs/mcp.md), [AGENTS.md](AGENTS.md), [llms.txt](llms.txt) |
 
+## Data that lives in Postgres
+
+`table` does not connect to a database: its authority row has no network, and CI fails if that changes. Export with `psql`, then ask. Output of a run against PostgreSQL 16:
+
+```console
+$ psql --csv -c "select id, customer, status, amount from orders where placed = '2026-11-13' order by id" shop > orders-pg.csv
+$ table --where "status = 200" --group customer --agg "count,sum:amount:dec(2)" --format csv orders-pg.csv
+customer,count,sum:amount
+"Doe, Jane",2,1269.90
+```
+
+A SQL `NULL` comes out as an empty cell, and `table` refuses an empty cell in a `:dec` column (`value.not-decimal`, with the same question minus that row as the repair) instead of counting it as zero. A separate `pg-export` that writes JSON lines, recorded as a step by [cancho-flow](https://github.com/alpibrusl/cancho-flow), is a [design](https://github.com/alpibrusl/cancho-pg/blob/main/docs/design.md#10-pg-export-rows-out-as-json-lines-for-table-and-for-a-recorded-step-design-nothing-built), not a tool.
+
 ## Two-minute quick start
 
 You need `git`, Rust, `clang` and `python3`. The first build downloads the compiler's and the tool's dependencies, so allow a few minutes the first time.
