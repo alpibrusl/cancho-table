@@ -121,6 +121,7 @@ jobs:
         working-directory: table
         run: |
           python3 scripts/cmpv_golden.py --check
+          python3 scripts/cmpv_addback.py --check
           python3 scripts/cexpr_golden.py --check
           python3 scripts/cmpv_golden.py --cases 20000
           python3 scripts/cexpr_golden.py --cases 1500

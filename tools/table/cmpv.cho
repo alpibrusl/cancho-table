@@ -322,13 +322,137 @@ fn shl1[&w](w: &!w [int], s: int) -> [] int {
     return carry;
 }
 
-fn bit_of[&w](w: &w [int], s: int, n: int) -> [] int {
-    return w[at(s, n / 30)] >> n % 30 & 1;
+// How many limbs of slot `s` are in use (0 for zero).
+fn limbs_of[&w](w: &w [int], s: int) -> [] int {
+    var i = 8;
+    while i >= 0 && w[at(s, i)] == 0 {
+        i = i - 1;
+    }
+    return i + 1;
+}
+
+// The magnitude of tmp0 divided by the magnitude of tmp1 (not zero): the quotient's limbs into tmp2 and the remainder's into slot 12, both cleared by the caller. A divisor of one limb is
+// divided out limb by limb; otherwise it is Knuth's algorithm D (TAOCP 4.3.1) in base 2^30: both are shifted left until the divisor's top limb has its top bit set, each quotient limb is
+// estimated from the top two limbs of the dividend and corrected (at most twice, then once more if the product was too large), and the remainder is shifted back. A limb times a limb is
+// below 2^60, so the language's checked arithmetic never traps. The scratch is the workspace's digit area (193 to 212), which `put` also uses, never at the same time.
+fn divmod_mag[&w](w: &!w [int]) -> [] int {
+    let nn = limbs_of(w, tmp0());
+    let nd = limbs_of(w, tmp1());
+    if nn < nd || nn == nd && mag_cmp(w, tmp0(), tmp1()) < 0 {
+        var k = 0;
+        while k < 9 {
+            w[at(12, k)] = w[at(tmp0(), k)];
+            k = k + 1;
+        }
+        return 0;
+    }
+    if nd == 1 {
+        let dv = w[at(tmp1(), 0)];
+        var rem = 0;
+        var i = nn - 1;
+        while i >= 0 {
+            let cur = rem * 1073741824 + w[at(tmp0(), i)];
+            let q = cur / dv;
+            rem = cur - q * dv;
+            w[at(tmp2(), i)] = q;
+            i = i - 1;
+        }
+        w[at(12, 0)] = rem;
+        return 0;
+    }
+    let u0 = 192;
+    let v0 = 204;
+    var top = w[at(tmp1(), nd - 1)];
+    var shift = 0;
+    while top < 536870912 {
+        top = top * 2;
+        shift = shift + 1;
+    }
+    var carry = 0;
+    var i = 0;
+    while i < nd {
+        let x = w[at(tmp1(), i)] * (1 << shift) + carry;
+        w[v0 + i] = x & 1073741823;
+        carry = x >> 30;
+        i = i + 1;
+    }
+    carry = 0;
+    i = 0;
+    while i < nn {
+        let x = w[at(tmp0(), i)] * (1 << shift) + carry;
+        w[u0 + i] = x & 1073741823;
+        carry = x >> 30;
+        i = i + 1;
+    }
+    w[u0 + nn] = carry;
+    var j = nn - nd;
+    while j >= 0 {
+        let num = w[u0 + j + nd] * 1073741824 + w[u0 + j + nd - 1];
+        let vtop = w[v0 + nd - 1];
+        var qhat = num / vtop;
+        var rhat = num - qhat * vtop;
+        var again = true;
+        while again {
+            again = false;
+            if qhat >= 1073741824 || qhat * w[v0 + nd - 2] > rhat * 1073741824 + w[u0 + j + nd - 2] {
+                qhat = qhat - 1;
+                rhat = rhat + vtop;
+                if rhat < 1073741824 {
+                    again = true;
+                }
+            }
+        }
+        var owed = 0;
+        var mc = 0;
+        i = 0;
+        while i < nd {
+            let p = qhat * w[v0 + i] + mc;
+            mc = p >> 30;
+            var t = w[u0 + j + i] - (p & 1073741823) - owed;
+            if t < 0 {
+                t = t + 1073741824;
+                owed = 1;
+            } else {
+                owed = 0;
+            }
+            w[u0 + j + i] = t;
+            i = i + 1;
+        }
+        var t2 = w[u0 + j + nd] - mc - owed;
+        var negative = false;
+        if t2 < 0 {
+            t2 = t2 + 1073741824;
+            negative = true;
+        }
+        w[u0 + j + nd] = t2;
+        if negative {
+            qhat = qhat - 1;
+            var c2 = 0;
+            i = 0;
+            while i < nd {
+                let sum = w[u0 + j + i] + w[v0 + i] + c2;
+                w[u0 + j + i] = sum & 1073741823;
+                c2 = sum >> 30;
+                i = i + 1;
+            }
+            w[u0 + j + nd] = w[u0 + j + nd] + c2 & 1073741823;
+        }
+        w[at(tmp2(), j)] = qhat;
+        j = j - 1;
+    }
+    // the remainder is what is left of the dividend, shifted back
+    let low = (1 << shift) - 1;
+    i = 0;
+    while i < nd {
+        w[at(12, i)] = (w[u0 + i] >> shift) + (w[u0 + i + 1] & low) * (1 << 30 - shift);
+        i = i + 1;
+    }
+    return 0;
 }
 
 // d = a / b rounded half to even at scale `n` (0 to 18). Answers 0 (done), 1 (b is zero) or 2 (the quotient does not fit 127 bits).
 // The value is (A / 10^sa) / (B / 10^sb); the integer wanted is round(A * 10^(n + sb - sa) / B): the exponent goes on the side that keeps it
-// non-negative. A shift-and-subtract long division gives the quotient and a remainder r < B; 2r against B decides the rounding.
+// non-negative. A long division of the magnitudes (`divmod_mag`) gives the quotient and a remainder r < B; 2r against B decides the rounding.
 pub fn div[&w](w: &!w [int], d: int, a: int, b: int, n: int) -> [] int {
     if mag_is_zero(w, b) {
         return 1;
@@ -348,16 +472,7 @@ pub fn div[&w](w: &!w [int], d: int, a: int, b: int, n: int) -> [] int {
     // quotient in tmp2, remainder in slot 12 (the caller's slots are 0 to 11).
     clear(w, tmp2(), n);
     clear(w, 12, 0);
-    var bit = 269;
-    while bit >= 0 {
-        shl1(w, 12);
-        w[at(12, 0)] = w[at(12, 0)] + bit_of(w, tmp0(), bit);
-        if mag_cmp(w, 12, tmp1()) >= 0 {
-            mag_sub(w, 12, 12, tmp1());
-            w[at(tmp2(), bit / 30)] = w[at(tmp2(), bit / 30)] + (1 << bit % 30);
-        }
-        bit = bit - 1;
-    }
+    divmod_mag(w);
     // round half to even: 2r against B.
     shl1(w, 12);
     let c = mag_cmp(w, 12, tmp1());

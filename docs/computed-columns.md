@@ -115,7 +115,7 @@ definition, the column and the row number only.
 
 `tools/table/cmpv.cho`: a value is a sign and a magnitude in **six limbs of 30 bits** (180 bits of room; the 2^127 bound is checked after each operation).
 `add`, `sub`, `mul` (schoolbook; a limb product is below 2^60 and a carry below 2^31, so the checked 64-bit arithmetic of the language never traps),
-`div_round_even(a, b, shift)` (long division by a limb vector, rounded half to even), and `put` (divides by 10^9 in place, limb remainder times 2^30 below
+`div` (the magnitudes divided by Knuth's algorithm D, TAOCP 4.3.1, in base 2^30: a one-limb divisor limb by limb, otherwise the divisor normalized so its top bit is set, each quotient limb estimated from the top two limbs of the dividend and corrected, with the add-back step; rounded half to even from the remainder). *The first build divided bit by bit, 270 shift-and-subtract steps over nine limbs; measured at 3.2 microseconds a row (7.1), it was replaced*, and `put` (divides by 10^9 in place, limb remainder times 2^30 below
 2^60). *Reading:* `dec.mul_small` (`dec.cho:126`) multiplies limbs by a small number and `dec.put_sum` prints a pair accumulator documented for sums below
 2^93, so neither covers a 126-bit product; this module is new and does not borrow their limits.
 
@@ -132,7 +132,17 @@ definition, the column and the row number only.
 * **G-COMPAT.** The corpus md5 of `scripts/corpus.py` on this branch equals the one on `main`, and the select path's instruction count (callgrind, budget
   1.01) is unchanged: the claim of section 2, measured.
 * **G-FLAT.** Peak resident memory of `--compute 't=price:dec(2)*qty:int;h=price:dec(2)/qty:int@4' --format csv`, measured by the repo's launcher (`tests/conformance/maxrss.c`, as `test_memory.py`; `wait4`'s `ru_maxrss` of a small forked child): **3,500 KB at 100,000 rows and 3,524 KB at 1,000,000 for a file; 3,656 and 3,652 KB for a pipe.** `test_compute.test_memory_is_flat_in_the_rows` holds the growth between 20,000 and 200,000 rows under 1 MB (the launcher's noise is about 0.5 MB either way, and a copy of the rows kept would add about 6 MB). *Correction in place:* the first figure written here, 8.9 MB, was taken from a forked Python script and is that script's own high-water mark (which `maxrss.c` exists to avoid), not the tool's.
-* **Speed of the stage: not measured.** Nothing is claimed about it, nor against another tool.
+* **Speed of the stage** (1,000,000 rows of `id,price,qty`, a file of about 20 MB read from the page cache, written to `/dev/null`, `--format csv`; minimum of 5 runs; a 4-core container with a load average of 0.8; the same binary for every line, so the comparison is with `table`'s own `--select` and with nothing else):
+
+  | plan | wall | per row | rows/s |
+  |---|---|---|---|
+  | `--select id,price,qty` (the existing row path) | 0.093 s | 93 ns | 10.7 M |
+  | `--compute 't=price:dec(2)*qty:int'` | 0.279 s | 279 ns | 3.6 M |
+  | `--compute 'h=price:dec(2)/qty:int@4'` | 0.338 s | 338 ns | 3.0 M |
+  | `--compute 't=...;h=...@4'` (a product and a division) | 0.555 s | 555 ns | 1.8 M |
+  | `--compute 't=(price:dec(2)+1)*(qty:int-2)+price:dec(2)*3'` | 0.546 s | 546 ns | 1.8 M |
+
+  *Corrected in place:* the first measurement of the same plans, with the bit-by-bit division, gave 3,207 ns a row for the product and the division (0.31 M rows/s) against 297 ns for the product alone: the division cost ten products. It is now 555 ns, 5.8 times less, with the algorithm of section 6; the arithmetic golden (100,018 cases and 160 that force the add-back step, 0 differences), its 27 mutants (all killed) and the expression golden (3,041 cases) hold the new division to the same answers. Nothing is claimed against another tool: none was measured here. A stage that computes a column costs about three times a selection of the same columns, which is the price of reading each cell as a number and writing the result in full.
 
 ## 8. Slices
 
