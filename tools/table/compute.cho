@@ -96,7 +96,7 @@ fn what_of(status: int) -> [] &static [byte] {
 
 fn hint_of(status: int) -> [] &static [byte] {
     if status == 2 {
-        return "name the column as the header has it, or by position as #3";
+        return "name the column as the header has it, by position as #3, or by the name of an earlier definition of the same --compute (a definition sees only the ones before it)";
     }
     if status == 3 {
         return "name it by position, as #3 for the third column";

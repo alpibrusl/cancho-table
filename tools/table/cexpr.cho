@@ -380,6 +380,27 @@ fn type_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
     return (from, 0, 0, 1);
 }
 
+// The index of the earlier definition (0 .. d - 1) whose name is `word`, or -1: the operand of a chained definition (docs/computed-columns.md section 11).
+fn def_index[&h, &t, &p, &w](heap: &!h Heap, t: &t [byte], prog: &p [int], d: int, word: &w [byte]) -> [heap] int {
+    var found = -1;
+    var k = 0;
+    while k < d {
+        var other = buffer.empty(heap, 32);
+        let (ob, oe, oq, os) = word_at(heap, other, t, prog[1 + 5 * k + 3]);
+        other = ob;
+        var same = false;
+        borrow other as &orr in {
+            same = bytes.equal(buffer.bytes(orr), word);
+        }
+        buffer.drop(heap, other);
+        if same {
+            found = k;
+        }
+        k = k + 1;
+    }
+    return found;
+}
+
 // One definition from `from` to the `;` or the end: its program is written at `prog[at ..]` and its header at slot `d`. Answers (end of the definition in the text, the new `at`, status, offset).
 fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], work: &!w [int], d: int, at: int) -> [heap] (int, int, int, int) {
     var wb = buffer.empty(heap, 32);
@@ -497,7 +518,27 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                         col = cc;
                         rs = rr;
                     }
-                    if rs != 0 {
+                    var dk = -1;
+                    if rs == 2 {
+                        borrow cb as &cr in {
+                            dk = def_index(heap, t, prog, d, buffer.bytes(cr));
+                        }
+                    }
+                    if dk >= 0 {
+                        // an earlier definition: its instructions are copied here, as one operand. It takes no type: a ':' after it is met as an operator is, and is a syntax error at its own offset.
+                        // The copy is not bounded here because the loop's own check (`cur - first > 4 * 128`, at the start of the next step) refuses what is too long, and the program has room for it:
+                        // a definition that passed is at most 4 * 128 + 4 * 28 ints, a copy adds one, so no definition's region passes 1,140 ints and the eight end before 5,600 of `program_size()`'s 8,233.
+                        let from_at = prog[1 + 5 * dk];
+                        let n_ints = prog[1 + 5 * dk + 1] - from_at;
+                        var q = 0;
+                        while q < n_ints {
+                            prog[cur + q] = prog[from_at + q];
+                            q = q + 1;
+                        }
+                        cur = cur + n_ints;
+                        i = e2;
+                        expect = false;
+                    } else if rs != 0 {
                         status = rs;
                     } else {
                         let (te, ts, tk, tstat) = type_at(t, e2);
