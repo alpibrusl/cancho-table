@@ -45,7 +45,8 @@ type   = "int" | "dec(" nat ")" ;
   operator only to avoid "the first expression"; a language with three operators and parentheses is what a spreadsheet user means by "operations", and
   the grammar above is the whole of it: **no functions, no comparisons, no strings, no conditionals.**
 * **`NAME`** is the new header; it must not equal an input header or another definition (`compute.duplicate-name`, repair: choose another name).
-* **At most 8 definitions, 256 bytes each, 16 levels of parentheses** (`compute.too-long`). *Choice, small enough to bound the work per row.*
+* **At most 8 definitions, 256 bytes each, 4 levels of parentheses and 10 operands pending at once** (`compute.too-long`). *Choice, small enough to bound the work per row; the first draft said 16 levels of parentheses, and the build (`tools/table/cexpr.cho`) holds 4, which a gate (`C 9` on five levels) pins.*
+* **`a / b @ N` takes a factor** on its right (a column, a number, a negation, a parenthesised group) and `@N` closes it, so `a / b @ 2 * c` is `(a / b @ 2) * c`; `a / b * c @ 2` is `compute.division-needs-scale` (the first `/` has none). *Read from the build's gates.*
 
 ### 3.1 Types
 
@@ -126,7 +127,8 @@ definition, the column and the row number only.
 |---|---|---|
 | **K0** | this document; the corrections in place (section 9) | merged first |
 | **K1** | `cmpv` and G-CORE with its mutants (no grammar) | G-CORE 0 differences, mutants killed |
-| **K2** | parser and evaluator, `--compute` for CSV/TSV from a file, CSV and JSON out | G-ORACLE, G-MUT, G-NOPANIC |
+| **K2a** (built) | `tools/table/cexpr.cho`: parser and evaluator, with `scripts/cexpr_golden.py` (3,041 cases, 0 differences; 3,000 fuzz cases, no trap; 19 mutants, all killed) | G-ORACLE, G-MUT, G-NOPANIC for the module |
+| **K2b** | the flag, the rule tags, the stage's read loop, CSV and JSON out | G-ORACLE through the binary |
 | **K3** | standard input, JSON-lines input; surface regeneration; AGENTS.md, README, `llms.txt`, `docs/index.html` | G-COMPAT, G-FLAT, G-SURFACE |
 
 ## 9. Corrections made in place

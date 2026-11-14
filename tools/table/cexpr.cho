@@ -1,0 +1,734 @@
+edition 5;
+
+module cexpr;
+
+// `--compute`: the definitions of docs/computed-columns.md, compiled once to a postfix program and evaluated once per row with the exact core (cmpv).
+//
+//     DEFS := DEF { ";" DEF }       DEF := NAME "=" EXPR       EXPR := TERM { ("+" | "-") TERM }
+//     TERM := FACTOR { "*" FACTOR | "/" FACTOR "@" N }          FACTOR := "-" FACTOR | "(" EXPR ")" | OPERAND
+//     OPERAND := COLUMN ":int" | COLUMN ":dec(" S ")" | NUMBER   COLUMN := WORD | "#" N         WORD := bare | 'quoted'
+//
+// A bare word runs to a space or one of `' ( ) + - * / ; : @ , =`; a backslash makes the next byte part of it; a quoted word is between single quotes
+// with '' for a quote and is never a position. A number is digits with at most one point and at most 18 digits in all (`12` is an int, `1.25` a
+// decimal of scale 2). The scale of every result is known before a row is read, so the refusals that depend on it (a product past scale 18) are the
+// compiler's.
+//
+// The program is an `int` slice. Header: [0] the number of definitions; for definition d, five ints at 1 + 5 * d: where its instructions start, how many,
+// the scale of its result, and the first and last byte of its name in the text. Instructions are four ints (op, a, b, c) from `code_base()` on.
+
+import std.buffer;
+import std.bytes;
+import cellnum;
+import cmpv;
+
+pub fn max_defs() -> [] int {
+    return 8;
+}
+
+pub fn code_base() -> [] int {
+    return 5 * 8 + 1;
+}
+
+// The ints a program needs: the header and room for 8 definitions of at most 256 bytes (128 operands and operators each, four ints an instruction).
+pub fn program_size() -> [] int {
+    return 41 + 8 * 4 * 256;
+}
+
+pub fn work_size() -> [] int {
+    return 128;
+}
+
+fn op_cell() -> [] int {
+    return 1;
+}
+
+fn op_const() -> [] int {
+    return 2;
+}
+
+fn op_add() -> [] int {
+    return 3;
+}
+
+fn op_sub() -> [] int {
+    return 4;
+}
+
+fn op_mul() -> [] int {
+    return 5;
+}
+
+fn op_div() -> [] int {
+    return 6;
+}
+
+fn op_neg() -> [] int {
+    return 7;
+}
+
+// Statuses: the compiler's, then the evaluator's.
+pub fn s_ok() -> [] int {
+    return 0;
+}
+
+pub fn s_syntax() -> [] int {
+    return 1;
+}
+
+pub fn s_unknown() -> [] int {
+    return 2;
+}
+
+pub fn s_ambiguous() -> [] int {
+    return 3;
+}
+
+pub fn s_duplicate() -> [] int {
+    return 4;
+}
+
+pub fn s_untyped() -> [] int {
+    return 5;
+}
+
+pub fn s_float() -> [] int {
+    return 6;
+}
+
+pub fn s_scale() -> [] int {
+    return 7;
+}
+
+pub fn s_needs_scale() -> [] int {
+    return 8;
+}
+
+pub fn s_too_long() -> [] int {
+    return 9;
+}
+
+pub fn s_divide_by_zero() -> [] int {
+    return 11;
+}
+
+pub fn s_overflow() -> [] int {
+    return 12;
+}
+
+// 100 + the status of `parse_int`, 200 + the status of `parse_dec`: a cell that is not what its type says (the column is the second answer).
+pub fn s_cell_int() -> [] int {
+    return 100;
+}
+
+pub fn s_cell_dec() -> [] int {
+    return 200;
+}
+
+fn is_space(c: int) -> [] bool {
+    return c == ' ' || c == 9;
+}
+
+fn stops_word(c: int) -> [] bool {
+    return is_space(c) || c == 39 || c == '(' || c == ')' || c == '+' || c == '-' || c == '*' || c == '/' || c == ';' || c == ':' || c == '@' || c == ',' || c == '=';
+}
+
+fn skip_space[&t](t: &t [byte], from: int) -> [] int {
+    var i = from;
+    while i < len(t) && is_space(int_of(t[i])) {
+        i = i + 1;
+    }
+    return i;
+}
+
+// The word at `from`, unescaped into `out`: answers (where it ends, whether it was quoted, status). Status 1: nothing there, or a quote not closed.
+fn word_at[&h, &t](heap: &!h Heap, out: buffer.Buffer, t: &t [byte], from: int) -> [heap] (buffer.Buffer, int, bool, int) {
+    var o = out;
+    var i = from;
+    if i >= len(t) {
+        return (o, i, false, 1);
+    }
+    if int_of(t[i]) == 39 {
+        i = i + 1;
+        while i < len(t) {
+            if int_of(t[i]) == 39 {
+                if i + 1 < len(t) && int_of(t[i + 1]) == 39 {
+                    o = buffer.push(heap, o, byte_of(39));
+                    i = i + 2;
+                } else {
+                    return (o, i + 1, true, 0);
+                }
+            } else {
+                o = buffer.push(heap, o, t[i]);
+                i = i + 1;
+            }
+        }
+        return (o, i, true, 1);
+    }
+    while i < len(t) && !stops_word(int_of(t[i])) {
+        if int_of(t[i]) == 92 {
+            if i + 1 >= len(t) {
+                return (o, i, false, 1);
+            }
+            i = i + 1;
+        }
+        o = buffer.push(heap, o, t[i]);
+        i = i + 1;
+    }
+    if i == from {
+        return (o, i, false, 1);
+    }
+    return (o, i, false, 0);
+}
+
+// A name against the header: the column index, or a status (2 unknown, 3 ambiguous) with the index 0. `names` is the header's names one after the other and `ends` where each stops.
+fn resolve[&n, &e, &w](names: &n [byte], ends: &e [int], ncols: int, word: &w [byte], quoted: bool) -> [] (int, int) {
+    if !quoted && len(word) > 1 && int_of(word[0]) == '#' {
+        var n = 0;
+        var k = 1;
+        var digits = true;
+        while k < len(word) {
+            let d = int_of(word[k]) - '0';
+            if d < 0 || d > 9 || n > 100000 {
+                digits = false;
+                k = len(word);
+            } else {
+                n = n * 10 + d;
+                k = k + 1;
+            }
+        }
+        if digits {
+            if n >= 1 && n <= ncols {
+                return (n - 1, 0);
+            }
+            return (0, 2);
+        }
+    }
+    var found = -1;
+    var count = 0;
+    var c = 0;
+    while c < ncols {
+        var start = 0;
+        if c > 0 {
+            start = ends[c - 1];
+        }
+        if bytes.equal(names[start..ends[c]], word) {
+            if count == 0 {
+                found = c;
+            }
+            count = count + 1;
+        }
+        c = c + 1;
+    }
+    if count == 0 {
+        return (0, 2);
+    }
+    if count > 1 {
+        return (0, 3);
+    }
+    return (found, 0);
+}
+
+// A number at `from`: digits and at most one point with a digit after it, at most 18 digits. Answers (end, value, scale, status 0 or 1).
+fn number_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
+    var end = from;
+    while end < len(t) && (int_of(t[end]) >= '0' && int_of(t[end]) <= '9' || int_of(t[end]) == '.') {
+        end = end + 1;
+    }
+    var v = 0;
+    var digits = 0;
+    var scale = 0;
+    var point = false;
+    var i = from;
+    while i < end {
+        let c = int_of(t[i]);
+        if c == '.' {
+            if point {
+                return (end, 0, 0, 1);
+            }
+            point = true;
+        } else {
+            digits = digits + 1;
+            if digits > 18 {
+                return (end, 0, 0, 1);
+            }
+            v = v * 10 + (c - '0');
+            if point {
+                scale = scale + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if digits == 0 || point && scale == 0 {
+        return (end, 0, 0, 1);
+    }
+    return (end, v, scale, 0);
+}
+
+fn emit[&p](prog: &!p [int], at: int, op: int, a: int, b: int, c: int) -> [] int {
+    prog[at] = op;
+    prog[at + 1] = a;
+    prog[at + 2] = b;
+    prog[at + 3] = c;
+    return at + 4;
+}
+
+// Pops the operator on top of the stack of `work` (codes at 0.., scales at 32..; the depth at 64) into the program at `at`. Answers the new `at`, or -1 for a division with no scale.
+fn pop_op[&p, &w](prog: &!p [int], work: &!w [int], at: int) -> [] int {
+    let top = work[64] - 1;
+    let code = work[top];
+    let n = work[32 + top];
+    work[64] = top;
+    if code == 4 {
+        if n < 0 {
+            return -1;
+        }
+        return emit(prog, at, op_div(), n, 0, 0);
+    }
+    if code == 1 {
+        return emit(prog, at, op_add(), 0, 0, 0);
+    }
+    if code == 2 {
+        return emit(prog, at, op_sub(), 0, 0, 0);
+    }
+    if code == 3 {
+        return emit(prog, at, op_mul(), 0, 0, 0);
+    }
+    return emit(prog, at, op_neg(), 0, 0, 0);
+}
+
+// Binding strength: * and / 2, + and - 1, a negation 3, a parenthesis 0.
+fn prec(code: int) -> [] int {
+    if code == 5 {
+        return 3;
+    }
+    if code == 3 || code == 4 {
+        return 2;
+    }
+    if code == 1 || code == 2 {
+        return 1;
+    }
+    return 0;
+}
+
+// The scale and the most operands pending at once of the program from `first` to `end`: (scale, depth, status). A product past scale 18 is status 7.
+fn shape[&p, &w](prog: &p [int], work: &!w [int], first: int, end: int) -> [] (int, int, int) {
+    var sp = 0;
+    var depth = 0;
+    var at = first;
+    while at < end {
+        let op = prog[at];
+        if op == op_cell() || op == op_const() {
+            if op == op_cell() {
+                work[72 + sp] = prog[at + 2];
+            } else {
+                work[72 + sp] = prog[at + 2];
+            }
+            sp = sp + 1;
+            if sp > depth {
+                depth = sp;
+            }
+        } else if op == op_neg() {
+            sp = sp;
+        } else {
+            let right = work[72 + sp - 1];
+            let left = work[72 + sp - 2];
+            sp = sp - 1;
+            var scale = left;
+            if op == op_mul() {
+                scale = left + right;
+                if scale > 18 {
+                    return (0, 0, s_scale());
+                }
+            } else if op == op_div() {
+                scale = prog[at + 1];
+            } else if right > left {
+                scale = right;
+            }
+            work[72 + sp - 1] = scale;
+        }
+        at = at + 4;
+    }
+    return (work[72], depth, 0);
+}
+
+// The type written after a column: `:int` or `:dec(S)`. Answers (end, scale, kind, status): kind 0 is an int and 1 a decimal; status 0, 1 (syntax), 5 (no type), 6 (`:float`).
+fn type_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
+    if from >= len(t) || int_of(t[from]) != ':' {
+        return (from, 0, 0, 5);
+    }
+    var rest = len(t) - (from + 1);
+    let r = t[from + 1..len(t)];
+    if rest >= 3 && bytes.equal(r[0..3], "int") {
+        return (from + 4, 0, 0, 0);
+    }
+    if rest >= 5 && bytes.equal(r[0..5], "float") {
+        return (from + 6, 0, 0, 6);
+    }
+    if rest >= 5 && bytes.equal(r[0..4], "dec(") {
+        var k = 4;
+        var n = 0;
+        var digits = 0;
+        while k < rest && int_of(r[k]) >= '0' && int_of(r[k]) <= '9' && digits < 3 {
+            n = n * 10 + (int_of(r[k]) - '0');
+            digits = digits + 1;
+            k = k + 1;
+        }
+        if digits > 0 && k < rest && int_of(r[k]) == ')' && n <= 18 {
+            return (from + 1 + k + 1, n, 1, 0);
+        }
+    }
+    return (from, 0, 0, 1);
+}
+
+// One definition from `from` to the `;` or the end: its program is written at `prog[at ..]` and its header at slot `d`. Answers (end of the definition in the text, the new `at`, status, offset).
+fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], work: &!w [int], d: int, at: int) -> [heap] (int, int, int, int) {
+    var wb = buffer.empty(heap, 32);
+    var i = skip_space(t, from);
+    let name_first = i;
+    var status = 0;
+    var offset = i;
+    var out_at = at;
+    var i_end = i;
+    let (nb, ne, nq, ns) = word_at(heap, wb, t, i);
+    wb = nb;
+    i = ne;
+    if ns != 0 {
+        status = 1;
+    }
+    var name_len = 0;
+    borrow wb as &wr in {
+        name_len = buffer.size(wr);
+    }
+    if status == 0 && name_len == 0 {
+        status = 1;
+    }
+    // the name is not a column of the input nor one of the definitions before
+    if status == 0 {
+        borrow wb as &wr in {
+            let (c0, cs) = resolve(names, ends, ncols, buffer.bytes(wr), true);
+            if cs == 0 {
+                status = 4;
+            }
+        }
+    }
+    let name_last = i;
+    if status == 0 {
+        var k = 0;
+        while k < d && status == 0 {
+            var other = buffer.empty(heap, 32);
+            let (ob, oe, oq, os) = word_at(heap, other, t, prog[1 + 5 * k + 3]);
+            other = ob;
+            var same = false;
+            borrow wb as &wr in {
+                borrow other as &orr in {
+                    same = bytes.equal(buffer.bytes(wr), buffer.bytes(orr));
+                }
+            }
+            buffer.drop(heap, other);
+            if same {
+                status = 4;
+            }
+            k = k + 1;
+        }
+    }
+    buffer.drop(heap, wb);
+    if status == 0 {
+        i = skip_space(t, i);
+        if i >= len(t) || int_of(t[i]) != '=' {
+            status = 1;
+            offset = i;
+        } else {
+            i = i + 1;
+        }
+    } else {
+        offset = name_first;
+    }
+    work[64] = 0;
+    work[65] = 0;
+    var expect = true;
+    var done = false;
+    var depth_ok = true;
+    let first = at;
+    var cur = at;
+    while status == 0 && !done {
+        i = skip_space(t, i);
+        offset = i;
+        if cur - first > 4 * 128 {
+            status = 9;
+        } else if i >= len(t) || int_of(t[i]) == ';' && work[65] == 0 {
+            done = true;
+        } else if expect {
+            let c = int_of(t[i]);
+            if c == '-' {
+                work[work[64]] = 5;
+                work[32 + work[64]] = -1;
+                work[64] = work[64] + 1;
+                i = i + 1;
+            } else if c == '(' {
+                work[65] = work[65] + 1;
+                if work[65] > 4 || work[64] > 28 {
+                    status = 9;
+                } else {
+                    work[work[64]] = 6;
+                    work[32 + work[64]] = -1;
+                    work[64] = work[64] + 1;
+                    i = i + 1;
+                }
+            } else if c >= '0' && c <= '9' || c == '.' {
+                let (ne2, v, sc, ns2) = number_at(t, i);
+                if ns2 != 0 {
+                    status = 1;
+                } else {
+                    cur = emit(prog, cur, op_const(), v, sc, 0);
+                    i = ne2;
+                    expect = false;
+                }
+            } else {
+                var cb = buffer.empty(heap, 32);
+                let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
+                cb = b2;
+                if s2 != 0 {
+                    status = 1;
+                } else {
+                    var col = 0;
+                    var rs = 0;
+                    borrow cb as &cr in {
+                        let (cc, rr) = resolve(names, ends, ncols, buffer.bytes(cr), q2);
+                        col = cc;
+                        rs = rr;
+                    }
+                    if rs != 0 {
+                        status = rs;
+                    } else {
+                        let (te, ts, tk, tstat) = type_at(t, e2);
+                        if tstat != 0 {
+                            status = tstat;
+                            offset = e2;
+                        } else {
+                            cur = emit(prog, cur, op_cell(), col, ts, tk);
+                            i = te;
+                            expect = false;
+                        }
+                    }
+                }
+                buffer.drop(heap, cb);
+            }
+        } else {
+            let c = int_of(t[i]);
+            if c == ')' {
+                if work[65] == 0 {
+                    status = 1;
+                } else {
+                    while work[64] > 0 && work[work[64] - 1] != 6 && status == 0 {
+                        cur = pop_op(prog, work, cur);
+                        if cur < 0 {
+                            status = 8;
+                        }
+                    }
+                    if status == 0 {
+                        work[64] = work[64] - 1;
+                        work[65] = work[65] - 1;
+                        i = i + 1;
+                    }
+                }
+            } else if c == '+' || c == '-' || c == '*' || c == '/' {
+                var code = 1;
+                if c == '-' {
+                    code = 2;
+                } else if c == '*' {
+                    code = 3;
+                } else if c == '/' {
+                    code = 4;
+                }
+                while status == 0 && work[64] > 0 && prec(work[work[64] - 1]) >= prec(code) {
+                    cur = pop_op(prog, work, cur);
+                    if cur < 0 {
+                        status = 8;
+                    }
+                }
+                if status == 0 {
+                    if work[64] > 28 {
+                        status = 9;
+                    } else {
+                        work[work[64]] = code;
+                        work[32 + work[64]] = -1;
+                        work[64] = work[64] + 1;
+                        expect = true;
+                        i = i + 1;
+                    }
+                }
+            } else if c == '@' {
+                while work[64] > 0 && work[work[64] - 1] == 5 {
+                    cur = pop_op(prog, work, cur);
+                }
+                if work[64] == 0 || work[work[64] - 1] != 4 || work[32 + work[64] - 1] >= 0 {
+                    status = 1;
+                } else {
+                    var k = i + 1;
+                    var n = 0;
+                    var digits = 0;
+                    while k < len(t) && int_of(t[k]) >= '0' && int_of(t[k]) <= '9' && digits < 3 {
+                        n = n * 10 + (int_of(t[k]) - '0');
+                        digits = digits + 1;
+                        k = k + 1;
+                    }
+                    if digits == 0 || n > 18 {
+                        status = 1;
+                        offset = i;
+                    } else {
+                        work[32 + work[64] - 1] = n;
+                        i = k;
+                    }
+                }
+            } else {
+                status = 1;
+            }
+        }
+    }
+    if status == 0 && (expect || work[65] != 0) {
+        status = 1;
+    }
+    while status == 0 && work[64] > 0 {
+        if work[work[64] - 1] == 6 {
+            status = 1;
+        } else {
+            cur = pop_op(prog, work, cur);
+            if cur < 0 {
+                status = 8;
+            }
+        }
+    }
+    if status != 0 {
+        return (i, at, status, offset);
+    }
+    let (scale, depth, shape_status) = shape(prog, work, first, cur);
+    if shape_status != 0 {
+        return (i, at, shape_status, name_first);
+    }
+    if depth > 10 {
+        return (i, at, 9, name_first);
+    }
+    prog[1 + 5 * d] = first;
+    prog[1 + 5 * d + 1] = cur;
+    prog[1 + 5 * d + 2] = scale;
+    prog[1 + 5 * d + 3] = name_first;
+    prog[1 + 5 * d + 4] = name_last;
+    return (i, cur, 0, 0);
+}
+
+// All the definitions of `t` against the header: answers (status, offset in the text, definitions compiled). `prog` is `program_size()` ints and `work` `work_size()`.
+pub fn compile[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], work: &!w [int]) -> [heap] (int, int, int) {
+    if len(t) > 8 * 256 {
+        return (9, 0, 0);
+    }
+    var at = code_base();
+    var d = 0;
+    var i = 0;
+    var more = true;
+    while more {
+        if d >= 8 {
+            return (9, i, d);
+        }
+        let (e1, at1, st, off) = define(heap, t, i, names, ends, ncols, prog, work, d, at);
+        if st != 0 {
+            return (st, off, d);
+        }
+        if e1 - i > 256 {
+            return (9, i, d);
+        }
+        at = at1;
+        d = d + 1;
+        i = e1;
+        if i < len(t) && int_of(t[i]) == ';' {
+            i = i + 1;
+        } else {
+            more = false;
+        }
+    }
+    prog[0] = d;
+    return (0, 0, d);
+}
+
+pub fn count[&p](prog: &p [int]) -> [] int {
+    return prog[0];
+}
+
+pub fn scale_of[&p](prog: &p [int], d: int) -> [] int {
+    return prog[1 + 5 * d + 2];
+}
+
+// The name of definition `d`, unescaped, appended to `out`.
+pub fn name_of[&h, &t, &p](heap: &!h Heap, out: buffer.Buffer, t: &t [byte], prog: &p [int], d: int) -> [heap] buffer.Buffer {
+    let (o, e, q, s) = word_at(heap, out, t, prog[1 + 5 * d + 3]);
+    return o;
+}
+
+// One cell of the row as a value in slot `s`: answers (status, 0). Status 0, or `s_cell_int()` / `s_cell_dec()` plus the parser's status.
+fn load_cell[&d, &c, &w](record: &d [byte], cells: &c [int], col: int, scale: int, kind: int, w: &!w [int], s: int) -> [] int {
+    let first = cells[3 * col];
+    let last = cells[3 * col + 1];
+    // A quoted cell's span is inside its quotes; a number holds no quote, so a cell with one is refused by the parser below as any other text is.
+    var v = 0;
+    var st = 0;
+    if kind == 0 {
+        let (v1, s1) = cellnum.parse_int(record[first..last]);
+        v = v1;
+        st = s1;
+    } else {
+        let (v1, s1) = cellnum.parse_dec(record[first..last], scale);
+        v = v1;
+        st = s1;
+    }
+    if st != 0 {
+        if kind == 0 {
+            return s_cell_int() + st;
+        }
+        return s_cell_dec() + st;
+    }
+    cmpv.set_int(w, s, v, scale);
+    return 0;
+}
+
+// Definition `d` against one row: the value is left in slot 0 of the workspace `w`. Answers (status, column of the cell that was refused).
+pub fn eval[&p, &dd, &c, &w](prog: &p [int], d: int, record: &dd [byte], cells: &c [int], w: &!w [int]) -> [] (int, int) {
+    var at = prog[1 + 5 * d];
+    let end = prog[1 + 5 * d + 1];
+    var sp = 0;
+    while at < end {
+        let op = prog[at];
+        if op == op_cell() {
+            let st = load_cell(record, cells, prog[at + 1], prog[at + 2], prog[at + 3], w, sp);
+            if st != 0 {
+                return (st, prog[at + 1]);
+            }
+            sp = sp + 1;
+        } else if op == op_const() {
+            cmpv.set_int(w, sp, prog[at + 1], prog[at + 2]);
+            sp = sp + 1;
+        } else if op == op_neg() {
+            cmpv.negate(w, sp - 1);
+        } else {
+            sp = sp - 1;
+            var ok = true;
+            if op == op_add() {
+                ok = cmpv.add(w, sp - 1, sp - 1, sp);
+            } else if op == op_sub() {
+                ok = cmpv.sub(w, sp - 1, sp - 1, sp);
+            } else if op == op_mul() {
+                ok = cmpv.mul(w, sp - 1, sp - 1, sp);
+            } else {
+                let st = cmpv.div(w, sp - 1, sp - 1, sp, prog[at + 1]);
+                if st == 1 {
+                    return (11, 0);
+                }
+                ok = st == 0;
+            }
+            if !ok {
+                return (12, 0);
+            }
+        }
+        at = at + 4;
+    }
+    cmpv.copy(w, 0, sp - 1);
+    return (0, 0);
+}
