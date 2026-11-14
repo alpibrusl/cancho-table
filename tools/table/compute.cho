@@ -1,0 +1,630 @@
+edition 5;
+
+module compute;
+
+// `--compute`: columns computed from the others, row by row (docs/computed-columns.md). A reader beside `read_file` and its kin, not a clause of the row loops: it is selected
+// by `read_any` when the flag is given, and nothing it does is in a loop the other plans run.
+//
+// It reads the file the way `read_file` does (the same lines, the same records, the same refusals), extends the header with the names of the definitions before the frame
+// is made (so the frame, the CSV header line and the JSON `columns` already have n + k columns), and for each row evaluates the definitions with `cexpr`, appends their text to
+// a copy of the record and gives that copy and its n + k cells to `engine.process_rows`, which writes the row as it writes any row of `--rows`: pages, budget, CSV and JSON.
+
+import std.buffer;
+import std.vec;
+import bulk;
+import cexpr;
+import cmpv;
+import engine;
+import finish;
+import frame;
+import query;
+import reader;
+import scan;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.lines;
+
+// The rule of a status of `cexpr`.
+fn rule_of(status: int) -> [] &static [byte] {
+    if status == 2 {
+        return "compute.unknown-column";
+    }
+    if status == 3 {
+        return "compute.ambiguous-column";
+    }
+    if status == 4 {
+        return "compute.duplicate-name";
+    }
+    if status == 5 {
+        return "compute.untyped-operand";
+    }
+    if status == 6 {
+        return "compute.float-operand";
+    }
+    if status == 7 {
+        return "compute.scale-too-large";
+    }
+    if status == 8 {
+        return "compute.division-needs-scale";
+    }
+    if status == 9 {
+        return "compute.too-long";
+    }
+    if status == 11 {
+        return "compute.divide-by-zero";
+    }
+    if status == 12 {
+        return "compute.overflow";
+    }
+    return "compute.syntax";
+}
+
+fn what_of(status: int) -> [] &static [byte] {
+    if status == 2 {
+        return "a column of --compute is not in the header";
+    }
+    if status == 3 {
+        return "a column of --compute is the name of more than one column";
+    }
+    if status == 4 {
+        return "the name of a computed column is a column of the input or the name of another definition";
+    }
+    if status == 5 {
+        return "a column of --compute has no type: write :int or :dec(S) after it";
+    }
+    if status == 6 {
+        return "a :float column is not an operand of --compute: a double is rounded by every operation";
+    }
+    if status == 7 {
+        return "a product of --compute would have more than 18 fractional digits";
+    }
+    if status == 8 {
+        return "a division of --compute has no scale: write a / b @ N, N from 0 to 18, rounded half to even";
+    }
+    if status == 9 {
+        return "--compute is longer than the bounds: 8 definitions of 256 bytes, 4 levels of parentheses, 10 operands at once";
+    }
+    if status == 11 {
+        return "a division of --compute has a divisor of zero in a row";
+    }
+    if status == 12 {
+        return "a result of --compute is 2^127 or more in a row";
+    }
+    return "--compute is not NAME=EXPR with + - * / and parentheses";
+}
+
+fn hint_of(status: int) -> [] &static [byte] {
+    if status == 2 {
+        return "name the column as the header has it, or by position as #3";
+    }
+    if status == 3 {
+        return "name it by position, as #3 for the third column";
+    }
+    if status == 4 {
+        return "choose a name that is not a column of the input";
+    }
+    if status == 5 {
+        return "write COLUMN:int or COLUMN:dec(S), as --where does";
+    }
+    if status == 6 {
+        return "use :int or :dec(S), or compute in a tool made for floats";
+    }
+    if status == 7 {
+        return "use columns of a smaller scale, or compute the product in two steps with a rounding division between";
+    }
+    if status == 8 {
+        return "write it a / b @ 2, which rounds half to even to 2 fractional digits (0 to 18)";
+    }
+    if status == 9 {
+        return "split the definitions between two calls, the second reading what the first wrote";
+    }
+    if status == 11 {
+        return "keep out the rows with a zero divisor in an earlier call";
+    }
+    if status == 12 {
+        return "use columns of a smaller scale or magnitude";
+    }
+    return "write --compute 'total=price:dec(2)*qty:int'";
+}
+
+// A refusal of a definition (a compile status, or a row status 11 or 12): the rule, the definition's offset in the text, and for a row the row and the column.
+pub fn refuse[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, offset: int, row: int, line: int, definition: int, path: &p [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, finish.extra(), rule_of(status), what_of(status), hint_of(status));
+    w = fail.repair_none(heap, w, "what the definition should be is not known");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", path);
+    w = fail.detail_int(heap, w, "offset", offset);
+    if row > 0 {
+        w = fail.detail_int(heap, w, "row", row);
+        w = fail.detail_int(heap, w, "line", line);
+        w = fail.detail_int(heap, w, "definition", definition);
+    }
+    return fail.add(heap, e, w);
+}
+
+// A cell that is not what its type says, in a definition: `value.not-integer` and the others, with the context `compute`.
+pub fn refuse_cell[&h, &p, &n, &d](heap: &!h Heap, e: fail.Errors, status: int, names: &n buffer.Buffer, hends: &d vec.Vec[int], col: int, row: int, line: int, path: &p [byte]) -> [heap] fail.Errors {
+    var rule = "value.not-integer";
+    var what = "a cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)";
+    var hint = "keep out the rows with such a cell in an earlier call, or declare the column :dec(N) if it has a point";
+    if status == 102 {
+        rule = "value.integer-overflow";
+        what = "a cell is an integer that does not fit 64 bits";
+    } else if status >= 200 {
+        rule = "value.not-decimal";
+        what = "a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone";
+        hint = "keep out the rows with such a cell in an earlier call";
+        if status == 203 {
+            rule = "value.decimal-scale";
+            what = "a cell has more fractional digits than the S of its :dec(S)";
+            hint = "declare the column with a larger scale";
+        } else if status == 202 {
+            rule = "value.decimal-too-wide";
+            what = "a cell is a decimal that does not fit 18 digits once scaled";
+            hint = "keep out the rows with such a cell in an earlier call";
+        }
+    }
+    var w = fail.open_in(heap, finish.extra(), rule, what, hint);
+    w = fail.repair_none(heap, w, "what the cell was meant to be is not known");
+    w = fail.detail_open(heap, w);
+    w = fail.detail_text(heap, w, "path", path);
+    w = fail.detail_str(heap, w, "context", "compute");
+    w = fail.detail_text(heap, w, "column", finish.name_of(names, hends, col));
+    w = fail.detail_int(heap, w, "row", row);
+    w = fail.detail_int(heap, w, "line", line);
+    return fail.add(heap, e, w);
+}
+
+// One row: the definitions evaluated against the record, their text appended to a copy of it, its cells made, and the row written by `engine.process_rows`. Answers the cells, the copy,
+// the four buffers of the output, and a status: 0, or the status of `cexpr` that refused the row with the column (for a cell) or the definition.
+pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a](heap: &!h Heap, io: &!i Io, line: &l [byte], prog: &p [int], nd: int, ncols: int, ws: &!w [int], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: Box[[int]], copy: buffer.Buffer, rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, picked: int, delim: int, as_csv: bool, budget: int, number: int, limit: int, a: &!a [int]) -> [heap, io_write] (Box[[int]], buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, int, int, int) {
+    var cells2 = cells;
+    var copy2 = copy;
+    borrow mut copy2 as &!cw in {
+        buffer.clear(cw);
+    }
+    copy2 = buffer.append(heap, copy2, line);
+    var status = 0;
+    var col = 0;
+    var def = 0;
+    var d = 0;
+    while d < nd && status == 0 {
+        var st = 0;
+        var cc = 0;
+        borrow cells2 as &cr in {
+            let (s1, c1) = cexpr.eval(prog, d, line, contents(cr), ws);
+            st = s1;
+            cc = c1;
+        }
+        if st != 0 {
+            status = st;
+            col = cc;
+            def = d;
+        } else {
+            var start = 0;
+            borrow copy2 as &kr in {
+                start = buffer.size(kr);
+            }
+            copy2 = cmpv.put(heap, copy2, ws, 0);
+            var end = 0;
+            borrow copy2 as &kr in {
+                end = buffer.size(kr);
+            }
+            borrow mut cells2 as &!cw2 in {
+                contents(cw2)[3 * (ncols + d)] = start;
+                contents(cw2)[3 * (ncols + d) + 1] = end;
+                contents(cw2)[3 * (ncols + d) + 2] = 0;
+            }
+        }
+        d = d + 1;
+    }
+    var rows2 = rows;
+    var scratch2 = scratch;
+    var escr2 = escr;
+    var kept2 = kept;
+    if status == 0 {
+        borrow copy2 as &kr in {
+            borrow cells2 as &cr in {
+                let (r2, s2, e2, k2) = engine.process_rows(heap, io, rows2, scratch2, escr2, kept2, tree, cols, buffer.bytes(kr), contents(cr), sel, picked, delim, as_csv, budget, number, limit, a);
+                rows2 = r2;
+                scratch2 = s2;
+                escr2 = e2;
+                kept2 = k2;
+            }
+        }
+    }
+    return (cells2, copy2, rows2, scratch2, escr2, kept2, status, col, def);
+}
+
+// The sequential read of `read_file` (or, with `stdin`, of `read_stream`: the refill is the one difference), with the definitions of `--compute` in the place of the selection. Same arguments, same answer.
+pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, shown: &s [byte], io: &!i Io, fs: &fs Fs(""), root: &rt [byte], rel: &rl [byte], full: &fu [byte], stdin: bool, delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_read, io_write] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+    let table = spec.flag_table();
+    let cap = cli.nat(args, parsed, table, "max-line-bytes");
+    let most = cli.nat(args, parsed, table, "max-rows");
+    let text = cli.text(args, parsed, table, "compute");
+    var e = errs;
+    var names = buffer.empty(heap, 1);
+    var hends = vec.empty(heap, 1, 0);
+    var head = buffer.empty(heap, 1);
+    var rows = buffer.empty(heap, 1);
+    var scratch = buffer.empty(heap, 1);
+    var escr = buffer.empty(heap, 16);
+    var kept = buffer.empty(heap, 64);
+    var rec = buffer.empty(heap, 256);
+    var copy = buffer.empty(heap, 256);
+    var cols = box_slice(heap, 1, 0);
+    var cells = box_slice(heap, 3, 0);
+    var sel = box_slice(heap, 1, 0);
+    var labels = buffer.empty(heap, 1);
+    var lends = vec.empty(heap, 1, 0);
+    var tally = box_slice(heap, engine.k_size(), 0);
+    var prog = box_slice(heap, cexpr.program_size(), 0);
+    var work = box_slice(heap, cexpr.work_size(), 0);
+    var ws = box_slice(heap, cmpv.workspace(), 0);
+    var nd = 0;
+    var picked = 0;
+    var header = false;
+    var quoted = false;
+    var seps = 0;
+    var opened = 0;
+    // a row refused by a definition: its status, column, definition, row and line
+    var rstatus = 0;
+    var rcol = 0;
+    var rdef = 0;
+    var rrow = 0;
+    var rline = 0;
+    var r = lines.start(heap, cap);
+    var going = true;
+    var c = finish.Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0, skipped: -1, skipped_join: -1 };
+    borrow mut tally as &!tw in {
+        let a = contents(tw);
+        while going {
+            var status = 9;
+            borrow mut r as &!rw in {
+                status = scan.next_fast(rw);
+            }
+            if status == 9 {
+                let (stepped, answer) = lines.next(heap, r);
+                r = stepped;
+                status = answer;
+            }
+            if status == lines.need() {
+                if stdin {
+                    r = bulk.fill_stdin(r, io);
+                } else {
+                    r = lines.fill_file(r, file);
+                }
+            } else if status == lines.done() {
+                going = false;
+            } else if status == lines.long() {
+                a[engine.k_abort()] = 4;
+                borrow r as &rr in {
+                    a[engine.k_abort_line()] = lines.number(rr);
+                    a[engine.k_long()] = lines.length(rr);
+                }
+                going = false;
+            } else {
+                borrow r as &rr in {
+                    let number = lines.number(rr);
+                    var line = lines.text(rr);
+                    if number == 1 && len(line) >= 3 && int_of(line[0]) == 239 && int_of(line[1]) == 187 && int_of(line[2]) == 191 {
+                        line = line[3..len(line)];
+                    }
+                    let whole = line;
+                    if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                        line = line[0..len(line) - 1];
+                    }
+                    if !quoted && len(line) == 0 {
+                        // A blank line between records is not a record.
+                    } else if header && !quoted && a[engine.k_records()] >= most {
+                        a[engine.k_capped()] = 1;
+                        going = false;
+                    } else if header && !quoted && a[engine.k_records()] >= from && a[engine.k_emitted()] >= limit {
+                        a[engine.k_more()] = 1;
+                        a[engine.k_next()] = a[engine.k_records()];
+                        going = false;
+                    } else if header && !quoted {
+                        // A data record begins; most are whole on this line.
+                        var inside = false;
+                        var found = 0;
+                        var bad = false;
+                        borrow mut cells as &!cw in {
+                            let (n, open, wrong) = reader.fields(line, delim, contents(cw), a[engine.k_columns()]);
+                            found = n;
+                            inside = open;
+                            bad = wrong;
+                        }
+                        if bad {
+                            a[engine.k_abort()] = 1;
+                            a[engine.k_abort_line()] = number;
+                            going = false;
+                        } else if inside {
+                            quoted = true;
+                            opened = number;
+                            borrow mut rec as &!rw2 in {
+                                buffer.clear(rw2);
+                            }
+                            rec = buffer.append(heap, rec, whole);
+                            rec = buffer.push(heap, rec, byte_of(10));
+                        } else if engine.count_row(a, found, number, from) {
+                            borrow cols as &kr in {
+                                borrow sel as &sr in {
+                                    borrow prog as &pr in {
+                                        borrow mut ws as &!wsw in {
+                                            let (c2, p2, r2, s2, e2, k2, st, col, def) = row_out(heap, io, line, contents(pr), nd, a[engine.k_columns()], contents(wsw), tree, contents(kr), contents(sr), cells, copy, rows, scratch, escr, kept, picked, delim, as_csv, budget, number, limit, a);
+                                            cells = c2;
+                                            copy = p2;
+                                            rows = r2;
+                                            scratch = s2;
+                                            escr = e2;
+                                            kept = k2;
+                                            if st != 0 {
+                                                rstatus = st;
+                                                rcol = col;
+                                                rdef = def;
+                                                rrow = a[engine.k_records()];
+                                                rline = number;
+                                                going = false;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // The header, or the rest of a record that has quotes open: kept.
+                        if !quoted {
+                            opened = number;
+                            borrow mut rec as &!rw2 in {
+                                buffer.clear(rw2);
+                            }
+                            seps = 0;
+                        }
+                        let (inside, n, bad) = reader.scan(line, delim, quoted, seps);
+                        seps = n;
+                        rec = buffer.append(heap, rec, whole);
+                        var held = 0;
+                        borrow rec as &rw2 in {
+                            held = buffer.size(rw2);
+                        }
+                        if bad {
+                            a[engine.k_abort()] = 1;
+                            a[engine.k_abort_line()] = number;
+                            going = false;
+                        } else if inside {
+                            quoted = true;
+                            rec = buffer.push(heap, rec, byte_of(10));
+                            if held + 1 > cap {
+                                a[engine.k_abort()] = 3;
+                                if header {
+                                    a[engine.k_abort()] = 7;
+                                }
+                                a[engine.k_abort_line()] = opened;
+                                going = false;
+                            }
+                        } else {
+                            quoted = false;
+                            seps = 0;
+                            if !header {
+                                buffer.drop(heap, names);
+                                vec.drop(heap, hends);
+                                borrow rec as &rw2 in {
+                                    let (nm, en) = reader.split_header(heap, buffer.bytes(rw2), delim);
+                                    names = nm;
+                                    hends = en;
+                                }
+                                header = true;
+                                var ncols = 0;
+                                borrow hends as &er in {
+                                    ncols = vec.size(er);
+                                }
+                                a[engine.k_columns()] = ncols;
+                                // the definitions, against the header as the file has it
+                                var endsb = box_slice(heap, ncols + 1, 0);
+                                borrow mut endsb as &!ew in {
+                                    borrow hends as &er in {
+                                        var k = 0;
+                                        while k < ncols {
+                                            contents(ew)[k] = vec.get(er, k);
+                                            k = k + 1;
+                                        }
+                                    }
+                                }
+                                var cstatus = 0;
+                                var coffset = 0;
+                                borrow mut prog as &!pw in {
+                                    borrow mut work as &!ww in {
+                                        borrow names as &nr in {
+                                            borrow endsb as &er in {
+                                                let (s1, o1, n1) = cexpr.compile(heap, text, buffer.bytes(nr), contents(er), ncols, contents(pw), contents(ww));
+                                                cstatus = s1;
+                                                coffset = o1;
+                                                nd = n1;
+                                            }
+                                        }
+                                    }
+                                }
+                                unbox_slice(heap, endsb);
+                                if cstatus != 0 {
+                                    e = refuse(heap, e, cstatus, coffset, 0, 0, 0, shown);
+                                    // 90: refused by the definitions and reported, which `finish.explain` leaves as it is and which keeps a document with no columns from being made
+                                    a[engine.k_abort()] = 90;
+                                    nd = 0;
+                                    going = false;
+                                } else {
+                                    // the header the frame sees has the computed names after the file's
+                                    var d = 0;
+                                    while d < nd {
+                                        borrow prog as &pr in {
+                                            names = cexpr.name_of(heap, names, text, contents(pr), d);
+                                        }
+                                        var size = 0;
+                                        borrow names as &nr in {
+                                            size = buffer.size(nr);
+                                        }
+                                        hends = vec.push(heap, hends, size);
+                                        d = d + 1;
+                                    }
+                                    var made = frame.none(heap);
+                                    frame.drop(heap, made);
+                                    borrow names as &nr in {
+                                        borrow hends as &er in {
+                                            made = frame.prepare(heap, tree, nr, er, ncols + nd, mode, delim, "");
+                                        }
+                                    }
+                                    let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
+                                    unbox_slice(heap, cols);
+                                    unbox_slice(heap, sel);
+                                    unbox_slice(heap, cells);
+                                    buffer.drop(heap, head);
+                                    buffer.drop(heap, labels);
+                                    vec.drop(heap, lends);
+                                    cols = fcols;
+                                    sel = fsel;
+                                    cells = fcells;
+                                    head = finish.report_head(heap, query.report_kind(tree), fhead);
+                                    labels = flabels;
+                                    lends = flends;
+                                    picked = fpicked;
+                                    if fabort != 0 {
+                                        a[engine.k_abort()] = fabort;
+                                        a[engine.k_bad_name()] = fbad;
+                                        going = false;
+                                    }
+                                    if as_csv && fabort == 0 {
+                                        rows = finish.start_output(heap, rows, finish.report_lead(heap, query.report_kind(tree), flead, delim));
+                                    } else {
+                                        buffer.drop(heap, flead);
+                                    }
+                                }
+                            } else {
+                                // A data record that spanned lines, whole in `rec`.
+                                var record_len = 0;
+                                borrow rec as &rw2 in {
+                                    record_len = buffer.size(rw2);
+                                    var record = buffer.bytes(rw2);
+                                    if record_len > 0 && int_of(record[record_len - 1]) == 13 {
+                                        record = record[0..record_len - 1];
+                                    }
+                                    var found = 0;
+                                    var wrong = false;
+                                    borrow mut cells as &!cw in {
+                                        let (n2, open, bad_quote) = reader.fields(record, delim, contents(cw), a[engine.k_columns()]);
+                                        found = n2;
+                                        wrong = bad_quote || open;
+                                    }
+                                    if wrong {
+                                        a[engine.k_abort()] = 1;
+                                        a[engine.k_abort_line()] = opened;
+                                        going = false;
+                                    } else if engine.count_row(a, found, opened, from) {
+                                        borrow cols as &kr in {
+                                            borrow sel as &sr in {
+                                                borrow prog as &pr in {
+                                                    borrow mut ws as &!wsw in {
+                                                        let (c2, p2, r2, s2, e2, k2, st, col, def) = row_out(heap, io, record, contents(pr), nd, a[engine.k_columns()], contents(wsw), tree, contents(kr), contents(sr), cells, copy, rows, scratch, escr, kept, picked, delim, as_csv, budget, opened, limit, a);
+                                                        cells = c2;
+                                                        copy = p2;
+                                                        rows = r2;
+                                                        scratch = s2;
+                                                        escr = e2;
+                                                        kept = k2;
+                                                        if st != 0 {
+                                                            rstatus = st;
+                                                            rcol = col;
+                                                            rdef = def;
+                                                            rrow = a[engine.k_records()];
+                                                            rline = opened;
+                                                            going = false;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if a[engine.k_stop()] == 1 {
+                    going = false;
+                }
+            }
+        }
+        // No header at all: no column to name.
+        if !header && a[engine.k_abort()] == 0 && rstatus == 0 {
+            a[engine.k_abort()] = 5;
+        }
+        // The end of the input with a quote open: not a record.
+        if quoted && a[engine.k_abort()] == 0 && rstatus == 0 {
+            a[engine.k_abort()] = 2;
+            a[engine.k_abort_line()] = opened;
+        }
+        if rstatus != 0 && a[engine.k_abort()] == 0 {
+            a[engine.k_abort()] = 90;
+        }
+        buffer.drop(heap, escr);
+        c = finish.Counts { columns: a[engine.k_columns()], records: a[engine.k_records()], ragged: a[engine.k_ragged()], first_row: a[engine.k_first_row()], first_line: a[engine.k_first_line()], first_found: a[engine.k_first_found()], capped: a[engine.k_capped()] == 1, abort: a[engine.k_abort()], abort_line: a[engine.k_abort_line()], long_length: a[engine.k_long()], emitted: a[engine.k_emitted()], more: a[engine.k_more()] == 1, next: a[engine.k_next()], bad_name: a[engine.k_bad_name()], err_col: a[engine.k_err_col()], err_fn: a[engine.k_err_fn()], err_row: a[engine.k_err_row()], err_line: a[engine.k_err_line()], err_cond: a[engine.k_err_cond()], err_digits: a[engine.k_err_digits()], groups: a[engine.k_groups()], skipped: -1, skipped_join: -1 };
+    }
+    unbox_slice(heap, tally);
+    unbox_slice(heap, cells);
+    unbox_slice(heap, sel);
+    unbox_slice(heap, cols);
+    unbox_slice(heap, prog);
+    unbox_slice(heap, work);
+    unbox_slice(heap, ws);
+    buffer.drop(heap, rec);
+    buffer.drop(heap, copy);
+    buffer.drop(heap, scratch);
+    var errno = 0;
+    borrow r as &rr in {
+        errno = lines.failed(rr);
+    }
+    lines.drop(heap, r);
+    var out_rows = rows;
+    // What csv still had pending, written now unless the stream already failed.
+    if as_csv && c.abort != 9 {
+        let (after, ok) = engine.flush_last(io, out_rows, query.hold_of(tree));
+        out_rows = after;
+        if !ok {
+            c = finish.Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: c.err_col, err_fn: c.err_fn, err_row: c.err_row, err_line: c.err_line, err_cond: c.err_cond, err_digits: c.err_digits, groups: c.groups, skipped: -1, skipped_join: -1 };
+        }
+    }
+    if rstatus != 0 {
+        if rstatus >= 100 {
+            borrow names as &nr in {
+                borrow hends as &er3 in {
+                    e = refuse_cell(heap, e, rstatus, nr, er3, rcol, rrow, rline, shown);
+                }
+            }
+        } else {
+            e = refuse(heap, e, rstatus, 0, rrow, rline, rdef, shown);
+        }
+    }
+    borrow names as &nr in {
+        borrow hends as &er3 in {
+            borrow labels as &lr in {
+                borrow lends as &le in {
+                    borrow kept as &kr in {
+                        e = finish.explain(heap, args, parsed, tree, nr, er3, lr, le, kr, c, shown, names_at, errno, as_csv, budget, e);
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, labels);
+    vec.drop(heap, lends);
+    buffer.drop(heap, kept);
+    return (c, head, out_rows, names, hends, e);
+}
+
+// A flag-level refusal: `compute.unsupported-combination`, with the flags it is about.
+pub fn problem[&h](heap: &!h Heap, e: fail.Errors, message: &static [byte], hint: &static [byte], flags: &static [byte]) -> [heap] fail.Errors {
+    var w = fail.open_in(heap, finish.extra(), "compute.unsupported-combination", message, hint);
+    w = fail.no_repair(heap, w);
+    w = fail.detail_open(heap, w);
+    w = fail.detail_str(heap, w, "flags", flags);
+    return fail.add(heap, e, w);
+}

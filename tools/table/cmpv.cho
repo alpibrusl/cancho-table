@@ -1,0 +1,441 @@
+edition 5;
+
+module cmpv;
+
+// The arithmetic of a computed column (docs/computed-columns.md section 6): a signed integer with a decimal scale, in a slot of a workspace.
+//
+// A slot is SLOT ints: [0] the sign (0, or 1 for a negative value; zero is never negative), [1] the scale, [2 .. 2 + LIMBS) the magnitude in limbs of 30
+// bits, least significant first. A limb times a limb is below 2^60 and a carry is below 2^31, so the checked arithmetic of the language never traps.
+// LIMBS is 9 (270 bits): a magnitude is held below 2^127 between operations (`fits`), and the widest intermediate is that times 10^36 (a divide at
+// scale 18 of a 0-scale divisor by an 18-scale one), below 2^250. Everything here is exact integer arithmetic. There is no float.
+//
+// Workspace: `slots()` slots, then DIGITS ints of scratch for `put`.
+
+import std.buffer;
+
+pub fn slot_size() -> [] int {
+    return 12;
+}
+
+fn limbs() -> [] int {
+    return 9;
+}
+
+fn base_mask() -> [] int {
+    return 1073741823;
+}
+
+pub fn slots() -> [] int {
+    return 16;
+}
+
+pub fn workspace() -> [] int {
+    return 16 * 12 + 64;
+}
+
+fn at(slot: int, i: int) -> [] int {
+    return slot * 12 + 2 + i;
+}
+
+// Zero at `scale`.
+pub fn clear[&w](w: &!w [int], s: int, scale: int) -> [] int {
+    w[s * 12] = 0;
+    w[s * 12 + 1] = scale;
+    var i = 0;
+    while i < 9 {
+        w[at(s, i)] = 0;
+        i = i + 1;
+    }
+    return 0;
+}
+
+pub fn scale_of[&w](w: &w [int], s: int) -> [] int {
+    return w[s * 12 + 1];
+}
+
+pub fn set_scale[&w](w: &!w [int], s: int, scale: int) -> [] int {
+    w[s * 12 + 1] = scale;
+    return 0;
+}
+
+pub fn negative[&w](w: &w [int], s: int) -> [] bool {
+    return w[s * 12] == 1;
+}
+
+fn mag_is_zero[&w](w: &w [int], s: int) -> [] bool {
+    var i = 0;
+    while i < 9 {
+        if w[at(s, i)] != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub fn is_zero[&w](w: &w [int], s: int) -> [] bool {
+    return mag_is_zero(w, s);
+}
+
+// A slot from an `int` (any 64-bit value, including the smallest) and a scale.
+pub fn set_int[&w](w: &!w [int], s: int, v: int, scale: int) -> [] int {
+    clear(w, s, scale);
+    var m = v;
+    var neg = 0;
+    var plus_one = 0;
+    if v < 0 {
+        neg = 1;
+        m = -(v + 1);
+        plus_one = 1;
+    }
+    var i = 0;
+    var carry = plus_one;
+    while i < 9 {
+        let part = (m & 1073741823) + carry;
+        w[at(s, i)] = part & 1073741823;
+        carry = part >> 30;
+        m = m >> 30;
+        i = i + 1;
+    }
+    if mag_is_zero(w, s) {
+        neg = 0;
+    }
+    w[s * 12] = neg;
+    return 0;
+}
+
+pub fn copy[&w](w: &!w [int], d: int, s: int) -> [] int {
+    var i = 0;
+    while i < 12 {
+        w[d * 12 + i] = w[s * 12 + i];
+        i = i + 1;
+    }
+    return 0;
+}
+
+// -1, 0, 1: |a| against |b|.
+fn mag_cmp[&w](w: &w [int], a: int, b: int) -> [] int {
+    var i = 8;
+    while i >= 0 {
+        let x = w[at(a, i)];
+        let y = w[at(b, i)];
+        if x > y {
+            return 1;
+        }
+        if x < y {
+            return -1;
+        }
+        i = i - 1;
+    }
+    return 0;
+}
+
+// d = |a| + |b| (the limbs only; sign and scale are the caller's). `d` may be `a` or `b`.
+fn mag_add[&w](w: &!w [int], d: int, a: int, b: int) -> [] int {
+    var carry = 0;
+    var i = 0;
+    while i < 9 {
+        let t = w[at(a, i)] + w[at(b, i)] + carry;
+        w[at(d, i)] = t & 1073741823;
+        carry = t >> 30;
+        i = i + 1;
+    }
+    return carry;
+}
+
+// d = |a| - |b|, |a| >= |b|.
+fn mag_sub[&w](w: &!w [int], d: int, a: int, b: int) -> [] int {
+    var owed = 0;
+    var i = 0;
+    while i < 9 {
+        var t = w[at(a, i)] - w[at(b, i)] - owed;
+        if t < 0 {
+            t = t + 1073741824;
+            owed = 1;
+        } else {
+            owed = 0;
+        }
+        w[at(d, i)] = t;
+        i = i + 1;
+    }
+    return owed;
+}
+
+// The magnitude is below 2^127: limbs 5.. are zero, and limb 4 (bits 120 to 149) is below 2^7.
+pub fn fits[&w](w: &w [int], s: int) -> [] bool {
+    var i = 5;
+    while i < 9 {
+        if w[at(s, i)] != 0 {
+            return false;
+        }
+        i = i + 1;
+    }
+    return w[at(s, 4)] < 128;
+}
+
+// Scratch slots the operations use: 13, 14 and 15 are theirs; a caller's values live in 0 to 12.
+fn tmp0() -> [] int {
+    return 13;
+}
+
+fn tmp1() -> [] int {
+    return 14;
+}
+
+fn tmp2() -> [] int {
+    return 15;
+}
+
+// a * 10^k in place, k in 0 to 40. Answers 0, or 1 when the product left the 270 bits (never for a value that `fits` and k <= 36).
+pub fn mul_pow10[&w](w: &!w [int], s: int, k: int) -> [] int {
+    var left = k;
+    var over = 0;
+    while left > 0 {
+        var step = left;
+        if step > 9 {
+            step = 9;
+        }
+        var m = 1;
+        var j = 0;
+        while j < step {
+            m = m * 10;
+            j = j + 1;
+        }
+        var carry = 0;
+        var i = 0;
+        while i < 9 {
+            let p = w[at(s, i)] * m + carry;
+            w[at(s, i)] = p & 1073741823;
+            carry = p >> 30;
+            i = i + 1;
+        }
+        if carry != 0 {
+            over = 1;
+        }
+        left = left - step;
+    }
+    return over;
+}
+
+// d = a + b, at the larger scale. Answers false when the result does not fit 127 bits. `d` may be `a` or `b`.
+pub fn add[&w](w: &!w [int], d: int, a: int, b: int) -> [] bool {
+    return addsub(w, d, a, b, false);
+}
+
+pub fn sub[&w](w: &!w [int], d: int, a: int, b: int) -> [] bool {
+    return addsub(w, d, a, b, true);
+}
+
+fn addsub[&w](w: &!w [int], d: int, a: int, b: int, minus: bool) -> [] bool {
+    let sa = w[a * 12 + 1];
+    let sb = w[b * 12 + 1];
+    var scale = sa;
+    if sb > scale {
+        scale = sb;
+    }
+    copy(w, tmp0(), a);
+    copy(w, tmp1(), b);
+    var over = mul_pow10(w, tmp0(), scale - sa);
+    over = over + mul_pow10(w, tmp1(), scale - sb);
+    var sign_b = w[tmp1() * 12];
+    if minus && !mag_is_zero(w, tmp1()) {
+        sign_b = 1 - sign_b;
+    }
+    let sign_a = w[tmp0() * 12];
+    clear(w, tmp2(), scale);
+    if sign_a == sign_b {
+        mag_add(w, tmp2(), tmp0(), tmp1());
+        w[tmp2() * 12] = sign_a;
+    } else {
+        let c = mag_cmp(w, tmp0(), tmp1());
+        if c >= 0 {
+            mag_sub(w, tmp2(), tmp0(), tmp1());
+            w[tmp2() * 12] = sign_a;
+        } else {
+            mag_sub(w, tmp2(), tmp1(), tmp0());
+            w[tmp2() * 12] = sign_b;
+        }
+    }
+    if mag_is_zero(w, tmp2()) {
+        w[tmp2() * 12] = 0;
+    }
+    copy(w, d, tmp2());
+    return over == 0 && fits(w, d);
+}
+
+// d = a * b, at the scale sum. Answers false when the result does not fit 127 bits (the scale limit is the caller's).
+pub fn mul[&w](w: &!w [int], d: int, a: int, b: int) -> [] bool {
+    let scale = w[a * 12 + 1] + w[b * 12 + 1];
+    var sign = 0;
+    if w[a * 12] != w[b * 12] {
+        sign = 1;
+    }
+    clear(w, tmp2(), scale);
+    var wide = false;
+    var i = 0;
+    while i < 9 {
+        let x = w[at(a, i)];
+        if x != 0 {
+            var carry = 0;
+            var j = 0;
+            while j < 9 {
+                let k = i + j;
+                if k < 9 {
+                    let t = w[at(tmp2(), k)] + x * w[at(b, j)] + carry;
+                    w[at(tmp2(), k)] = t & 1073741823;
+                    carry = t >> 30;
+                } else if x * w[at(b, j)] != 0 {
+                    wide = true;
+                }
+                j = j + 1;
+            }
+            if carry != 0 {
+                wide = true;
+            }
+        }
+        i = i + 1;
+    }
+    w[tmp2() * 12] = sign;
+    if mag_is_zero(w, tmp2()) {
+        w[tmp2() * 12] = 0;
+    }
+    copy(w, d, tmp2());
+    return !wide && fits(w, d);
+}
+
+pub fn negate[&w](w: &!w [int], s: int) -> [] int {
+    if !mag_is_zero(w, s) {
+        w[s * 12] = 1 - w[s * 12];
+    }
+    return 0;
+}
+
+fn shl1[&w](w: &!w [int], s: int) -> [] int {
+    var carry = 0;
+    var i = 0;
+    while i < 9 {
+        let t = w[at(s, i)] * 2 + carry;
+        w[at(s, i)] = t & 1073741823;
+        carry = t >> 30;
+        i = i + 1;
+    }
+    return carry;
+}
+
+fn bit_of[&w](w: &w [int], s: int, n: int) -> [] int {
+    return w[at(s, n / 30)] >> n % 30 & 1;
+}
+
+// d = a / b rounded half to even at scale `n` (0 to 18). Answers 0 (done), 1 (b is zero) or 2 (the quotient does not fit 127 bits).
+// The value is (A / 10^sa) / (B / 10^sb); the integer wanted is round(A * 10^(n + sb - sa) / B): the exponent goes on the side that keeps it
+// non-negative. A shift-and-subtract long division gives the quotient and a remainder r < B; 2r against B decides the rounding.
+pub fn div[&w](w: &!w [int], d: int, a: int, b: int, n: int) -> [] int {
+    if mag_is_zero(w, b) {
+        return 1;
+    }
+    let e = n + w[b * 12 + 1] - w[a * 12 + 1];
+    copy(w, tmp0(), a);
+    copy(w, tmp1(), b);
+    if e >= 0 {
+        mul_pow10(w, tmp0(), e);
+    } else {
+        mul_pow10(w, tmp1(), -e);
+    }
+    var sign = 0;
+    if w[a * 12] != w[b * 12] {
+        sign = 1;
+    }
+    // quotient in tmp2, remainder in slot 12 (the caller's slots are 0 to 11).
+    clear(w, tmp2(), n);
+    clear(w, 12, 0);
+    var bit = 269;
+    while bit >= 0 {
+        shl1(w, 12);
+        w[at(12, 0)] = w[at(12, 0)] + bit_of(w, tmp0(), bit);
+        if mag_cmp(w, 12, tmp1()) >= 0 {
+            mag_sub(w, 12, 12, tmp1());
+            w[at(tmp2(), bit / 30)] = w[at(tmp2(), bit / 30)] + (1 << bit % 30);
+        }
+        bit = bit - 1;
+    }
+    // round half to even: 2r against B.
+    shl1(w, 12);
+    let c = mag_cmp(w, 12, tmp1());
+    var up = false;
+    if c > 0 {
+        up = true;
+    } else if c == 0 {
+        up = w[at(tmp2(), 0)] & 1 == 1;
+    }
+    if up {
+        clear(w, 12, 0);
+        w[at(12, 0)] = 1;
+        mag_add(w, tmp2(), tmp2(), 12);
+    }
+    w[tmp2() * 12] = sign;
+    if mag_is_zero(w, tmp2()) {
+        w[tmp2() * 12] = 0;
+    }
+    copy(w, d, tmp2());
+    if !fits(w, d) {
+        return 2;
+    }
+    return 0;
+}
+
+// The value as text, `-` first when negative, at exactly its scale's fractional digits (`12.50`; a scale 0 value has no point), appended to `out`.
+// The digits go through the scratch ints of the workspace, least significant first.
+pub fn put[&h, &w](heap: &!h Heap, out: buffer.Buffer, w: &!w [int], s: int) -> [heap] buffer.Buffer {
+    let scale = w[s * 12 + 1];
+    copy(w, tmp0(), s);
+    let base = 16 * 12;
+    var count = 0;
+    var more = true;
+    while more {
+        var rem = 0;
+        var i = 8;
+        var any = false;
+        while i >= 0 {
+            let cur = rem * 1073741824 + w[at(tmp0(), i)];
+            let q = cur / 1000000000;
+            rem = cur - q * 1000000000;
+            w[at(tmp0(), i)] = q;
+            if q != 0 {
+                any = true;
+            }
+            i = i - 1;
+        }
+        var g = 0;
+        while g < 9 {
+            w[base + count] = rem % 10;
+            rem = rem / 10;
+            count = count + 1;
+            g = g + 1;
+        }
+        more = any;
+    }
+    while count > scale + 1 && w[base + count - 1] == 0 {
+        count = count - 1;
+    }
+    while count < scale + 1 {
+        w[base + count] = 0;
+        count = count + 1;
+    }
+    var o = out;
+    if w[s * 12] == 1 {
+        o = buffer.push(heap, o, byte_of('-'));
+    }
+    var k = count - 1;
+    while k >= scale {
+        o = buffer.push(heap, o, byte_of('0' + w[base + k]));
+        k = k - 1;
+    }
+    if scale > 0 {
+        o = buffer.push(heap, o, byte_of('.'));
+    }
+    while k >= 0 {
+        o = buffer.push(heap, o, byte_of('0' + w[base + k]));
+        k = k - 1;
+    }
+    return o;
+}

@@ -1,0 +1,170 @@
+// The probe of scripts/cexpr_golden.py: the compiler and evaluator of the module @MODULE@ driven from the command line. Arguments come in threes: the header (names
+// joined by commas, none quoted), a row (cells joined by commas; a cell that starts with a double quote is quoted), the definitions. One line a case: `C status offset` when the
+// definitions are refused, `E status column definition` when the row is, else the values of the definitions as NAME=value joined by `;`.
+import std.io as console;
+import std.buffer;
+import std.bytes;
+import @MODULE@;
+import cmpv;
+
+fn split_cells[&r, &c](line: &r [byte], cells: &!c [int]) -> [] int {
+    var n = 0;
+    var start = 0;
+    var i = 0;
+    var inside = false;
+    while i <= len(line) {
+        if i < len(line) && int_of(line[i]) == 34 {
+            inside = !inside;
+        }
+        if i == len(line) || (int_of(line[i]) == ',' && !inside) {
+            cells[3 * n] = start;
+            cells[3 * n + 1] = i;
+            if i > start + 1 && int_of(line[start]) == 34 {
+                // a quoted cell: the span is inside the enclosing quotes, as the reader's
+                cells[3 * n] = start + 1;
+                cells[3 * n + 1] = i - 1;
+                cells[3 * n + 2] = 1;
+            } else {
+                cells[3 * n + 2] = 0;
+            }
+            n = n + 1;
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+    return n;
+}
+
+fn run[&h, &i, &g](heap: &!h Heap, io: &!i Io, args: &g Args) -> [heap, io_write, args] int {
+    var progb = box_slice(heap, @MODULE@.program_size(), 0);
+    var workb = box_slice(heap, @MODULE@.work_size(), 0);
+    var wsb = box_slice(heap, cmpv.workspace(), 0);
+    var cellb = box_slice(heap, 3 * 64, 0);
+    var hcellb = box_slice(heap, 3 * 64, 0);
+    var at = 1;
+    while at + 2 < arg_count(args) {
+        let header = arg(args, at);
+        let row = arg(args, at + 1);
+        let defs = arg(args, at + 2);
+        var names = buffer.empty(heap, 64);
+        var ends = box_slice(heap, 64, 0);
+        var ncols = 0;
+        borrow mut hcellb as &!hc in {
+          borrow mut ends as &!ew in {
+            ncols = split_cells(header, contents(hc));
+            var k = 0;
+            while k < ncols {
+                names = buffer.append(heap, names, header[contents(hc)[3 * k]..contents(hc)[3 * k + 1]]);
+                var size = 0;
+                borrow names as &nr in {
+                    size = buffer.size(nr);
+                }
+                contents(ew)[k] = size;
+                k = k + 1;
+            }
+          }
+        }
+        var nrows = 0;
+        borrow mut cellb as &!cc in {
+            nrows = split_cells(row, contents(cc));
+        }
+        var status = 0;
+        var offset = 0;
+        var made = 0;
+        borrow mut progb as &!pp in {
+            borrow mut workb as &!ww in {
+                borrow names as &nr in {
+                    borrow ends as &er in {
+                        let (s, o, m) = @MODULE@.compile(heap, defs, buffer.bytes(nr), contents(er), ncols, contents(pp), contents(ww));
+                        status = s;
+                        offset = o;
+                        made = m;
+                    }
+                }
+            }
+        }
+        if status != 0 {
+            console.write_all(io, "C ");
+            console.print_int(io, status);
+            console.space(io);
+            console.print_int(io, offset);
+        } else {
+            var line = buffer.empty(heap, 64);
+            var d = 0;
+            var failed = false;
+            while d < made && !failed {
+                var es = 0;
+                var ecol = 0;
+                borrow mut wsb as &!ws in {
+                    borrow progb as &pr in {
+                        borrow cellb as &cr in {
+                            let (s2, c2) = @MODULE@.eval(contents(pr), d, row, contents(cr), contents(ws));
+                            es = s2;
+                            ecol = c2;
+                        }
+                    }
+                }
+                if es != 0 {
+                    console.write_all(io, "E ");
+                    console.print_int(io, es);
+                    console.space(io);
+                    console.print_int(io, ecol);
+                    console.space(io);
+                    console.print_int(io, d);
+                    failed = true;
+                } else {
+                    if d > 0 {
+                        line = buffer.push(heap, line, byte_of(';'));
+                    }
+                    var o = buffer.empty(heap, 64);
+                    borrow progb as &pr in {
+                        o = @MODULE@.name_of(heap, o, defs, contents(pr), d);
+                    }
+                    o = buffer.push(heap, o, byte_of('='));
+                    borrow mut wsb as &!ws in {
+                        o = cmpv.put(heap, o, contents(ws), 0);
+                    }
+                    borrow o as &orr in {
+                        line = buffer.append(heap, line, buffer.bytes(orr));
+                    }
+                    buffer.drop(heap, o);
+                }
+                d = d + 1;
+            }
+            if !failed {
+                borrow line as &lr in {
+                    console.write_all(io, buffer.bytes(lr));
+                }
+            }
+            buffer.drop(heap, line);
+        }
+        console.newline(io);
+        buffer.drop(heap, names);
+        unbox_slice(heap, ends);
+        at = at + 3;
+    }
+    unbox_slice(heap, progb);
+    unbox_slice(heap, workb);
+    unbox_slice(heap, wsb);
+    unbox_slice(heap, cellb);
+    unbox_slice(heap, hcellb);
+    return 0;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &g in {
+                status = run(h, i, g);
+            }
+        }
+    }
+    release(heap);
+    release(io);
+    release(args);
+    return status;
+}

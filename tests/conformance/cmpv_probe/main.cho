@@ -1,0 +1,131 @@
+// The probe of scripts/cmpv_golden.py: the 128-bit core of the module @MODULE@ driven from the command line. Arguments come in fives:
+// an operation (A add, S sub, M mul, D div), the left operand, its scale, the right operand, its scale; the quotient's scale is the sixth for D, so every
+// case is six arguments: op a sa b sb n. An operand is a decimal integer text of any length up to 38 digits, with an optional sign. One line a case:
+// the result text, or `!` for a result that does not fit (D: `/0` for a zero divisor, `!` for a quotient that does not fit).
+import std.io as console;
+import std.buffer;
+import @MODULE@;
+
+fn number[&a](s: &a [byte]) -> [] int {
+    var n = 0;
+    var at = 0;
+    while at < len(s) {
+        n = n * 10 + int_of(s[at]) - '0';
+        at = at + 1;
+    }
+    return n;
+}
+
+// Reads an integer text (sign, up to 38 digits) into slot `s` at `scale`.
+fn load[&w, &t](w: &!w [int], s: int, t: &t [byte], scale: int) -> [] int {
+    // `=` before the digits: the value goes through `set_int` as an `int` (it is what the stage's cell readers produce); the smallest int has no positive.
+    if len(t) > 1 && int_of(t[0]) == '=' {
+        var m = 0;
+        var k = 2;
+        var minus = int_of(t[1]) == '-';
+        if !minus {
+            k = 1;
+        }
+        if len(t) == 21 && minus && int_of(t[2]) == '9' && int_of(t[20]) == '8' {
+            // the text of the smallest int: its magnitude is not an int
+            m = -9223372036854775807 - 1;
+        } else {
+            while k < len(t) {
+                m = m * 10 + (int_of(t[k]) - '0');
+                k = k + 1;
+            }
+            if minus {
+                m = -m;
+            }
+        }
+        return @MODULE@.set_int(w, s, m, scale);
+    }
+    @MODULE@.clear(w, s, scale);
+    var neg = false;
+    var at = 0;
+    if len(t) > 0 && int_of(t[0]) == '-' {
+        neg = true;
+        at = 1;
+    }
+    // acc = acc * 10 + digit, through slots 10 and 11.
+    while at < len(t) {
+        @MODULE@.mul_pow10(w, s, 1);
+        @MODULE@.set_int(w, 11, int_of(t[at]) - '0', 0);
+        @MODULE@.set_scale(w, s, 0);
+        @MODULE@.add(w, s, s, 11);
+        at = at + 1;
+    }
+    @MODULE@.set_scale(w, s, scale);
+    if neg {
+        @MODULE@.negate(w, s);
+    }
+    return 0;
+}
+
+fn cases[&h, &i, &g, &x](heap: &!h Heap, io: &!i Io, args: &g Args, w: &!x [int]) -> [heap, io_write, args] int {
+    var at = 1;
+    while at + 5 < arg_count(args) {
+        let op = arg(args, at);
+        load(w, 0, arg(args, at + 1), number(arg(args, at + 2)));
+        load(w, 1, arg(args, at + 3), number(arg(args, at + 4)));
+        let n = number(arg(args, at + 5));
+        var ok = true;
+        var zero = false;
+        if int_of(op[0]) == 'A' {
+            ok = @MODULE@.add(w, 2, 0, 1);
+        } else if int_of(op[0]) == 'S' {
+            ok = @MODULE@.sub(w, 2, 0, 1);
+        } else if int_of(op[0]) == 'M' {
+            ok = @MODULE@.mul(w, 2, 0, 1);
+        } else {
+            let st = @MODULE@.div(w, 2, 0, 1, n);
+            if st == 1 {
+                zero = true;
+            }
+            ok = st == 0;
+        }
+        if zero {
+            console.write_all(io, "/0");
+        } else if !ok {
+            console.write_all(io, "!");
+        } else {
+            var o = buffer.empty(heap, 64);
+            o = @MODULE@.put(heap, o, w, 2);
+            borrow o as &r in {
+                console.write_all(io, buffer.bytes(r));
+            }
+            buffer.drop(heap, o);
+        }
+        console.newline(io);
+        at = at + 6;
+    }
+    return 0;
+}
+
+fn run[&h, &i, &g](heap: &!h Heap, io: &!i Io, args: &g Args) -> [heap, io_write, args] int {
+    var wb = box_slice(heap, @MODULE@.workspace(), 0);
+    var status = 0;
+    borrow mut wb as &!w in {
+        status = cases(heap, io, args, contents(w));
+    }
+    unbox_slice(heap, wb);
+    return status;
+}
+
+fn main(world: World) -> [] int {
+    let Split { io, ffi, fs, heap, args } = split(world);
+    release(ffi);
+    release(fs);
+    var status = 0;
+    borrow mut heap as &!h in {
+        borrow mut io as &!i in {
+            borrow args as &g in {
+                status = run(h, i, g);
+            }
+        }
+    }
+    release(heap);
+    release(io);
+    release(args);
+    return status;
+}

@@ -71,7 +71,7 @@ FORM_FLAGS = {
     "query": COMMON | PAGED | {"--query", "--max-sort-rows", "--max-groups", "--max-distinct"},
     "join": COMMON | {"--join", "--on", "--join-type", "--join-prefix", "--join-where", "--max-join-rows", "--join-input-format", "--join-fields", "--join-delimiter", "--join-sorted", "--select", "--where", "--group", "--agg", "--sort", "--order-by", "--top", "--rename", "--limit", "--from", "--max-bytes", "--max-groups", "--max-distinct", "--max-sort-rows", "--max-state-bytes", "--threads"},
 }
-FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"], "all": ["--rows"], "query": ["--query", "select host, count(*) group by host"], "join": ["--join", "sales.csv", "--on", "host=host", "--join-prefix", "r_"]}
+FORM_BASE = {"shape": [], "rows": ["--select", "host"], "groups": ["--group", "host"], "report": ["--report", "types"], "all": ["--rows"], "compute": ["--compute", "t=port:int+1"], "query": ["--query", "select host, count(*) group by host"], "join": ["--join", "sales.csv", "--on", "host=host", "--join-prefix", "r_"]}
 
 
 def usage_lines():
@@ -79,7 +79,7 @@ def usage_lines():
     text = introspect()["usage"]
     forms = {}
     for line in text.splitlines():
-        m = re.match(r"(shape|rows|groups|report|all|query|join): ", line)
+        m = re.match(r"(shape|rows|groups|report|all|compute|query|join): ", line)
         if m:
             forms[m.group(1)] = set(re.findall(r"--[a-z][a-z-]*", line))
     return forms, set(re.findall(r"--[a-z][a-z-]*", text))
@@ -231,7 +231,7 @@ class Usage(unittest.TestCase):
     def test_usage_names_every_flag_and_only_flags(self):
         forms, named = usage_lines()
         table = {f["name"] for f in introspect()["flags"]}
-        self.assertEqual(set(forms), {"shape", "rows", "groups", "report", "all", "query", "join"})
+        self.assertEqual(set(forms), {"shape", "rows", "groups", "report", "all", "compute", "query", "join"})
         self.assertEqual(named, table, "usage and the flag table disagree: missing %s, extra %s" % (sorted(table - named), sorted(named - table)))
 
     def test_each_line_lists_what_its_form_takes(self):

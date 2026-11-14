@@ -113,7 +113,17 @@ jobs:
       - name: The mutants still apply
         working-directory: table
         run: |
-          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin query explain jsonl jsonl_out or join group rename query_join join_jsonl join_j7 join_sorted join_j8 datetime datetime_bucket datetime_surface groupsort bench_named bench_named_join bench_matrix column join_full empty_guard join_right sql out default_limit join_report preamble numrow; do python3 scripts/${m}_mutants.py --check; done
+          for m in select filter parallel cellcost sort numbers float float_sum typed_keys report mcp skill inputs stdin query explain jsonl jsonl_out or join group rename query_join join_jsonl join_j7 join_sorted join_j8 datetime datetime_bucket datetime_surface groupsort bench_named bench_named_join bench_matrix column join_full empty_guard join_right sql out default_limit join_report preamble numrow compute; do python3 scripts/${m}_mutants.py --check; done
+
+      # Computed columns (docs/computed-columns.md): the exact core and the expression compiler against Python's integers, their mutants applying, then the
+      # stage's own gates run with the conformance suite below. Each golden builds a small probe with the pinned compiler.
+      - name: The arithmetic and the expressions of --compute against Python's integers
+        working-directory: table
+        run: |
+          python3 scripts/cmpv_golden.py --check
+          python3 scripts/cexpr_golden.py --check
+          python3 scripts/cmpv_golden.py --cases 20000
+          python3 scripts/cexpr_golden.py --cases 1500
 
       - name: Conformance gates (differential against Python's csv, rules, limits, memory, authority)
         working-directory: table
