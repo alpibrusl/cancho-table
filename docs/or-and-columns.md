@@ -280,6 +280,8 @@ No rename ever produces a refusal because a new label equals another: in CSV two
 
 ### 8.3 B2 and B3: values that are not columns (proposed: do not build)
 
+> **Reopened (14 Nov 2026).** The maintainer asked for column operations as a basic feature. [`docs/computed-columns.md`](computed-columns.md) is the design (a *stage*, `--compute`, that leaves the loops below untouched); the reasoning that follows is kept as the record of why it was not built first.
+
 **Literals and concatenation (`select a, 'x' as src`, `a || ' ' || b`).** Not built, and not proposed as a stage. A constant column is not asked for by any question the tool answers; a concatenation is total and exact (it is bytes), which is the argument for it, and it is the argument for `upper`, `substr` and `trim` too, one at a time. The line is drawn at **the output being bytes of the input**: today a row's output is the file's cells, unchanged (`docs/select.md`'s claim, "the selected fields are exactly Python's `csv.reader`'s", `docs/select.md:118`), and every test oracle for selections rests on it. The first computed column ends that, for all later features.
 
 **Arithmetic on typed columns (`price * qty`, `a + b`).** The rules that would make it exact are below, so that the answer "no" is not "not thought through":
