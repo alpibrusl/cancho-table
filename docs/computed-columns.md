@@ -89,6 +89,20 @@ cannot be done without editing the loops of section 2; **a decision to be revisi
 apply (they are the row page, one meaning). Introspection (`table describe`), the skill text and the MCP tool list are generated from the flag and rule
 tables, so the flag and the rules are added there and the generators re-run (`scripts/manifest.py`, `scripts/schemas.py`, `publish_numeric --check`).
 
+### 4.1 Where it plugs in (read on 14 Nov 2026, not yet built)
+
+`read_any` (`tools/table/table.cho`) already dispatches to a reader per input kind (`jnrun.read`, `jsonl.read`, `read_stream`, `read_file`, the `_opt` variants), each returning the
+same tuple (`Counts`, header, rows, names, ends, errors). The stage is **one more reader**, `compute.read`, selected when `--compute` is given, and it has no effect on the
+others. The plan it runs is `--rows` (all columns, no condition), which `inputs.from_flags` sets when `--compute` is present. Its trick, so that **no emit code changes**:
+
+1. The header's names and ends are **extended with the computed names** before `frame.prepare`, so the frame (selection, labels, the CSV header line, the JSON `columns`) already
+   has `n + k` columns; `a[k_columns()]` stays the real `n`, so `reader.fields` and the ragged-row check are the file's.
+2. Per row, after `reader.fields`, each definition is evaluated (`cexpr.eval`) and its text is appended to a copy of the record; the extra cells point into the copy.
+   `engine.process_rows` then writes the row exactly as for `--rows`: pages, budget, `--limit/--from`, CSV and JSON are the existing code.
+3. A refusal of a cell or of the arithmetic is recorded in the tally and turned into its rule by `finish.explain`'s neighbour, with the definition, the column and the row, never the cell.
+
+Cost: a copy of the line and a few appends per row, on the stage's own loop. The existing loops are not edited, which G-COMPAT measures.
+
 ## 5. Rules (every refusal has a tag)
 
 `compute.syntax` (offset, what was expected) · `compute.unknown-column` · `compute.ambiguous-column` · `compute.duplicate-name` · `compute.untyped-operand` ·
