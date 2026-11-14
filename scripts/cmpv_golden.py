@@ -7,7 +7,8 @@
 The expected text is computed here: add and sub at the larger scale, mul at the sum of scales, div rounded half to even at scale n; a result of
 2^127 or more is `!`, a zero divisor is `/0`. A value is written with exactly its scale's fractional digits and `-` only when it is not zero.
 """
-import argparse, pathlib, random, shutil, subprocess, sys, tempfile
+import argparse, pathlib, random, shutil, sys, tempfile
+import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LIM = 2**127
