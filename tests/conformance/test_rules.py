@@ -78,6 +78,18 @@ LOCAL = {
     "rename.repeated-target": (2, "never", "twice"),
     "out.exists": (2, "sometimes", "already there"),
     "out.write-failed": (1, "never", "could not be written"),
+    "compute.syntax": (2, "never", "NAME=EXPR"),
+    "compute.unknown-column": (3, "never", "not in the header"),
+    "compute.ambiguous-column": (8, "never", "more than one column"),
+    "compute.duplicate-name": (2, "never", "column of the file"),
+    "compute.untyped-operand": (2, "never", "no type"),
+    "compute.float-operand": (2, "never", "typed :float"),
+    "compute.scale-too-large": (2, "never", "18 fractional digits"),
+    "compute.division-needs-scale": (2, "never", "no scale"),
+    "compute.too-long": (2, "never", "bounds"),
+    "compute.divide-by-zero": (8, "never", "divisor of zero"),
+    "compute.overflow": (8, "never", "2^127"),
+    "compute.unsupported-combination": (2, "never", "flag that shapes rows"),
 }
 # rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
 VARIABLE_HINT = {"query.unsupported"}
@@ -122,6 +134,8 @@ class Rules(unittest.TestCase):
         s.write("text.csv", "a,b\n1,x\n")
         s.write("emptyb.csv", "a,b\n1,\n")      # an empty cell: the typed-cell rules repair it with a guard in --where (#107)
         s.write("big.csv", "a\n99999999999999999999\n")
+        s.write("zero.csv", "a\n0\n")
+        s.write("huge.csv", "a\n9223372036854775807\n")
         s.write("ovf.csv", "a\n1e999\n")
         s.write("ovfsum.csv", "a\n1.7976931348623157e308\n1.7976931348623157e308\n")
         s.write("scale.csv", "a\n1.25\n")
@@ -229,6 +243,18 @@ class Rules(unittest.TestCase):
             ("rename.unknown-target", root + ["--select", "a", "--rename", "A=x", "ok.csv"], None),
             ("rename.ambiguous-target", root + ["--select", "a,a", "--rename", "a=x", "ok.csv"], None),
             ("rename.repeated-target", root + ["--select", "a", "--rename", "a=x,#1=y", "ok.csv"], None),
+            ("compute.syntax", root + ["--compute", "r=", "ok.csv"], None),
+            ("compute.unknown-column", root + ["--compute", "r=zz:int+1", "ok.csv"], None),
+            ("compute.ambiguous-column", root + ["--compute", "r=a:int+1", "dup.csv"], None),
+            ("compute.duplicate-name", root + ["--compute", "a=a:int+1", "ok.csv"], None),
+            ("compute.untyped-operand", root + ["--compute", "r=a+1", "ok.csv"], None),
+            ("compute.float-operand", root + ["--compute", "r=a:float+1", "ok.csv"], None),
+            ("compute.scale-too-large", root + ["--compute", "r=a:dec(10)*a:dec(10)", "ok.csv"], None),
+            ("compute.division-needs-scale", root + ["--compute", "r=a:int/a:int", "ok.csv"], None),
+            ("compute.too-long", root + ["--compute", "r=((((((a:int))))))", "ok.csv"], None),
+            ("compute.divide-by-zero", root + ["--compute", "r=1/a:int@2", "zero.csv"], None),
+            ("compute.overflow", root + ["--compute", "r=a:int*a:int*a:int", "huge.csv"], None),
+            ("compute.unsupported-combination", root + ["--compute", "r=a:int+1", "--select", "a", "ok.csv"], None),
             ("out.exists", root + ["--select", "a", "--format", "csv", "--out", "ok.csv", "ok.csv"], None),
             # a directory where the file goes: the rename is refused by the file system, whoever runs it
             ("out.write-failed", root + ["--select", "a", "--format", "csv", "--out", "adir", "--overwrite", "ok.csv"], None),
