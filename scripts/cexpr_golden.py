@@ -44,6 +44,8 @@ def ev(node, row):
         return row[c][0] * 10 ** (s - row[c][1]), s
     if k == "lit":
         return node[1], node[2]
+    if k == "ref":
+        return ev(node[1], row)
     if k == "neg":
         v, s = ev(node[1], row)
         return -v, s
@@ -77,6 +79,8 @@ def static_scale(node):
         return node[3]
     if k == "lit":
         return node[2]
+    if k == "ref":
+        return static_scale(node[1])
     if k == "neg":
         return static_scale(node[1])
     a, b = static_scale(node[1]), static_scale(node[2])
@@ -95,7 +99,7 @@ def sp(rng):
 
 
 def atom(node):
-    return node[0] in ("col", "lit")
+    return node[0] in ("col", "lit", "ref")
 
 
 def render(node, rng):
@@ -105,6 +109,8 @@ def render(node, rng):
         return f"#{node[1] + 1}" + s[1:] if rng.random() < 0.15 else s
     if k == "lit":
         return text(node[1], node[2])
+    if k == "ref":
+        return node[2]
     if k == "neg":
         inner = render(node[1], rng)
         return "-" + sp(rng) + (inner if atom(node[1]) or node[1][0] == "neg" else f"({inner})")
@@ -192,6 +198,105 @@ def lines_of(rng, n):
         # the order the tool evaluates in is the definition order: values of earlier definitions are not printed on a failure
         out.append((HEADER, cells, ";".join(defs), want))
     return out
+
+
+def size_of(node):
+    k = node[0]
+    if k in ("col", "lit"):
+        return 1
+    if k == "ref":
+        return size_of(node[1])
+    if k == "neg":
+        return size_of(node[1]) + 1
+    return size_of(node[1]) + size_of(node[2]) + 1
+
+
+def depth_of(node):
+    """most operands pending at once in the postfix program of the expanded tree"""
+    k = node[0]
+    if k in ("col", "lit"):
+        return 1
+    if k == "ref":
+        return depth_of(node[1])
+    if k == "neg":
+        return depth_of(node[1])
+    return max(depth_of(node[1]), 1 + depth_of(node[2]))
+
+
+def gen_chain(rng, depth, cols, refs):
+    """like gen, with leaves that may be an earlier definition: ("ref", its tree, its name)"""
+    if depth == 0 or rng.random() < 0.25:
+        if refs and rng.random() < 0.45:
+            tree, name = rng.choice(refs)
+            return ("ref", tree, name)
+        return gen(rng, 0, cols)
+    k = rng.choice(["+", "-", "*", "*", "/", "neg"])
+    if k == "neg":
+        return ("neg", gen_chain(rng, depth - 1, cols, refs))
+    if k == "/":
+        return ("/", gen_chain(rng, depth - 1, cols, refs), gen_chain(rng, depth - 1, cols, refs), rng.randint(0, 18))
+    return (k, gen_chain(rng, depth - 1, cols, refs), gen_chain(rng, depth - 1, cols, refs))
+
+
+def chain_lines(rng, n):
+    """G-CHAIN-ORACLE: two to four definitions, each of which may name the ones before it; the first refusal decides, as in lines_of"""
+    out = []
+    for _ in range(n):
+        cols, cells, row = make_row(rng)
+        defs, exp, refs = [], [], []
+        for d in range(rng.randint(2, 4)):
+            tree = None
+            for _try in range(12):
+                t = gen_chain(rng, rng.randint(1, 3), cols, refs)
+                if size_of(t) <= 40 and depth_of(t) <= 8 and paren_depth(render(t, random.Random(0))) <= 4:
+                    tree = t
+                    break
+            if tree is None:
+                tree = gen(rng, 1, cols)
+            name = f"r{d}"
+            try:
+                static_scale(tree)
+                v, s = ev(tree, row)
+                exp.append(("ok", f"{name}={text(v, s)}"))
+            except BadScale:
+                exp.append(("C", 7))
+            except Overflow:
+                exp.append(("E", 12))
+            except DivZero:
+                exp.append(("E", 11))
+            defs.append(f"{name}=" + render(tree, rng))
+            refs.append((tree, name))
+        if any(e[0] == "C" for e in exp):
+            want = "C %d" % [e[1] for e in exp if e[0] == "C"][0]
+        else:
+            bad = [i for i, e in enumerate(exp) if e[0] == "E"]
+            want = f"E {exp[bad[0]][1]} 0 {bad[0]}" if bad else ";".join(e[1] for e in exp)
+        out.append((HEADER, cells, ";".join(defs), want))
+    return out
+
+
+CHAIN_HAND = [
+    # cells are 10,20,30,40,50,60
+    ("r0=a:int+b:int;r1=r0*c:int", "r0=30;r1=900"),
+    ("p=a:dec(1)*b:dec(1);q=p+1", "p=200.00;q=201.00"),
+    ("x=a:int+b:int;y=x/c:int@3", "x=30;y=1.000"),
+    ("x=a:int;y=-x*(x+1)", "x=10;y=-110"),
+    ("x=a:int;y=x+1;z=y*y", "x=10;y=11;z=121"),
+    ("x=a:int;y=x+1;z=x*y", "x=10;y=11;z=110"),
+    ("'my col'=a:int;y='my col'+1", "my col=10;y=11"),
+    ("x=y+1;y=a:int", "C 2"),
+    ("x=a:int;y=x:int+1", "C 1"),
+    ("x=a:int;y=x : int+1", "C 1"),
+    ("x=a:int;x=x+1", "C 4"),
+    ("a=b:int;y=a+1", "C 4"),
+    ("x=a:int;y=#7+1", "C 2"),
+    ("r0=a:int+a:int;r1=r0+r0;r2=r1+r1;r3=r2+r2;r4=r3+r3;r5=r4+r4", "r0=20;r1=40;r2=80;r3=160;r4=320;r5=640"),
+    ("r0=a:int+a:int;r1=r0+r0;r2=r1+r1;r3=r2+r2;r4=r3+r3;r5=r4+r4;r6=r5+r5", "C 9"),
+]
+
+
+def chain_hand_cases():
+    return [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in CHAIN_HAND]
 
 
 HAND = [
@@ -323,6 +428,12 @@ MUTANTS = [
     ("the literal's scale is dropped", "            cmpv.set_int(w, sp, prog[at + 1], prog[at + 2]);", "            cmpv.set_int(w, sp, prog[at + 1], 0);"),
     ("negation does nothing", "            cmpv.negate(w, sp - 1);", "            sp = sp;"),
     ("parentheses are unlimited", "                if work[65] > 4 || work[64] > 28 {", "                if work[65] > 400 || work[64] > 28 {"),
+    ("chain: a reference is never found", "                    if rs == 2 {\n                        borrow cb as &cr in {", "                    if rs == 99 {\n                        borrow cb as &cr in {"),
+    ("chain: one instruction too few copied", "                        while q < n_ints {", "                        while q < n_ints - 4 {"),
+    ("chain: one instruction too many copied", "let n_ints = prog[1 + 5 * dk + 1] - from_at;", "let n_ints = prog[1 + 5 * dk + 1] - from_at + 4;"),
+    ("chain: the loop's size check is off", "        if cur - first > 4 * 128 {\n            status = 9;", "        if cur - first > 4 * 12800 {\n            status = 9;"),
+    ("chain: always the first definition", "let from_at = prog[1 + 5 * dk];", "let from_at = prog[1 + 5 * 0];"),
+    ("chain: the operand is not closed", "                        cur = cur + n_ints;\n                        i = e2;\n                        expect = false;", "                        cur = cur + n_ints;\n                        i = e2;"),
     ("an empty expression is accepted", "    if status == 0 && (expect || work[65] != 0) {", "    if status == 0 && (work[65] != 0) {"),
 ]
 
@@ -374,7 +485,7 @@ def main():
         print("\n".join(problems) or f"{len(MUTANTS)} mutants: every pattern occurs exactly once")
         sys.exit(1 if problems else 0)
     rng = random.Random(a.seed)
-    cs = hand_cases() + lines_of(rng, a.cases if not a.mutants else 1500)
+    cs = hand_cases() + lines_of(rng, a.cases if not a.mutants else 1500) + chain_hand_cases() + chain_lines(rng, 1500 if not a.mutants else 800)
     if not a.mutants:
         with tempfile.TemporaryDirectory() as w:
             probe, err = build(w)

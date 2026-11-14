@@ -1,6 +1,6 @@
 # Computed columns: `--compute`, a design (slice K0)
 
-> **Status: built for a file and for standard input, CSV or JSON lines (slices K0 to K3b).** What was measured is in section 7.1; the lines below that say "not yet" or "nothing built" were true when they were written and are corrected where they stand.
+> **Status: built for a file and for standard input, CSV or JSON lines (slices K0 to K4; K4 is chaining, section 11).** What was measured is in section 7.1; the lines below that say "not yet" or "nothing built" were true when they were written and are corrected where they stand.
 > **(Written as: design, nothing built.)** This reopens the decision of `docs/or-and-columns.md` section 8.3 ("B2 and B3: do not build"). The maintainer's direction
 > (14 Nov 2026, relayed by the cancho-sheets work) is that *column operations are a basic feature of a table tool*. Section 8.3 recorded its own reopening
 > condition (a recorded use that needs the value in the same call, and the select path measured with the instruction budget 1.01). The use is recorded
@@ -155,6 +155,7 @@ definition, the column and the row number only.
 | **K2b** (built) | the flag, 12 rules, `compute.read` beside `read_file`, usage form, MCP text, docs; `tests/conformance/test_compute.py` and `scripts/compute_mutants.py` (14 of 14 killed) | G-ORACLE through the binary |
 | **K3** (built for standard input) | standard input (`bulk.fill_stdin` in the same reader), G-COMPAT and G-FLAT measured (7.1), surface regenerated, AGENTS.md, README, `docs/index.html` | G-COMPAT, G-FLAT, G-SURFACE |
 | **K3b** (built) | JSON-lines input (`--input-format jsonl --fields ...`): `computej.read`, the sequential loop of `jsonl.read` with the stage's header and row steps (`compute.row_out` is shared); `jsonl.cho` is not edited. `test_compute`: the same rows as JSON lines give the CSV answer's bytes from a file and from a pipe, the JSON document and `--format jsonl` say the same cells, and the refusals; 4 more mutants | the CSV gates, through JSON lines |
+| **K4** (built) | chaining (section 11): an operand may name an earlier definition, copied in at compile time; `cexpr.cho` only, `eval` and the readers untouched | G-CHAIN-ORACLE, mutants, through the binary |
 
 ## 9. Corrections made in place
 
@@ -170,3 +171,22 @@ definition, the column and the row number only.
 * **JSON-lines input** (K3b) is built (section 8). It is a second copy of the stage's reader (`computej.cho`), because `jsonl.read` has its own loop; the day the two diverge is the day a change to one needs the other, and `scripts/compute_mutants.py` has a mutant for each of the stage's steps in both.
 * **Dates** (`ts + 1d`, differences): out; `docs/datetime.md` section 15 says why.
 * **Rounding functions** (`round`, `floor`): out; `/ @N` is the only rounding.
+
+## 11. Chaining: a definition may name an earlier one (built 14 Nov 2026)
+
+**The use.** `--compute 'total=price:dec(2)*qty:int;tax=total*rate:dec(2)'` today needs two stages (`... | table --stdin --compute 'tax=total:dec(2)*rate:dec(2)'`), the first printing `total` as text and the second parsing it back. A spreadsheet's `=B2*C2` followed by `=D2*E2` is one sheet, so one call. *Choice.*
+
+**Meaning.** An operand written as the name of an **earlier definition of the same `--compute`** is that definition's value, with its scale, exactly as if its expression had been written there in parentheses. It takes no type (the definition has one): `total` and not `total:dec(2)`; a type after it is `compute.syntax` at the colon. A name that is an input column is the column as before (a definition cannot be named like a column: `compute.duplicate-name` already). A name that is a **later** definition, or none, is `compute.unknown-column` (a definition sees only what is written before it). *Choice.*
+
+**How (a compile-time substitution, nothing at run time).** The compiler already writes a definition as a postfix program. A reference to an earlier definition copies that definition's instructions into the current program at the operand's place, so `eval`, the arithmetic core, the stage's readers (`compute.read`, `computej.read`) and every output path are **not edited**: the chained program is an ordinary program. Consequences, stated because they are the price:
+
+* the limits apply to the *expanded* program (the size check is the loop's own, made at the start of the next step; a copy adds at most one definition, so the program array has room, see the comment in `define`): at most 128 instructions' worth per definition and 10 operands pending at once (`compute.too-long`), so `r0=a+a; r1=r0+r0; ...` doubles its size each step and the sixth step is the last that fits (`r5` of 127 instructions); `r6` is `compute.too-long`;
+* a referenced expression is evaluated again at each use (no common-subexpression sharing): the cost of a reference is the cost of writing the expression out, which is what the substitution is;
+* a row that makes an earlier definition fail fails at that definition (they run in order), never at the later one that copies it, so the refusal names the definition where the cell or the overflow is.
+
+**Rules.** None new: `compute.unknown-column` (a later or missing name), `compute.syntax` (a type after a reference), `compute.too-long` (the expanded size), and the existing ones for the copied operands.
+
+**Gates, written before the code.**
+* **G-CHAIN-ORACLE** (`scripts/cexpr_golden.py`): random chains of two to four definitions whose leaves may be earlier definitions, a Python tree of integers as the oracle (a reference is the value of the earlier tree), the expanded size and depth held well under the limits; the hand cases above (a forward reference, a typed reference, a reference of a reference, a quoted name, the doubling chain at the limit and one step past it).
+* **Mutants** (`scripts/cexpr_golden.py --mutants`): a reference never found, one instruction too few and one too many copied, the first definition copied whatever is named, the operand not closed (the next token read as an operand), the loop's size check off: each must fail the golden.
+* **Through the binary** (`tests/conformance/test_compute.py`): the two-stage and the one-stage answer are the same bytes; a forward reference is refused with its tag and a repair.

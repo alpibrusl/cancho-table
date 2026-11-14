@@ -210,6 +210,44 @@ class Compute(unittest.TestCase):
         r = run(*base, "--compute", "s=a:int+1", "--select", "a", "t.jsonl")
         self.assertEqual((r.status, r.first_rule()), (2, "compute.unsupported-combination"))
 
+    def test_chained_definitions_are_the_two_stages_in_one_call(self):
+        """docs/computed-columns.md section 11: `total=...;tax=total*rate` is the answer of two stages, byte for byte, as CSV and as JSON lines input."""
+        rng = random.Random(11)
+        checked = 0
+        for _ in range(30):
+            n = rng.randint(1, 10)
+            rows = [(rng.randint(-5000, 5000), rng.randint(-30, 30), rng.randint(0, 999)) for _ in range(n)]
+            text = "price,qty,rate\n" + "".join(f"{G.text(p, 2)},{q},{G.text(r, 3)}\n" for p, q, r in rows)
+            self.s.write("t.csv", text)
+            one = run("--root", self.s.dir, "--compute", "total=price:dec(2)*qty:int;tax=total*rate:dec(3);net=total-tax+1", "--format", "csv", "t.csv")
+            first = run("--root", self.s.dir, "--compute", "total=price:dec(2)*qty:int", "--format", "csv", "t.csv")
+            two = run("--compute", "tax=total:dec(2)*rate:dec(3)", "--format", "csv", stdin=first.stdout)
+            third = run("--compute", "net=total:dec(2)-tax:dec(5)+1", "--format", "csv", stdin=two.stdout)
+            self.assertEqual((one.status, two.status, third.status), (0, 0, 0), (one.stderr, two.stderr, third.stderr))
+            self.assertEqual(one.stdout, third.stdout, text)
+            checked += 1
+        self.assertGreater(checked, 20)
+
+    def test_chained_json_lines_equal_chained_csv(self):
+        self.s.write("t.csv", "a,b\n3,4\n5,6\n")
+        csv_out = run("--root", self.s.dir, "--compute", "s=a:int+b:int;p=s*s", "--format", "csv", "t.csv")
+        jl = run("--input-format", "jsonl", "--fields", "a,b", "--compute", "s=a:int+b:int;p=s*s", "--format", "csv", stdin=b'{"a":3,"b":4}\n{"a":5,"b":6}\n')
+        self.assertEqual((csv_out.status, jl.status), (0, 0))
+        self.assertEqual(csv_out.stdout, jl.stdout)
+        self.assertEqual(csv_out.stdout.decode(), "a,b,s,p\n3,4,7,49\n5,6,11,121\n")
+
+    def test_a_definition_sees_only_the_ones_before_it(self):
+        self.s.write("t.csv", "a\n1\n")
+        for defs, rule, status in [("x=y+1;y=a:int", "compute.unknown-column", 3), ("x=a:int;y=x:int+1", "compute.syntax", 2), ("x=a:int;x=x+1", "compute.duplicate-name", 2)]:
+            r = run("--root", self.s.dir, "--compute", defs, "t.csv")
+            self.assertEqual((r.status, r.first_rule()), (status, rule), defs)
+
+    def test_a_row_that_fails_an_earlier_definition_fails_there(self):
+        self.s.write("t.csv", "a,b\n6,2\n6,0\n")
+        r = run("--root", self.s.dir, "--compute", "q=a:int/b:int@2;r=q+1", "t.csv")
+        d = r.doc()["errors"][0]
+        self.assertEqual((r.status, d["rule"], d["detail"]["row"], d["detail"]["definition"]), (8, "compute.divide-by-zero", 2, 0))  # definition 0 is q, the earlier one, not r (1) that copies it
+
     def test_the_overflow_is_a_refusal_never_a_wrap(self):
         big = 2**62
         self.s.write("t.csv", f"a\n{big}\n")
