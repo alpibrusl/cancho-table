@@ -9,6 +9,7 @@ The expected text is computed here: add and sub at the larger scale, mul at the 
 """
 import argparse, pathlib, random, shutil, sys, tempfile
 import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
+import mutlib  # the shared half of the mutation scripts: `check` says every pattern occurs exactly once
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LIM = 2**127
@@ -84,7 +85,6 @@ def build(src_dir, work, extra=None):
     cmpv = (ROOT / "tools/table/cmpv.cho").read_text()
     if extra:
         old, new = extra
-        assert cmpv.count(old) == 1, f"mutant text not found exactly once: {old!r}"
         cmpv = cmpv.replace(old, new)
     (proj / "src/cmpv.cho").write_text(cmpv)
     (proj / "src/main.cho").write_text((ROOT / "tests/conformance/cmpv_probe/main.cho").read_text().replace("@MODULE@", "cmpv"))
@@ -134,8 +134,8 @@ MUTANTS = [
     ("product sign", "    if w[a * 12] != w[b * 12] {\n        sign = 1;\n    }\n    clear(w, tmp2(), scale);", "    clear(w, tmp2(), scale);"),
     ("product scale", "    let scale = w[a * 12 + 1] + w[b * 12 + 1];\n    var sign = 0;", "    let scale = w[a * 12 + 1];\n    var sign = 0;"),
     ("product carry dropped", "                    w[at(tmp2(), k)] = t & 1073741823;\n                    carry = t >> 30;", "                    w[at(tmp2(), k)] = t & 1073741823;\n                    carry = 0;"),
-    ("half-even tie rounds up", "        up = (w[at(tmp2(), 0)] & 1) == 1;", "        up = true;"),
-    ("half-even tie rounds down", "        up = (w[at(tmp2(), 0)] & 1) == 1;", "        up = false;"),
+    ("half-even tie rounds up", "        up = w[at(tmp2(), 0)] & 1 == 1;", "        up = true;"),
+    ("half-even tie rounds down", "        up = w[at(tmp2(), 0)] & 1 == 1;", "        up = false;"),
     ("remainder above half does not round", "    if c > 0 {\n        up = true;", "    if c > 100 {\n        up = true;"),
     ("zero divisor not seen", "    if mag_is_zero(w, b) {\n        return 1;\n    }", "    if false {\n        return 1;\n    }"),
     ("division exponent on the wrong side", "    if e >= 0 {\n        mul_pow10(w, tmp0(), e);", "    if e > 100 {\n        mul_pow10(w, tmp0(), e);"),
@@ -157,7 +157,12 @@ def main():
     ap.add_argument("--cases", type=int, default=20000)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--mutants", action="store_true")
+    ap.add_argument("--check", action="store_true", help="only verify that every mutant applies exactly once (no compiler)")
     a = ap.parse_args()
+    problems = mutlib.check([(n, "cmpv.cho", o, w) for n, o, w in MUTANTS])
+    if problems or a.check:
+        print("\n".join(problems) or f"{len(MUTANTS)} mutants: every pattern occurs exactly once")
+        sys.exit(1 if problems else 0)
     cs = cases(a.cases if not a.mutants else 6000, a.seed)
     if not a.mutants:
         with tempfile.TemporaryDirectory() as w:
