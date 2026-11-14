@@ -55,16 +55,20 @@ Most data tools optimise for flexibility. `table` optimises for predictability.
 
 ## Data that lives in Postgres
 
-`table` does not connect to a database: its authority row has no network, and CI fails if that changes. Export with `psql`, then ask. Output of a run against PostgreSQL 16:
+`table` does not connect to a database: its authority row has no network, and CI fails if that changes. [cancho-pg](https://github.com/alpibrusl/cancho-pg)'s `pg-export` (a cancho program on its own PostgreSQL driver) runs one read-only query and writes JSON lines, which `table` reads. Output of a run against PostgreSQL 16:
 
 ```console
-$ psql --csv -c "select id, customer, status, amount from orders where placed = '2026-11-13' order by id" shop > orders-pg.csv
-$ table --where "status = 200" --group customer --agg "count,sum:amount:dec(2)" --format csv orders-pg.csv
+$ pg-export 127.0.0.1 5432 postgres shop - "select id, customer, status, amount from orders where placed = '2026-11-13' order by id" > orders-pg.jsonl
+$ table --input-format jsonl --fields customer,status,amount --where "status = 200" --group customer --agg "count,sum:amount:dec(2)" --format csv orders-pg.jsonl
+table: parse.jsonl-missing-field: a declared path has no value in a line
+  hint: --absent empty reads such a path as the empty cell
+  repair: table --input-format jsonl --fields customer,status,amount --where 'status = 200' --group customer --agg 'count,sum:amount:dec(2)' --format csv orders-pg.jsonl --absent empty
+$ table --input-format jsonl --fields customer,status,amount --where 'status = 200' --group customer --agg 'count,sum:amount:dec(2)' --format csv orders-pg.jsonl --absent empty
 customer,count,sum:amount
 "Doe, Jane",2,1269.90
 ```
 
-A SQL `NULL` comes out as an empty cell, and `table` refuses an empty cell in a `:dec` column (`value.not-decimal`, with the same question minus that row as the repair) instead of counting it as zero. A separate `pg-export` that writes JSON lines, recorded as a step by [cancho-flow](https://github.com/alpibrusl/cancho-flow), is a [design](https://github.com/alpibrusl/cancho-pg/blob/main/docs/design.md#10-pg-export-rows-out-as-json-lines-for-table-and-for-a-recorded-step-design-nothing-built), not a tool.
+A SQL `NULL` is a JSON `null`, and `table` refuses a missing value unless `--absent empty` says otherwise. `pg-export` is **not faster than `psql`** (about 16 percent slower and twice the memory at 1,000,000 rows, level at 100,000; [the numbers and conditions](https://github.com/alpibrusl/cancho-pg/blob/main/docs/design.md#107-as-built-and-what-was-measured)).
 
 ## Two-minute quick start
 

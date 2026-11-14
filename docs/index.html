@@ -304,23 +304,24 @@ footer { border-top: 1px solid var(--line); padding: 1.5rem 0 2rem; color: var(-
 
 <section id="postgres"><div class="wrap">
   <h2>Data that lives in Postgres</h2>
-  <p class="lead"><code>table</code> does not connect to a database: its authority row has no network, and CI fails if that changes. Export with <code>psql</code>, then ask. The numbers below are from a real run against PostgreSQL 16.</p>
+  <p class="lead"><code>table</code> does not connect to a database: its authority row has no network, and CI fails if that changes. <a href="https://github.com/alpibrusl/cancho-pg">cancho-pg</a>&rsquo;s <code>pg-export</code>, a cancho program on its own PostgreSQL driver, runs one read-only query and writes JSON lines, which <code>table</code> reads. The output below is from a real run against PostgreSQL 16.</p>
   <div class="narrowcol">
-<pre class="code" tabindex="0"><span class="c">$</span> psql --csv -c "select id, customer, status, amount from orders where placed = '2026-11-13' order by id" shop &gt; orders-pg.csv
-<span class="c">$</span> cat orders-pg.csv
-id,customer,status,amount
-1,"Doe, Jane",200,19.90
-2,Acme,404,
-3,"Doe, Jane",200,1250.00
-4,Acme,500,8.05
-<span class="c">$</span> table --where "status = 200" --group customer --agg "count,sum:amount:dec(2)" --format csv orders-pg.csv
+<pre class="code" tabindex="0"><span class="c">$</span> pg-export 127.0.0.1 5432 postgres shop - "select id, customer, status, amount from orders where placed = '2026-11-13' order by id" &gt; orders-pg.jsonl
+<span class="c">$</span> cat orders-pg.jsonl
+{"id":1,"customer":"Doe, Jane","status":200,"amount":19.90}
+{"id":2,"customer":"Acme","status":404,"amount":null}
+{"id":3,"customer":"Doe, Jane","status":200,"amount":1250.00}
+{"id":4,"customer":"Acme","status":500,"amount":8.05}
+<span class="c">$</span> table --input-format jsonl --fields customer,status,amount --where "status = 200" --group customer --agg "count,sum:amount:dec(2)" --format csv orders-pg.jsonl
+table: parse.jsonl-missing-field: a declared path has no value in a line
+  hint: --absent empty reads such a path as the empty cell
+  repair: table --input-format jsonl --fields customer,status,amount --where 'status = 200' --group customer --agg 'count,sum:amount:dec(2)' --format csv orders-pg.jsonl --absent empty
+<span class="r"># exit status 8; the rule, hint and repair, the rest of the message cut here</span>
+<span class="c">$</span> table --input-format jsonl --fields customer,status,amount --where 'status = 200' --group customer --agg 'count,sum:amount:dec(2)' --format csv orders-pg.jsonl --absent empty
 customer,count,sum:amount
-"Doe, Jane",2,1269.90
-<span class="c">$</span> table --group customer --agg "count,sum:amount:dec(2)" orders-pg.csv
-{"rule": "value.not-decimal", "detail": {"row": 2, "column": "amount", "value": ""}, "repair": {"kind": "choose", "options": [{"argv": ["table", "--where", "amount != ''", "--group", "customer", "--agg", "count,sum:amount:dec(2)", "orders-pg.csv"]}]}}
-<span class="r"># exit status 8; the rule, detail and repair of the JSON line it prints, the rest cut here</span></pre>
-  <p class="note" style="margin-top:.8rem">A SQL <code>NULL</code> comes out of <code>psql --csv</code> as an empty cell (row 2), and <code>table</code> refuses an empty cell in a <code>:dec</code> column instead of counting it as zero. The repair is the same question without that row. Declare <code>:dec(2)</code> so the sum is exact to the cent; without it the amounts are text.</p>
-  <p class="fine">No Postgres reader is built into <code>table</code> and none is planned inside it. A separate <code>pg-export</code>, which writes JSON lines that <code>table</code> reads, and the way <a href="https://github.com/alpibrusl/cancho-flow">cancho-flow</a> would record it, are a <a href="https://github.com/alpibrusl/cancho-pg/blob/main/docs/design.md#10-pg-export-rows-out-as-json-lines-for-table-and-for-a-recorded-step-design-nothing-built">design</a>, not a tool.</p>
+"Doe, Jane",2,1269.90</pre>
+  <p class="note" style="margin-top:.8rem">A SQL <code>NULL</code> is a JSON <code>null</code> (line 2), and <code>table</code> refuses a missing value unless you say <code>--absent empty</code> instead of counting it as zero. Numbers keep the server&rsquo;s own text, so <code>:dec(2)</code> sums them exactly. <code>pg-export</code> writes the same bytes as the server&rsquo;s <code>row_to_json</code> for these types, runs the statement in a read-only transaction, and refuses (writing nothing) a value that has no JSON form.</p>
+  <p class="fine"><code>pg-export</code> is <strong>not faster than <code>psql</code></strong>: with the same JSON lines it was level at 100,000 rows and about 16 percent slower, with about twice the memory, at 1,000,000 (one machine, one table shape; the table of numbers and the conditions are in <a href="https://github.com/alpibrusl/cancho-pg/blob/main/docs/design.md#107-as-built-and-what-was-measured">its design, section 10.7</a>). It has no password file, no <code>--out</code> and no one-host build yet.</p>
   </div>
 </div></section>
 
