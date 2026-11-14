@@ -39,6 +39,6 @@
     "na": "Markers read as the empty cell, comma-separated ('?,NA'), the output included. CSV only.",
     "skip-lines": "Drop the first N physical lines before the header (a title block); the count is in data.skipped.lines. CSV only.",
     "skip-prefix": "Drop the lines before the header that start with this text (comment lines); an unquoted header line is kept. CSV only.",
-    "compute": "Add exact computed columns: NAME=EXPR items separated by semicolons, with + - *, parentheses, COLUMN:int or COLUMN:dec(S), and a / b @ N. A file or standard input."
+    "compute": "Add exact computed columns: NAME=EXPR items separated by semicolons, with + - *, parentheses, COLUMN:int or COLUMN:dec(S), and a / b @ N. A file or standard input, CSV or JSON lines."
   }
 }

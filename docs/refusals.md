@@ -172,7 +172,7 @@ $ table --where "bytes:int > 100" --select id orders.csv          # exit status 
 | `compute.too-long` | 2 | never | --compute is beyond the bounds: 8 definitions of 256 bytes, 4 levels of parentheses and 10 operands at once. Hint: split the definitions between two calls, the second reading what the first wrote. Repair: none. |
 | `compute.divide-by-zero` | 8 | never | a division in --compute has a divisor of zero in a row (detail.row, detail.definition). Hint: keep out the rows with a zero divisor in an earlier call. Repair: none. |
 | `compute.overflow` | 8 | never | a result in --compute is 2^127 or more in a row (detail.row, detail.definition), and it is never wrapped or rounded. Hint: use columns of a smaller scale or magnitude. Repair: none. |
-| `compute.unsupported-combination` | 2 | never | --compute is beside a flag that shapes rows or groups, a JSON-lines input or a reader option. Hint: compute first and write CSV, then give that to a second call with the flags. Repair: none. |
+| `compute.unsupported-combination` | 2 | never | --compute is beside a flag that shapes rows or groups, or a reader option. Hint: compute first and write CSV, then give that to a second call with the flags. Repair: none. |
 <!-- /gen:rules -->
 
 The list is what `table introspect` prints under `rules`. `args.*`, `path.*` and `io.*` are the contract's, shared by the other cancho-tools; the rest are `table`'s own.

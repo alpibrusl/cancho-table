@@ -129,7 +129,7 @@ fn hint_of(status: int) -> [] &static [byte] {
 }
 
 // A refusal of a definition (a compile status, or a row status 11 or 12): the rule, the definition's offset in the text, and for a row the row and the column.
-fn refuse[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, offset: int, row: int, line: int, definition: int, path: &p [byte]) -> [heap] fail.Errors {
+pub fn refuse[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, offset: int, row: int, line: int, definition: int, path: &p [byte]) -> [heap] fail.Errors {
     var w = fail.open_in(heap, finish.extra(), rule_of(status), what_of(status), hint_of(status));
     w = fail.repair_none(heap, w, "what the definition should be is not known");
     w = fail.detail_open(heap, w);
@@ -144,7 +144,7 @@ fn refuse[&h, &p](heap: &!h Heap, e: fail.Errors, status: int, offset: int, row:
 }
 
 // A cell that is not what its type says, in a definition: `value.not-integer` and the others, with the context `compute`.
-fn refuse_cell[&h, &p, &n, &d](heap: &!h Heap, e: fail.Errors, status: int, names: &n buffer.Buffer, hends: &d vec.Vec[int], col: int, row: int, line: int, path: &p [byte]) -> [heap] fail.Errors {
+pub fn refuse_cell[&h, &p, &n, &d](heap: &!h Heap, e: fail.Errors, status: int, names: &n buffer.Buffer, hends: &d vec.Vec[int], col: int, row: int, line: int, path: &p [byte]) -> [heap] fail.Errors {
     var rule = "value.not-integer";
     var what = "a cell is not an exact integer: an optional sign and digits, nothing else (an empty cell is not one)";
     var hint = "keep out the rows with such a cell in an earlier call, or declare the column :dec(N) if it has a point";
@@ -178,7 +178,7 @@ fn refuse_cell[&h, &p, &n, &d](heap: &!h Heap, e: fail.Errors, status: int, name
 
 // One row: the definitions evaluated against the record, their text appended to a copy of it, its cells made, and the row written by `engine.process_rows`. Answers the cells, the copy,
 // the four buffers of the output, and a status: 0, or the status of `cexpr` that refused the row with the column (for a cell) or the definition.
-fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a](heap: &!h Heap, io: &!i Io, line: &l [byte], prog: &p [int], nd: int, ncols: int, ws: &!w [int], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: Box[[int]], copy: buffer.Buffer, rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, picked: int, delim: int, as_csv: bool, budget: int, number: int, limit: int, a: &!a [int]) -> [heap, io_write] (Box[[int]], buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, int, int, int) {
+pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a](heap: &!h Heap, io: &!i Io, line: &l [byte], prog: &p [int], nd: int, ncols: int, ws: &!w [int], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: Box[[int]], copy: buffer.Buffer, rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, picked: int, delim: int, as_csv: bool, budget: int, number: int, limit: int, a: &!a [int]) -> [heap, io_write] (Box[[int]], buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, int, int, int) {
     var cells2 = cells;
     var copy2 = copy;
     borrow mut copy2 as &!cw in {

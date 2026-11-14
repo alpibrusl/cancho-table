@@ -1,0 +1,332 @@
+edition 5;
+
+module computej;
+
+// `--compute` over JSON lines (docs/computed-columns.md, K3b): `compute.read` for an input that `jsonl.read` reads. The declared fields (`--fields`) are the header; each line is made
+// into the cells of a CSV record by `jrec.extract` as `jsonl.read` does it, and from there a row is the stage's: the definitions are evaluated (`cexpr`), their text is appended to a copy
+// of the record and `engine.process_rows` writes it. Rows are not grouped or sorted here: those flags are refused with the stage, and the loop is the sequential one of `jsonl.read`.
+
+import std.buffer;
+import std.bytes;
+import std.vec;
+import bulk;
+import cexpr;
+import cmpv;
+import compute;
+import engine;
+import finish;
+import frame;
+import jfields;
+import jrec;
+import query;
+import scan;
+import spec;
+import toolbox.cli;
+import toolbox.fail;
+import toolbox.lines;
+
+pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, stdin: bool, shown: &s [byte], io: &!i Io, fs: &fs Fs(""), root: &rt [byte], rel: &rl [byte], full: &fu [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_read, io_write] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+    let table = spec.flag_table();
+    let cap = cli.nat(args, parsed, table, "max-line-bytes");
+    let most = cli.nat(args, parsed, table, "max-rows");
+    let text = cli.text(args, parsed, table, "compute");
+    let nodes = cli.nat(args, parsed, table, "max-json-nodes");
+    var absent = 0;
+    if bytes.equal(cli.text(args, parsed, table, "absent"), "empty") {
+        absent = 1;
+    }
+    var qdelim = 0 - 1;
+    if as_csv {
+        qdelim = delim;
+    }
+    let jfields.Fields { fnames, fends, fsbytes, ftable, fstatus, fat } = jfields.parse(heap, cli.text(args, parsed, table, "fields"));
+    var e = errs;
+    var names = fnames;
+    var hends = fends;
+    var head = buffer.empty(heap, 1);
+    var rows = buffer.empty(heap, 1);
+    var scratch = buffer.empty(heap, 1);
+    var escr = buffer.empty(heap, 16);
+    var kept = buffer.empty(heap, 64);
+    var rec = buffer.empty(heap, 256);
+    var copy = buffer.empty(heap, 256);
+    var cols = box_slice(heap, 1, 0);
+    var cells = box_slice(heap, 3, 0);
+    var sel = box_slice(heap, 1, 0);
+    var labels = buffer.empty(heap, 1);
+    var lends = vec.empty(heap, 1, 0);
+    var tally = box_slice(heap, engine.k_size(), 0);
+    var tape = box_slice(heap, 3 * nodes, 0);
+    var st = box_slice(heap, 2, 0);
+    var prog = box_slice(heap, cexpr.program_size(), 0);
+    var work = box_slice(heap, cexpr.work_size(), 0);
+    var ws = box_slice(heap, cmpv.workspace(), 0);
+    var nd = 0;
+    var picked = 0;
+    var rstatus = 0;
+    var rcol = 0;
+    var rdef = 0;
+    var rrow = 0;
+    var rline = 0;
+    var r = lines.start(heap, cap);
+    var going = true;
+    var c = finish.Counts { columns: 0, records: 0, ragged: 0, first_row: 0, first_line: 0, first_found: 0, capped: false, abort: 0, abort_line: 0, long_length: 0, emitted: 0, more: false, next: 0, bad_name: 0, err_col: 0, err_fn: 0, err_row: 0, err_line: 0, err_cond: 0, err_digits: 0, groups: 0, skipped: -1, skipped_join: -1 };
+    var nfields = 0;
+    borrow hends as &der in {
+        nfields = vec.size(der);
+    }
+    var flat = true;
+    borrow ftable as &flr in {
+        var f = 0;
+        while f < nfields {
+            if contents(flr)[2 * f + 1] != 1 {
+                flat = false;
+            }
+            f = f + 1;
+        }
+    }
+    borrow mut tally as &!tw in {
+        let a = contents(tw);
+        a[engine.k_columns()] = nfields;
+        // the definitions, against the declared fields
+        var endsb = box_slice(heap, nfields + 1, 0);
+        borrow mut endsb as &!ew in {
+            borrow hends as &er in {
+                var k = 0;
+                while k < nfields {
+                    contents(ew)[k] = vec.get(er, k);
+                    k = k + 1;
+                }
+            }
+        }
+        var cstatus = 0;
+        var coffset = 0;
+        borrow mut prog as &!pw in {
+            borrow mut work as &!ww in {
+                borrow names as &nr in {
+                    borrow endsb as &er in {
+                        let (s1, o1, n1) = cexpr.compile(heap, text, buffer.bytes(nr), contents(er), nfields, contents(pw), contents(ww));
+                        cstatus = s1;
+                        coffset = o1;
+                        nd = n1;
+                    }
+                }
+            }
+        }
+        unbox_slice(heap, endsb);
+        if cstatus != 0 {
+            e = compute.refuse(heap, e, cstatus, coffset, 0, 0, 0, shown);
+            a[engine.k_abort()] = 90;
+            nd = 0;
+            going = false;
+        } else {
+            var d = 0;
+            while d < nd {
+                borrow prog as &pr in {
+                    names = cexpr.name_of(heap, names, text, contents(pr), d);
+                }
+                var size = 0;
+                borrow names as &nr in {
+                    size = buffer.size(nr);
+                }
+                hends = vec.push(heap, hends, size);
+                d = d + 1;
+            }
+            var made = frame.none(heap);
+            frame.drop(heap, made);
+            borrow names as &nr in {
+                borrow hends as &er in {
+                    made = frame.prepare(heap, tree, nr, er, nfields + nd, mode, delim, "");
+                }
+            }
+            let frame.Frame { fcols, fsel, fcells, fhead, flead, flabels, flends, fpicked, fabort, fbad, fsort_field, fsort_slot, fdesc } = made;
+            unbox_slice(heap, cols);
+            unbox_slice(heap, sel);
+            unbox_slice(heap, cells);
+            buffer.drop(heap, head);
+            buffer.drop(heap, labels);
+            vec.drop(heap, lends);
+            cols = fcols;
+            sel = fsel;
+            cells = fcells;
+            head = finish.report_head(heap, query.report_kind(tree), fhead);
+            labels = flabels;
+            lends = flends;
+            picked = fpicked;
+            if fabort != 0 {
+                a[engine.k_abort()] = fabort;
+                a[engine.k_bad_name()] = fbad;
+                going = false;
+            }
+            if as_csv && fabort == 0 {
+                rows = finish.start_output(heap, rows, finish.report_lead(heap, query.report_kind(tree), flead, delim));
+            } else {
+                buffer.drop(heap, flead);
+            }
+        }
+        borrow mut tape as &!tpw in {
+            borrow mut st as &!sw in {
+                borrow ftable as &tbr in {
+                    borrow fsbytes as &sbr in {
+                        while going {
+                            var status = 9;
+                            borrow mut r as &!rw in {
+                                status = scan.next_fast(rw);
+                            }
+                            if status == 9 {
+                                let (stepped, answer) = lines.next(heap, r);
+                                r = stepped;
+                                status = answer;
+                            }
+                            if status == lines.need() {
+                                if stdin {
+                                    r = bulk.fill_stdin(r, io);
+                                } else {
+                                    r = lines.fill_file(r, file);
+                                }
+                            } else if status == lines.done() {
+                                going = false;
+                            } else if status == lines.long() {
+                                a[engine.k_abort()] = 4;
+                                borrow r as &rr in {
+                                    a[engine.k_abort_line()] = lines.number(rr);
+                                    a[engine.k_long()] = lines.length(rr);
+                                }
+                                going = false;
+                            } else {
+                                borrow r as &rr in {
+                                    let number = lines.number(rr);
+                                    var line = lines.text(rr);
+                                    if number == 1 && len(line) >= 3 && int_of(line[0]) == 239 && int_of(line[1]) == 187 && int_of(line[2]) == 191 {
+                                        line = line[3..len(line)];
+                                    }
+                                    if len(line) > 0 && int_of(line[len(line) - 1]) == 13 {
+                                        line = line[0..len(line) - 1];
+                                    }
+                                    if jrec.blank(line) {
+                                        // A blank line is not a record.
+                                    } else if a[engine.k_records()] >= most {
+                                        a[engine.k_capped()] = 1;
+                                        going = false;
+                                    } else if a[engine.k_records()] >= from && a[engine.k_emitted()] >= limit {
+                                        a[engine.k_more()] = 1;
+                                        a[engine.k_next()] = a[engine.k_records()];
+                                        going = false;
+                                    } else {
+                                        var shape = 0;
+                                        borrow mut cells as &!cw in {
+                                            let (code, rec2) = jrec.extract(heap, line, contents(tpw), contents(sw), contents(tbr), buffer.bytes(sbr), nfields, flat, nodes, absent, qdelim, contents(cw), rec, a);
+                                            rec = rec2;
+                                            shape = code;
+                                        }
+                                        if shape >= 50 {
+                                            a[engine.k_abort_line()] = number;
+                                            a[engine.k_err_line()] = number;
+                                            kept = jrec.keep_facts(heap, kept, shape, line, contents(tbr), buffer.bytes(sbr), nfields, a);
+                                            going = false;
+                                        } else if engine.count_row(a, nfields, number, from) {
+                                            borrow cols as &kr in {
+                                                borrow sel as &sr in {
+                                                    borrow prog as &pr in {
+                                                        borrow rec as &rcr in {
+                                                            var record = buffer.bytes(rcr);
+                                                            if shape == 0 {
+                                                                record = line;
+                                                            }
+                                                            borrow mut ws as &!wsw in {
+                                                                let (c2, p2, r2, s2, e2, k2, st2, col, def) = compute.row_out(heap, io, record, contents(pr), nd, nfields, contents(wsw), tree, contents(kr), contents(sr), cells, copy, rows, scratch, escr, kept, picked, delim, as_csv, budget, number, limit, a);
+                                                                cells = c2;
+                                                                copy = p2;
+                                                                rows = r2;
+                                                                scratch = s2;
+                                                                escr = e2;
+                                                                kept = k2;
+                                                                if st2 != 0 {
+                                                                    rstatus = st2;
+                                                                    rcol = col;
+                                                                    rdef = def;
+                                                                    rrow = a[engine.k_records()];
+                                                                    rline = number;
+                                                                    going = false;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if a[engine.k_stop()] == 1 {
+                                    going = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if rstatus != 0 && a[engine.k_abort()] == 0 {
+            a[engine.k_abort()] = 90;
+        }
+        buffer.drop(heap, escr);
+        c = finish.Counts { columns: a[engine.k_columns()], records: a[engine.k_records()], ragged: a[engine.k_ragged()], first_row: a[engine.k_first_row()], first_line: a[engine.k_first_line()], first_found: a[engine.k_first_found()], capped: a[engine.k_capped()] == 1, abort: a[engine.k_abort()], abort_line: a[engine.k_abort_line()], long_length: a[engine.k_long()], emitted: a[engine.k_emitted()], more: a[engine.k_more()] == 1, next: a[engine.k_next()], bad_name: a[engine.k_bad_name()], err_col: a[engine.k_err_col()], err_fn: a[engine.k_err_fn()], err_row: a[engine.k_err_row()], err_line: a[engine.k_err_line()], err_cond: a[engine.k_err_cond()], err_digits: a[engine.k_err_digits()], groups: a[engine.k_groups()], skipped: -1, skipped_join: -1 };
+    }
+    unbox_slice(heap, tally);
+    unbox_slice(heap, cells);
+    unbox_slice(heap, sel);
+    unbox_slice(heap, cols);
+    unbox_slice(heap, tape);
+    unbox_slice(heap, st);
+    unbox_slice(heap, prog);
+    unbox_slice(heap, work);
+    unbox_slice(heap, ws);
+    buffer.drop(heap, rec);
+    buffer.drop(heap, copy);
+    buffer.drop(heap, scratch);
+    buffer.drop(heap, fsbytes);
+    unbox_slice(heap, ftable);
+    var errno = 0;
+    borrow r as &rr in {
+        errno = lines.failed(rr);
+    }
+    lines.drop(heap, r);
+    var out_rows = rows;
+    if as_csv && c.abort != 9 {
+        let (after, ok) = engine.flush_last(io, out_rows, query.hold_of(tree));
+        out_rows = after;
+        if !ok {
+            c = finish.Counts { columns: c.columns, records: c.records, ragged: c.ragged, first_row: c.first_row, first_line: c.first_line, first_found: c.first_found, capped: c.capped, abort: 9, abort_line: 0, long_length: 0, emitted: c.emitted, more: c.more, next: c.next, bad_name: c.bad_name, err_col: c.err_col, err_fn: c.err_fn, err_row: c.err_row, err_line: c.err_line, err_cond: c.err_cond, err_digits: c.err_digits, groups: c.groups, skipped: -1, skipped_join: -1 };
+        }
+    }
+    if rstatus != 0 {
+        if rstatus >= 100 {
+            borrow names as &nr in {
+                borrow hends as &er3 in {
+                    e = compute.refuse_cell(heap, e, rstatus, nr, er3, rcol, rrow, rline, shown);
+                }
+            }
+        } else {
+            e = compute.refuse(heap, e, rstatus, 0, rrow, rline, rdef, shown);
+        }
+    }
+    borrow names as &nr in {
+        borrow hends as &er3 in {
+            borrow labels as &lr in {
+                borrow lends as &le in {
+                    borrow kept as &kr in {
+                        if c.abort >= 50 && c.abort <= 55 {
+                            e = finish.jsonl_refusal(heap, e, args, parsed, nr, er3, kr, c, shown, "");
+                        } else {
+                            e = finish.explain(heap, args, parsed, tree, nr, er3, lr, le, kr, c, shown, names_at, errno, as_csv, budget, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buffer.drop(heap, labels);
+    vec.drop(heap, lends);
+    buffer.drop(heap, kept);
+    return (c, head, out_rows, names, hends, e);
+}

@@ -1,6 +1,6 @@
 # Computed columns: `--compute`, a design (slice K0)
 
-> **Status: built for a file and for standard input (slices K0 to K3); JSON-lines input is still refused (section 10).** What was measured is in section 7.1; the lines below that say "not yet" or "nothing built" were true when they were written and are corrected where they stand.
+> **Status: built for a file and for standard input, CSV or JSON lines (slices K0 to K3b).** What was measured is in section 7.1; the lines below that say "not yet" or "nothing built" were true when they were written and are corrected where they stand.
 > **(Written as: design, nothing built.)** This reopens the decision of `docs/or-and-columns.md` section 8.3 ("B2 and B3: do not build"). The maintainer's direction
 > (14 Nov 2026, relayed by the cancho-sheets work) is that *column operations are a basic feature of a table tool*. Section 8.3 recorded its own reopening
 > condition (a recorded use that needs the value in the same call, and the select path measured with the instruction budget 1.01). The use is recorded
@@ -84,7 +84,7 @@ There is no `null`, no propagation: one bad cell stops the run with the first ro
 | `--format csv\|json` | as today (`table.v2` JSON: `columns` has the new names last) |
 | input | a FILE or `--stdin`, CSV/TSV or `--json-lines` as today |
 
-`--compute` is **refused** (standard input is *not* among them: it works) beside any flag that shapes rows or groups — `--select`, `--where`, `--group`, `--agg`, `--order-by`, `--join`, `--rename`,
+`--compute` is **refused** (standard input and JSON lines are *not* among them: they work) beside any flag that shapes rows or groups — `--select`, `--where`, `--group`, `--agg`, `--order-by`, `--join`, `--rename`,
 `--query` — as `compute.unsupported-combination`, with the repair "run the operation in a second stage": an argv pair joined by `|`. Not built because it
 cannot be done without editing the loops of section 2; **a decision to be revisited only with G-COST in hand.** `--limit/--from/--max-rows/--max-bytes`
 apply (they are the row page, one meaning). Introspection (`table describe`), the skill text and the MCP tool list are generated from the flag and rule
@@ -144,7 +144,7 @@ definition, the column and the row number only.
 | **K2b** | the flag, the rule tags, the stage's read loop, CSV and JSON out | G-ORACLE through the binary |
 | **K2b** (built) | the flag, 12 rules, `compute.read` beside `read_file`, usage form, MCP text, docs; `tests/conformance/test_compute.py` and `scripts/compute_mutants.py` (14 of 14 killed) | G-ORACLE through the binary |
 | **K3** (built for standard input) | standard input (`bulk.fill_stdin` in the same reader), G-COMPAT and G-FLAT measured (7.1), surface regenerated, AGENTS.md, README, `docs/index.html` | G-COMPAT, G-FLAT, G-SURFACE |
-| **K3b** (open) | JSON-lines input: `jsonl.read` has its own record builder; the stage would need its own seam there | not started |
+| **K3b** (built) | JSON-lines input (`--input-format jsonl --fields ...`): `computej.read`, the sequential loop of `jsonl.read` with the stage's header and row steps (`compute.row_out` is shared); `jsonl.cho` is not edited. `test_compute`: the same rows as JSON lines give the CSV answer's bytes from a file and from a pipe, the JSON document and `--format jsonl` say the same cells, and the refusals; 4 more mutants | the CSV gates, through JSON lines |
 
 ## 9. Corrections made in place
 
@@ -157,6 +157,6 @@ definition, the column and the row number only.
 
 * **Whether `--compute` should later be allowed beside `--select`/`--where`** (one pass instead of two): only with G-COST, the select path measured with a
   callee at the 1.01 budget.
-* **JSON-lines input** (K3b): refused as `compute.unsupported-combination`. `jsonl.read` holds each object as the CSV record of its cells and has its own loop; the stage's trick (extend the header, append the values to a copy of the record) would be a second copy there, to be designed with its own mutants.
+* **JSON-lines input** (K3b) is built (section 8). It is a second copy of the stage's reader (`computej.cho`), because `jsonl.read` has its own loop; the day the two diverge is the day a change to one needs the other, and `scripts/compute_mutants.py` has a mutant for each of the stage's steps in both.
 * **Dates** (`ts + 1d`, differences): out; `docs/datetime.md` section 15 says why.
 * **Rounding functions** (`round`, `floor`): out; `/ @N` is the only rounding.

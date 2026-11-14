@@ -161,10 +161,54 @@ class Compute(unittest.TestCase):
         d = r.doc()["errors"][0]["detail"]
         self.assertEqual((d["row"], d["line"], d["column"]), (2, 3, "b"))
 
-    def test_json_lines_input_is_refused(self):
-        self.s.write("t.jsonl", '{"a": 1}\n')
-        r = run("--root", self.s.dir, "--compute", "s=a:int+1", "--input-format", "jsonl", "--fields", "a", "t.jsonl")
-        self.assertEqual((r.status, r.first_rule()), (2, "compute.unsupported-combination"), r.stdout)
+    def test_json_lines_give_the_csv_answer(self):
+        """K3b: the same rows as JSON lines (exact number text, strings with commas and newlines) give the bytes the CSV gives, from a file and from a pipe."""
+        rng = random.Random(11)
+        checked = 0
+        for _ in range(25):
+            kinds, text, rows, values = make_file(rng, rng.randint(1, 10))
+            trees = [tree_for(rng, kinds) for _ in range(rng.randint(1, 2))]
+            try:
+                for t in trees:
+                    G.static_scale(t)
+                [expected(t, v) for t in trees for v in values]
+            except (G.BadScale, G.Overflow, G.DivZero):
+                continue
+            defs = self._shift_positions(";".join(f"r{i}=" + G.render(t, rng) for i, t in enumerate(trees)))
+            lines = []
+            for row in rows:
+                body = [json.dumps(row[0])] + [row[k] for k in range(1, 7)]
+                lines.append("{" + ",".join(f'"{n}":{v}' for n, v in zip(["name"] + list("abcdef"), body)) + "}")
+            jl = "\n".join(lines) + "\n"
+            self.s.write("t.csv", text)
+            self.s.write("t.jsonl", jl)
+            fields = ["--fields", "name,a,b,c,d,e,f"]
+            want = run("--root", self.s.dir, "--compute", defs, "--format", "csv", "t.csv")
+            self.assertEqual(want.status, 0, (defs, want.stderr))
+            got = run("--root", self.s.dir, "--input-format", "jsonl", *fields, "--compute", defs, "--format", "csv", "t.jsonl")
+            self.assertEqual((got.status, got.stdout), (0, want.stdout), (defs, jl))
+            piped = run("--input-format", "jsonl", *fields, "--compute", defs, "--format", "csv", stdin=jl.encode())
+            self.assertEqual((piped.status, piped.stdout), (0, want.stdout))
+            # the JSON document and the JSON-lines output say the same cells
+            doc = run("--root", self.s.dir, "--input-format", "jsonl", *fields, "--compute", defs, "t.jsonl").data()
+            self.assertEqual(doc["rows"], list(csv.reader(io.StringIO(want.stdout.decode())))[1:])
+            lines_out = run("--root", self.s.dir, "--input-format", "jsonl", *fields, "--compute", defs, "--format", "jsonl", "t.jsonl").stdout.decode().splitlines()
+            self.assertEqual([list(json.loads(l).values()) for l in lines_out], doc["rows"])
+            checked += 1
+        self.assertGreater(checked, 10)
+
+    def test_json_lines_refusals(self):
+        self.s.write("t.jsonl", '{"a":1,"b":2}\n{"a":"x","b":3}\n{"a":5,"b":6}\n')
+        base = ["--root", self.s.dir, "--input-format", "jsonl", "--fields", "a,b"]
+        r = run(*base, "--compute", "s=a:int+b:int", "--format", "csv", "t.jsonl")
+        self.assertEqual(r.status, 8)
+        self.assertEqual(r.stdout.decode(), "a,b,s\n1,2,3\n")   # the rows before the refused one, none after it
+        d = run(*base, "--compute", "s=a:int+b:int", "t.jsonl").doc()["errors"][0]
+        self.assertEqual((d["rule"], d["detail"]["row"], d["detail"]["line"], d["detail"]["column"]), ("value.not-integer", 2, 2, "a"))
+        r = run(*base, "--compute", "s=z:int+1", "t.jsonl")
+        self.assertEqual((r.status, r.first_rule()), (3, "compute.unknown-column"))
+        r = run(*base, "--compute", "s=a:int+1", "--select", "a", "t.jsonl")
+        self.assertEqual((r.status, r.first_rule()), (2, "compute.unsupported-combination"))
 
     def test_the_overflow_is_a_refusal_never_a_wrap(self):
         big = 2**62
