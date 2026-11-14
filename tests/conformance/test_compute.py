@@ -10,6 +10,7 @@
 import csv
 import io
 import json
+import os
 import pathlib
 import random
 import sys
@@ -178,8 +179,45 @@ class Compute(unittest.TestCase):
         for flags in (["--select", "a"], ["--where", "a:int > 0"], ["--group", "a"], ["--agg", "count"], ["--order-by", "a"], ["--rows"], ["--skip-lines", "1"], ["--rename", "a=z"]):
             r = run("--root", self.s.dir, "--compute", "r=a:int+1", *flags, "t.csv")
             self.assertEqual((r.status, r.first_rule()), (2, "compute.unsupported-combination"), (flags, r.stdout))
-        r = run("--compute", "r=a:int+1", stdin=b"a,b\n1,2\n")
-        self.assertEqual((r.status, r.first_rule()), (2, "compute.unsupported-combination"))
+
+    def test_standard_input_is_the_files_answer(self):
+        text = 'name,a,b\n"x, y",1.50,2\nz,-0.25,3\n"q\nr",100,4\n'
+        self.s.write("t.csv", text)
+        for flags in (["--format", "csv"], [], ["--limit", "2"], ["--limit", "1", "--from", "1"]):
+            args = ["--compute", "s=a:dec(2)*b:int;d=a:dec(2)/b:int@3", *flags]
+            f = run("--root", self.s.dir, *args, "t.csv")
+            p = run(*args, stdin=text.encode())
+            self.assertEqual(f.status, 0)
+            self.assertEqual((p.status, p.stdout), (f.status, f.stdout), flags)
+        # a refusal reads the same from a pipe, with the input named `-`
+        bad = "a\n1\nx\n"
+        self.s.write("bad.csv", bad)
+        f = run("--root", self.s.dir, "--compute", "s=a:int+1", "bad.csv")
+        p = run("--compute", "s=a:int+1", stdin=bad.encode())
+        self.assertEqual((p.status, p.first_rule()), (f.status, f.first_rule()))
+        self.assertEqual(p.doc()["errors"][0]["detail"]["path"], "-")
+
+    def test_memory_is_flat_in_the_rows(self):
+        """G-FLAT: the peak resident memory of a file and of a pipe does not grow with the rows: 200,000 rows peak less than 1 MB above 20,000 (the noise of the launcher is about 0.5 MB either way; a copy of the rows kept would add about 6 MB). Measured by the small launcher of
+        test_memory (a process forked from the runner would report the runner's own high-water mark: tests/conformance/maxrss.c)."""
+        import procs as subprocess
+        from harness import binary
+        from test_memory import helper
+        peaks = {}
+        for n in (20000, 200000):
+            rows = "".join(f"{i},{i % 997}.{i % 100:02d},{i % 50 + 1}\n" for i in range(n))
+            path = self.s.write(f"m{n}.csv", "id,price,qty\n" + rows)
+            del rows
+            plan = ["--compute", "t=price:dec(2)*qty:int;h=price:dec(2)/qty:int@4", "--format", "csv"]
+            for mode in ("file", "stdin"):
+                argv = [helper(), binary(), *plan] + (["--root", str(self.s.dir), f"m{n}.csv"] if mode == "file" else [])
+                with open(path, "rb") as src:
+                    p = subprocess.run(argv, capture_output=True, text=True, check=True, stdin=src if mode == "stdin" else subprocess.DEVNULL)
+                rss, status = p.stdout.split()
+                self.assertEqual(int(status), 0)
+                peaks[(n, mode)] = int(rss)
+        for mode in ("file", "stdin"):
+            self.assertLessEqual(peaks[(200000, mode)] - peaks[(20000, mode)], 1024, peaks)
 
     def test_the_stage_composes_with_a_second_call(self):
         self.s.write("t.csv", "price,qty\n2.50,4\n10.00,3\n0.99,10\n")

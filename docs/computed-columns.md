@@ -1,6 +1,7 @@
 # Computed columns: `--compute`, a design (slice K0)
 
-> **Status: design, nothing built.** This reopens the decision of `docs/or-and-columns.md` section 8.3 ("B2 and B3: do not build"). The maintainer's direction
+> **Status: built for a file and for standard input (slices K0 to K3); JSON-lines input is still refused (section 10).** What was measured is in section 7.1; the lines below that say "not yet" or "nothing built" were true when they were written and are corrected where they stand.
+> **(Written as: design, nothing built.)** This reopens the decision of `docs/or-and-columns.md` section 8.3 ("B2 and B3: do not build"). The maintainer's direction
 > (14 Nov 2026, relayed by the cancho-sheets work) is that *column operations are a basic feature of a table tool*. Section 8.3 recorded its own reopening
 > condition (a recorded use that needs the value in the same call, and the select path measured with the instruction budget 1.01). The use is recorded
 > in section 1; the measurement is a gate of this design (section 7), not a claim. Every claim below is a **choice**, a **read** (file and line), or **open**;
@@ -83,7 +84,7 @@ There is no `null`, no propagation: one bad cell stops the run with the first ro
 | `--format csv\|json` | as today (`table.v2` JSON: `columns` has the new names last) |
 | input | a FILE or `--stdin`, CSV/TSV or `--json-lines` as today |
 
-`--compute` is **refused** beside any flag that shapes rows or groups — `--select`, `--where`, `--group`, `--agg`, `--order-by`, `--join`, `--rename`,
+`--compute` is **refused** (standard input is *not* among them: it works) beside any flag that shapes rows or groups — `--select`, `--where`, `--group`, `--agg`, `--order-by`, `--join`, `--rename`,
 `--query` — as `compute.unsupported-combination`, with the repair "run the operation in a second stage": an argv pair joined by `|`. Not built because it
 cannot be done without editing the loops of section 2; **a decision to be revisited only with G-COST in hand.** `--limit/--from/--max-rows/--max-bytes`
 apply (they are the row page, one meaning). Introspection (`table describe`), the skill text and the MCP tool list are generated from the flag and rule
@@ -130,10 +131,8 @@ definition, the column and the row number only.
   that **the gates must kill**; a survivor is explained or the gate is extended.
 * **G-COMPAT.** The corpus md5 of `scripts/corpus.py` on this branch equals the one on `main`, and the select path's instruction count (callgrind, budget
   1.01) is unchanged: the claim of section 2, measured.
-* **G-FLAT.** Memory with 100,000 and 1,000,000 rows is the same to the megabyte (`docs/` convention for streaming claims); byte-identical output with
-  `--threads` 1 and 8 is not applicable (the stage is one loop) and **is stated as such**.
-* **G-NOPANIC.** The refusals' fuzz: random and damaged definitions, every outcome an answer or a listed rule tag; no trap.
-* **G-SURFACE.** `describe`, `skill`, the MCP list and the schemas regenerate and the existing checks (`scripts/manifest.py --check`, `schemas.py --check`) pass.
+* **G-FLAT.** Peak resident memory of `--compute 't=price:dec(2)*qty:int;h=price:dec(2)/qty:int@4' --format csv`, measured by the repo's launcher (`tests/conformance/maxrss.c`, as `test_memory.py`; `wait4`'s `ru_maxrss` of a small forked child): **3,500 KB at 100,000 rows and 3,524 KB at 1,000,000 for a file; 3,656 and 3,652 KB for a pipe.** `test_compute.test_memory_is_flat_in_the_rows` holds the growth between 20,000 and 200,000 rows under 1 MB (the launcher's noise is about 0.5 MB either way, and a copy of the rows kept would add about 6 MB). *Correction in place:* the first figure written here, 8.9 MB, was taken from a forked Python script and is that script's own high-water mark (which `maxrss.c` exists to avoid), not the tool's.
+* **Speed of the stage: not measured.** Nothing is claimed about it, nor against another tool.
 
 ## 8. Slices
 
@@ -143,7 +142,9 @@ definition, the column and the row number only.
 | **K1** | `cmpv` and G-CORE with its mutants (no grammar) | G-CORE 0 differences, mutants killed |
 | **K2a** (built) | `tools/table/cexpr.cho`: parser and evaluator, with `scripts/cexpr_golden.py` (3,041 cases, 0 differences; 3,000 fuzz cases, no trap; 19 mutants, all killed) | G-ORACLE, G-MUT, G-NOPANIC for the module |
 | **K2b** | the flag, the rule tags, the stage's read loop, CSV and JSON out | G-ORACLE through the binary |
-| **K3** | standard input, JSON-lines input; surface regeneration; AGENTS.md, README, `llms.txt`, `docs/index.html` | G-COMPAT, G-FLAT, G-SURFACE |
+| **K2b** (built) | the flag, 12 rules, `compute.read` beside `read_file`, usage form, MCP text, docs; `tests/conformance/test_compute.py` and `scripts/compute_mutants.py` (14 of 14 killed) | G-ORACLE through the binary |
+| **K3** (built for standard input) | standard input (`bulk.fill_stdin` in the same reader), G-COMPAT and G-FLAT measured (7.1), surface regenerated, AGENTS.md, README, `docs/index.html` | G-COMPAT, G-FLAT, G-SURFACE |
+| **K3b** (open) | JSON-lines input: `jsonl.read` has its own record builder; the stage would need its own seam there | not started |
 
 ## 9. Corrections made in place
 
@@ -156,5 +157,6 @@ definition, the column and the row number only.
 
 * **Whether `--compute` should later be allowed beside `--select`/`--where`** (one pass instead of two): only with G-COST, the select path measured with a
   callee at the 1.01 budget.
+* **JSON-lines input** (K3b): refused as `compute.unsupported-combination`. `jsonl.read` holds each object as the CSV record of its cells and has its own loop; the stage's trick (extend the header, append the values to a copy of the record) would be a second copy there, to be designed with its own mutants.
 * **Dates** (`ts + 1d`, differences): out; `docs/datetime.md` section 15 says why.
 * **Rounding functions** (`round`, `floor`): out; `/ @N` is the only rounding.

@@ -11,6 +11,7 @@ module compute;
 
 import std.buffer;
 import std.vec;
+import bulk;
 import cexpr;
 import cmpv;
 import engine;
@@ -236,8 +237,8 @@ fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a](heap: &!h Heap, io: &!i Io, line:
     return (cells2, copy2, rows2, scratch2, escr2, kept2, status, col, def);
 }
 
-// The sequential read of `read_file`, with the definitions of `--compute` in the place of the selection. Same arguments, same answer.
-pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, shown: &s [byte], io: &!i Io, fs: &fs Fs(""), root: &rt [byte], rel: &rl [byte], full: &fu [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_write] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
+// The sequential read of `read_file` (or, with `stdin`, of `read_stream`: the refill is the one difference), with the definitions of `--compute` in the place of the selection. Same arguments, same answer.
+pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, file: &!f File, shown: &s [byte], io: &!i Io, fs: &fs Fs(""), root: &rt [byte], rel: &rl [byte], full: &fu [byte], stdin: bool, delim: int, mode: int, as_csv: bool, from: int, limit: int, budget: int, top: int, tree: &q query.Query, names_at: int, errs: fail.Errors) -> [heap, args, file_read, io_read, io_write] (finish.Counts, buffer.Buffer, buffer.Buffer, buffer.Buffer, vec.Vec[int], fail.Errors) {
     let table = spec.flag_table();
     let cap = cli.nat(args, parsed, table, "max-line-bytes");
     let most = cli.nat(args, parsed, table, "max-rows");
@@ -289,7 +290,11 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
                 status = answer;
             }
             if status == lines.need() {
-                r = lines.fill_file(r, file);
+                if stdin {
+                    r = bulk.fill_stdin(r, io);
+                } else {
+                    r = lines.fill_file(r, file);
+                }
             } else if status == lines.done() {
                 going = false;
             } else if status == lines.long() {
