@@ -1,0 +1,113 @@
+edition 5;
+
+module computex;
+
+// `--explain` of a `--compute` stage (docs/functions.md section 3.1): the definitions compiled against the header, and what they say about the
+// run. Nothing here reads a row. The stage member of the document, the refusals the stage can add to `refusals.possible`, and the names that
+// follow the input columns in `output.columns` are answered as JSON text; a definition that does not compile answers the status of `cexpr` and
+// the offset, which the caller raises as the run raises it (`compute.refuse`).
+
+import std.buffer;
+import std.vec;
+import cexpr;
+import toolbox.text;
+
+fn put_rule[&h](heap: &!h Heap, o: buffer.Buffer, name: &static [byte]) -> [heap] buffer.Buffer {
+    var b = buffer.append(heap, o, ",\"");
+    b = buffer.append(heap, b, name);
+    return buffer.push(heap, b, byte_of('"'));
+}
+
+// Answers (status, offset, the `stage` object, the rules to add after the I/O and reader ones, the `,"name"` of each definition).
+pub fn plan[&h, &t, &n, &e](heap: &!h Heap, text0: &t [byte], names: &n buffer.Buffer, hends: &e vec.Vec[int]) -> [heap] (int, int, buffer.Buffer, buffer.Buffer, buffer.Buffer) {
+    var stage = buffer.empty(heap, 256);
+    var rules = buffer.empty(heap, 64);
+    var labels = buffer.empty(heap, 64);
+    let ncols = vec.size(hends);
+    var endsb = box_slice(heap, ncols + 1, 0);
+    borrow mut endsb as &!ew in {
+        var k = 0;
+        while k < ncols {
+            contents(ew)[k] = vec.get(hends, k);
+            k = k + 1;
+        }
+    }
+    var prog = box_slice(heap, cexpr.program_size(), 0);
+    var work = box_slice(heap, cexpr.work_size(), 0);
+    var status = 0;
+    var offset = 0;
+    var nd = 0;
+    borrow mut prog as &!pw in {
+        borrow mut work as &!ww in {
+            borrow endsb as &er in {
+                let (s1, o1, n1) = cexpr.compile(heap, text0, buffer.bytes(names), contents(er), ncols, contents(pw), contents(ww));
+                status = s1;
+                offset = o1;
+                nd = n1;
+            }
+        }
+    }
+    if status == 0 {
+        var int_cells = false;
+        var dec_cells = false;
+        var operators = false;
+        var divisions = false;
+        stage = buffer.append(heap, stage, "{\"definitions\":[");
+        borrow prog as &pr in {
+            var d = 0;
+            while d < nd {
+                if d > 0 {
+                    stage = buffer.push(heap, stage, byte_of(','));
+                }
+                var nm = cexpr.name_of(heap, buffer.empty(heap, 16), text0, contents(pr), d);
+                stage = buffer.append(heap, stage, "{\"name\":");
+                borrow nm as &nmr in {
+                    stage = text.append_json(heap, stage, buffer.bytes(nmr));
+                    labels = buffer.push(heap, labels, byte_of(','));
+                    labels = text.append_json(heap, labels, buffer.bytes(nmr));
+                }
+                buffer.drop(heap, nm);
+                stage = buffer.append(heap, stage, ",\"scale\":");
+                stage = buffer.push_nat(heap, stage, cexpr.scale_of(contents(pr), d));
+                stage = buffer.append(heap, stage, ",\"instructions\":");
+                stage = buffer.push_nat(heap, stage, cexpr.size_of(contents(pr), d));
+                stage = buffer.push(heap, stage, byte_of('}'));
+                if cexpr.has(contents(pr), d, 2) {
+                    int_cells = true;
+                }
+                if cexpr.has(contents(pr), d, 3) {
+                    dec_cells = true;
+                }
+                if cexpr.has(contents(pr), d, 0) {
+                    operators = true;
+                }
+                if cexpr.has(contents(pr), d, 1) {
+                    divisions = true;
+                }
+                d = d + 1;
+            }
+        }
+        stage = buffer.append(heap, stage, "],\"max_definitions\":");
+        stage = buffer.push_nat(heap, stage, cexpr.max_defs());
+        stage = buffer.push(heap, stage, byte_of('}'));
+        if int_cells {
+            rules = put_rule(heap, rules, "value.not-integer");
+            rules = put_rule(heap, rules, "value.integer-overflow");
+        }
+        if dec_cells {
+            rules = put_rule(heap, rules, "value.not-decimal");
+            rules = put_rule(heap, rules, "value.decimal-scale");
+            rules = put_rule(heap, rules, "value.decimal-too-wide");
+        }
+        if operators {
+            rules = put_rule(heap, rules, "compute.overflow");
+        }
+        if divisions {
+            rules = put_rule(heap, rules, "compute.divide-by-zero");
+        }
+    }
+    unbox_slice(heap, endsb);
+    unbox_slice(heap, prog);
+    unbox_slice(heap, work);
+    return (status, offset, stage, rules, labels);
+}

@@ -83,6 +83,7 @@ There is no `null`, no propagation: one bad cell stops the run with the first ro
 | `--compute DEFS` | the definitions of section 3; **repeatable** only through `;` |
 | `--format csv\|json` | as today (`table.v2` JSON: `columns` has the new names last) |
 | input | a FILE or `--stdin`, CSV/TSV or `--json-lines` as today |
+| `--explain` | the plan said and not run (K5a, [`docs/functions.md`](functions.md) section 3.1): the definitions compiled against the header, their scales, the refusals the program can give, and the columns of the answer; a definition that does not compile is refused as the run refuses it |
 
 `--compute` is **refused** (standard input and JSON lines are *not* among them: they work) beside any flag that shapes rows or groups — `--select`, `--where`, `--group`, `--agg`, `--order-by`, `--join`, `--rename`,
 `--query` — as `compute.unsupported-combination`, with the repair "run the operation in a second stage": an argv pair joined by `|`. Not built because it

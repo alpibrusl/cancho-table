@@ -1,6 +1,6 @@
 # Functions in `--compute`: a design (slices K5 to K8)
 
-> **Status: design, nothing built.** Every claim is a **choice**, a **read** (file), **measured** (with the command), or **open**. A measurement replaces its line, in place, when it exists.
+> **Status: design; K5a (`--explain` for the stage, section 3.1) is built, the functions are not.** Every claim is a **choice**, a **read** (file), **measured** (with the command), or **open**. A measurement replaces its line, in place, when it exists.
 > Written 2026-11-15 after the maintainer's direction (relayed in the working session): *unblock functions without affecting performance or the first principles.*
 > It amends item 14 of `docs/backlog.md` (the decision of 2026-11-09) and reopens two lines of `docs/computed-columns.md` section 10 ("Rounding functions: out", "Dates: out"); both are corrected in place and point here.
 
@@ -39,11 +39,37 @@ The signature table is **one static table** that the parser, `introspect`, the s
 
 | slice | functions | note |
 |---|---|---|
-| **K5a** | `--explain` for the stage | the definitions, the result kind and scale of each, the program size, the possible refusals; no data read beyond the header, as `--explain` is. A prerequisite, not a function |
+| **K5a** (built) | `--explain` for the stage | the definitions, the scale of each, the program size, the possible refusals; no data read beyond the header, as `--explain` is. A prerequisite, not a function. Section 3.1 |
 | **K5** numbers | `abs(x)`, `sign(x)`, `greatest(a, b ...)`, `least(a, b ...)`, `round(x, n)`, `floor(x, n)`, `ceil(x, n)`, `trunc(x, n)`, `coalesce(col, literal)` | `round` is half to even, the rule `/ @N` already has (**read**: `docs/computed-columns.md` section 6); `n` is a literal scale `0..18`; the result is `dec(n)`. `coalesce` is the answer to the empty cell (`value.not-decimal`, `docs/numbers.md`): an empty cell, and only an empty one, becomes the literal; any other bad cell is still refused. A result is exact or refused (`compute.overflow`), never a double |
 | **K6** text | `lower(s)`, `upper(s)`, `trim(s)`, `ltrim(s)`, `rtrim(s)`, `substr(s, start, count)`, `concat(a, b ...)`, `len(s)`, `replace(s, from, to)` | **ASCII only** (choice, recommended and accepted): `lower` and `upper` change the 26 ASCII letters and leave every other byte as it is, and the signature says so; no Unicode table, no locale. `trim` removes ASCII space and tab. `substr` counts **bytes** and refuses a cut inside a multi-byte character (`compute.not-utf8-boundary`), because a half character is not a text. `replace` and `concat` can grow: bounded by invariant 2. `len` counts bytes (**open**: also a character count under another name) |
 | **K7** conditions | `if(cond, a, b)`, comparisons in a definition | **open and last of the numbers and texts**: it needs the `--where` condition grammar inside an expression (so its 4-level and 64-condition limits), and a boolean kind. It is designed after K5 and K6 have measured what a function costs |
 | **K8** dates | `year(d)`, `month(d)`, `day(d)`, `weekday(d)`, `days_between(a, b)`, `add_days(d, n)` | on `:date` only, the real calendar already in `dtparse` (**read**: `docs/datetime.md`): integer arithmetic on days, no zone, no time of day. **Open, to confirm before K8:** whether day-count arithmetic reopens the non-goal "no arithmetic" of `docs/datetime.md` section 15. `strftime`, zones, `now` and epoch integers stay non-goals |
+
+### 3.1 K5a: the explain document of a stage (built 2026-11-15)
+
+> **Status: built.** The text below is the design as first written, **corrected in place** where the build differs: the stage is an **additive member** (`stage`) of the one explain document, and `plan` stays the plan of the read, so every consumer of the existing keys keeps working and the explain of every other plan is the earlier bytes.
+
+**Read** (`table --rows --explain f.csv`, `table --group s --agg count --explain f.csv`, 15 Nov 2026, `table` built from `main` at `a553449`): an explained plan is one document `{"explain": {...}}` with the keys `source`, `plan`, `output`, `work`, `refusals`, `notes`, `sql`, `sql_flags`. **The refusal that was there** was one name (`inp.has_explain`) in the list that `--compute` refuses in `tools/table/table.cho`; it is removed.
+
+| key | for `--compute 'NAME=EXPR;...'` (as built) |
+|---|---|
+| `source` | as for any plan (the header is read, nothing else) |
+| `plan` | **unchanged**: the plan of the read (`form: "rows"`, every column, no condition, `limit`, `from`) |
+| **`stage`** (new, only for a stage whose header is known) | `{"definitions": [{"name": "t", "scale": 2, "instructions": 3}, ...], "max_definitions": 8}`: the names, scales and program sizes are the compiler's (`cexpr.compile`, `cexpr.scale_of`, `cexpr.size_of`), not a guess. **Corrected:** the first design also had a `kind` (`int` or `dec`); the machine has no such distinction in a result (a scale of 0 prints as an integer), so there is none |
+| `output.columns` | every input column, then every name: the header of the real answer |
+| `work` | the read's; `threads.effective` is **1** and `reason` is `the --compute stage runs on one core`, whatever `--threads` says (found while building: the first version said `effective: 4` on a large file, which the stage never does; `test_the_stage_runs_on_one_core_whatever_threads_say`) |
+| `refusals.possible` | the I/O and reader rules of any plan, then exactly those that this program can give: `value.not-integer` and `value.integer-overflow` if a cell is read as `:int`, `value.not-decimal`, `value.decimal-scale` and `value.decimal-too-wide` if a cell is read as `:dec(S)`, `compute.overflow` if any definition has an operator, `compute.divide-by-zero` only if one has a `/` |
+| `sql`, `sql_flags` | `null` and `[]`, with the note `sql.compute: no query is shown for this plan: --compute adds columns that a query has no word for` (a new reason, `qsql` code 11) |
+
+**A definition that does not compile is the explain's refusal**, with the rule, message and detail the run gives (`compute.syntax`, `compute.unknown-column`, `compute.too-long`, ...). A constant zero divisor (`t/0@2`) **does** compile: it is a refusal of the data, so it is in `refusals.possible` and not a certain refusal. The explain reads the header and runs no row. **Not resolved:** for standard input the header is unknown, so there is no `stage` member and the existing note says so (`test_standard_input_is_not_read`).
+
+**Gates** (`tests/conformance/test_compute_explain.py`, 11 tests; `scripts/compute_explain_mutants.py`, 17 mutants):
+
+* *G-EXPLAIN-CERTAIN*: 20 definitions that do not compile; the explain's `error`, `errors`, message and exit status equal the run's.
+* *G-EXPLAIN-PLAN*: six valid stages (a product, a division at a scale, a chain, a quoted name, unary minus); `stage.definitions` equal the names written by the run after the input columns and the fractional digits of its values, and `output.columns` is the run's CSV header.
+* *G-EXPLAIN-POSSIBLE*: eight hostile files (a bad integer, an integer past 64 bits, a bad decimal, too many fractional digits, too wide a decimal, an overflow, a zero divisor, a ragged row): the rule the run gives is in the list; and a rule that the definitions cannot reach is not in it.
+* *G-EXPLAIN-NOREAD*: a 3 MB file whose rows are all garbage explains, and `bytes_read` is the header chunk's, under 70,000.
+* *G-COMPAT*: the explain of every other plan is the earlier one: `test_explain.py` (42 tests) and `test_sql_explain.py` (10) pass unchanged beside the new file.
 
 ## 4. Rules (every refusal has a tag)
 

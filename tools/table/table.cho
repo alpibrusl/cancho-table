@@ -2670,7 +2670,7 @@ fn plan_body[&h, &g, &p, &f, &i, &s1, &s2, &s3, &s4, &s5, &s6, &s7, &s8, &s9](he
     if inp.has_rows && (has_select || has_where || grouped || has_order || has_report) {
         e = flags.problem(heap, e, "args.conflict", "--rows is every row and every column, with no condition, selection, grouping or order", "drop --rows, or drop the flags that say more", "--rows --select --where --group --agg --order-by --report");
     }
-    if computing && (has_select || has_where || grouped || has_order || has_report || inp.has_rows || inp.has_join || inp.has_query || inp.has_explain || inp.has_sort || inp.has_top || inp.has_rename || cli.has(parsed, table, "skip-lines") || cli.has(parsed, table, "skip-prefix") || cli.has(parsed, table, "na") || cli.has(parsed, table, "decimal") || cli.has(parsed, table, "thousands")) {
+    if computing && (has_select || has_where || grouped || has_order || has_report || inp.has_rows || inp.has_join || inp.has_query || inp.has_sort || inp.has_top || inp.has_rename || cli.has(parsed, table, "skip-lines") || cli.has(parsed, table, "skip-prefix") || cli.has(parsed, table, "na") || cli.has(parsed, table, "decimal") || cli.has(parsed, table, "thousands")) {
         e = compute.problem(heap, e, "--compute adds columns to the rows of a file and takes none of the flags that shape rows or groups, JSON lines or a reader option", "compute first and write CSV, then give that to a second call with the flags", "--compute --select --where --group --agg --order-by --report --rows --join --query --sort --top --rename");
     }
     if !has_report && !grouped && (inp.has_sort || inp.has_top && !has_order) {

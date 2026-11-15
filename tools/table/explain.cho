@@ -13,6 +13,8 @@ import std.buffer;
 import std.bytes;
 import std.vec;
 import qsql;
+import compute;
+import computex;
 import dtbucket;
 import dtfail;
 import dtparse;
@@ -335,7 +337,7 @@ fn put_sql[&h, &t, &f](heap: &!h Heap, o: buffer.Buffer, text0: &t buffer.Buffer
     return buffer.push(heap, b, byte_of(']'));
 }
 
-pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer, jn: &j [byte]) -> [heap, args] buffer.Buffer {
+pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j, &sg, &xr](heap: &!h Heap, args: &g Args, parsed: &p cli.Parsed, tree: &q query.Query, stdin: bool, as_json: bool, shown: &s [byte], delim: int, mode: int, as_csv: bool, from: int, limit: int, top: int, size: int, got: bool, consumed: int, bytes_read: int, resolved: bool, cols: &c [int], names: &n buffer.Buffer, ends: &e vec.Vec[int], head: &k buffer.Buffer, jn: &j [byte], stage: &sg [byte], extra_rules: &xr [byte]) -> [heap, args] buffer.Buffer {
     let table = spec.flag_table();
     let reporting = query.reporting(tree);
     let ns = query.count_of(tree, 0);
@@ -444,6 +446,8 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
             }
         } else if stdin {
             why = "standard input is read on one core";
+        } else if len(stage) > 0 {
+            why = "the --compute stage runs on one core";
         } else if query.syn_of(tree) != 0 || query.nam_of(tree) >= 0 {
             why = "--decimal, --thousands and --na are read on one core";
         } else if mode == 0 {
@@ -907,6 +911,8 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
         o = rule(heap, o, "column.unknown");
         o = rule(heap, o, "column.ambiguous");
     }
+    // the refusals a --compute stage adds (computex.cho)
+    o = buffer.append(heap, o, extra_rules);
     // notes: advice, not refusals
     o = buffer.append(heap, o, "]},\"notes\":[");
     var first_note = true;
@@ -1021,6 +1027,10 @@ pub fn document[&h, &g, &p, &q, &s, &c, &n, &e, &k, &j](heap: &!h Heap, args: &g
         borrow sql_flags as &sfr in {
             o = put_sql(heap, o, sxr, sfr, sql_why);
         }
+    }
+    if len(stage) > 0 {
+        o = buffer.append(heap, o, ",\"stage\":");
+        o = buffer.append(heap, o, stage);
     }
     o = buffer.append(heap, o, "}}");
     buffer.drop(heap, sql_text);
@@ -1148,6 +1158,30 @@ pub fn conclude[&h, &g, &p, &s, &j](heap: &!h Heap, args: &g Args, parsed: &p cl
             }
         }
     }
+    // a --compute stage: its definitions are compiled against the header, and one that does not compile is refused as the run refuses it
+    var stage = buffer.empty(heap, 1);
+    var stage_rules = buffer.empty(heap, 1);
+    var stage_labels = buffer.empty(heap, 1);
+    if cli.has(parsed, table, "compute") && got {
+        var cstatus = 0;
+        var coffset = 0;
+        borrow names as &nr in {
+            borrow ends as &er in {
+                let (s1, o1, b1, b2, b3) = computex.plan(heap, cli.text(args, parsed, table, "compute"), nr, er);
+                cstatus = s1;
+                coffset = o1;
+                buffer.drop(heap, stage);
+                buffer.drop(heap, stage_rules);
+                buffer.drop(heap, stage_labels);
+                stage = b1;
+                stage_rules = b2;
+                stage_labels = b3;
+            }
+        }
+        if cstatus != 0 {
+            e = compute.refuse(heap, e, cstatus, coffset, 0, 0, 0, shown);
+        }
+    }
     var refused = false;
     borrow e as &er in {
         refused = fail.count(er) > 0;
@@ -1161,13 +1195,43 @@ pub fn conclude[&h, &g, &p, &s, &j](heap: &!h Heap, args: &g Args, parsed: &p cl
         if mode != 0 && got {
             shown_head = finish.report_head(heap, reporting, shown_head);
         }
+        var has_labels = false;
+        borrow stage_labels as &xl in {
+            has_labels = buffer.size(xl) > 0;
+        }
+        if has_labels {
+            // the names of the definitions follow the input columns in the answer's header
+            var widened = buffer.empty(heap, 64);
+            var widened_ok = false;
+            borrow shown_head as &sh in {
+                borrow stage_labels as &xl in {
+                    let hb = buffer.bytes(sh);
+                    if len(hb) > 1 && int_of(hb[len(hb) - 1]) == ']' {
+                        widened = buffer.append(heap, widened, hb[0..len(hb) - 1]);
+                        widened = buffer.append(heap, widened, buffer.bytes(xl));
+                        widened = buffer.push(heap, widened, byte_of(']'));
+                        widened_ok = true;
+                    }
+                }
+            }
+            if widened_ok {
+                buffer.drop(heap, shown_head);
+                shown_head = widened;
+            } else {
+                buffer.drop(heap, widened);
+            }
+        }
         borrow tree0 as &tq in {
             borrow fcols as &cr in {
                 borrow names as &nr in {
                     borrow ends as &er in {
                         borrow shown_head as &hr in {
-                            buffer.drop(heap, payload);
-                            payload = document(heap, args, parsed, tq, stdin, as_json, shown, delim, mode, as_csv, from, limit, top, size, got, consumed, bytes_read, got && mode != 0, contents(cr), nr, er, hr, jn);
+                            borrow stage as &sgr in {
+                                borrow stage_rules as &xrr in {
+                                    buffer.drop(heap, payload);
+                                    payload = document(heap, args, parsed, tq, stdin, as_json, shown, delim, mode, as_csv, from, limit, top, size, got, consumed, bytes_read, got && mode != 0, contents(cr), nr, er, hr, jn, buffer.bytes(sgr), buffer.bytes(xrr));
+                                }
+                            }
                         }
                     }
                 }
@@ -1177,6 +1241,9 @@ pub fn conclude[&h, &g, &p, &s, &j](heap: &!h Heap, args: &g Args, parsed: &p cl
     } else {
         buffer.drop(heap, fhead);
     }
+    buffer.drop(heap, stage);
+    buffer.drop(heap, stage_rules);
+    buffer.drop(heap, stage_labels);
     unbox_slice(heap, fcols);
     unbox_slice(heap, fsel);
     unbox_slice(heap, fcells);
