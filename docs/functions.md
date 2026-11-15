@@ -1,0 +1,73 @@
+# Functions in `--compute`: a design (slices K5 to K8)
+
+> **Status: design, nothing built.** Every claim is a **choice**, a **read** (file), **measured** (with the command), or **open**. A measurement replaces its line, in place, when it exists.
+> Written 2026-11-15 after the maintainer's direction (relayed in the working session): *unblock functions without affecting performance or the first principles.*
+> It amends item 14 of `docs/backlog.md` (the decision of 2026-11-09) and reopens two lines of `docs/computed-columns.md` section 10 ("Rounding functions: out", "Dates: out"); both are corrected in place and point here.
+
+## 0. The decision, and what it keeps
+
+**Amended rule (choice, the maintainer's).** A *derived column* is in `table`; an *in-place rewrite* is out. `--compute` already only appends columns (`compute.duplicate-name` refuses a name that is an input header, `docs/computed-columns.md` section 3), so a function that makes a new column from old ones is a derivation. `--lower COL`, `--clip`, `--sentinel` as a value rewrite and `--dedupe` stay out, as item 14 says.
+
+Item 14 gave three reasons for putting transforms in another tool. Each is answered here, not argued away:
+
+| reason of 2026-11-09 | answer |
+|---|---|
+| `--query` has no expressions or functions | it still has none. A function is a flag of the stage; a `--query` that wants one is `query.unsupported`, naming the flag form (as `--compute` is refused beside `--query` today, `docs/computed-columns.md` section 4) |
+| `--explain` and the equivalence gates assume one plan from flags or query | the stage has **one plan form**, and it gets an `--explain` (K5a below) and an oracle gate (G-FN-ORACLE). **Measured gap:** `table --compute 't=a:int*b:int' --explain f.csv` is today `compute.unsupported-combination` (one run, `table` built from this repository's `main` at `a553449` with the pinned compiler, 15 Nov 2026; the refusal's `detail.flags` lists `--compute --select --where --group --agg --order-by --report --rows --join --query --sort --top --rename`), so the stage has no explain yet; closing it comes first |
+| a transform changes the data the plan is about | a derivation does not: the input columns are written as they were read, byte for byte, then the new ones |
+
+## 1. Invariants every function keeps (the first principles, as gates)
+
+1. **Typed, no coercion.** A function has a signature (argument kinds, result kind). A mismatch is `compute.type-mismatch` with a repair. Nothing is converted silently: a text is never read as a number inside a function, as a column is never read as one outside `:int`/`:dec(S)`.
+2. **Bounded.** Every function declares its output bound. A result that would pass the record limit (`--max-line-bytes`) is `compute.result-too-long`, never truncated. At most 8 definitions, 4 levels of nesting, 8 arguments (the first two are the existing limits' neighbours: **choice**).
+3. **Deterministic and local.** No locale, no `now`, no zone database, no random, no I/O. Case mapping is explicit (section 3). The same bytes on any number of cores: the stage is one loop on one core (as `--compute` is), so there is nothing to merge.
+4. **A refusal names the definition, the column and the row, never the cell** (the rule of `--compute`).
+5. **The existing paths do not change.** A function lives in the stage's loop and in no other. `--where`, `--query`, `--group`, `--agg`, `--join` take no function (**choice**: their docs say "no expressions, no functions", and a function there is the select path's 1.01 budget, `docs/or-and-columns.md` 8.3). The idiom is two stages.
+
+## 2. Two value domains, so the exact machine stays as it is (choice)
+
+`tools/table/cexpr.cho` (775 lines) is an integer stack machine over the 180-bit core of `tools/table/cmpv.cho` (**read**): opcodes cell, const, add, sub, mul, div, neg. A text has no place in it. So:
+
+* A definition has **one result kind**: a number (`int` or `dec(S)`, the existing machine) or a text (a new, small evaluator over byte slices of the row copy and one scratch arena).
+* **Numbers keep their machine, untouched.** A number-valued function that takes numbers (`abs`, `round`) is an opcode (`op_fn`) with the function's id in `b`. A number-valued function of a text or a date (`len(s)`, `year(d)`) is a **leaf**: it produces an integer that is pushed as an operand, so the arithmetic around it is unchanged.
+* **Texts have their own grammar**: `fn(text_operand, literal ...)` nested to 4 levels, no arithmetic. A column is a text operand as itself (`name`); a date operand is `d:date` as in `--where`.
+* **No automatic conversion between the domains** (invariant 1). Whether a number may be written as text (`text(x)`, exact, at its scale) is **open** (section 7).
+
+## 3. The functions, by slice (each a row of the signature table)
+
+The signature table is **one static table** that the parser, `introspect`, the skill text and the MCP schema all read (as the lexical tables of `docs/query.md` section 10 are), so the surface is generated, not written twice. **Names must not be a reserved word of `--query`** (`count sum min max mean`, `docs/query.md`), hence `greatest`/`least`.
+
+| slice | functions | note |
+|---|---|---|
+| **K5a** | `--explain` for the stage | the definitions, the result kind and scale of each, the program size, the possible refusals; no data read beyond the header, as `--explain` is. A prerequisite, not a function |
+| **K5** numbers | `abs(x)`, `sign(x)`, `greatest(a, b ...)`, `least(a, b ...)`, `round(x, n)`, `floor(x, n)`, `ceil(x, n)`, `trunc(x, n)`, `coalesce(col, literal)` | `round` is half to even, the rule `/ @N` already has (**read**: `docs/computed-columns.md` section 6); `n` is a literal scale `0..18`; the result is `dec(n)`. `coalesce` is the answer to the empty cell (`value.not-decimal`, `docs/numbers.md`): an empty cell, and only an empty one, becomes the literal; any other bad cell is still refused. A result is exact or refused (`compute.overflow`), never a double |
+| **K6** text | `lower(s)`, `upper(s)`, `trim(s)`, `ltrim(s)`, `rtrim(s)`, `substr(s, start, count)`, `concat(a, b ...)`, `len(s)`, `replace(s, from, to)` | **ASCII only** (choice, recommended and accepted): `lower` and `upper` change the 26 ASCII letters and leave every other byte as it is, and the signature says so; no Unicode table, no locale. `trim` removes ASCII space and tab. `substr` counts **bytes** and refuses a cut inside a multi-byte character (`compute.not-utf8-boundary`), because a half character is not a text. `replace` and `concat` can grow: bounded by invariant 2. `len` counts bytes (**open**: also a character count under another name) |
+| **K7** conditions | `if(cond, a, b)`, comparisons in a definition | **open and last of the numbers and texts**: it needs the `--where` condition grammar inside an expression (so its 4-level and 64-condition limits), and a boolean kind. It is designed after K5 and K6 have measured what a function costs |
+| **K8** dates | `year(d)`, `month(d)`, `day(d)`, `weekday(d)`, `days_between(a, b)`, `add_days(d, n)` | on `:date` only, the real calendar already in `dtparse` (**read**: `docs/datetime.md`): integer arithmetic on days, no zone, no time of day. **Open, to confirm before K8:** whether day-count arithmetic reopens the non-goal "no arithmetic" of `docs/datetime.md` section 15. `strftime`, zones, `now` and epoch integers stay non-goals |
+
+## 4. Rules (every refusal has a tag)
+
+New: `compute.unknown-function` (the name, the table of names in `detail`) · `compute.arity` · `compute.type-mismatch` (the argument, the kind it wanted and the kind it got) · `compute.result-too-long` · `compute.not-utf8-boundary` (K6) · `compute.bad-literal` (a scale outside 0..18, a negative count). Existing `compute.*` and `value.*` unchanged. **No payload in any message.**
+
+## 5. Gates (written before the code, each able to fail)
+
+* **G-FN-ORACLE.** For each function, `tests/conformance/compute_fn_ref.py` (Python, sharing no code with the tool) generates random definitions over random typed tables, with hostile cells (the empty cell, NUL, `"`, `\`, U+2028, a 4-byte character, a half character, digits past the scale, 18-digit numbers, ties of half-even for every sign) and compares **stdout, stderr and the exit status**, refusals included.
+* **G-FN-MUT.** `scripts/compute_fn_mutants.py`: per function, mutants the oracle must kill (half-even to half-up, `trim` of one side only, a cut inside a character allowed, an off-by-one `substr`, `lower` of a non-letter, `coalesce` of a non-empty bad cell, the result bound off by one, an argument swapped). A survivor is explained or the gate is extended.
+* **G-COMPAT.** The corpus md5 of `scripts/corpus.py` and the instruction counts of the select loops (callgrind, budget 1.01) equal those of `main`: no byte of the existing paths changes (`docs/computed-columns.md` section 7).
+* **G-FLAT.** Peak resident memory of one definition of each function class is flat in the rows (the repository's `maxrss` launcher), as `test_compute.test_memory_is_flat_in_the_rows` holds for the arithmetic.
+* **G-COST.** Per function, wall time per row on the repository's 1,000,000-row file, next to the numbers of the stage as it is. **No speed is claimed before this table exists.** Baseline, **measured** (`docs/computed-columns.md` section 7, 4-core container): `--select id,price,qty` 93 ns a row; `--compute 't=price:dec(2)*qty:int'` 279 ns; a product and a division 555 ns.
+* **G-EXPLAIN.** The explain of a stage lists exactly the definitions that run, with their kinds; a corpus of stages is run with and without `--explain`, and every refusal that the explain calls certain is the one the run gives.
+* **G-SURFACE.** `introspect`, `skill`, the MCP schema and AGENTS.md are regenerated from the signature table, and every example in them is run.
+* **G-NOPANIC.** A fuzz of function names, arities, literals and cell bytes: no input reaches a panic.
+
+## 6. What stays out
+
+In-place rewrites (`--lower COL`, `--clip`, `--sentinel`, `--dedupe`); a function in `--where`, `--query`, `--group`, `--agg`, `--join` or `--order-by`; `:float` operands and float functions (`sqrt`, `exp`: a double is rounded by every operation, `docs/computed-columns.md` section 3.1); regular expressions; user-defined functions; locale, `now`, zones, `strftime`; Unicode case mapping.
+
+## 7. Open
+
+1. **Dates (K8):** day-count arithmetic only, no zones: **to be confirmed by the maintainer before K8** (the direction in the session was a recommendation, not yet a yes for this one).
+2. **`text(x)`**: a number written as text, exact at its scale. Needed by `concat(name, '-', id)`; without it `concat` takes texts only and a number column is not a text operand.
+3. **Unicode case mapping** and a **character-count `len`**: out for v1; the names are not taken (`upper`, `lower` and `len` are the ASCII and byte ones, and say so).
+4. **K7** (conditions): the boolean kind and how much of the `--where` grammar it takes.
+5. **Window functions** are a different stage (a materialising one) and have their own document.
