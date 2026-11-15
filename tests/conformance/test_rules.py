@@ -95,6 +95,8 @@ LOCAL = {
     "compute.type-mismatch": (2, "never", "text and a number meet"),
     "compute.result-too-long": (8, "never", "longer than --max-line-bytes"),
     "compute.not-utf8-boundary": (8, "never", "continuation byte"),
+    "compute.mixed-and-or": (2, "never", "both and and or"),
+    "compute.too-many-conditions": (2, "never", "more than 4 comparisons"),
     "compute.unsupported-combination": (2, "never", "flag that shapes rows"),
 }
 # rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
@@ -264,6 +266,8 @@ class Rules(unittest.TestCase):
             ("compute.type-mismatch", root + ["--compute", "r=lower(a:int)", "ok.csv"], None),
             ("compute.result-too-long", root + ["--compute", "r=replace(a, \"1\", \"xxxxxxxxxx\")", "--max-line-bytes", "8", "ok.csv"], None),
             ("compute.not-utf8-boundary", root + ["--compute", "r=substr(a, 2, 1)", "accent.csv"], None),
+            ("compute.mixed-and-or", root + ["--compute", "r=if(a:int < 1 and a:int < 2 or a:int < 3, 1, 2)", "ok.csv"], None),
+            ("compute.too-many-conditions", root + ["--compute", "r=if(a:int<1 and a:int<2 and a:int<3 and a:int<4 and a:int<5, 1, 2)", "ok.csv"], None),
             ("compute.too-long", root + ["--compute", "r=((((((a:int))))))", "ok.csv"], None),
             ("compute.divide-by-zero", root + ["--compute", "r=1/a:int@2", "zero.csv"], None),
             ("compute.overflow", root + ["--compute", "r=a:int*a:int*a:int", "huge.csv"], None),

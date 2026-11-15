@@ -89,6 +89,16 @@ def ev(node, row):
         return r, sc
     if k == "lit":
         return node[1], node[2]
+    if k == "if":
+        # docs/functions.md section 3.4: only the chosen branch is evaluated, and the comparisons are evaluated left to right and stop at the first that decides
+        _, conn, conds, a_node, b_node = node
+        taken = cond_holds(conn, conds, row)
+        v, sv = ev(a_node if taken else b_node, row)
+        target = static_scale(node)
+        r = v * 10 ** (target - sv)
+        if abs(r) >= LIM:
+            raise Overflow()
+        return r, target
     if k == "ref":
         return ev(node[1], row)
     if k == "neg":
@@ -118,8 +128,34 @@ def ev(node, row):
     return r, sc
 
 
+CMP_OPS = ("=", "!=", "<", "<=", ">", ">=")
+
+
+def compare(op, x, sx, y, sy):
+    """exact: both at the larger scale (never an overflow: the comparison is not an operand)"""
+    sc = max(sx, sy)
+    x, y = x * 10 ** (sc - sx), y * 10 ** (sc - sy)
+    return {"=": x == y, "!=": x != y, "<": x < y, "<=": x <= y, ">": x > y, ">=": x >= y}[op]
+
+
+def cond_holds(conn, conds, row):
+    for i, (op, left, right) in enumerate(conds):
+        (x, sx), (y, sy) = ev(left, row), ev(right, row)
+        t = compare(op, x, sx, y, sy)
+        if conn == "or" and t:
+            return True
+        if conn != "or" and not t:
+            return False
+    return conn != "or"
+
+
 def static_scale(node):
     k = node[0]
+    if k == "if":
+        for _, left, right in node[2]:
+            static_scale(left)
+            static_scale(right)
+        return max(static_scale(node[3]), static_scale(node[4]))
     if k == "col":
         return node[3]
     if k == "coal":
@@ -156,11 +192,16 @@ def sp(rng):
 
 
 def atom(node):
-    return node[0] in ("col", "lit", "ref", "fn", "coal")
+    return node[0] in ("col", "lit", "ref", "fn", "coal", "if")
 
 
 def render(node, rng):
     k = node[0]
+    if k == "if":
+        _, conn, conds, a_node, b_node = node
+        parts = [f"{render(l, rng)}{sp(rng)}{op}{sp(rng)}{render(r, rng)}" for op, l, r in conds]
+        glue = " " + (conn or "and") + " "
+        return "if(" + sp(rng) + glue.join(parts) + sp(rng) + "," + sp(rng) + render(a_node, rng) + sp(rng) + "," + sp(rng) + render(b_node, rng) + sp(rng) + ")"
     if k == "coal":
         _, col, lv, ls = node
         return f"coalesce({sp(rng)}{render(col, rng)}{sp(rng)},{sp(rng)}{text(lv, ls)}{sp(rng)})"
@@ -238,6 +279,164 @@ def gen(rng, depth, cols, fns=True):
     return (k, gen(rng, depth - 1, cols, fns), gen(rng, depth - 1, cols, fns))
 
 
+def gen_if(rng, depth, cols):
+    """an `if` of docs/functions.md section 3.4: one to three comparisons joined by one connective; half of the time the guard of a division by the column it tests"""
+    conn = rng.choice(["and", "or"])
+    n = rng.choice([1, 1, 2, 3])
+    conds = []
+    for _ in range(n):
+        conds.append((rng.choice(CMP_OPS), gen(rng, max(depth - 1, 0), cols, True), gen(rng, max(depth - 1, 0), cols, True)))
+    if rng.random() < 0.5:
+        c = rng.randrange(6)
+        kind, sc = cols[c]
+        col = ("col", c, kind, 0 if kind == "int" else sc)
+        conds[0] = (rng.choice(["!=", "=", ">", "<"]), col, ("lit", 0, 0))
+        div = ("/", gen(rng, 1, cols, False), col, rng.randint(0, 6))
+        a_node, b_node = (div, ("lit", 0, 0)) if conds[0][0] in ("!=", ">", "<") else (("lit", 0, 0), div)
+    else:
+        arm = (lambda: gen_if(rng, depth - 1, cols)) if depth > 1 and rng.random() < 0.3 else (lambda: gen(rng, max(depth - 1, 0), cols, True))
+        a_node, b_node = arm(), arm()
+    return ("if", conn if n > 1 else None, conds, a_node, b_node)
+
+
+def lines_if(rng, n):
+    """G-IF-ORACLE: definitions that are an `if` (alone or in an expression), against rows with zeros and wide values; the first refusal decides, as in lines_of"""
+    out = []
+    for _ in range(n):
+        cols, cells, row = make_row(rng)
+        defs, exp = [], []
+        for d in range(rng.randint(1, 3)):
+            tree = None
+            for _try in range(30):
+                t = gen_if(rng, rng.randint(1, 3), cols)
+                if rng.random() < 0.3:
+                    t = (rng.choice(["+", "-", "*"]), t, gen(rng, 1, cols, False))
+                if size_of(t) <= 100 and depth_of(t) <= 9 and len(render(t, Longest())) < 245:
+                    tree = t
+                    break
+            if tree is None:
+                tree = gen(rng, 1, cols)
+            try:
+                static_scale(tree)
+                v, sc = ev(tree, row)
+                exp.append(("ok", f"r{d}={text(v, sc)}"))
+            except BadScale:
+                exp.append(("C", 7))
+            except Overflow:
+                exp.append(("E", 12))
+            except DivZero:
+                exp.append(("E", 11))
+            rendered = render(tree, rng)
+            if paren_depth(rendered) > 4:
+                exp[-1] = ("C", 9)
+            defs.append(f"r{d}=" + rendered)
+        if any(e[0] == "C" for e in exp):
+            want = "C %d" % [e[1] for e in exp if e[0] == "C"][0]
+        else:
+            bad = [i for i, e in enumerate(exp) if e[0] == "E"]
+            want = f"E {exp[bad[0]][1]} 0 {bad[0]}" if bad else ";".join(e[1] for e in exp)
+        out.append((HEADER, cells, ";".join(defs), want))
+    return out
+
+
+IF_HAND = [
+    # cells are 10,20,30,40,50,60 (a to f)
+    ("r=if(a:int < b:int, 1, 2)", "r=1"),
+    ("r=if(a:int > b:int, 1, 2)", "r=2"),
+    ("r=if(a:int = 10, 1, 2)", "r=1"),
+    ("r=if(a:int != 10, 1, 2)", "r=2"),
+    ("r=if(a:int <= 10, 1, 2)", "r=1"),
+    ("r=if(a:int >= 11, 1, 2)", "r=2"),
+    ("r=if(a:int<b:int,1,2)", "r=1"),
+    # the scale of the result is the larger of the arms, the other brought to it exactly
+    ("r=if(a:int < b:int, 1, 2.50)", "r=1.00"),
+    ("r=if(a:int > b:int, 1, 2.50)", "r=2.50"),
+    ("r=if(a:int < b:int, 1.5, 2)", "r=1.5"),
+    # exact comparison across scales
+    ("r=if(a:dec(1) = 10, 1, 0)", "r=1"),
+    ("r=if(1.50 = 1.5, 1, 0)", "r=1"),
+    ("r=if(0.1 + 0.2 = 0.3, 1, 0)", "r=1"),
+    # the guard: the arm that divides by zero is not taken
+    ("r=if(a:int != 0, 100 / a:int @2, 0)", "r=10.00"),
+    ("r=if(a:int - 10 != 0, 100 / (a:int - 10) @2, -1)", "r=-1.00"),
+    ("r=if(a:int - 10 = 0, -1, 100 / (a:int - 10) @2)", "r=-1.00"),
+    # the same refusal in the taken arm is refused
+    ("r=if(a:int - 10 = 0, 100 / (a:int - 10) @2, -1)", "E 11 0 0"),
+    # and, or, and the stop at the first that decides
+    ("r=if(a:int < b:int and b:int < c:int and c:int < d:int, 1, 0)", "r=1"),
+    ("r=if(a:int < b:int and b:int > c:int, 1, 0)", "r=0"),
+    ("r=if(a:int > b:int or b:int < c:int, 1, 0)", "r=1"),
+    ("r=if(a:int > b:int or b:int > c:int or c:int > d:int, 1, 0)", "r=0"),
+    # an unreached comparison is never evaluated: its division by zero is not a refusal
+    ("r=if(a:int > b:int and 1 / (a:int - 10) @0 > 0, 1, 0)", "r=0"),
+    ("r=if(a:int < b:int or 1 / (a:int - 10) @0 > 0, 1, 0)", "r=1"),
+    ("r=if(a:int < b:int and 1 / (a:int - 10) @0 > 0, 1, 0)", "E 11 0 0"),
+    # nesting, and an if inside an expression
+    ("r=if(a:int < b:int, if(c:int > d:int, 1, 2), 3)", "r=2"),
+    ("r=if(a:int < b:int, 1, if(c:int > d:int, 2, 3))", "r=1"),
+    ("r=1 + if(a:int < b:int, 10, 20) * 2", "r=21"),
+    ("r=if(if(a:int < b:int, 1, 0) = 1, 7, 8)", "r=7"),
+    ("r=abs(if(a:int < b:int, -5, 5))", "r=5"),
+    ("r=greatest(if(a:int < b:int, 1, 2), 3)", "r=3"),
+    # a function in the condition, in an arm, a reference to an earlier definition
+    ("r=if(abs(a:int - 20) = 10, 1, 0)", "r=1"),
+    ("x=a:int + 1;r=if(x > 10, x, 0)", "x=11;r=11"),
+    # a zero divisor or overflow in the arm that is not taken is not an error; in the taken one it is
+    ("r=if(a:int > 0, 1, 999999999999999999 * 999999999999999999 * 999999999999999999)", "r=1"),
+    ("r=if(a:int < 0, 1, 999999999999999999 * 999999999999999999 * 999999999999999999)", "E 12 0 0"),
+    # a cell that is not a number, in an arm not reached
+    ("r=if(a:int > 0, 1, z:int)", "C 2"),
+    # refusals of the compiler
+    ("r=if(a:int < b:int, 1)", "C 14"),
+    ("r=if(a:int < b:int, 1, 2, 3)", "C 14"),
+    ("r=if(a:int, 1, 2)", "C 1"),
+    ("r=if(a:int < b:int and b:int < c:int or c:int < d:int, 1, 2)", "C 19"),
+    ("r=if(a:int < b:int or b:int < c:int and c:int < d:int, 1, 2)", "C 19"),
+    ("r=if(a:int<1 and a:int<2 and a:int<3 and a:int<4, 1, 2)", "r=2"),
+    ("r=if(a:int<1 and a:int<2 and a:int<3 and a:int<4 and a:int<5, 1, 2)", "C 20"),
+    ("r=if(a:int<1 or a:int<2 or a:int<3 or a:int<4 or a:int<5, 1, 2)", "C 20"),
+    ("r=if(a:int < b:int, 1, 2", "C 1"),
+    ("r=if(a:int < , 1, 2)", "C 1"),
+    ("r=if(< 1, 1, 2)", "C 2"),
+    ("r=if(a:int < b:int < c:int, 1, 2)", "C 1"),
+    ("r=if(a:int < b:int, , 2)", "C 1"),
+    ("r=if(a:int < 1 and, 1, 2)", "C 1"),
+    ("r=if()", "C 1"),
+    ("r=if(a:int and b:int < 1, 1, 2)", "C 1"),
+    ("r=if(a:int < 1 or and b:int < 1, 1, 2)", "C 2"),
+    ("r=if(a:int < 1 xor b:int < 1, 1, 2)", "C 1"),
+    ("r=a:int < 1", "C 1"),
+    ("r=(a:int < 1)", "C 1"),
+    ("r=abs(a:int < 1)", "C 1"),
+    ("r=if(a:int < b:int, 1, 2) < 3", "C 1"),
+    ("r=if (a:int < b:int, 1, 2)", "C 2"),
+    # a product past scale 18 in an arm that is not taken is the compiler's refusal
+    ("r=if(a:int > 0, 1, 0.1234567890 * 0.1234567890)", "C 7"),
+    # four levels of parentheses: an if is one
+    ("r=if(a:int < b:int, if(a:int < b:int, if(a:int < b:int, if(a:int < b:int, 1, 2), 2), 2), 2)", "r=1"),
+    ("r=if(a:int < b:int, if(a:int < b:int, if(a:int < b:int, if(a:int < b:int, if(a:int < b:int, 1, 2), 2), 2), 2), 2)", "C 9"),
+    # a text function in an arm: no conversion
+    ('r=if(a:int < b:int, upper("x"), 2)', "C 16"),
+]
+
+
+IF_CELLS = [
+    # a cell that is not a number, in the arm that is taken and in the one that is not
+    ("10,x,3,4,5,6", "r=if(a:int > 0, 1, b:int)", "r=1"),
+    ("10,x,3,4,5,6", "r=if(a:int > 0, b:int, 1)", "E 101 1 0"),
+    ("10,x,3,4,5,6", "r=if(a:int < 0, 1, b:int)", "E 101 1 0"),
+    ("10,x,3,4,5,6", "r=if(a:int < 0 and b:int > 1, 1, 2)", "r=2"),
+    ("10,x,3,4,5,6", "r=if(a:int > 0 and b:int > 1, 1, 2)", "E 101 1 0"),
+    ("10,x,3,4,5,6", "r=if(a:int > 0 or b:int > 1, 1, 2)", "r=1"),
+    ("10,x,3,4,5,6", "r=if(b:int > 1 or a:int > 0, 1, 2)", "E 101 1 0"),
+    ("10,,3,4,5,6", "r=if(a:int > 0, coalesce(b:int, 7), 0)", "r=7"),
+]
+
+
+def if_hand_cases():
+    return [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_HAND] + [(HEADER, cells, defs, want) for cells, defs, want in IF_CELLS]
+
+
 def make_row(rng):
     cols, cells, row = [], [], []
     for _ in range(6):
@@ -295,6 +494,8 @@ def lines_of(rng, n):
 
 def size_of(node):
     k = node[0]
+    if k == "if":
+        return sum(size_of(l) + size_of(r) + 2 for _, l, r in node[2]) + size_of(node[3]) + size_of(node[4]) + 3
     if k in ("col", "lit"):
         return 1
     if k == "coal":
@@ -315,6 +516,8 @@ def depth_of(node):
         return 1
     if k == "coal":
         return 1
+    if k == "if":
+        return max([max(depth_of(l), 1 + depth_of(r)) for _, l, r in node[2]] + [depth_of(node[3]), depth_of(node[4])])
     if k == "fn":
         return max(i + depth_of(a) for i, a in enumerate(node[2]))
     if k == "ref":
@@ -662,8 +865,40 @@ MUTANTS = [
     ("fn: the default is also an operand", "            if kind >= 2 {\n                at = at + 4;\n            }\n            sp = sp + 1;", "            sp = sp + 1;"),
     ("fn: a default with more digits than the column is accepted", "                            if ls != 0 || sc > prog[start + 2] {", "                            if ls != 0 {"),
     ("fn: coalesce takes an expression", "                        if commas != 0 || cur - start != 4 || prog[start] != op_cell() || prog[start + 3] >= 2 {", "                        if commas != 0 {"),
-    ("fn: a comma outside a call is accepted", "                if status == 0 && (work[64] == 0 || work[work[64] - 1] != 7) {\n                    status = 1;", "                if status == 0 && (work[64] == 0) {\n                    status = 1;"),
+    ("fn: a comma outside a call is accepted", "                if status == 0 && (work[64] == 0 || work[work[64] - 1] != 7 && work[work[64] - 1] != 8) {\n                    status = 1;", "                if status == 0 && (work[64] == 0) {\n                    status = 1;"),
     ("fn: the shape does not skip a default", "            if op == op_cell() && prog[at + 3] >= 2 {\n                // a coalesce: the constant that follows is the default, not an operand\n                at = at + 4;\n            }", ""),
+    # conditions (docs/functions.md section 3.4): G-IF-MUT
+    ("if: a false condition does not skip the first arm", "        } else if op == cif.op_jf() {\n            if !verdict {", "        } else if op == cif.op_jf() {\n            if false {"),
+    ("if: a true verdict does not skip at a jt", "        } else if op == cif.op_jt() {\n            if verdict {", "        } else if op == cif.op_jt() {\n            if !verdict {"),
+    ("if: the jump over the second arm does not skip", "        } else if op == cif.op_jmp() {\n            at = at + 4 * prog[at + 1];", "        } else if op == cif.op_jmp() {\n            at = at + 0;"),
+    ("if: the result is not brought to the scale of the arms", "            if !cmpv.rescale(w, sp - 1, prog[at + 1]) {\n                return (12, 0);", "            if false {\n                return (12, 0);"),
+    ("if: the scale of the result is the first arm's", "    if sb > sa {\n        target = sb;\n    }", ""),
+    ("if: a comparison consumes one operand", "            sp = sp - 2;\n            verdict = cif.compare", "            sp = sp - 1;\n            verdict = cif.compare"),
+    ("if: the shape does not return to the first arm's depth", "            // the arm that follows pushes its own value where this one's was\n            sp = sp - 1;", "            sp = sp;"),
+    ("if: the shape ignores the scale of an arm", "            work[72 + sp - 1] = prog[at + 1];\n        } else if op == cif.op_jmp() {", "        } else if op == cif.op_jmp() {"),
+    ("if: an or is an and", "    if is_or {\n        at = emit(prog, at, cif.op_jt(), -1, 0, 0);", "    if false {\n        at = emit(prog, at, cif.op_jt(), -1, 0, 0);"),
+    ("if: the jumps of an or land one instruction late", "            if prog[q] == cif.op_jt() && prog[q + 1] == -1 {\n                prog[q + 1] = cif.skip(q, at);", "            if prog[q] == cif.op_jt() && prog[q + 1] == -1 {\n                prog[q + 1] = cif.skip(q, at + 4);"),
+    ("if: the jumps of the condition land one instruction late", "            if prog[q] == cif.op_jf() && prog[q + 1] == -1 {\n                prog[q + 1] = cif.skip(q, at);", "            if prog[q] == cif.op_jf() && prog[q + 1] == -1 {\n                prog[q + 1] = cif.skip(q, at + 4);"),
+    ("if: a skip is counted from the jump, not after it", "    return (to - (from + 4)) / 4;", "    return (to - from) / 4;", "cif"),
+    ("if: the mix of and and or is accepted", "    if conn != 0 && conn != want {\n        return (cur, 19);", "    if false {\n        return (cur, 19);"),
+    ("if: a fifth comparison is accepted", "    if ncmp + 1 >= cif.max_comparisons() {", "    if ncmp + 1 > cif.max_comparisons() {"),
+    ("if: the limit of comparisons is five", "pub fn max_comparisons() -> [] int {\n    return 4;", "pub fn max_comparisons() -> [] int {\n    return 5;", "cif"),
+    ("if: a condition with no comparison is accepted", "        if pending == 0 {\n            return (cur, 1);\n        }\n        var at = emit(prog, cur, cif.op_cmp(), pending, 0, 0);", "        var at = emit(prog, cur, cif.op_cmp(), pending, 0, 0);"),
+    ("if: a connective with no comparison before it is accepted", "    if pending == 0 || st / 256 != 0 {\n        return (cur, 1);", "    if st / 256 != 0 {\n        return (cur, 1);"),
+    ("if: two arguments are accepted", "    if work[32 + top] / 256 != 2 {\n        return (cur, 14);", "    if work[32 + top] / 256 < 1 {\n        return (cur, 14);"),
+    ("if: a third comma is accepted", "        work[32 + top] = st + 256;\n        return (at, 0);\n    }\n    return (cur, 14);", "        work[32 + top] = st + 256;\n        return (at, 0);\n    }\n    return (cur, 0);"),
+    ("if: five levels of parentheses are accepted for an if", "if work[64] > 28 || work[65] > 4 {\n                            status = 9;\n                        } else {\n                            let top = work[64];\n                            work[top] = 8;", "if work[64] > 28 || work[65] > 5 {\n                            status = 9;\n                        } else {\n                            let top = work[64];\n                            work[top] = 8;"),
+    ("if: the parser reads <= as <", "                    if c == '<' {\n                        code = 4;", "                    if c == '<' {\n                        code = 3;"),
+    ("if: the parser reads >= as >", "                    } else if c == '>' {\n                        code = 6;", "                    } else if c == '>' {\n                        code = 5;"),
+    ("if: the parser reads != as =", "    if c == '!' {\n                    code = 2;", "    if c == '!' {\n                    code = 1;"),
+    ("if: < is <=", "    if op == 3 {\n        return c < 0;", "    if op == 3 {\n        return c <= 0;", "cif"),
+    ("if: <= is <", "    if op == 4 {\n        return c <= 0;", "    if op == 4 {\n        return c < 0;", "cif"),
+    ("if: > is >=", "    if op == 5 {\n        return c > 0;", "    if op == 5 {\n        return c >= 0;", "cif"),
+    ("if: >= is >", "    return c >= 0;\n}\n\n// The skip count", "    return c > 0;\n}\n\n// The skip count", "cif"),
+    ("if: = is !=", "    if op == 1 {\n        return c == 0;", "    if op == 1 {\n        return c != 0;", "cif"),
+    ("if: the left operand is not brought to the scale of the right", "        cmpv.mul_pow10(w, x, sy - sx);\n        cmpv.set_scale(w, x, sy);", "        cmpv.set_scale(w, x, sy);", "cif"),
+    ("if: the right operand is not brought to the scale of the left", "        cmpv.mul_pow10(w, y, sx - sy);\n        cmpv.set_scale(w, y, sx);", "        cmpv.set_scale(w, y, sx);", "cif"),
+    ("if: an if is not a marker the operators stop at", "                    while work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 && work[work[64] - 1] != 8 && status == 0 {", "                    while work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 && status == 0 {"),
     # the exact core: what the functions added to it
     ("cmpv: abs keeps the sign", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = 0;", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = w[s * 12];", "cmpv"),
     ("cmpv: a comparison of a negative and a positive is by magnitude", "    if na && !nb {\n        return -1;\n    }\n    if nb && !na {\n        return 1;\n    }\n    let c = mag_cmp(w, a, b);", "    let c = mag_cmp(w, a, b);", "cmpv"),
@@ -724,7 +959,7 @@ def main():
         print("\n".join(problems) or f"{len(MUTANTS)} mutants: every pattern occurs exactly once")
         sys.exit(1 if problems else 0)
     rng = random.Random(a.seed)
-    cs = hand_cases() + lines_of(rng, a.cases if not a.mutants else 1500) + lines_coalesce(rng, 600 if not a.mutants else 300) + chain_hand_cases() + chain_lines(rng, 1500 if not a.mutants else 800)
+    cs = hand_cases() + if_hand_cases() + lines_if(rng, 1200 if not a.mutants else 600) + lines_of(rng, a.cases if not a.mutants else 1500) + lines_coalesce(rng, 600 if not a.mutants else 300) + chain_hand_cases() + chain_lines(rng, 1500 if not a.mutants else 800)
     if not a.mutants:
         with tempfile.TemporaryDirectory() as w:
             probe, err = build(w)
