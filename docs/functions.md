@@ -45,6 +45,23 @@ The signature table is **one static table** that the parser, `introspect`, the s
 | **K7** conditions | `if(cond, a, b)`, comparisons in a definition | **open and last of the numbers and texts**: it needs the `--where` condition grammar inside an expression (so its 4-level and 64-condition limits), and a boolean kind. It is designed after K5 and K6 have measured what a function costs |
 | **K8** dates | `year(d)`, `month(d)`, `day(d)`, `weekday(d)`, `days_between(a, b)`, `add_days(d, n)` | on `:date` only, the real calendar already in `dtparse` (**read**: `docs/datetime.md`): integer arithmetic on days, no zone, no time of day. **Open, to confirm before K8:** whether day-count arithmetic reopens the non-goal "no arithmetic" of `docs/datetime.md` section 15. `strftime`, zones, `now` and epoch integers stay non-goals |
 
+### 3.1 K5a: the explain document of a stage (design; written before the code)
+
+**Read** (`table --rows --explain f.csv`, `table --group s --agg count --explain f.csv`, 15 Nov 2026, `table` built from `main` at `a553449`): an explained plan is one document `{"explain": {...}}` with the keys `source`, `plan`, `output`, `work`, `refusals`, `notes`, `sql`, `sql_flags`; `source` says how the file was opened and that only the header was read; `work` has a `class`, what it `reads`, the `bounds` and the `threads`; `refusals.possible` lists the rules the run can give. **The refusal today** is one line of `tools/table/table.cho` (`inp.has_explain` in the list that `--compute` refuses; **read**, line 2673 at `fe8be2f`). A stage's document keeps those keys and fills them as follows (**choice**):
+
+| key | for `--compute 'NAME=EXPR;...'` |
+|---|---|
+| `source` | as for any plan (the header is read, nothing else) |
+| `plan` | `{"form": "compute", "definitions": [{"name": "t", "kind": "dec", "scale": 2, "instructions": 5}, ...], "limit": N, "from": N}`; the kind and scale are the compiler's (`cexpr.compile`, `cexpr.scale_of`), not a guess; `instructions` is the size of the definition's program |
+| `output` | `{"format": ..., "columns": [every input column, then every name]}` |
+| `work` | `{"class": "stage, one pass", "reads": "until the page is full" or "all rows", "bounds": {...}, "threads": {"requested": N, "effective": 1, "reason": "the stage runs on one core"}}` |
+| `refusals.possible` | the I/O and reader rules of any plan, plus exactly those that this program can give: `value.not-integer` / `value.not-decimal` / `value.decimal-scale` for the typed operands it has, `compute.overflow` if it has any operator, `compute.divide-by-zero` only if it has a `/` |
+| `sql`, `sql_flags` | `null` and `[]`: a stage has no SQL form (`--query` refuses a function and `--compute` alike) |
+
+**A definition that does not compile is the explain's refusal**, with the rule and the repair the run would give (`compute.syntax`, `compute.unknown-column`, ...): these are the refusals "that are certain without reading data" (`docs/query.md` section 9). The explain reads the header and runs no row.
+
+**Gates, written before the code.** *G-EXPLAIN-CERTAIN*: for a corpus of stages that fail to compile, the explain's refusal and the run's are the same bytes. *G-EXPLAIN-PLAN*: for a corpus of valid stages, the `definitions` of the explain equal the header the run writes (names, in order, after the input columns) and the scale of each equals the scale the run prints (a column of cells is read from the answer, not from a model of it). *G-EXPLAIN-POSSIBLE*: every refusal the run gives on a hostile file (a bad cell, a zero divisor, an overflow, a ragged row) is in `refusals.possible`; a rule in the list that no input can reach is a mutant the corpus must find. *G-EXPLAIN-NOREAD*: with `strace`, the explain reads no more than the header chunk (as the existing `test_explain.py` holds for the other plans). *G-COMPAT* as in section 5: the explain of every other plan is byte-identical to `main`'s.
+
 ## 4. Rules (every refusal has a tag)
 
 New: `compute.unknown-function` (the name, the table of names in `detail`) · `compute.arity` · `compute.type-mismatch` (the argument, the kind it wanted and the kind it got) · `compute.result-too-long` · `compute.not-utf8-boundary` (K6) · `compute.bad-literal` (a scale outside 0..18, a negative count). Existing `compute.*` and `value.*` unchanged. **No payload in any message.**
