@@ -71,6 +71,32 @@ The signature table is **one static table** that the parser, `introspect`, the s
 * *G-EXPLAIN-NOREAD*: a 3 MB file whose rows are all garbage explains, and `bytes_read` is the header chunk's, under 70,000.
 * *G-COMPAT*: the explain of every other plan is the earlier one: `test_explain.py` (42 tests) and `test_sql_explain.py` (10) pass unchanged beside the new file.
 
+### 3.2 K5 as designed: the numeric functions, exactly (written before the code)
+
+**Grammar.** A call is `name(` argument { `,` argument } `)` with the `(` **immediately** after the name (no space). A word followed by `(` is a call; a word followed by `:` or by anything else is a column or an earlier definition, as today, so a column called `abs` is still `abs:int`. A call is an operand: it can be anywhere an operand can, inside an operator expression and inside another call. **Choice:** a call's parenthesis counts as one of the 4 levels of `compute.too-long`, its arguments are pending operands (the limit of 10), and a call has at most 8 arguments.
+
+| function | arguments | result scale | meaning (exact; Python integers are the reference) |
+|---|---|---|---|
+| `abs(x)` | 1 | scale of `x` | the magnitude |
+| `sign(x)` | 1 | 0 | -1, 0 or 1 |
+| `greatest(a, b ...)`, `least(a, b ...)` | 2 to 8 | the largest scale among the arguments | each argument is rescaled **exactly** to the result scale, then compared; a rescale that leaves 127 bits is `compute.overflow` |
+| `round(x, n)` | 2: `x`, and `n` an **integer literal 0 to 18** | `n` | `x` at scale `n`, ties **to even** (the rule of `/ @N`) |
+| `floor(x, n)` | the same | `n` | toward minus infinity |
+| `ceil(x, n)` | the same | `n` | toward plus infinity |
+| `trunc(x, n)` | the same | `n` | toward zero |
+| `coalesce(c, lit)` | 2: `c` a **plain typed column** (`price:dec(2)`, `qty:int`), `lit` a number with an optional `-` | the scale of `c` | `lit` (scaled to the scale of `c`) when the cell of `c` is **empty**, else the cell exactly as `c:type` reads it; any other bad cell is still its `value.*` refusal |
+
+* If `n` is not below the scale of `x`, `round` and its kin only add zeros: `x * 10^(n - scale)`, `compute.overflow` past 127 bits. Below it, the digits dropped are decided by the rule of the function.
+* **An empty cell** is a cell of zero bytes (a quoted `""` too). A cell of spaces is not empty; it is refused as it is today.
+* `coalesce` takes a *column*, not an expression, because the empty cell is a fact of a cell and not of a value: `coalesce(price:dec(2) * 2, 0)` is `compute.syntax` at the first argument. A literal with more fractional digits than the column's scale is `compute.bad-literal`.
+* **No float anywhere**; a `:float` operand is still `compute.float-operand`.
+
+**New refusals** (exit 2, as the other `compute.*` compile refusals; no payload): `compute.unknown-function` (status 13: the name is not in the table; `detail.available` lists the names), `compute.arity` (status 14: too few or too many arguments, at the name), `compute.bad-literal` (status 15: the scale of `round` and its kin is not an integer literal 0 to 18, or the literal of `coalesce` is not a number or has more fractional digits than the column). `compute.syntax` stays for a comma outside a call, an empty argument, or `coalesce` of a non-column.
+
+**Encoding (choice, nothing at run time beyond the machine).** A call is postfix: its arguments' instructions, then `op_fn` with `a` the function id and `b` the number of arguments and `c` the literal `n` of the rounding family. A `coalesce` is the cell instruction with its kind raised by 2 (`2` an integer, `3` a decimal with a default) followed by an `op_const` that the evaluator reads as the default and skips; so a cell instruction is the same four ints it is. `shape` (scale and pending depth) reads `op_fn` as "pop `b`, push one".
+
+**The reference** is `scripts/cexpr_golden.py`: the tree of Python integers gains a `fn` node and a `coal` node (the code is the table above, and the rounding family is also checked against Python's `decimal` module, which shares no code with either: `scripts/cexpr_golden.py --selftest`). **Gates:** G-FN-ORACLE for the numbers (random calls, nested, with the operators, at all scales, with ties and values near 2^127), G-FN-MUT (below), `tests/conformance/test_compute.py` through the binary, and the explain's `refusals.possible` (a call that can overflow lists `compute.overflow`).
+
 ## 4. Rules (every refusal has a tag)
 
 New: `compute.unknown-function` (the name, the table of names in `detail`) · `compute.arity` · `compute.type-mismatch` (the argument, the kind it wanted and the kind it got) · `compute.result-too-long` · `compute.not-utf8-boundary` (K6) · `compute.bad-literal` (a scale outside 0..18, a negative count). Existing `compute.*` and `value.*` unchanged. **No payload in any message.**
