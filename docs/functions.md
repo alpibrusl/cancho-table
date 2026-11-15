@@ -1,6 +1,6 @@
 # Functions in `--compute`: a design (slices K5 to K8)
 
-> **Status: design; K5a (`--explain` for the stage, section 3.1), K5 (the numeric functions, section 3.2) and K6 (the text functions, section 3.3) are built; K7 and K8 are not.** Every claim is a **choice**, a **read** (file), **measured** (with the command), or **open**. A measurement replaces its line, in place, when it exists.
+> **Status: design; K5a (`--explain` for the stage, section 3.1), K5 (the numeric functions, section 3.2) and K6 (the text functions, section 3.3) are built; K7 (conditions, section 3.4) and K8 (dates, section 3.5) are designed, not built.** Every claim is a **choice**, a **read** (file), **measured** (with the command), or **open**. A measurement replaces its line, in place, when it exists.
 > Written 2026-11-15 after the maintainer's direction (relayed in the working session): *unblock functions without affecting performance or the first principles.*
 > It amends item 14 of `docs/backlog.md` (the decision of 2026-11-09) and reopens two lines of `docs/computed-columns.md` section 10 ("Rounding functions: out", "Dates: out"); both are corrected in place and point here.
 
@@ -42,8 +42,8 @@ The signature table is **one static table** that the parser, `introspect`, the s
 | **K5a** (built) | `--explain` for the stage | the definitions, the scale of each, the program size, the possible refusals; no data read beyond the header, as `--explain` is. A prerequisite, not a function. Section 3.1 |
 | **K5** (built) numbers | `abs(x)`, `sign(x)`, `greatest(a, b ...)`, `least(a, b ...)`, `round(x, n)`, `floor(x, n)`, `ceil(x, n)`, `trunc(x, n)`, `coalesce(col, literal)` | `round` is half to even, the rule `/ @N` already has (**read**: `docs/computed-columns.md` section 6); `n` is a literal scale `0..18`; the result is `dec(n)`. `coalesce` is the answer to the empty cell (`value.not-decimal`, `docs/numbers.md`): an empty cell, and only an empty one, becomes the literal; any other bad cell is still refused. A result is exact or refused (`compute.overflow`), never a double |
 | **K6** (built) text | `lower(s)`, `upper(s)`, `trim(s)`, `ltrim(s)`, `rtrim(s)`, `substr(s, start, count)`, `concat(a, b ...)`, `len(s)`, `replace(s, from, to)` | **ASCII only** (choice, recommended and accepted): `lower` and `upper` change the 26 ASCII letters and leave every other byte as it is, and the signature says so; no Unicode table, no locale. `trim` removes ASCII space and tab. `substr` counts **bytes** and refuses a cut inside a multi-byte character (`compute.not-utf8-boundary`), because a half character is not a text. `replace` and `concat` can grow: bounded by invariant 2. `len` counts bytes (**open**: also a character count under another name) |
-| **K7** conditions | `if(cond, a, b)`, comparisons in a definition | **open and last of the numbers and texts**: it needs the `--where` condition grammar inside an expression (so its 4-level and 64-condition limits), and a boolean kind. It is designed after K5 and K6 have measured what a function costs |
-| **K8** dates | `year(d)`, `month(d)`, `day(d)`, `weekday(d)`, `days_between(a, b)`, `add_days(d, n)` | on `:date` only, the real calendar already in `dtparse` (**read**: `docs/datetime.md`): integer arithmetic on days, no zone, no time of day. **Open, to confirm before K8:** whether day-count arithmetic reopens the non-goal "no arithmetic" of `docs/datetime.md` section 15. `strftime`, zones, `now` and epoch integers stay non-goals |
+| **K7** conditions | `if(cond, a, b)`, comparisons in a definition | **designed, section 3.4**: one comparison or up to 4 joined by one of `and`/`or`; no boolean kind; only the chosen branch is evaluated (two jump opcodes). *The earlier version of this row said it waited for a cost measurement of K5 and K6; G-COST is still open, and the design makes no cost claim* |
+| **K8** dates | `year(d)`, `month(d)`, `day(d)`, `weekday(d)`, `days_between(a, b)`, `add_days(d, n)` | on `:date` only, the real calendar already in `dtparse` (**read**: `docs/datetime.md`): integer arithmetic on days, no zone, no time of day. **Designed, section 3.5**; day-count arithmetic is read as confirmed by "go with k7 then k8" (2026-11-15), and reopens the non-goal "no arithmetic" of `docs/datetime.md` section 15 for days only. `strftime`, zones, `now` and epoch integers stay non-goals |
 
 ### 3.1 K5a: the explain document of a stage (built 2026-11-15)
 
@@ -148,9 +148,71 @@ The signature table is **one static table** that the parser, `introspect`, the s
 
 **Not measured:** the cost of a text function (G-COST). No speed is claimed.
 
+### 3.4 K7: conditions (design, 2026-11-15)
+
+> **Status: design, not built.** Every line is a **choice** (recommended, to confirm), a **read** (file) or **open**. Nothing here was timed.
+
+**The problem it must solve first (reasoned, to be measured by G-IF-LAZY).** The use that justifies K7 is a guard: `if(qty != 0, total / qty, 0)`. A machine that computed both branches and then picked one would refuse `compute.divide-by-zero` on the rows that the guard was written for. So **only the chosen branch is evaluated**, exactly as `--where` evaluates left to right and reads a typed cell only when its condition is reached (**read**: `docs/or-and-columns.md` section 0, row "evaluation"). A bad cell, an overflow or a zero divisor in the branch that is not taken is not an error.
+
+**Surface (choice).**
+
+```
+table --compute 'r=if(qty != 0, total / qty, 0);tag=if(name = "", "none", upper(name))' f.csv
+```
+
+| part | rule |
+|---|---|
+| `if(cond, a, b)` | exactly three arguments; the name `if` is a function name of the stage only, it is not a reserved word of `--query` or `--where` (**read**: `docs/query.md`, the reserved words are `count sum min max mean`) |
+| `cond` | one comparison `x OP y`, or up to **4** comparisons joined by `and` only, or by `or` only. `OP` is one of `= != < <= > >=`. **No `not`, no parentheses, and `and` mixed with `or` is refused** (`compute.mixed-and-or`, the repair is the nesting, written out for the user: `if(c1 and c2, a, if(c3, a, b))` for one reading, and so on), the rule of `--where` (**read**: `docs/or-and-columns.md` section 3.3): a refusal can become an answer later, an answer cannot become a refusal |
+| operands of a comparison | two **numbers** (any expression of K5, compared **exactly** after bringing both to the larger scale, `cmpv.cmp`) or two **texts** (a column without a type, a string literal, a call of K6; compared **bytewise**, the shorter first on a tie). A number against a text is `compute.type-mismatch`; there is no coercion (invariant 1) |
+| `a`, `b` | both numbers or both texts (else `compute.type-mismatch`). Numbers: the result scale is the larger of the two, the other is brought to it exactly (an overflow is `compute.overflow`, never a rounding). Either may itself be an `if` (nesting counts as a paren level; the 4-level limit holds) |
+| a boolean kind | **none.** A comparison exists only as the condition of an `if`; a definition cannot be a boolean and no column can be written as `true`/`false` (choice: it is the smallest thing that is not a boolean language, as `docs/or-and-columns.md` section 0 chose for `--where`) |
+| text `<` `>` | bytes, not a collation: `"B" < "a"` is true. No locale (invariant 3) |
+
+**Evaluation (choice).** The number machine gets **two** new opcodes, a conditional skip and an unconditional skip (`op_jf`, `op_jmp`, forward only, `a` = how many instructions to skip), so a program is still a flat array run once, left to right, with no stack of frames. A comparison of numbers is an instruction pair (the operands, then `op_cmp` with the operator in `b`, leaving a verdict) and `and`/`or` are the short circuit: the first verdict that decides ends the condition (`and`: a false, `or`: a true), as `expr.eval` does. A text-valued `if` is the same program of `ctext.cho` with the same two jumps. The new code is a **new file** (`tools/table/cif.cho`), because `cexpr.cho` is 1,648 lines and the limit is 2,000.
+
+**New refusals.** `compute.mixed-and-or` (compile, exit 2) and `compute.too-many-conditions` (compile, exit 2, more than 4 comparisons in one `if`); `compute.type-mismatch`, `compute.arity`, `compute.syntax` as before. **No new row refusal.**
+
+**Explain.** `stage.definitions[].instructions` counts the jumps; `refusals.possible` is the union of both branches' and the condition's (the explain says what *can* happen, as it does now).
+
+**Gates (written before the code, each able to fail).**
+
+* **G-IF-ORACLE.** `scripts/cif_ref.py` (Python: `decimal` for numbers, `bytes` for texts, no code shared with the tool) generates random `if` definitions over random typed tables: every operator, both kinds, `and` and `or` lists of 1 to 4, nesting to 4, branches that refuse (divide by zero, overflow, a half character) in the taken and in the untaken arm. The tool and the reference must agree on every row's output **and on every refusal's rule and row**. 6,000 definitions at three seeds, as K6.
+* **G-IF-LAZY.** A fixed hand case for each refusal class in the **untaken** branch (divide by zero, `compute.overflow`, `compute.not-utf8-boundary`, a typed cell that is not a number): the run succeeds. And the same refusal in the **taken** branch: it is refused, naming the row. A mutant that evaluates both arms must die on the first.
+* **G-IF-MUT.** `scripts/cif_mutants.py`: operators swapped (`<` for `<=`, `!=` for `=`), `and` as `or`, no short circuit, the jump off by one in either arm, both arms evaluated, the scale of the result taken from the first arm only, text compared as numbers, a tie in a text comparison going to the longer, the 4-comparison limit off by one, the mix not refused. Every one killed or explained.
+* **G-IF-COMPAT.** The existing numeric (`cexpr_golden.py`, 54 mutants) and text (`ctext_ref.py`, 37 mutants) gates pass unchanged, and a definition without `if` compiles to the same program as before (a test on `--explain` instruction counts).
+* The surface gates of section 5 (G-EXPLAIN, G-SURFACE, G-NOPANIC), with `if` in the fuzz.
+
+**Not claimed.** No cost: G-COST for `if` is measured after K7 exists and before it is described as anything but correct.
+
+### 3.5 K8: dates (design, 2026-11-15)
+
+> **Status: design, not built.** **The maintainer's go for K7 then K8 (2026-11-15, "go with k7 then k8") is read as the confirmation that open question 1 asked for: day-count arithmetic on `:date`.** It reopens the non-goal "no arithmetic" of `docs/datetime.md` section 15 for **days only**, and that sentence now points here. If the reading is wrong, K8 stops at this document.
+
+**Read.** A `:date` cell is `YYYY-MM-DD` and nothing else, read as a count of days since 1970-01-01 (`dtparse.parse(data, 22)`; `docs/datetime.md` section 4.1); `dtparse.put(heap, out, v, 22)` writes one back; the civil calendar is `days_from_civil` / `civil_from_shifted` (`tools/table/dtparse.cho`). A cell that is not a date is refused by the reader with the rule `value.not-date` family as today. K8 adds no parser and no calendar.
+
+| function | arguments | result | meaning |
+|---|---|---|---|
+| `year(d)` | a column `NAME:date` | number, scale 0 | the year, 1 to 9999 |
+| `month(d)` | the same | number | 1 to 12 |
+| `day(d)` | the same | number | 1 to 31 |
+| `weekday(d)` | the same | number | **ISO: Monday is 1, Sunday is 7** (choice; 1970-01-01 was a Thursday, 4) |
+| `days_between(a, b)` | two `:date` columns or date literals | number (signed) | `b - a` in days: `days_between(due, paid)` is positive when paid is later |
+| `add_days(d, n)` | a `:date` column or literal, an integer literal or an integer column `n:int` | **a date, written as text** `YYYY-MM-DD` | the date `n` days after (negative: before). A result outside 0001-01-01 to 9999-12-31 is `compute.date-out-of-range` for that row, never wrapped |
+
+A date literal is `"YYYY-MM-DD"` in double quotes (the string literal of K6), validated at compile time by the date parser (an invalid one is `compute.bad-literal`). The number results are **leaves** of the exact machine (as `len` is): `year(d) * 100 + month(d)` and `if(days_between(a, b) > 30, ...)` are expressions of K5 and K7. `add_days` is **text-valued** with kind date: it is written as a quoted cell like any text of K6, and it can feed `concat`, `substr` and `len`, but not be compared as a date (compare with `days_between`; **choice**, so there is no date kind in the machine). A date result is never a column the stage then reads as `:date` again; the user types it on the next stage.
+
+**New refusals.** `compute.date-out-of-range` (row, exit 8). A cell that is not a date is the existing date refusal of the reader (its rule, not a new one). `compute.type-mismatch` for a non-date argument (a column with another type, a text) and `compute.arity`.
+
+**Stays out.** `strftime` and formatting other than `YYYY-MM-DD`; timestamps and datetimes (`:timestamp`, `:datetime` take no function in K8: a day count of an instant is a zone question); zones, `now`, epoch integers, leap seconds, week numbers, month arithmetic (`add_months`: the end-of-month rule is a policy), business days.
+
+**Gates.** **G-DT-ORACLE:** `scripts/cdate_ref.py` uses Python's `datetime.date` (no code shared with the tool): **every date from 0001-01-01 to 9999-12-31 for `year`, `month`, `day`, `weekday`** (3,652,059 days, one run), random pairs for `days_between`, random `(date, n)` for `add_days` including the two ends and the leap days of 1900, 2000, 2100, and a refusal check outside the range. **G-DT-MUT:** the epoch constant, ISO weekday as Sunday 0, `is_leap` of a century, the sign of `days_between`, `add_days` off by one at the range end, a month of 31 days for April. **G-DT-WRITE:** the output of `add_days` through CSV, JSON and JSON lines. The surface gates of section 5.
+
+**Not claimed.** No cost; no claim about `:timestamp`.
+
 ## 4. Rules (every refusal has a tag)
 
-New: `compute.unknown-function` (the name, the table of names in `detail`) · `compute.arity` · `compute.type-mismatch` (the argument, the kind it wanted and the kind it got) · `compute.result-too-long` · `compute.not-utf8-boundary` (K6) · `compute.bad-literal` (a scale outside 0..18, a negative count). Existing `compute.*` and `value.*` unchanged. **No payload in any message.**
+New: `compute.unknown-function` (the name, the table of names in `detail`) · `compute.arity` · `compute.type-mismatch` (the argument, the kind it wanted and the kind it got) · `compute.result-too-long` · `compute.not-utf8-boundary` (K6) · `compute.bad-literal` (a scale outside 0..18, a negative count) · K7: `compute.mixed-and-or`, `compute.too-many-conditions` · K8: `compute.date-out-of-range`. Existing `compute.*` and `value.*` unchanged. **No payload in any message.**
 
 ## 5. Gates (written before the code, each able to fail)
 
@@ -169,8 +231,8 @@ In-place rewrites (`--lower COL`, `--clip`, `--sentinel`, `--dedupe`); a functio
 
 ## 7. Open
 
-1. **Dates (K8):** day-count arithmetic only, no zones: **to be confirmed by the maintainer before K8** (the direction in the session was a recommendation, not yet a yes for this one).
+1. **Dates (K8):** day-count arithmetic only, no zones: read as confirmed by the maintainer's "go with k7 then k8" (2026-11-15); if that reading is wrong, section 3.5 stops being a plan.
 2. **`text(x)`**: a number written as text, exact at its scale. Needed by `concat(name, '-', id)`; without it `concat` takes texts only and a number column is not a text operand.
 3. **Unicode case mapping** and a **character-count `len`**: out for v1; the names are not taken (`upper`, `lower` and `len` are the ASCII and byte ones, and say so).
-4. **K7** (conditions): the boolean kind and how much of the `--where` grammar it takes.
+4. **K7:** settled in section 3.4 as a recommendation: no boolean kind, 4 comparisons of one connective, no `not`, no parentheses. To confirm.
 5. **Window functions** are a different stage (a materialising one) and have their own document.
