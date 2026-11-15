@@ -92,6 +92,9 @@ LOCAL = {
     "compute.unknown-function": (2, "never", "function that is not there"),
     "compute.arity": (2, "never", "too few or too many arguments"),
     "compute.bad-literal": (2, "never", "integer from 0 to 18"),
+    "compute.type-mismatch": (2, "never", "text and a number meet"),
+    "compute.result-too-long": (8, "never", "longer than --max-line-bytes"),
+    "compute.not-utf8-boundary": (8, "never", "continuation byte"),
     "compute.unsupported-combination": (2, "never", "flag that shapes rows"),
 }
 # rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
@@ -139,6 +142,7 @@ class Rules(unittest.TestCase):
         s.write("big.csv", "a\n99999999999999999999\n")
         s.write("zero.csv", "a\n0\n")
         s.write("huge.csv", "a\n9223372036854775807\n")
+        s.write("accent.csv", "a\n\u00e9x\n")
         s.write("ovf.csv", "a\n1e999\n")
         s.write("ovfsum.csv", "a\n1.7976931348623157e308\n1.7976931348623157e308\n")
         s.write("scale.csv", "a\n1.25\n")
@@ -257,6 +261,9 @@ class Rules(unittest.TestCase):
             ("compute.unknown-function", root + ["--compute", "r=nope(1)", "ok.csv"], None),
             ("compute.arity", root + ["--compute", "r=abs(1,2)", "ok.csv"], None),
             ("compute.bad-literal", root + ["--compute", "r=round(1,19)", "ok.csv"], None),
+            ("compute.type-mismatch", root + ["--compute", "r=lower(a:int)", "ok.csv"], None),
+            ("compute.result-too-long", root + ["--compute", "r=replace(a, \"1\", \"xxxxxxxxxx\")", "--max-line-bytes", "8", "ok.csv"], None),
+            ("compute.not-utf8-boundary", root + ["--compute", "r=substr(a, 2, 1)", "accent.csv"], None),
             ("compute.too-long", root + ["--compute", "r=((((((a:int))))))", "ok.csv"], None),
             ("compute.divide-by-zero", root + ["--compute", "r=1/a:int@2", "zero.csv"], None),
             ("compute.overflow", root + ["--compute", "r=a:int*a:int*a:int", "huge.csv"], None),

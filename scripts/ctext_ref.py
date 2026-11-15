@@ -110,7 +110,7 @@ def render(node, rng):
 # ---- random cases ----------------------------------------------------------------------------------------------------------------------
 
 PIECES = [b"", b"a", b"B", b"Hello", b"WORLD", b"  x  ", b"\t", b" \tmixed\t ", b",", b'"', b'say "hi"', b"a,b", b"line\nbreak", b"cr\rhere", b"\xc3\xa9", b"\xc3\x89t\xc3\xa9",
-          b"\xe6\x97\xa5\xe6\x9c\xac", b"\xf0\x9f\x98\x80", b"abc123", b"ABC xyz", b"\x80", b"a\xc3", b"\xff\xfe"]
+          b"\xe6\x97\xa5\xe6\x9c\xac", b"\xf0\x9f\x98\x80", b"abc123", b"ABC xyz", b"\x80", b"a\xc3", b"\xff\xfe", b"\n", b" \n ", b"\r \t"]
 
 
 def text(rng):
@@ -157,6 +157,7 @@ HAND = [
     (R1, 'u=lower(a);v=upper(a)', [[b"hello world", b"HELLO WORLD"]]),
     (R1, 'u=trim(b);v=ltrim(b);w=rtrim(b)', [[b"pad", b"pad  ", b"  pad"]]),
     ([[b"\t a \t", b"", b"", b""]], 'u=trim(a);v=ltrim(a);w=rtrim(a)', [[b"a", b"a \t", b"\t a"]]),
+    ([[b"\nx\n", b"\rx\r", b" \n x \n ", b""]], 'u=trim(a);v=trim(b);w=trim(c);z=ltrim(c)', [[b"\nx\n", b"\rx\r", b"\n x \n", b"\n x \n "]]),
     (R1, 'u=substr(a, 1, 5);v=substr(a, 7, 100);w=substr(a, 20, 3);z=substr(a, 3, 0)', [[b"Hello", b"World", b"", b""]]),
     (R1, 'u=concat(a, "-", b);v=concat(c, d)', [[b"Hello World-  pad  ", b'x,ysay "hi"']]),
     (R1, 'u=replace(a, "o", "0");v=replace(a, "l", "");w=replace("aaa", "aa", "b")', [[b"Hell0 W0rld", b"Heo Word", b"ba"]]),
@@ -167,7 +168,8 @@ HAND = [
     ([[b"\xc3\xa9abc", b"", b"", b""]], 'u=substr(a, 2, 3)', ("E", "compute.not-utf8-boundary", 1)),
     ([[b"\xc3\xa9abc", b"", b"", b""]], 'u=substr(a, 1, 1)', ("E", "compute.not-utf8-boundary", 1)),
     ([[b"abc", b"", b"", b""], [b"\xf0\x9f\x98\x80z", b"", b"", b""]], 'u=substr(a, 1, 2)', ("E", "compute.not-utf8-boundary", 2)),
-    ([[b"\x80\x80", b"", b"", b""]], 'u=substr(a, 1, 1)', [[b"\x80"]]),
+    ([[b"\x80\x80", b"", b"", b""]], 'u=substr(a, 1, 1)', ("E", "compute.not-utf8-boundary", 1)),
+    ([[b"\x80", b"", b"", b""]], 'u=substr(a, 1, 1)', [[b"\x80"]]),
     ([[b"", b"", b"", b""]], 'u=lower(a);v=trim(a);w=concat(a, b)', [[b"", b"", b""]]),
     # a text with a comma, a quote, a line feed and a CR is a cell the writers quote
     ([[b"a,b", b'q"', b"l\nf", b"c\rr"]], 'u=concat(a, "")', [[b"a,b"]]),
@@ -224,6 +226,9 @@ LEN = [
     ([[b"Hello", b"\xc3\xa9", b"", b""]], 'n=len(a);m=len(b);k=len(c);j=len("xyz")', [[b"5", b"2", b"0", b"3"]]),
     ([[b"Hello", b"\xc3\xa9", b"", b""]], 'n=len(a)+len(b)*2;j=len("")', [[b"9", b"0"]]),
     ([[b"Hello", b"\xc3\xa9", b"", b""]], 'n=len(a);u=upper(a);m=n+1', [[b"5", b"HELLO", b"6"]]),
+    # a cell read from quotes counts its bytes once the doubled quotes are undone; a literal the same
+    ([[b'say "hi"', b"", b"", b""]], 'n=len(a)', [[b"8"]]),
+    ([[b"", b"", b"", b""]], 'n=len("a""b");m=len("""")', [[b"3", b"1"]]),
 ]
 
 

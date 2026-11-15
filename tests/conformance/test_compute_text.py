@@ -51,7 +51,7 @@ class Text(unittest.TestCase):
         return run("--root", self.s.dir, "--compute", defs, "--format", fmt, *extra, "f.csv")
 
     def rule_of(self, r):
-        m = re.match(rb"table: ([a-z.-]+): ", r.raw_stderr)
+        m = re.match(rb"table: ([a-z0-9.-]+): ", r.raw_stderr)
         return m.group(1).decode() if m else None
 
     def row_of(self, r):
@@ -142,6 +142,25 @@ class Text(unittest.TestCase):
         self.assertEqual((self.rule_of(r), self.row_of(r)), ("compute.result-too-long", 1), r.raw_stderr[:200])
         r = self.stage(HEADER, rows, 'u=lower(a)', "--max-line-bytes", "64")
         self.assertEqual(r.status, 0, r.raw_stderr[:200])
+
+    def test_each_limit_of_a_text_is_checked_on_its_own(self):
+        # (the limit is --max-line-bytes; a row of the file is always shorter than it)
+        cap = ("--max-line-bytes", "64")
+        row = [[b"x" * 10, b"", b"", b""]]
+        # a literal longer than the limit, narrowed at once: refused where it is loaded
+        r = self.stage(HEADER, row, 'u=substr("' + "x" * 70 + '", 1, 3)', *cap)
+        self.assertEqual((self.rule_of(r), self.row_of(r)), ("compute.result-too-long", 1), r.raw_stderr[:160])
+        # a text made longer than the limit and narrowed after: refused where it is made
+        r = self.stage(HEADER, row, 'u=substr(replace(a, "x", "xxxxxxxxxx"), 1, 3)', *cap)
+        self.assertEqual((self.rule_of(r), self.row_of(r)), ("compute.result-too-long", 1), r.raw_stderr[:160])
+        # a short text that makes the row longer than the limit: refused where it is written
+        r = self.stage(HEADER, [[b"x" * 40, b"", b"", b""]], 'u=lower(a)', *cap)
+        self.assertEqual((self.rule_of(r), self.row_of(r)), ("compute.result-too-long", 1), r.raw_stderr[:160])
+        # and with room, all three are answered
+        for defs in ('u=substr("' + "x" * 70 + '", 1, 3)', 'u=substr(replace(a, "x", "xxxxxxxxxx"), 1, 3)'):
+            r = self.stage(HEADER, row, defs)
+            self.assertEqual(r.status, 0, (defs, r.raw_stderr[:160]))
+            self.assertEqual(parse_csv(r.stdout)[1][4:], [b"xxx"])
 
     # a function name stays a column name, and the chain
     def test_a_name_that_is_a_function_is_a_column(self):

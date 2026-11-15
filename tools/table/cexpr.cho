@@ -20,6 +20,7 @@ import std.buffer;
 import std.bytes;
 import cellnum;
 import cmpv;
+import ctext;
 
 pub fn max_defs() -> [] int {
     return 8;
@@ -69,6 +70,11 @@ fn op_neg() -> [] int {
 // A call of a numeric function (docs/functions.md section 3.2): `a` the function, `b` how many operands it takes, `c` the scale literal of the rounding family.
 fn op_fn() -> [] int {
     return 8;
+}
+
+// The number of bytes of a text cell (`len`): `a` the column. The text instructions are `ctext.op_col()` and the two after it, 16 to 18.
+fn op_len() -> [] int {
+    return 19;
 }
 
 // Statuses: the compiler's, then the evaluator's.
@@ -121,6 +127,10 @@ pub fn s_overflow() -> [] int {
 }
 
 // 100 + the status of `parse_int`, 200 + the status of `parse_dec`: a cell that is not what its type says (the column is the second answer).
+pub fn s_type_mismatch() -> [] int {
+    return 16;
+}
+
 pub fn s_unknown_function() -> [] int {
     return 13;
 }
@@ -177,6 +187,33 @@ fn function_id[&w](word: &w [byte]) -> [] int {
     }
     if bytes.equal(word, "coalesce") {
         return 9;
+    }
+    if bytes.equal(word, "lower") {
+        return 11;
+    }
+    if bytes.equal(word, "upper") {
+        return 12;
+    }
+    if bytes.equal(word, "trim") {
+        return 13;
+    }
+    if bytes.equal(word, "ltrim") {
+        return 14;
+    }
+    if bytes.equal(word, "rtrim") {
+        return 15;
+    }
+    if bytes.equal(word, "substr") {
+        return 16;
+    }
+    if bytes.equal(word, "concat") {
+        return 17;
+    }
+    if bytes.equal(word, "replace") {
+        return 18;
+    }
+    if bytes.equal(word, "len") {
+        return 19;
     }
     return 0;
 }
@@ -429,7 +466,7 @@ fn shape[&p, &w](prog: &p [int], work: &!w [int], first: int, end: int) -> [] (i
     var at = first;
     while at < end {
         let op = prog[at];
-        if op == op_cell() || op == op_const() {
+        if op == op_cell() || op == op_const() || op == op_len() {
             if op == op_cell() {
                 work[72 + sp] = prog[at + 2];
             } else {
@@ -536,6 +573,435 @@ fn def_index[&h, &t, &p, &w](heap: &!h Heap, t: &t [byte], prog: &p [int], d: in
     return found;
 }
 
+// The string literal at `from` (a double quote), `""` inside it one quote: answers (where the text between the quotes starts, where it ends, where the literal ends, status). Status 15
+// for a literal that is not closed.
+fn string_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
+    var j = from + 1;
+    while j < len(t) {
+        if int_of(t[j]) == 34 {
+            if j + 1 < len(t) && int_of(t[j + 1]) == 34 {
+                j = j + 2;
+            } else {
+                return (from + 1, j, j + 1, 0);
+            }
+        } else {
+            j = j + 1;
+        }
+    }
+    return (from + 1, j, j, 15);
+}
+
+// An integer written in digits only at `from` (spaces first), from 0 to 999,999,999: answers (where it ends, its value, status). Status 15 for anything else, a sign and a point included.
+fn digits_at[&t](t: &t [byte], from: int) -> [] (int, int, int) {
+    let p = skip_space(t, from);
+    var q = p;
+    var n = 0;
+    var digits = 0;
+    while q < len(t) && int_of(t[q]) >= '0' && int_of(t[q]) <= '9' && digits < 10 {
+        n = n * 10 + (int_of(t[q]) - '0');
+        digits = digits + 1;
+        q = q + 1;
+    }
+    if digits == 0 || digits > 9 {
+        return (p, 0, 15);
+    }
+    if q < len(t) && !(is_space(int_of(t[q])) || int_of(t[q]) == ')' || int_of(t[q]) == ',') {
+        return (p, 0, 15);
+    }
+    return (q, n, 0);
+}
+
+// `len(` of a column or of a string literal, the argument at `from`, in a number-valued definition: the instruction is written at `cur`. Answers (where the call ends, the new `cur`, status).
+// A typed column, a call and an earlier definition are `compute.type-mismatch`; a second argument is `compute.arity`.
+fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], cur: int, d: int) -> [heap] (int, int, int) {
+    let i = skip_space(t, from);
+    if i >= len(t) {
+        return (i, cur, 1);
+    }
+    var next = i;
+    var cur2 = cur;
+    if int_of(t[i]) == 34 {
+        let (lf, lt, le, ls) = string_at(t, i);
+        if ls != 0 {
+            return (i, cur, ls);
+        }
+        var bytes_in = 0;
+        var k = lf;
+        while k < lt {
+            bytes_in = bytes_in + 1;
+            if int_of(t[k]) == 34 {
+                k = k + 2;
+            } else {
+                k = k + 1;
+            }
+        }
+        cur2 = emit(prog, cur, op_const(), bytes_in, 0, 0);
+        next = le;
+    } else {
+        var cb = buffer.empty(heap, 32);
+        let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
+        cb = b2;
+        var status = 0;
+        if s2 != 0 {
+            status = 1;
+        } else if e2 < len(t) && (int_of(t[e2]) == ':' || int_of(t[e2]) == '(') {
+            status = 16;
+        } else {
+            var col = 0;
+            var rs = 0;
+            borrow cb as &cr in {
+                let (cc, rr) = resolve(names, ends, ncols, buffer.bytes(cr), q2);
+                col = cc;
+                rs = rr;
+            }
+            if rs == 2 {
+                var dk = -1;
+                borrow cb as &cr in {
+                    dk = def_index(heap, t, prog, d, buffer.bytes(cr));
+                }
+                if dk >= 0 {
+                    status = 16;
+                } else {
+                    status = 2;
+                }
+            } else if rs != 0 {
+                status = rs;
+            } else {
+                cur2 = emit(prog, cur, op_len(), col, 0, 0);
+                next = e2;
+            }
+        }
+        buffer.drop(heap, cb);
+        if status != 0 {
+            return (i, cur, status);
+        }
+    }
+    let after = skip_space(t, next);
+    if after >= len(t) {
+        return (after, cur, 1);
+    }
+    if int_of(t[after]) == ',' {
+        return (after, cur, 14);
+    }
+    if int_of(t[after]) != ')' {
+        return (after, cur, 1);
+    }
+    return (after + 1, cur2, 0);
+}
+
+// Whether the expression at `from` (after the `=`) is a call of a text function: a word, the parenthesis next to it, and a name from 11 to 18.
+fn is_text_call[&h, &t](heap: &!h Heap, t: &t [byte], from: int) -> [heap] bool {
+    let p = skip_space(t, from);
+    if p >= len(t) {
+        return false;
+    }
+    var cb = buffer.empty(heap, 32);
+    let (b2, e2, q2, s2) = word_at(heap, cb, t, p);
+    cb = b2;
+    var fid = 0;
+    if s2 == 0 && !q2 && e2 < len(t) && int_of(t[e2]) == '(' {
+        borrow cb as &cr in {
+            fid = function_id(buffer.bytes(cr));
+        }
+    }
+    buffer.drop(heap, cb);
+    return fid >= 11 && fid <= 18;
+}
+
+// The instructions of definition `dk` written again at `cur`: answers the new `cur`.
+fn copy_definition[&p](prog: &!p [int], cur: int, dk: int) -> [] int {
+    let src = prog[1 + 5 * dk];
+    let size = prog[1 + 5 * dk + 1] - src;
+    var q = 0;
+    while q < size {
+        prog[cur + q] = prog[src + q];
+        q = q + 1;
+    }
+    return cur + size;
+}
+
+// The most ints a text definition may take: 128 instructions of four.
+fn text_limit() -> [] int {
+    return 4 * 128;
+}
+
+// A text-valued definition (docs/functions.md section 3.3), from `from`, its first token the name of a text function. The program is written at `at`; the definition's scale is -1. Answers
+// (where the definition ends, the new `at`, status, offset) as `define` does.
+fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], work: &!w [int], d: int, at: int, name_first: int, name_last: int) -> [heap] (int, int, int, int) {
+    var status = 0;
+    var offset = from;
+    var i = from;
+    var cur = at;
+    let first = at;
+    var expect = true;
+    var done = false;
+    work[64] = 0;
+    work[65] = 0;
+    while status == 0 && !done {
+        i = skip_space(t, i);
+        offset = i;
+        if cur - first > text_limit() {
+            status = 9;
+        } else if expect {
+            if i >= len(t) {
+                status = 1;
+            } else if int_of(t[i]) == 34 {
+                let (lf, lt, le, ls) = string_at(t, i);
+                if ls != 0 {
+                    status = ls;
+                } else {
+                    cur = emit(prog, cur, ctext.op_lit(), lf, lt, 0);
+                    i = le;
+                    expect = false;
+                }
+            } else if int_of(t[i]) >= '0' && int_of(t[i]) <= '9' || int_of(t[i]) == '.' || int_of(t[i]) == '-' {
+                status = 16;
+            } else {
+                var cb = buffer.empty(heap, 32);
+                let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
+                cb = b2;
+                if s2 != 0 {
+                    status = 1;
+                } else if !q2 && e2 < len(t) && int_of(t[e2]) == '(' {
+                    var fid = 0;
+                    borrow cb as &cr in {
+                        fid = function_id(buffer.bytes(cr));
+                    }
+                    if fid == 0 {
+                        status = 13;
+                    } else if fid < 11 || fid == 19 {
+                        status = 16;
+                    } else {
+                        work[65] = work[65] + 1;
+                        if work[64] > 28 || work[65] > 4 {
+                            status = 9;
+                        } else {
+                            let top = work[64];
+                            work[top] = 7;
+                            work[32 + top] = fid * 16;
+                            work[192 + top] = i;
+                            work[224 + top] = 0;
+                            work[64] = top + 1;
+                            i = e2 + 1;
+                        }
+                    }
+                } else if e2 < len(t) && int_of(t[e2]) == ':' {
+                    status = 16;
+                } else {
+                    var col = 0;
+                    var rs = 0;
+                    borrow cb as &cr in {
+                        let (cc, rr) = resolve(names, ends, ncols, buffer.bytes(cr), q2);
+                        col = cc;
+                        rs = rr;
+                    }
+                    if rs == 2 {
+                        var dk = -1;
+                        borrow cb as &cr in {
+                            dk = def_index(heap, t, prog, d, buffer.bytes(cr));
+                        }
+                        if dk < 0 {
+                            status = 2;
+                        } else if prog[1 + 5 * dk + 2] >= 0 {
+                            status = 16;
+                        } else {
+                            // an earlier text definition: its instructions are copied here, as one operand (as a number definition's are)
+                            cur = copy_definition(prog, cur, dk);
+                            i = e2;
+                            expect = false;
+                        }
+                    } else if rs != 0 {
+                        status = rs;
+                    } else {
+                        cur = emit(prog, cur, ctext.op_col(), col, 0, 0);
+                        i = e2;
+                        expect = false;
+                    }
+                }
+                buffer.drop(heap, cb);
+            }
+        } else if i >= len(t) || int_of(t[i]) == ';' && work[65] == 0 {
+            if work[65] != 0 {
+                status = 1;
+            } else {
+                done = true;
+            }
+        } else if int_of(t[i]) == ')' {
+            if work[65] == 0 {
+                status = 1;
+            } else {
+                let top = work[64] - 1;
+                let fid = work[32 + top] / 16;
+                let nargs = work[32 + top] % 16 + 1;
+                var lo = 1;
+                var hi = 1;
+                if fid == 16 || fid == 18 {
+                    lo = 3;
+                    hi = 3;
+                } else if fid == 17 {
+                    lo = 2;
+                    hi = 8;
+                }
+                if nargs < lo || nargs > hi {
+                    status = 14;
+                    offset = work[192 + top];
+                } else {
+                    // substr takes one value off the stack: its start and count are literals of the instruction
+                    var take = nargs;
+                    if fid == 16 {
+                        take = 1;
+                    }
+                    cur = emit(prog, cur, ctext.op_call(), fid, take, work[224 + top]);
+                    work[64] = top;
+                    work[65] = work[65] - 1;
+                    i = i + 1;
+                }
+            }
+        } else if int_of(t[i]) == ',' {
+            if work[65] == 0 {
+                status = 1;
+            } else {
+                let top = work[64] - 1;
+                let fid = work[32 + top] / 16;
+                let commas = work[32 + top] % 16;
+                if fid == 16 {
+                    // substr(s, start, count): two integer literals
+                    let (e1, v1, s1) = digits_at(t, i + 1);
+                    if commas != 0 {
+                        status = 14;
+                        offset = work[192 + top];
+                    } else if s1 != 0 || v1 < 1 {
+                        status = 15;
+                        offset = e1;
+                    } else {
+                        let q1 = skip_space(t, e1);
+                        if q1 >= len(t) {
+                            status = 1;
+                            offset = q1;
+                        } else if int_of(t[q1]) == ')' {
+                            status = 14;
+                            offset = work[192 + top];
+                        } else if int_of(t[q1]) != ',' {
+                            status = 1;
+                            offset = q1;
+                        } else {
+                            let (e2, v2, s2) = digits_at(t, q1 + 1);
+                            if s2 != 0 {
+                                status = 15;
+                                offset = e2;
+                            } else {
+                                let q2 = skip_space(t, e2);
+                                if q2 >= len(t) {
+                                    status = 1;
+                                    offset = q2;
+                                } else if int_of(t[q2]) == ',' {
+                                    status = 14;
+                                    offset = work[192 + top];
+                                } else if int_of(t[q2]) != ')' {
+                                    status = 1;
+                                    offset = q2;
+                                } else {
+                                    work[224 + top] = v1 * 2147483648 + v2;
+                                    work[32 + top] = fid * 16 + 2;
+                                    i = q2;
+                                }
+                            }
+                        }
+                    }
+                } else if fid == 18 {
+                    // replace(s, from, to): two string literals, the first not empty
+                    let p1 = skip_space(t, i + 1);
+                    if commas != 0 {
+                        status = 14;
+                        offset = work[192 + top];
+                    } else if p1 >= len(t) || int_of(t[p1]) != 34 {
+                        status = 15;
+                        offset = p1;
+                    } else {
+                        let (f1, t1, l1, s1) = string_at(t, p1);
+                        if s1 != 0 || t1 == f1 {
+                            status = 15;
+                            offset = p1;
+                        } else {
+                            cur = emit(prog, cur, ctext.op_lit(), f1, t1, 0);
+                            let q1 = skip_space(t, l1);
+                            if q1 >= len(t) {
+                                status = 1;
+                                offset = q1;
+                            } else if int_of(t[q1]) == ')' {
+                                status = 14;
+                                offset = work[192 + top];
+                            } else if int_of(t[q1]) != ',' {
+                                status = 1;
+                                offset = q1;
+                            } else {
+                                let p2 = skip_space(t, q1 + 1);
+                                if p2 >= len(t) || int_of(t[p2]) != 34 {
+                                    status = 15;
+                                    offset = p2;
+                                } else {
+                                    let (f2, t2, l2, s2) = string_at(t, p2);
+                                    if s2 != 0 {
+                                        status = 15;
+                                        offset = p2;
+                                    } else {
+                                        cur = emit(prog, cur, ctext.op_lit(), f2, t2, 0);
+                                        let q2 = skip_space(t, l2);
+                                        if q2 >= len(t) {
+                                            status = 1;
+                                            offset = q2;
+                                        } else if int_of(t[q2]) == ',' {
+                                            status = 14;
+                                            offset = work[192 + top];
+                                        } else if int_of(t[q2]) != ')' {
+                                            status = 1;
+                                            offset = q2;
+                                        } else {
+                                            work[32 + top] = fid * 16 + 2;
+                                            i = q2;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if fid == 17 {
+                    if commas + 2 > 8 {
+                        status = 14;
+                        offset = work[192 + top];
+                    } else {
+                        work[32 + top] = work[32 + top] + 1;
+                        expect = true;
+                        i = i + 1;
+                    }
+                } else {
+                    // a function of one argument: an empty argument is a syntax error, a second one is the wrong arity
+                    let q = skip_space(t, i + 1);
+                    if q < len(t) && int_of(t[q]) == ')' {
+                        status = 1;
+                    } else {
+                        status = 14;
+                        offset = work[192 + top];
+                    }
+                }
+            }
+        } else if int_of(t[i]) == '+' || int_of(t[i]) == '-' || int_of(t[i]) == '*' || int_of(t[i]) == '/' {
+            status = 16;
+        } else {
+            status = 1;
+        }
+    }
+    if status != 0 {
+        return (i, at, status, offset);
+    }
+    prog[1 + 5 * d] = first;
+    prog[1 + 5 * d + 1] = cur;
+    prog[1 + 5 * d + 2] = -1;
+    prog[1 + 5 * d + 3] = name_first;
+    prog[1 + 5 * d + 4] = name_last;
+    return (i, cur, 0, 0);
+}
+
 // One definition from `from` to the `;` or the end: its program is written at `prog[at ..]` and its header at slot `d`. Answers (end of the definition in the text, the new `at`, status, offset).
 fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], work: &!w [int], d: int, at: int) -> [heap] (int, int, int, int) {
     var wb = buffer.empty(heap, 32);
@@ -599,6 +1065,9 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
     } else {
         offset = name_first;
     }
+    if status == 0 && is_text_call(heap, t, i) {
+        return text_define(heap, t, i, names, ends, ncols, prog, work, d, at, name_first, name_last);
+    }
     work[64] = 0;
     work[65] = 0;
     var expect = true;
@@ -653,6 +1122,19 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                     }
                     if fid == 0 {
                         status = 13;
+                    } else if fid >= 11 && fid <= 18 {
+                        // a text function in the middle of a number expression: no conversion either way
+                        status = 16;
+                    } else if fid == 19 {
+                        let (le, lcur, lst) = len_at(heap, t, e2 + 1, names, ends, ncols, prog, cur, d);
+                        if lst != 0 {
+                            status = lst;
+                            offset = le;
+                        } else {
+                            cur = lcur;
+                            i = le;
+                            expect = false;
+                        }
                     } else {
                         work[65] = work[65] + 1;
                         if work[64] > 28 || work[65] > 4 {
@@ -682,7 +1164,10 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                             dk = def_index(heap, t, prog, d, buffer.bytes(cr));
                         }
                     }
-                    if dk >= 0 {
+                    if dk >= 0 && prog[1 + 5 * dk + 2] < 0 {
+                        // an earlier definition that is a text: no conversion either way
+                        status = 16;
+                    } else if dk >= 0 {
                         // an earlier definition: its instructions are copied here, as one operand. It takes no type: a ':' after it is met as an operator is, and is a syntax error at its own offset.
                         // The copy is not bounded here because the loop's own check (`cur - first > 4 * 128`, at the start of the next step) refuses what is too long, and the program has room for it:
                         // a definition that passed is at most 4 * 128 + 4 * 28 ints, a copy adds one, so no definition's region passes 1,140 ints and the eight end before 5,600 of `program_size()`'s 8,233.
@@ -955,7 +1440,7 @@ pub fn size_of[&p](prog: &p [int], d: int) -> [] int {
     return (prog[1 + 5 * d + 1] - prog[1 + 5 * d]) / 4;
 }
 
-// Whether definition `d` has an instruction of a class: 0 an operator (+, -, * or /), 1 a division, 2 a cell read as :int, 3 a cell read as :dec(S).
+// Whether definition `d` has an instruction of a class: 0 an operator (+, -, * or /), 1 a division, 2 a cell read as :int, 3 a cell read as :dec(S), 4 a `substr`.
 pub fn has[&p](prog: &p [int], d: int, what: int) -> [] bool {
     var at = prog[1 + 5 * d];
     let end = prog[1 + 5 * d + 1];
@@ -965,6 +1450,9 @@ pub fn has[&p](prog: &p [int], d: int, what: int) -> [] bool {
             return true;
         }
         if what == 1 && op == op_div() {
+            return true;
+        }
+        if what == 4 && op == ctext.op_call() && prog[at + 1] == 16 {
             return true;
         }
         if op == op_cell() {
@@ -1117,6 +1605,10 @@ pub fn eval[&p, &dd, &c, &w](prog: &p [int], d: int, record: &dd [byte], cells: 
             if kind >= 2 {
                 at = at + 4;
             }
+            sp = sp + 1;
+        } else if op == op_len() {
+            let col = prog[at + 1];
+            cmpv.set_int(w, sp, ctext.length(record, cells[3 * col], cells[3 * col + 1], cells[3 * col + 2]), 0);
             sp = sp + 1;
         } else if op == op_fn() {
             let base = sp - prog[at + 2];
