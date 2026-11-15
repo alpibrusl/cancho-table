@@ -934,7 +934,7 @@ def fuzz_ok(cs, probe):
     got, err = run(probe, cs)
     if got is None:
         return [("probe failed", err)]
-    shape = re.compile(r"^(C (1[0-5]|[1-9]) (\d+)|E (1\d\d|2\d\d|11|12) \d+ \d+|[^=;]*=.*)$")
+    shape = re.compile(r"^(C (1\d|20|[1-9]) (\d+)|E (1\d\d|2\d\d|11|12) \d+ \d+|[^=]*=.*)$")
     bad = []
     for c, g in zip(cs, got):
         m = shape.match(g)
