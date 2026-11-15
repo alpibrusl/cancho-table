@@ -310,5 +310,74 @@ class Compute(unittest.TestCase):
         self.assertEqual(total["rows"], [["49.90"]])
 
 
+class Functions(unittest.TestCase):
+    """docs/functions.md section 3.2 (slice K5) through the binary: the values, the three rules, JSON lines, and the calls beside the operators. The random calls of the oracle are in
+    Compute above (the generator draws them) and in scripts/cexpr_golden.py."""
+
+    def setUp(self):
+        self.s = Scratch()
+        self.s.write("f.csv", "price,qty,note\n19.995,3,\n2.50,,x\n-0.005,7,y\n")
+
+    def tearDown(self):
+        self.s.cleanup()
+
+    def csv(self, defs, name="f.csv", *extra):
+        r = run("--root", self.s.dir, "--compute", defs, "--format", "csv", *extra, name)
+        self.assertEqual(r.status, 0, (defs, r))
+        return list(csv.reader(io.StringIO(r.stdout.decode("utf-8"))))
+
+    def test_the_values(self):
+        rows = self.csv("r=round(price:dec(3),2);f=floor(price:dec(3),1);c=ceil(price:dec(3),0);t=trunc(price:dec(3),1);a=abs(price:dec(3));g=sign(price:dec(3))")
+        self.assertEqual(rows[0][3:], ["r", "f", "c", "t", "a", "g"])
+        self.assertEqual(rows[1][3:], ["20.00", "19.9", "20", "19.9", "19.995", "1"])
+        self.assertEqual(rows[3][3:], ["0.00", "-0.1", "0", "0.0", "0.005", "-1"])
+
+    def test_greatest_and_least_bring_the_scales_together(self):
+        rows = self.csv("g=greatest(price:dec(3),1.5,7);l=least(price:dec(3),1.5,7)")
+        self.assertEqual(rows[1][3:], ["19.995", "1.500"])
+        self.assertEqual(rows[3][3:], ["7.000", "-0.005"])
+
+    def test_coalesce_takes_an_empty_cell_and_nothing_else(self):
+        rows = self.csv("c=coalesce(qty:int,0);d=coalesce(qty:int,-1)*2")
+        self.assertEqual([r[3:] for r in rows[1:]], [["3", "6"], ["0", "-2"], ["7", "14"]])
+        self.s.write("bad.csv", "price,qty,note\n1.5,x,\n")
+        r = run("--root", self.s.dir, "--compute", "c=coalesce(qty:int,0)", "bad.csv")
+        self.assertEqual(r.first_rule(), "value.not-integer")
+
+    def test_a_call_beside_the_operators(self):
+        self.s.write("g.csv", "price,qty\n19.995,3\n-1.25,12\n")
+        rows = self.csv("r=round(price:dec(3)*2,1)+abs(qty:int-10)/2@2", "g.csv")
+        # 19.995 * 2 = 39.990 -> 40.0 ; |3 - 10| / 2 = 3.50 -> 43.50 ; -1.25 * 2 = -2.500 -> -2.5 ; |12 - 10| / 2 = 1.00 -> -1.50
+        self.assertEqual([r[2] for r in rows[1:]], ["43.50", "-1.50"])
+
+    def test_json_lines_and_an_absent_value(self):
+        self.s.write("j.jsonl", '{"a":null,"b":2}\n{"a":"7","b":3}\n')
+        r = run("--root", self.s.dir, "--input-format", "jsonl", "--fields", "a,b", "--absent", "empty", "--compute", "r=coalesce(a:int,5)+b:int;s=round(b:int/3@6,2)", "--format", "csv", "j.jsonl")
+        self.assertEqual(r.status, 0, r)
+        self.assertEqual(list(csv.reader(io.StringIO(r.stdout.decode("utf-8")))), [["a", "b", "r", "s"], ["", "2", "7", "0.67"], ["7", "3", "10", "1.00"]])
+
+    def test_the_new_rules(self):
+        for defs, rule in [("r=nope(1)", "compute.unknown-function"), ("r=ABS(1)", "compute.unknown-function"), ("r=abs(1,2)", "compute.arity"), ("r=greatest(1)", "compute.arity"),
+                           ("r=round(1)", "compute.arity"), ("r=round(1,19)", "compute.bad-literal"), ("r=round(1,qty:int)", "compute.bad-literal"), ("r=coalesce(qty:int,1.5)", "compute.bad-literal"),
+                           ("r=coalesce(qty:int*2,0)", "compute.syntax"), ("r=1,2", "compute.syntax"), ("r=abs()", "compute.syntax"), ("r=abs (1)", "compute.unknown-column")]:
+            r = run("--root", self.s.dir, "--compute", defs, "f.csv")
+            self.assertEqual(r.status, 3 if rule == "compute.unknown-column" else 2, defs)
+            self.assertEqual(r.first_rule(), rule, defs)
+            self.assertIn("offset", r.error()["detail"], defs)
+            self.assertNotIn(b"19.995", r.stdout, defs)
+
+    def test_an_overflow_is_a_refusal_never_a_wrap(self):
+        self.s.write("big.csv", "a\n4611686018427387904\n")
+        for defs in ("r=round(a:int*a:int,18)", "r=greatest(a:int*a:int,1.5)"):
+            r = run("--root", self.s.dir, "--compute", defs, "big.csv")
+            self.assertEqual(r.first_rule(), "compute.overflow", defs)
+            self.assertEqual(r.status, 8)
+
+    def test_a_function_name_is_still_a_column_name(self):
+        self.s.write("n.csv", "abs,round\n-3,4\n")
+        rows = self.csv("r=abs:int+round:int", "n.csv")
+        self.assertEqual(rows[1], ["-3", "4", "1"])
+
+
 if __name__ == "__main__":
     unittest.main()

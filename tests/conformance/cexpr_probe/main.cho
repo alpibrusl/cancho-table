@@ -104,6 +104,14 @@ fn run[&h, &i, &g](heap: &!h Heap, io: &!i Io, args: &g Args) -> [heap, io_write
                         }
                     }
                 }
+                var scale_ok = true;
+                if es == 0 {
+                    borrow progb as &pr in {
+                        borrow wsb as &wr in {
+                            scale_ok = @MODULE@.scale_of(contents(pr), d) == cmpv.scale_of(contents(wr), 0);
+                        }
+                    }
+                }
                 if es != 0 {
                     console.write_all(io, "E ");
                     console.print_int(io, es);
@@ -111,6 +119,23 @@ fn run[&h, &i, &g](heap: &!h Heap, io: &!i Io, args: &g Args) -> [heap, io_write
                     console.print_int(io, ecol);
                     console.space(io);
                     console.print_int(io, d);
+                    failed = true;
+                } else if !scale_ok {
+                    // the scale the definition was compiled with is not the scale of the value it computed: `S definition compiled computed`
+                    var sc = 0;
+                    var sd = 0;
+                    borrow progb as &pr in {
+                        sc = @MODULE@.scale_of(contents(pr), d);
+                    }
+                    borrow wsb as &wr in {
+                        sd = cmpv.scale_of(contents(wr), 0);
+                    }
+                    console.write_all(io, "S ");
+                    console.print_int(io, d);
+                    console.space(io);
+                    console.print_int(io, sc);
+                    console.space(io);
+                    console.print_int(io, sd);
                     failed = true;
                 } else {
                     if d > 0 {

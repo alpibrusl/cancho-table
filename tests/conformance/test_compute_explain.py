@@ -134,6 +134,32 @@ class StageExplain(unittest.TestCase):
         for rule in ("value.not-integer", "value.not-decimal", "compute.overflow", "compute.divide-by-zero"):
             self.assertNotIn(rule, possible)
 
+    def test_the_refusals_of_the_functions(self):
+        # abs and sign cannot overflow; the others can; coalesce adds no rule beyond its cell's
+        possible, _ = self.possible("r=abs(qty:int)", FILE)
+        self.assertNotIn("compute.overflow", possible)
+        possible, _ = self.possible("r=sign(price:dec(2))", FILE)
+        self.assertNotIn("compute.overflow", possible)
+        for defs in ("r=round(price:dec(2),1)", "r=floor(price:dec(2),1)", "r=ceil(qty:int,3)", "r=trunc(qty:int,0)", "r=greatest(qty:int,1)", "r=least(qty:int,1)"):
+            possible, _ = self.possible(defs, FILE)
+            self.assertIn("compute.overflow", possible, defs)
+            self.assertNotIn("compute.divide-by-zero", possible, defs)
+        possible, _ = self.possible("r=coalesce(qty:int,0)", FILE)
+        self.assertNotIn("compute.overflow", possible)
+        self.assertIn("value.not-integer", possible)
+        self.assertNotIn("value.not-decimal", possible)
+
+    def test_a_function_that_does_not_compile_is_refused_as_the_run_refuses_it(self):
+        for defs in ("t=nope(1)", "t=abs(1,2)", "t=round(1,19)", "t=coalesce(qty:int,1.5)", "t=round(qty:int)", "t=abs()", "t=1,2", "t=greatest(1,2,3,4,5,6,7,8,9)"):
+            e = self.explain(defs)
+            r = self.run_stage(defs)
+            self.assertNotEqual(r.status, 0, defs)
+            self.assertEqual((e.status, e.doc().get("error")), (r.status, r.doc().get("error")), defs)
+
+    def test_the_scale_of_a_call_is_in_the_stage(self):
+        x = self.explain("a=round(price:dec(2),1);b=sign(price:dec(2));c=greatest(price:dec(2),qty:int,1.123);d=coalesce(qty:int,0)").data()["explain"]
+        self.assertEqual([(d["name"], d["scale"]) for d in x["stage"]["definitions"]], [("a", 1), ("b", 0), ("c", 3), ("d", 0)])
+
     # G-EXPLAIN-NOREAD
     def test_the_rows_are_not_read(self):
         body = "price,qty,s\n" + "garbage,garbage\n" * 200000
