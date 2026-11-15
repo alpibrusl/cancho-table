@@ -415,7 +415,7 @@ Sizes are **estimates by analogy**; the `:dec(S)` sources are `dec.cho` 311 line
 7. **`:datetime` can be misread as an instant** by a person who puts a UTC file in it and then mixes it with a `:timestamp` column in a join. The join refuses the cross-type pair (`args.bad-value`); the documentation says that a `:datetime` is a wall clock.
 8. **Leap seconds** are refused at `:60`, which makes a leap-second log line unreadable until the user filters it. The repair is a filter that is false first (`ts != '2016-12-31T23:59:60Z' and ts:timestamp ...`), the idiom for NaN.
 
-**Non-goals.** No zone database or any local-time conversion (a `Europe/Madrid` cell is refused); no arithmetic (no `+ 1d`, no difference of two columns); no formatting functions (`strftime`, `to_char`) and no output in another zone; no parsing of locale formats (`02/01/2026`, `Jan 2`); no epoch integers (14.5); no leap-second table; no `now`; no `infinity`/`epoch` strings; no `sum`/`mean`; no reduced-precision, basic, week or ordinal forms in v1; no bucket on a join key in v1.
+**Non-goals.** No zone database or any local-time conversion (a `Europe/Madrid` cell is refused); no arithmetic (no `+ 1d`, no difference of two columns) *(reopened 2026-11-15 for day counts on `:date` in `--compute` only, see `docs/functions.md` section 3.5)*; no formatting functions (`strftime`, `to_char`) and no output in another zone; no parsing of locale formats (`02/01/2026`, `Jan 2`); no epoch integers (14.5); no leap-second table; no `now`; no `infinity`/`epoch` strings; no `sum`/`mean`; no reduced-precision, basic, week or ordinal forms in v1; no bucket on a join key in v1.
 
 ## 16. Open questions for the maintainer
 
