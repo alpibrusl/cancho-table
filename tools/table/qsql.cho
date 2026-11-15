@@ -356,6 +356,9 @@ pub fn reason_id(code: int) -> [] &static [byte] {
     if code == 10 {
         return "value";
     }
+    if code == 11 {
+        return "compute";
+    }
     return "unsupported";
 }
 
@@ -390,6 +393,9 @@ pub fn reason_text(code: int) -> [] &static [byte] {
     if code == 10 {
         return "a literal the query dialect would not read as the flags do";
     }
+    if code == 11 {
+        return "--compute adds columns that a query has no word for";
+    }
     return "this plan has no spelling in --query";
 }
 
@@ -400,6 +406,9 @@ pub fn render[&h, &g, &p, &q, &s, &o](heap: &!h Heap, args: &g Args, parsed: &p 
     var extra = buffer.empty(heap, 16);
     if joining {
         return (out, extra, 3);
+    }
+    if cli.has(parsed, table, "compute") {
+        return (out, extra, 11);
     }
     if query.reporting(tree) {
         return (out, extra, 2);

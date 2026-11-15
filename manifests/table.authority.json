@@ -318,6 +318,7 @@
     "has",
     "has",
     "has",
+    "has",
     "has_between",
     "has_columns",
     "has_dates",
@@ -531,6 +532,7 @@
     "mantissa",
     "marked",
     "mask32",
+    "max_defs",
     "max_depth",
     "memo_size",
     "memory",
@@ -782,6 +784,7 @@
     "same",
     "same_letters",
     "same_letters",
+    "scale_of",
     "scan",
     "scan_for",
     "schema",
@@ -806,6 +809,7 @@
     "size$int",
     "size$int",
     "size_for",
+    "size_of",
     "skip",
     "skip_of",
     "skip_space",
@@ -938,5 +942,5 @@
   ],
   "folded_operators": 399,
   "folded_calls": 0,
-  "functions": 1585
+  "functions": 1591
 }

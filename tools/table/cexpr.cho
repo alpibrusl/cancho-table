@@ -704,6 +704,36 @@ pub fn name_of[&h, &t, &p](heap: &!h Heap, out: buffer.Buffer, t: &t [byte], pro
     return o;
 }
 
+// The size of definition `d`, in instructions.
+pub fn size_of[&p](prog: &p [int], d: int) -> [] int {
+    return (prog[1 + 5 * d + 1] - prog[1 + 5 * d]) / 4;
+}
+
+// Whether definition `d` has an instruction of a class: 0 an operator (+, -, * or /), 1 a division, 2 a cell read as :int, 3 a cell read as :dec(S).
+pub fn has[&p](prog: &p [int], d: int, what: int) -> [] bool {
+    var at = prog[1 + 5 * d];
+    let end = prog[1 + 5 * d + 1];
+    while at < end {
+        let op = prog[at];
+        if what == 0 && (op == op_add() || op == op_sub() || op == op_mul() || op == op_div()) {
+            return true;
+        }
+        if what == 1 && op == op_div() {
+            return true;
+        }
+        if op == op_cell() {
+            if what == 2 && prog[at + 3] == 0 {
+                return true;
+            }
+            if what == 3 && prog[at + 3] != 0 {
+                return true;
+            }
+        }
+        at = at + 4;
+    }
+    return false;
+}
+
 // One cell of the row as a value in slot `s`: answers (status, 0). Status 0, or `s_cell_int()` / `s_cell_dec()` plus the parser's status.
 fn load_cell[&d, &c, &w](record: &d [byte], cells: &c [int], col: int, scale: int, kind: int, w: &!w [int], s: int) -> [] int {
     let first = cells[3 * col];
