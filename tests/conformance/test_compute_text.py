@@ -132,7 +132,8 @@ class Text(unittest.TestCase):
         self.assertEqual(r.status, 0, r.raw_stderr[:200])
         data = r.data()
         self.assertEqual(data["columns"], HEADER + ["u", "v", "w"])
-        self.assertEqual(data["rows"][0][4:], ["HELLO, WORLD", 'say "hi"line\nfeed', "Été".lower().replace("é", "é").replace("É", "É")])
+        # lower() changes the ASCII letters only: the accented capital stays a capital
+        self.assertEqual(data["rows"][0][4:], ["HELLO, WORLD", 'say "hi"line\nfeed', "\u00c9t\u00e9"])
 
     # the limit of a row
     def test_a_result_past_the_line_limit_is_refused_and_one_inside_it_is_not(self):
