@@ -44,7 +44,7 @@ type   = "int" | "dec(" nat ")" ;
 * **Names and positions** as `--where` has them (`docs/select.md`): a bare word, `'quoted'` with `''`, `#3` a position, a backslash escape. *Read.*
 * **`+ - *`, unary minus, parentheses, the usual precedence** (a product binds tighter than a sum, left to right). *Choice:* the earlier design allowed one
   operator only to avoid "the first expression"; a language with three operators and parentheses is what a spreadsheet user means by "operations", and
-  the grammar above was the whole of it: **no comparisons, no strings, no conditionals**. *Corrected 2026-11-15:* it is no longer the whole of it; `operand` also has the calls of the numeric functions of [`docs/functions.md`](functions.md) section 3.2 (`abs`, `sign`, `greatest`, `least`, `round`, `floor`, `ceil`, `trunc`, `coalesce`), written `name(` with the parenthesis next to the name.
+  the grammar above was the whole of it: **no comparisons, no strings, no conditionals**. *Corrected 2026-11-15:* it is no longer the whole of it, and strings are in a definition of their own kind (a text-valued one: [`docs/functions.md`](functions.md) section 3.3); `operand` also has the calls of the numeric functions of [`docs/functions.md`](functions.md) section 3.2 (`abs`, `sign`, `greatest`, `least`, `round`, `floor`, `ceil`, `trunc`, `coalesce`), written `name(` with the parenthesis next to the name.
 * **`NAME`** is the new header; it must not equal an input header or another definition (`compute.duplicate-name`, repair: choose another name).
 * **At most 8 definitions, 256 bytes each, 4 levels of parentheses and 10 operands pending at once** (`compute.too-long`). *Choice, small enough to bound the work per row; the first draft said 16 levels of parentheses, and the build (`tools/table/cexpr.cho`) holds 4, which a gate (`C 9` on five levels) pins.*
 * **`a / b @ N` takes a factor** on its right (a column, a number, a negation, a parenthesised group) and `@N` closes it, so `a / b @ 2 * c` is `(a / b @ 2) * c`; `a / b * c @ 2` is `compute.division-needs-scale` (the first `/` has none). *Read from the build's gates.*
@@ -109,7 +109,7 @@ Cost: a copy of the line and a few appends per row, on the stage's own loop. The
 
 `compute.syntax` (offset, what was expected) · `compute.unknown-column` · `compute.ambiguous-column` · `compute.duplicate-name` · `compute.untyped-operand` ·
 `compute.float-operand` · `compute.scale-too-large` · `compute.division-needs-scale` · `compute.divide-by-zero` · `compute.overflow` ·
-`compute.too-long` · `compute.unknown-function` · `compute.arity` · `compute.bad-literal` (the three of the calls, section 3.2 of `docs/functions.md`) · `compute.unsupported-combination`. Existing: `value.*` for cells. No payload (no cell) is in any message: a refusal names the
+`compute.too-long` · `compute.unknown-function` · `compute.arity` · `compute.bad-literal` (the three of the calls, section 3.2 of `docs/functions.md`) · `compute.type-mismatch` · `compute.result-too-long` · `compute.not-utf8-boundary` (the three of the text functions, section 3.3) · `compute.unsupported-combination`. Existing: `value.*` for cells. No payload (no cell) is in any message: a refusal names the
 definition, the column and the row number only.
 
 ## 6. The arithmetic core (the first piece, as 8.3 said)

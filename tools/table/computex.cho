@@ -52,6 +52,8 @@ pub fn plan[&h, &t, &n, &e](heap: &!h Heap, text0: &t [byte], names: &n buffer.B
         var dec_cells = false;
         var operators = false;
         var divisions = false;
+        var texts = false;
+        var cuts = false;
         stage = buffer.append(heap, stage, "{\"definitions\":[");
         borrow prog as &pr in {
             var d = 0;
@@ -67,8 +69,17 @@ pub fn plan[&h, &t, &n, &e](heap: &!h Heap, text0: &t [byte], names: &n buffer.B
                     labels = text.append_json(heap, labels, buffer.bytes(nmr));
                 }
                 buffer.drop(heap, nm);
-                stage = buffer.append(heap, stage, ",\"scale\":");
-                stage = buffer.push_nat(heap, stage, cexpr.scale_of(contents(pr), d));
+                if cexpr.scale_of(contents(pr), d) < 0 {
+                    // a text-valued definition: a kind and no scale
+                    stage = buffer.append(heap, stage, ",\"kind\":\"text\"");
+                    texts = true;
+                    if cexpr.has(contents(pr), d, 4) {
+                        cuts = true;
+                    }
+                } else {
+                    stage = buffer.append(heap, stage, ",\"scale\":");
+                    stage = buffer.push_nat(heap, stage, cexpr.scale_of(contents(pr), d));
+                }
                 stage = buffer.append(heap, stage, ",\"instructions\":");
                 stage = buffer.push_nat(heap, stage, cexpr.size_of(contents(pr), d));
                 stage = buffer.push(heap, stage, byte_of('}'));
@@ -104,6 +115,12 @@ pub fn plan[&h, &t, &n, &e](heap: &!h Heap, text0: &t [byte], names: &n buffer.B
         }
         if divisions {
             rules = put_rule(heap, rules, "compute.divide-by-zero");
+        }
+        if texts {
+            rules = put_rule(heap, rules, "compute.result-too-long");
+        }
+        if cuts {
+            rules = put_rule(heap, rules, "compute.not-utf8-boundary");
         }
     }
     unbox_slice(heap, endsb);

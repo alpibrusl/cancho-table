@@ -48,6 +48,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     var scratch = buffer.empty(heap, 1);
     var escr = buffer.empty(heap, 16);
     var kept = buffer.empty(heap, 64);
+    var arena = buffer.empty(heap, 64);
     var rec = buffer.empty(heap, 256);
     var copy = buffer.empty(heap, 256);
     var cols = box_slice(heap, 1, 0);
@@ -234,13 +235,14 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
                                                                 record = line;
                                                             }
                                                             borrow mut ws as &!wsw in {
-                                                                let (c2, p2, r2, s2, e2, k2, st2, col, def) = compute.row_out(heap, io, record, contents(pr), nd, nfields, contents(wsw), tree, contents(kr), contents(sr), cells, copy, rows, scratch, escr, kept, picked, delim, as_csv, budget, number, limit, a);
+                                                                let (c2, p2, r2, s2, e2, k2, st2, col, def, ar2) = compute.row_out(heap, io, record, contents(pr), nd, nfields, contents(wsw), tree, contents(kr), contents(sr), cells, copy, rows, scratch, escr, kept, picked, delim, as_csv, budget, number, limit, a, text, cap, arena);
                                                                 cells = c2;
                                                                 copy = p2;
                                                                 rows = r2;
                                                                 scratch = s2;
                                                                 escr = e2;
                                                                 kept = k2;
+                                                                arena = ar2;
                                                                 if st2 != 0 {
                                                                     rstatus = st2;
                                                                     rcol = col;
@@ -284,6 +286,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     buffer.drop(heap, rec);
     buffer.drop(heap, copy);
     buffer.drop(heap, scratch);
+    buffer.drop(heap, arena);
     buffer.drop(heap, fsbytes);
     unbox_slice(heap, ftable);
     var errno = 0;

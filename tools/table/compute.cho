@@ -14,6 +14,7 @@ import std.vec;
 import bulk;
 import cexpr;
 import cmpv;
+import ctext;
 import engine;
 import finish;
 import frame;
@@ -66,6 +67,15 @@ fn rule_of(status: int) -> [] &static [byte] {
     if status == 15 {
         return "compute.bad-literal";
     }
+    if status == 16 {
+        return "compute.type-mismatch";
+    }
+    if status == 17 {
+        return "compute.result-too-long";
+    }
+    if status == 18 {
+        return "compute.not-utf8-boundary";
+    }
     return "compute.syntax";
 }
 
@@ -107,7 +117,16 @@ fn what_of(status: int) -> [] &static [byte] {
         return "a call in --compute has too few or too many arguments for its function";
     }
     if status == 15 {
-        return "a literal of a call in --compute is not what the function takes: a scale from 0 to 18, or a number with no more fractional digits than the column";
+        return "a literal of a call in --compute is not what the function takes: a scale from 0 to 18, a number with no more fractional digits than the column, an integer for substr, a string literal that is closed";
+    }
+    if status == 16 {
+        return "a text and a number meet in --compute: the functions of text take a text (a column with no type, a string literal in double quotes or a call) and the numbers never are converted";
+    }
+    if status == 17 {
+        return "a text of --compute is longer than --max-line-bytes in a row";
+    }
+    if status == 18 {
+        return "substr cuts a text between a byte and a continuation byte in a row: a half of a character is not a text";
     }
     return "--compute is not NAME=EXPR with + - * / and parentheses, and calls of functions";
 }
@@ -151,6 +170,15 @@ fn hint_of(status: int) -> [] &static [byte] {
     }
     if status == 15 {
         return "round, floor, ceil and trunc take an integer from 0 to 18 as their second argument, coalesce takes a number as its second, with no more fractional digits than its column";
+    }
+    if status == 16 {
+        return "write a text as a column with no type, a string literal in double quotes or a call of a text function, and a number as the numbers are written: len(NAME) is the one way from a text to a number";
+    }
+    if status == 17 {
+        return "raise --max-line-bytes, or make the text shorter";
+    }
+    if status == 18 {
+        return "cut at a character: start and count in bytes, at the first byte of a character";
     }
     return "write --compute 'total=price:dec(2)*qty:int'";
 }
@@ -205,7 +233,7 @@ pub fn refuse_cell[&h, &p, &n, &d](heap: &!h Heap, e: fail.Errors, status: int, 
 
 // One row: the definitions evaluated against the record, their text appended to a copy of it, its cells made, and the row written by `engine.process_rows`. Answers the cells, the copy,
 // the four buffers of the output, and a status: 0, or the status of `cexpr` that refused the row with the column (for a cell) or the definition.
-pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a](heap: &!h Heap, io: &!i Io, line: &l [byte], prog: &p [int], nd: int, ncols: int, ws: &!w [int], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: Box[[int]], copy: buffer.Buffer, rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, picked: int, delim: int, as_csv: bool, budget: int, number: int, limit: int, a: &!a [int]) -> [heap, io_write] (Box[[int]], buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, int, int, int) {
+pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a, &x](heap: &!h Heap, io: &!i Io, line: &l [byte], prog: &p [int], nd: int, ncols: int, ws: &!w [int], tree: &q query.Query, cols: &c [int], sel: &s [int], cells: Box[[int]], copy: buffer.Buffer, rows: buffer.Buffer, scratch: buffer.Buffer, escr: buffer.Buffer, kept: buffer.Buffer, picked: int, delim: int, as_csv: bool, budget: int, number: int, limit: int, a: &!a [int], text: &x [byte], cap: int, arena: buffer.Buffer) -> [heap, io_write] (Box[[int]], buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, buffer.Buffer, int, int, int, buffer.Buffer) {
     var cells2 = cells;
     var copy2 = copy;
     borrow mut copy2 as &!cw in {
@@ -216,19 +244,66 @@ pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a](heap: &!h Heap, io: &!i Io, l
     var col = 0;
     var def = 0;
     var d = 0;
+    var arena2 = arena;
     while d < nd && status == 0 {
         var st = 0;
         var cc = 0;
-        borrow cells2 as &cr in {
-            let (s1, c1) = cexpr.eval(prog, d, line, contents(cr), ws);
-            st = s1;
-            cc = c1;
+        if cexpr.scale_of(prog, d) < 0 {
+            // a text-valued definition (docs/functions.md section 3.3): written as a quoted cell, its quotes doubled, so that the writers quote it where they must
+            var ts = 0;
+            var tb = 0;
+            var te = 0;
+            borrow cells2 as &cr in {
+                let (a3, s3, b3, e3) = ctext.eval(heap, prog, d, text, line, contents(cr), arena2, cap);
+                arena2 = a3;
+                ts = s3;
+                tb = b3;
+                te = e3;
+            }
+            if ts != 0 {
+                st = ts;
+            } else {
+                var tstart = 0;
+                borrow copy2 as &kr in {
+                    tstart = buffer.size(kr);
+                }
+                borrow arena2 as &ar in {
+                    let data = buffer.bytes(ar);
+                    var k = tb;
+                    while k < te {
+                        copy2 = buffer.push(heap, copy2, data[k]);
+                        if int_of(data[k]) == 34 {
+                            copy2 = buffer.push(heap, copy2, data[k]);
+                        }
+                        k = k + 1;
+                    }
+                }
+                var tend = 0;
+                borrow copy2 as &kr in {
+                    tend = buffer.size(kr);
+                }
+                if tend > cap {
+                    st = 17;
+                } else {
+                    borrow mut cells2 as &!cw3 in {
+                        contents(cw3)[3 * (ncols + d)] = tstart;
+                        contents(cw3)[3 * (ncols + d) + 1] = tend;
+                        contents(cw3)[3 * (ncols + d) + 2] = 1;
+                    }
+                }
+            }
+        } else {
+            borrow cells2 as &cr in {
+                let (s1, c1) = cexpr.eval(prog, d, line, contents(cr), ws);
+                st = s1;
+                cc = c1;
+            }
         }
         if st != 0 {
             status = st;
             col = cc;
             def = d;
-        } else {
+        } else if cexpr.scale_of(prog, d) >= 0 {
             var start = 0;
             borrow copy2 as &kr in {
                 start = buffer.size(kr);
@@ -261,7 +336,7 @@ pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a](heap: &!h Heap, io: &!i Io, l
             }
         }
     }
-    return (cells2, copy2, rows2, scratch2, escr2, kept2, status, col, def);
+    return (cells2, copy2, rows2, scratch2, escr2, kept2, status, col, def, arena2);
 }
 
 // The sequential read of `read_file` (or, with `stdin`, of `read_stream`: the refill is the one difference), with the definitions of `--compute` in the place of the selection. Same arguments, same answer.
@@ -278,6 +353,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     var scratch = buffer.empty(heap, 1);
     var escr = buffer.empty(heap, 16);
     var kept = buffer.empty(heap, 64);
+    var arena = buffer.empty(heap, 64);
     var rec = buffer.empty(heap, 256);
     var copy = buffer.empty(heap, 256);
     var cols = box_slice(heap, 1, 0);
@@ -379,13 +455,14 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
                                 borrow sel as &sr in {
                                     borrow prog as &pr in {
                                         borrow mut ws as &!wsw in {
-                                            let (c2, p2, r2, s2, e2, k2, st, col, def) = row_out(heap, io, line, contents(pr), nd, a[engine.k_columns()], contents(wsw), tree, contents(kr), contents(sr), cells, copy, rows, scratch, escr, kept, picked, delim, as_csv, budget, number, limit, a);
+                                            let (c2, p2, r2, s2, e2, k2, st, col, def, ar2) = row_out(heap, io, line, contents(pr), nd, a[engine.k_columns()], contents(wsw), tree, contents(kr), contents(sr), cells, copy, rows, scratch, escr, kept, picked, delim, as_csv, budget, number, limit, a, text, cap, arena);
                                             cells = c2;
                                             copy = p2;
                                             rows = r2;
                                             scratch = s2;
                                             escr = e2;
                                             kept = k2;
+                                            arena = ar2;
                                             if st != 0 {
                                                 rstatus = st;
                                                 rcol = col;
@@ -550,13 +627,14 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
                                             borrow sel as &sr in {
                                                 borrow prog as &pr in {
                                                     borrow mut ws as &!wsw in {
-                                                        let (c2, p2, r2, s2, e2, k2, st, col, def) = row_out(heap, io, record, contents(pr), nd, a[engine.k_columns()], contents(wsw), tree, contents(kr), contents(sr), cells, copy, rows, scratch, escr, kept, picked, delim, as_csv, budget, opened, limit, a);
+                                                        let (c2, p2, r2, s2, e2, k2, st, col, def, ar2) = row_out(heap, io, record, contents(pr), nd, a[engine.k_columns()], contents(wsw), tree, contents(kr), contents(sr), cells, copy, rows, scratch, escr, kept, picked, delim, as_csv, budget, opened, limit, a, text, cap, arena);
                                                         cells = c2;
                                                         copy = p2;
                                                         rows = r2;
                                                         scratch = s2;
                                                         escr = e2;
                                                         kept = k2;
+                                                        arena = ar2;
                                                         if st != 0 {
                                                             rstatus = st;
                                                             rcol = col;
@@ -605,6 +683,7 @@ pub fn read[&h, &g, &p, &f, &s, &i, &q, &fs, &rt, &rl, &fu](heap: &!h Heap, args
     buffer.drop(heap, rec);
     buffer.drop(heap, copy);
     buffer.drop(heap, scratch);
+    buffer.drop(heap, arena);
     var errno = 0;
     borrow r as &rr in {
         errno = lines.failed(rr);

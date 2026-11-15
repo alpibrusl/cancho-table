@@ -1,6 +1,6 @@
 # Functions in `--compute`: a design (slices K5 to K8)
 
-> **Status: design; K5a (`--explain` for the stage, section 3.1) and K5 (the numeric functions, section 3.2) are built; K6 to K8 are not.** Every claim is a **choice**, a **read** (file), **measured** (with the command), or **open**. A measurement replaces its line, in place, when it exists.
+> **Status: design; K5a (`--explain` for the stage, section 3.1), K5 (the numeric functions, section 3.2) and K6 (the text functions, section 3.3) are built; K7 and K8 are not.** Every claim is a **choice**, a **read** (file), **measured** (with the command), or **open**. A measurement replaces its line, in place, when it exists.
 > Written 2026-11-15 after the maintainer's direction (relayed in the working session): *unblock functions without affecting performance or the first principles.*
 > It amends item 14 of `docs/backlog.md` (the decision of 2026-11-09) and reopens two lines of `docs/computed-columns.md` section 10 ("Rounding functions: out", "Dates: out"); both are corrected in place and point here.
 
@@ -41,7 +41,7 @@ The signature table is **one static table** that the parser, `introspect`, the s
 |---|---|---|
 | **K5a** (built) | `--explain` for the stage | the definitions, the scale of each, the program size, the possible refusals; no data read beyond the header, as `--explain` is. A prerequisite, not a function. Section 3.1 |
 | **K5** (built) numbers | `abs(x)`, `sign(x)`, `greatest(a, b ...)`, `least(a, b ...)`, `round(x, n)`, `floor(x, n)`, `ceil(x, n)`, `trunc(x, n)`, `coalesce(col, literal)` | `round` is half to even, the rule `/ @N` already has (**read**: `docs/computed-columns.md` section 6); `n` is a literal scale `0..18`; the result is `dec(n)`. `coalesce` is the answer to the empty cell (`value.not-decimal`, `docs/numbers.md`): an empty cell, and only an empty one, becomes the literal; any other bad cell is still refused. A result is exact or refused (`compute.overflow`), never a double |
-| **K6** (designed, section 3.3) text | `lower(s)`, `upper(s)`, `trim(s)`, `ltrim(s)`, `rtrim(s)`, `substr(s, start, count)`, `concat(a, b ...)`, `len(s)`, `replace(s, from, to)` | **ASCII only** (choice, recommended and accepted): `lower` and `upper` change the 26 ASCII letters and leave every other byte as it is, and the signature says so; no Unicode table, no locale. `trim` removes ASCII space and tab. `substr` counts **bytes** and refuses a cut inside a multi-byte character (`compute.not-utf8-boundary`), because a half character is not a text. `replace` and `concat` can grow: bounded by invariant 2. `len` counts bytes (**open**: also a character count under another name) |
+| **K6** (built) text | `lower(s)`, `upper(s)`, `trim(s)`, `ltrim(s)`, `rtrim(s)`, `substr(s, start, count)`, `concat(a, b ...)`, `len(s)`, `replace(s, from, to)` | **ASCII only** (choice, recommended and accepted): `lower` and `upper` change the 26 ASCII letters and leave every other byte as it is, and the signature says so; no Unicode table, no locale. `trim` removes ASCII space and tab. `substr` counts **bytes** and refuses a cut inside a multi-byte character (`compute.not-utf8-boundary`), because a half character is not a text. `replace` and `concat` can grow: bounded by invariant 2. `len` counts bytes (**open**: also a character count under another name) |
 | **K7** conditions | `if(cond, a, b)`, comparisons in a definition | **open and last of the numbers and texts**: it needs the `--where` condition grammar inside an expression (so its 4-level and 64-condition limits), and a boolean kind. It is designed after K5 and K6 have measured what a function costs |
 | **K8** dates | `year(d)`, `month(d)`, `day(d)`, `weekday(d)`, `days_between(a, b)`, `add_days(d, n)` | on `:date` only, the real calendar already in `dtparse` (**read**: `docs/datetime.md`): integer arithmetic on days, no zone, no time of day. **Open, to confirm before K8:** whether day-count arithmetic reopens the non-goal "no arithmetic" of `docs/datetime.md` section 15. `strftime`, zones, `now` and epoch integers stay non-goals |
 
@@ -108,9 +108,9 @@ The signature table is **one static table** that the parser, `introspect`, the s
 
 **Not measured:** the cost of a call (G-COST). No speed is claimed for the functions; the baseline of section 5 stands.
 
-### 3.3 K6: the text functions, exactly (written before the code)
+### 3.3 K6: the text functions, exactly (built 2026-11-15)
 
-> **Status: design.** The decisions that show in a definition (the string literal, ASCII case, bytes, what `len` takes) are **choices**, listed at the end of the section for the maintainer.
+> **Status: built.** The decisions that show in a definition (the string literal, ASCII case, bytes, what `len` takes) were **choices**, confirmed by the maintainer as written ("go as written", 2026-11-15). The text below is the design as written before the code, **corrected in place** where the build differs (marked *Corrected*); the gates are at the end.
 
 **Two kinds of definition.** A definition is **text-valued** when its expression is a call of a text function (`lower`, `upper`, `trim`, `ltrim`, `rtrim`, `substr`, `concat`, `replace`), and **number-valued** otherwise (everything of K5, plus `len`). A text-valued definition has no operators: its expression is one call whose arguments are text operands, which are themselves calls. A number-valued one never takes a text except as the argument of `len`. **No automatic conversion** either way: `lower(price:dec(2))`, `upper(1)` and `1 + lower(name)` are `compute.type-mismatch`.
 
@@ -120,12 +120,12 @@ The signature table is **one static table** that the parser, `introspect`, the s
 |---|---|---|
 | `lower(s)`, `upper(s)` | 1 | the 26 ASCII letters changed; **every other byte unchanged** (no locale, no Unicode tables: `lower("Ã")` is `Ã`) |
 | `trim(s)`, `ltrim(s)`, `rtrim(s)` | 1 | ASCII space (0x20) and tab (0x09) removed from both ends, the left, the right |
-| `substr(s, start, count)` | 3: `start` an integer literal from 1, `count` an integer literal from 0 (digits only) | the bytes from `start` (1 is the first), at most `count`, clipped to the end; a `start` past the end is empty. A cut **between a byte and a continuation byte** (0x80 to 0xBF) is `compute.not-utf8-boundary` for that row: a half character is not a text |
+| `substr(s, start, count)` | 3: `start` an integer literal from 1, `count` an integer literal from 0 (digits only, **at most nine of them**: *Corrected:* a tenth digit is `compute.bad-literal`, as the two are packed into one instruction) | the bytes from `start` (1 is the first), at most `count`, clipped to the end; a `start` past the end is empty. A cut **between a byte and a continuation byte** (0x80 to 0xBF) is `compute.not-utf8-boundary` for that row: a half character is not a text |
 | `concat(a, b ...)` | 2 to 8 text operands | the bytes one after the other |
 | `replace(s, from, to)` | 3: `from` a **non-empty** string literal, `to` a string literal | every non-overlapping `from`, left to right (`replace("aaa","aa","b")` is `ba`) |
-| `len(s)` | 1: **a column without a type or a string literal** | the **number of bytes**, an integer (scale 0). Number-valued: `n=len(name)+1` is an expression of K5. **Choice:** its argument is not a call in this slice |
+| `len(s)` | 1: **a column without a type or a string literal** (*Corrected:* a typed column, a call and the name of an earlier definition are each `compute.type-mismatch`) | the **number of bytes**, an integer (scale 0). Number-valued: `n=len(name)+1` is an expression of K5. **Choice:** its argument is not a call in this slice |
 
-**What a text result is.** A text of any bytes. It is written into the answer **as a quoted cell** (the quotes inside doubled, flagged as the reader flags a cell it read quoted), so the writers quote it when it has to be (`csv_cell` quotes an unquoted cell only for a quote or a CR, because a field read from a file cannot hold a delimiter or a line feed, which a computed text can; **read**: `tools/table/writer.cho`, `csv_cell`) and JSON writes it as a string (`json_cell`). The row's line is longer by its length, so a result that would take the record past `--max-line-bytes` is `compute.result-too-long` for that row (never truncated).
+**What a text result is.** A text of any bytes. It is written into the answer **as a quoted cell** (the quotes inside doubled, flagged as the reader flags a cell it read quoted), so the writers quote it when it has to be (`csv_cell` quotes an unquoted cell only for a quote or a CR, because a field read from a file cannot hold a delimiter or a line feed, which a computed text can; **read**: `tools/table/writer.cho`, `csv_cell`) and JSON writes it as a string (`json_cell`). The row's line is longer by its length, so a result that would take the record past `--max-line-bytes` is `compute.result-too-long` for that row (never truncated). *Corrected:* an **intermediate** text longer than `--max-line-bytes` (a `replace` that grows it, a cell that is itself longer) is refused the same way, which keeps the arena to one limit's worth for each value.
 
 **Evaluation.** One new small evaluator for texts, `tools/table/ctext.cho`: a postfix program of the same shape as the number one (`op`, `a`, `b`, `c`), values held in one scratch buffer that is emptied for each row, the cells copied into it unquoted. The number machine (`cexpr.cho`, `cmpv.cho`) is **not changed** except for one leaf, `op_len`, which reads a cell's byte count. Literals are read from the definitions' own text.
 
@@ -135,7 +135,18 @@ The signature table is **one static table** that the parser, `introspect`, the s
 
 **The reference** is `scripts/ctext_golden.py` (Python, `bytes`/`str` methods, no code shared with the tool): the same shape as `cexpr_golden.py`, with a probe over `tools/table/ctext.cho`. **Gates:** G-TX-ORACLE (random texts: ASCII, 2- to 4-byte characters, quotes, commas, line feeds, empty; random nested calls; refusals), G-TX-MUT (mutants of the evaluator and of the parser), G-TX-WRITE (through the binary: CSV that a CSV reader reads back to the same fields, and JSON, for texts with a comma, a quote, a line feed and a CR), `compute.*` explain, and `test_compute.py` as for K5.
 
-**Choices to confirm.** (1) The string literal in double quotes. (2) ASCII-only case mapping (decided on 2026-11-15) and bytes, not characters, for `substr` and `len`: a character count is a different function and is **open**. (3) `len` takes a column or a literal, not a call. (4) A text result is a quoted cell. (5) No conversion between texts and numbers in either direction; a number written as text (`text(x)`) stays **open**.
+**Choices, confirmed as written.** (1) The string literal in double quotes. (2) ASCII-only case mapping and bytes for `substr` and `len` (a character count is a different function: **open**). (3) `len` takes a column or a literal, not a call. (4) A text result is a quoted cell. (5) No conversion between texts and numbers in either direction; `text(x)` stays **open**.
+
+**Gates, as run** (compiler `119bcfe`, 15 Nov 2026):
+
+* *G-TX-ORACLE* (`tests/conformance/test_compute_text.py` against `scripts/ctext_ref.py`, Python's `bytes` methods): the hand cases (every function, every refusal, the boundary at the first and the last byte, chaining, `len`), and **6,000 random definitions over random texts** (ASCII, 2 to 4 byte characters, quotes, commas, line feeds, CRs, empty, bytes that are not UTF-8) at three seeds, **0 differences**, the refused rows included (the rule and the row).
+* *G-TX-WRITE*: the answer is CSV that a CSV reader reads back to the same fields (a delimiter, a quote, a line feed, a CR in a result), JSON that reads back to the same strings, and the same through JSON lines and standard input.
+* *G-TX-MUT* (`python3 scripts/ctext_mutants.py`): 37 mutants of the evaluator, the compiler's text half, the row and the explain.
+* The explain (`stage.definitions[].kind: "text"` and no scale; `compute.result-too-long` for a text, `compute.not-utf8-boundary` only with a `substr`), `test_rules` (a fixture for each new rule).
+
+**Found by the gates:** `substr` took three operands off the stack where it has one (the start and the count are literals), a trap on the first run; and my hand case for `substr` over `\x80\x80` expected a value where the rule of the design refuses (the cut is before a continuation byte): the tool was right and the hand case wrong.
+
+**Not measured:** the cost of a text function (G-COST). No speed is claimed.
 
 ## 4. Rules (every refusal has a tag)
 
