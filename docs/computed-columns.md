@@ -44,7 +44,7 @@ type   = "int" | "dec(" nat ")" ;
 * **Names and positions** as `--where` has them (`docs/select.md`): a bare word, `'quoted'` with `''`, `#3` a position, a backslash escape. *Read.*
 * **`+ - *`, unary minus, parentheses, the usual precedence** (a product binds tighter than a sum, left to right). *Choice:* the earlier design allowed one
   operator only to avoid "the first expression"; a language with three operators and parentheses is what a spreadsheet user means by "operations", and
-  the grammar above is the whole of it: **no functions, no comparisons, no strings, no conditionals.**
+  the grammar above was the whole of it: **no comparisons, no strings, no conditionals**. *Corrected 2026-11-15:* it is no longer the whole of it; `operand` also has the calls of the numeric functions of [`docs/functions.md`](functions.md) section 3.2 (`abs`, `sign`, `greatest`, `least`, `round`, `floor`, `ceil`, `trunc`, `coalesce`), written `name(` with the parenthesis next to the name.
 * **`NAME`** is the new header; it must not equal an input header or another definition (`compute.duplicate-name`, repair: choose another name).
 * **At most 8 definitions, 256 bytes each, 4 levels of parentheses and 10 operands pending at once** (`compute.too-long`). *Choice, small enough to bound the work per row; the first draft said 16 levels of parentheses, and the build (`tools/table/cexpr.cho`) holds 4, which a gate (`C 9` on five levels) pins.*
 * **`a / b @ N` takes a factor** on its right (a column, a number, a negation, a parenthesised group) and `@N` closes it, so `a / b @ 2 * c` is `(a / b @ 2) * c`; `a / b * c @ 2` is `compute.division-needs-scale` (the first `/` has none). *Read from the build's gates.*
@@ -109,7 +109,7 @@ Cost: a copy of the line and a few appends per row, on the stage's own loop. The
 
 `compute.syntax` (offset, what was expected) · `compute.unknown-column` · `compute.ambiguous-column` · `compute.duplicate-name` · `compute.untyped-operand` ·
 `compute.float-operand` · `compute.scale-too-large` · `compute.division-needs-scale` · `compute.divide-by-zero` · `compute.overflow` ·
-`compute.too-long` · `compute.unsupported-combination`. Existing: `value.*` for cells. No payload (no cell) is in any message: a refusal names the
+`compute.too-long` · `compute.unknown-function` · `compute.arity` · `compute.bad-literal` (the three of the calls, section 3.2 of `docs/functions.md`) · `compute.unsupported-combination`. Existing: `value.*` for cells. No payload (no cell) is in any message: a refusal names the
 definition, the column and the row number only.
 
 ## 6. The arithmetic core (the first piece, as 8.3 said)
@@ -171,7 +171,7 @@ definition, the column and the row number only.
   callee at the 1.01 budget.
 * **JSON-lines input** (K3b) is built (section 8). It is a second copy of the stage's reader (`computej.cho`), because `jsonl.read` has its own loop; the day the two diverge is the day a change to one needs the other, and `scripts/compute_mutants.py` has a mutant for each of the stage's steps in both.
 * **Dates** (`ts + 1d`, differences): out; `docs/datetime.md` section 15 says why. *Reopened 2026-11-15 for day counts on `:date` only, to be confirmed before it is built: [`docs/functions.md`](functions.md) slice K8.*
-* **Rounding functions** (`round`, `floor`): out; `/ @N` is the only rounding. *Reopened 2026-11-15: [`docs/functions.md`](functions.md) slice K5 (`round`, `floor`, `ceil`, `trunc` with an explicit scale, half to even).*
+* **Rounding functions** (`round`, `floor`): out; `/ @N` is the only rounding. *Reopened 2026-11-15 and built: [`docs/functions.md`](functions.md) slice K5 (`round`, `floor`, `ceil`, `trunc` with an explicit scale, half to even).*
 
 ## 11. Chaining: a definition may name an earlier one (built 14 Nov 2026)
 

@@ -77,6 +77,37 @@ pub fn is_zero[&w](w: &w [int], s: int) -> [] bool {
     return mag_is_zero(w, s);
 }
 
+// The magnitude: the sign is cleared (zero was never negative).
+pub fn abs[&w](w: &!w [int], s: int) -> [] int {
+    w[s * 12] = 0;
+    return 0;
+}
+
+// The sign of a - b: -1, 0 or 1. The two values are at the same scale (the caller brings them there with `rescale`), and the slots are not changed. A magnitude may be as wide as the limbs
+// hold (270 bits), which `fits` is not asked of: a value stepped back to a wider scale to be compared is not an operand.
+pub fn cmp[&w](w: &w [int], a: int, b: int) -> [] int {
+    let na = w[a * 12] == 1;
+    let nb = w[b * 12] == 1;
+    if na && !nb {
+        return -1;
+    }
+    if nb && !na {
+        return 1;
+    }
+    let c = mag_cmp(w, a, b);
+    if na {
+        return -c;
+    }
+    return c;
+}
+
+// The value at a larger scale, exactly (`to` at least its scale). Answers false when the result is 2^127 or more.
+pub fn rescale[&w](w: &!w [int], s: int, to: int) -> [] bool {
+    mul_pow10(w, s, to - w[s * 12 + 1]);
+    w[s * 12 + 1] = to;
+    return fits(w, s);
+}
+
 // A slot from an `int` (any 64-bit value, including the smallest) and a scale.
 pub fn set_int[&w](w: &!w [int], s: int, v: int, scale: int) -> [] int {
     clear(w, s, scale);

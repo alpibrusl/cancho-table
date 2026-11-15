@@ -36,12 +36,57 @@ class BadScale(Exception):
     pass
 
 
+ROUND_MODES = ("round", "floor", "ceil", "trunc")
+FN_ARITY = {"abs": (1, 1), "sign": (1, 1), "greatest": (2, 8), "least": (2, 8), "round": (2, 2), "floor": (2, 2), "ceil": (2, 2), "trunc": (2, 2), "coalesce": (2, 2)}
+
+
+def round_to(v, s, n, mode):
+    """v at scale s as a value at scale n: more digits are only zeros; fewer are decided by the mode (round: ties to even; floor, ceil, trunc)"""
+    if n >= s:
+        return v * 10 ** (n - s)
+    d = 10 ** (s - n)
+    if mode == "round":
+        q, r = divmod(abs(v), d)
+        if 2 * r > d or (2 * r == d and q % 2 == 1):
+            q += 1
+        return -q if v < 0 else q
+    if mode == "floor":
+        return v // d
+    if mode == "ceil":
+        return -((-v) // d)
+    return -(abs(v) // d) if v < 0 else abs(v) // d
+
+
 def ev(node, row):
     """(value, scale) of a node; raises Overflow, DivZero, BadScale"""
     k = node[0]
     if k == "col":
         _, c, kind, s = node
         return row[c][0] * 10 ** (s - row[c][1]), s
+    if k == "coal":
+        # coalesce(column, literal): an empty cell (None) is the literal at the column's scale, anything else is the column
+        _, col, lv, ls = node
+        if row[col[1]] is None:
+            return lv * 10 ** (col[3] - ls), col[3]
+        return ev(col, row)
+    if k == "fn":
+        _, name, args, extra = node
+        vs = [ev(a, row) for a in args]
+        if name == "abs":
+            r, sc = abs(vs[0][0]), vs[0][1]
+        elif name == "sign":
+            r, sc = (vs[0][0] > 0) - (vs[0][0] < 0), 0
+        elif name in ("greatest", "least"):
+            sc = max(sv for _, sv in vs)
+            xs = [v * 10 ** (sc - sv) for v, sv in vs]
+            if any(abs(x) >= LIM for x in xs):
+                raise Overflow()
+            r = max(xs) if name == "greatest" else min(xs)
+        else:
+            r, sc = round_to(vs[0][0], vs[0][1], extra, name), extra
+        if abs(r) >= LIM:
+            raise Overflow()
+        return r, sc
     if k == "lit":
         return node[1], node[2]
     if k == "ref":
@@ -77,6 +122,18 @@ def static_scale(node):
     k = node[0]
     if k == "col":
         return node[3]
+    if k == "coal":
+        return node[1][3]
+    if k == "fn":
+        name, args, extra = node[1], node[2], node[3]
+        scales = [static_scale(a) for a in args]
+        if name == "abs":
+            return scales[0]
+        if name == "sign":
+            return 0
+        if name in ("greatest", "least"):
+            return max(scales)
+        return extra
     if k == "lit":
         return node[2]
     if k == "ref":
@@ -99,11 +156,18 @@ def sp(rng):
 
 
 def atom(node):
-    return node[0] in ("col", "lit", "ref")
+    return node[0] in ("col", "lit", "ref", "fn", "coal")
 
 
 def render(node, rng):
     k = node[0]
+    if k == "coal":
+        _, col, lv, ls = node
+        return f"coalesce({sp(rng)}{render(col, rng)}{sp(rng)},{sp(rng)}{text(lv, ls)}{sp(rng)})"
+    if k == "fn":
+        _, name, args, extra = node
+        parts = [render(a, rng) for a in args] + ([str(extra)] if extra is not None else [])
+        return f"{name}(" + sp(rng) + (sp(rng) + "," + sp(rng)).join(parts) + sp(rng) + ")"
     if k == "col":
         s = f"{'abcdef'[node[1]]}:int" if node[2] == "int" else f"{'abcdef'[node[1]]}:dec({node[3]})"
         return f"#{node[1] + 1}" + s[1:] if rng.random() < 0.15 else s
@@ -126,6 +190,8 @@ def render(node, rng):
 
 
 def paren_depth(s):
+    """the deepest nesting of grouping parentheses and call parentheses; the parentheses of a type (`dec(2)`) are not a level"""
+    s = re.sub(r"dec\(\d+\)", "dec", s)
     d = m = 0
     for ch in s:
         d += ch == "("
@@ -134,7 +200,29 @@ def paren_depth(s):
     return m
 
 
-def gen(rng, depth, cols):
+class Longest:
+    """a stand-in for the random generator that makes `render` as long as it can be: the widest spacing, no `#N` position"""
+
+    def random(self):
+        return 0.99
+
+    def choice(self, seq):
+        return max(seq, key=len)
+
+
+def gen_fn(rng, depth, cols):
+    """a call of one of the numeric functions of docs/functions.md section 3.2 (not coalesce: its cell must be empty, see lines_coalesce)"""
+    name = rng.choice(["abs", "sign", "greatest", "least", "round", "floor", "ceil", "trunc", "round", "trunc"])
+    if name in ("abs", "sign"):
+        return ("fn", name, [gen(rng, depth - 1, cols, True)], None)
+    if name in ("greatest", "least"):
+        return ("fn", name, [gen(rng, depth - 1, cols, True) for _ in range(rng.randint(2, 4))], None)
+    return ("fn", name, [gen(rng, depth - 1, cols, True)], rng.randint(0, 18))
+
+
+def gen(rng, depth, cols, fns=True):
+    if depth > 0 and fns and rng.random() < 0.3:
+        return gen_fn(rng, depth, cols)
     if depth == 0 or rng.random() < 0.25:
         if rng.random() < 0.2:
             sc = rng.randint(0, 4)
@@ -144,10 +232,10 @@ def gen(rng, depth, cols):
         return ("col", c, kind, 0 if kind == "int" else s)
     k = rng.choice(["+", "-", "*", "*", "/", "neg"])
     if k == "neg":
-        return ("neg", gen(rng, depth - 1, cols))
+        return ("neg", gen(rng, depth - 1, cols, fns))
     if k == "/":
-        return ("/", gen(rng, depth - 1, cols), gen(rng, depth - 1, cols), rng.randint(0, 18))
-    return (k, gen(rng, depth - 1, cols), gen(rng, depth - 1, cols))
+        return ("/", gen(rng, depth - 1, cols, fns), gen(rng, depth - 1, cols, fns), rng.randint(0, 18))
+    return (k, gen(rng, depth - 1, cols, fns), gen(rng, depth - 1, cols, fns))
 
 
 def make_row(rng):
@@ -175,6 +263,11 @@ def lines_of(rng, n):
         defs, exp = [], []
         for d in range(rng.randint(1, 3)):
             tree = gen(rng, rng.randint(1, 4), cols)
+            for _ in range(30):
+                # the limits (256 bytes, 128 instructions, 10 pending operands) have their own hand cases: a generated tree stays inside them
+                if size_of(tree) <= 100 and depth_of(tree) <= 9 and len(render(tree, Longest())) < 245:
+                    break
+                tree = gen(rng, rng.randint(1, 3), cols)
             try:
                 static_scale(tree)
                 v, s = ev(tree, row)
@@ -204,6 +297,10 @@ def size_of(node):
     k = node[0]
     if k in ("col", "lit"):
         return 1
+    if k == "coal":
+        return 2
+    if k == "fn":
+        return sum(size_of(a) for a in node[2]) + 1
     if k == "ref":
         return size_of(node[1])
     if k == "neg":
@@ -216,6 +313,10 @@ def depth_of(node):
     k = node[0]
     if k in ("col", "lit"):
         return 1
+    if k == "coal":
+        return 1
+    if k == "fn":
+        return max(i + depth_of(a) for i, a in enumerate(node[2]))
     if k == "ref":
         return depth_of(node[1])
     if k == "neg":
@@ -325,6 +426,108 @@ HAND = [
 ]
 
 
+def function_hand_cases():
+    """docs/functions.md section 3.2, one line each: the values the table says, and the refusals with their statuses"""
+    cells = "10,20,30,40,50,60"
+    big = "4611686018427387904,2,3,4,5,6"  # 2^62
+    rows = [
+        (cells, "r=abs(-a:int)", "r=10"), (cells, "r=abs(a:int)", "r=10"), (cells, "r=abs(0-5)", "r=5"), (cells, "r=abs(-1.50)", "r=1.50"),
+        (cells, "r=sign(-a:int)", "r=-1"), (cells, "r=sign(a:int)", "r=1"), (cells, "r=sign(0)", "r=0"), (cells, "r=sign(-0.5)", "r=-1"),
+        (cells, "r=greatest(a:int, b:int, c:int)", "r=30"), (cells, "r=least(a:int,b:int)", "r=10"), (cells, "r=greatest(1.5, 2)", "r=2.0"),
+        (cells, "r=least(1.50, 1.5)", "r=1.50"), (cells, "r=greatest(-1, -2, -3)", "r=-1"), (cells, "r=least(1.25, 1, 3.125)", "r=1.000"),
+        (cells, "r=round(2.5, 0)", "r=2"), (cells, "r=round(3.5, 0)", "r=4"), (cells, "r=round(-2.5, 0)", "r=-2"), (cells, "r=round(-3.5, 0)", "r=-4"),
+        (cells, "r=round(2.675, 2)", "r=2.68"), (cells, "r=round(1.005, 2)", "r=1.00"), (cells, "r=round(0.5, 0)", "r=0"), (cells, "r=round(7, 2)", "r=7.00"),
+        (cells, "r=round(1/3@6, 2)", "r=0.33"), (cells, "r=round(a:int/c:int@6, 3)", "r=0.333"),
+        (cells, "r=floor(2.5, 0)", "r=2"), (cells, "r=floor(-2.5, 0)", "r=-3"), (cells, "r=floor(-0.1, 0)", "r=-1"), (cells, "r=floor(2.999, 2)", "r=2.99"),
+        (cells, "r=ceil(2.1, 0)", "r=3"), (cells, "r=ceil(-2.5, 0)", "r=-2"), (cells, "r=ceil(0.1, 0)", "r=1"), (cells, "r=ceil(-0.001, 2)", "r=0.00"),
+        (cells, "r=trunc(2.9, 0)", "r=2"), (cells, "r=trunc(-2.9, 0)", "r=-2"), (cells, "r=trunc(2.5, 0)", "r=2"), (cells, "r=trunc(12.3456, 1)", "r=12.3"),
+        (cells, "r=greatest(-3, 5)", "r=5"), (cells, "r=least(-3, 5)", "r=-3"), (cells, "r=greatest(3, -5)", "r=3"), (cells, "r=least(3, -5)", "r=-5"),
+        (cells, "r=greatest(-0.5, 0)", "r=0.0"), (cells, "r=least(-0.5, 0)", "r=-0.5"), (cells, "r=floor(-5.5, 0)", "r=-6"), (cells, "r=ceil(5.5, 0)", "r=6"),
+        (cells, "r=round(1.5, 18)", "r=1.500000000000000000"), (cells, "r=abs(round(-2.5,0))+1", "r=3"), (cells, "r=greatest(abs(-2), round(1.5,0))", "r=2"),
+        (cells, "r=round( a:int , 2 )", "r=10.00"), (cells, "r = round ( 1.5 , 0 )".replace("round (", "round("), "r=2"),
+        (cells, "x=abs(-1);y=sign(x)", "x=1;y=1"),
+        # the refusals
+        (cells, "r=nope(1)", "C 13"), (cells, "r=ABS(1)", "C 13"), (cells, "r=abs()", "C 1"), (cells, "r=abs(1,2)", "C 14"), (cells, "r=greatest(1)", "C 14"),
+        (cells, "r=greatest(1,2,3,4,5,6,7,8,9)", "C 14"), (cells, "r=round(1)", "C 14"), (cells, "r=round(1,2,3)", "C 14"),
+        (cells, "r=round(1,19)", "C 15"), (cells, "r=round(1,-1)", "C 15"), (cells, "r=round(1,a:int)", "C 15"), (cells, "r=round(1,1.5)", "C 15"),
+        (cells, "r=floor(1,)", "C 15"), (cells, "r=abs(1", "C 1"), (cells, "r=abs(1))", "C 1"), (cells, "r=1,2", "C 1"), (cells, "r=(1,2)", "C 1"),
+        (cells, "r=abs (1)", "C 2"), (cells, "r=abs(,1)", "C 1"), (cells, "r=greatest(1,,2)", "C 1"), (cells, "r=greatest(1,2,)", "C 1"),
+        (cells, "r=abs(abs(abs(abs(abs(1)))))", "C 9"), (cells, "r=abs(abs(abs(abs(1))))", "r=1"),
+        (cells, "r=abs(a:float)", "C 6"), (cells, "r=abs(nope:int)", "C 2"), (cells, "r=abs(a)", "C 5"),
+        # overflow and the cells
+        (big, "r=round(a:int*a:int, 18)", "E 12 0 0"), (big, "r=greatest(a:int*a:int, 1.5)", "E 12 0 0"), (big, "r=abs(a:int*a:int)", "r=21267647932558653966460912964485513216"),
+        ("x,2,3,4,5,6", "r=abs(a:int)", "E 101 0 0"), ("1.234,2,3,4,5,6", "r=round(a:dec(2), 0)", "E 203 0 0"),
+        # coalesce
+        (",2,3,4,5,6", "r=coalesce(a:int, 7)", "r=7"), ('"",2,3,4,5,6', "r=coalesce(a:int, 7)", "r=7"), ("10,2,3,4,5,6", "r=coalesce(a:int, 7)", "r=10"),
+        (",2,3,4,5,6", "r=coalesce(a:dec(2), 1.5)", "r=1.50"), (",2,3,4,5,6", "r=coalesce(a:dec(2), 2)", "r=2.00"), (",2,3,4,5,6", "r=coalesce(a:int, -3)", "r=-3"),
+        (",2,3,4,5,6", "r=coalesce(a:int, 7)+1", "r=8"), (",2,3,4,5,6", "r=round(coalesce(a:dec(3), 0.125), 2)", "r=0.12"),
+        ("x,2,3,4,5,6", "r=coalesce(a:int, 7)", "E 101 0 0"), (" ,2,3,4,5,6", "r=coalesce(a:int, 7)", "E 101 0 0"),
+        (",2,3,4,5,6", "r=coalesce(a:int, 1.5)", "C 15"), (",2,3,4,5,6", "r=coalesce(a:int*2, 0)", "C 1"), (",2,3,4,5,6", "r=coalesce(a:int)", "C 14"),
+        (",2,3,4,5,6", "r=coalesce(a, 7)", "C 5"), (",2,3,4,5,6", "r=coalesce(a:int, b:int)", "C 15"), (",2,3,4,5,6", "r=coalesce(7, a:int)", "C 1"),
+        (",2,3,4,5,6", "r=coalesce(a:int, )", "C 15"), (",2,3,4,5,6", "r=1+coalesce(a:int, 7)*2", "r=15"),
+        (",2,3,4,5,6", "r=a:int+1", "E 101 0 0"),
+    ]
+    return [(HEADER, c, d, w) for c, d, w in rows]
+
+
+def lines_coalesce(rng, n):
+    """coalesce(cell, literal) with the cell empty or not, alone and inside an expression whose other leaves are other columns"""
+    out = []
+    for _ in range(n):
+        cols, cells, row = make_row(rng)
+        parts = cells.split(",")
+        c = rng.randrange(6)
+        kind, scale = cols[c]
+        col = ("col", c, kind, scale)
+        empty = rng.random() < 0.5
+        if empty:
+            parts[c] = '""' if rng.random() < 0.2 else ""
+            row[c] = None
+        ls = rng.randint(0, scale) if rng.random() < 0.85 else scale + rng.randint(1, 3)
+        lv = rng.randint(-10 ** rng.randint(1, 8), 10 ** rng.randint(1, 8))
+        tree = ("coal", col, lv, ls)
+        if rng.random() < 0.5:
+            o = (c + 1) % 6
+            ok, osc = cols[o]
+            other = ("col", o, ok, osc)
+            tree = rng.choice([("+", tree, other), ("*", other, tree), ("-", tree, other)])
+        rendered = render(tree, rng)
+        if ls > scale:
+            want = "C 15"
+        else:
+            try:
+                static_scale(tree)
+                v, sc = ev(tree, row)
+                want = f"r0={text(v, sc)}"
+            except BadScale:
+                want = "C 7"
+            except Overflow:
+                want = "E 12 0 0"
+        out.append((HEADER, ",".join(parts), "r0=" + rendered, want))
+    return out
+
+
+def selftest(rng, n=200000):
+    """the rounding family of the reference against Python's `decimal`, which shares no code with it"""
+    import decimal
+    ctx = decimal.Context(prec=80)
+    modes = {"round": decimal.ROUND_HALF_EVEN, "floor": decimal.ROUND_FLOOR, "ceil": decimal.ROUND_CEILING, "trunc": decimal.ROUND_DOWN}
+    for i in range(n):
+        sc = rng.randint(0, 18)
+        v = rng.choice([0, 5, -5, 25, -25, 15, 35, 10 ** 30, rng.randint(-10 ** rng.randint(1, 36), 10 ** rng.randint(1, 36))])
+        # ties on purpose: a value ending in 5 followed by zeros at the digit being dropped
+        n_to = rng.randint(0, 18)
+        if i % 3 == 0 and sc > n_to:
+            v = (v // 10 ** (sc - n_to) * 10 + rng.choice([5, -5])) * 10 ** (sc - n_to - 1) if sc - n_to >= 1 else v
+        d = decimal.Decimal(v).scaleb(-sc, context=ctx)
+        for mode, dm in modes.items():
+            q = d.quantize(decimal.Decimal(1).scaleb(-n_to), rounding=dm, context=ctx)
+            want = int(q.scaleb(n_to, context=ctx))
+            got = round_to(v, sc, n_to, mode)
+            assert got == want, (mode, v, sc, n_to, got, want)
+    return n
+
+
 def hand_cases():
     out = []
     for header, defs, want in HAND:
@@ -351,6 +554,7 @@ def hand_cases():
         ("a b,b,c,d,e,f", "7,2,3,4,5,6", "'out one'=\\a\\ b:int+1", "out one=8"),
         ("a,b,c,d,e,f", "7,2,3,4,5,6", "r=#1:int+#2:int", "r=9"),
     ]
+    out += function_hand_cases()
     return out
 
 
@@ -435,6 +639,37 @@ MUTANTS = [
     ("chain: always the first definition", "let from_at = prog[1 + 5 * dk];", "let from_at = prog[1 + 5 * 0];"),
     ("chain: the operand is not closed", "                        cur = cur + n_ints;\n                        i = e2;\n                        expect = false;", "                        cur = cur + n_ints;\n                        i = e2;"),
     ("an empty expression is accepted", "    if status == 0 && (expect || work[65] != 0) {", "    if status == 0 && (work[65] != 0) {"),
+    # the numeric functions (docs/functions.md section 3.2)
+    ("fn: abs keeps the sign", "        cmpv.abs(w, base);\n        return 0;", "        return 0;"),
+    ("fn: the sign of a negative is 1", "        } else if cmpv.negative(w, base) {\n            v = -1;", "        } else if cmpv.negative(w, base) {\n            v = 1;"),
+    ("fn: greatest and least are swapped", "            if id == 3 && c > 0 || id == 4 && c < 0 {", "            if id == 3 && c < 0 || id == 4 && c > 0 {"),
+    ("fn: the operands are not brought to one scale", "            if !cmpv.rescale(w, base + k, widest) {\n                return 12;\n            }", "            if false {\n                return 12;\n            }"),
+    ("fn: floor steps the wrong way", "        if id == 6 {\n            down = c > 0;", "        if id == 6 {\n            down = c < 0;"),
+    ("fn: ceil steps the wrong way", "        } else if id == 7 {\n            up = c < 0;", "        } else if id == 7 {\n            up = c > 0;"),
+    ("fn: trunc treats a negative as a positive", "        } else if cmpv.negative(w, base) {\n            up = c < 0;", "        } else if false {\n            up = c < 0;"),
+    ("fn: floor, ceil and trunc never step", "        if down || up {", "        if false {"),
+    ("fn: an overflow of the rounding is not reported", "    if cmpv.div(w, 11, base, 10, extra) != 0 {\n        return 12;", "    if cmpv.div(w, 11, base, 10, extra) == 99 {\n        return 12;"),
+    ("fn: the scale of a rounding call is the operand's", "            } else if id >= 5 {\n                fscale = prog[at + 3];", "            } else if id >= 99 {\n                fscale = prog[at + 3];"),
+    ("fn: the scale of sign is the operand's", "            if id == 2 {\n                fscale = 0;", "            if id == 99 {\n                fscale = 0;"),
+    ("fn: greatest takes the scale of its first operand", "                    if work[72 + sp - n + k] > fscale {", "                    if work[72 + sp - n + k] > 99 {"),
+    ("fn: an unknown function is not refused", "                    if fid == 0 {\n                        status = 13;", "                    if fid == 99 {\n                        status = 13;"),
+    ("fn: the arity is not checked", "                            if nargs < arity_min(fid) || nargs > arity_max(fid) {", "                            if false {"),
+    ("fn: the scale literal may be 19", "    if digits == 0 || n > 18 {\n        return (p, 0, 15);", "    if digits == 0 || n > 19 {\n        return (p, 0, 15);"),
+    ("fn: a call's parenthesis is not a level", "                        if work[64] > 28 || work[65] > 4 {\n                            status = 9;\n                        } else {\n                            let top = work[64];", "                        if work[64] > 28 || work[65] > 400 {\n                            status = 9;\n                        } else {\n                            let top = work[64];"),
+    ("fn: the scale of a rounding call is taken as an operand", "cur = emit(prog, cur, op_fn(), fid, 1, work[224 + top]);", "cur = emit(prog, cur, op_fn(), fid, 2, work[224 + top]);"),
+    ("fn: coalesce takes the default of a cell that is not empty", "            if kind >= 2 && cells[3 * prog[at + 1]] == cells[3 * prog[at + 1] + 1] {", "            if kind >= 2 {"),
+    ("fn: the default is not brought to the column's scale", "                cmpv.mul_pow10(w, sp, prog[at + 2] - prog[at + 6]);", "                cmpv.mul_pow10(w, sp, 0);"),
+    ("fn: the default is also an operand", "            if kind >= 2 {\n                at = at + 4;\n            }\n            sp = sp + 1;", "            sp = sp + 1;"),
+    ("fn: a default with more digits than the column is accepted", "                            if ls != 0 || sc > prog[start + 2] {", "                            if ls != 0 {"),
+    ("fn: coalesce takes an expression", "                        if commas != 0 || cur - start != 4 || prog[start] != op_cell() || prog[start + 3] >= 2 {", "                        if commas != 0 {"),
+    ("fn: a comma outside a call is accepted", "                if status == 0 && (work[64] == 0 || work[work[64] - 1] != 7) {\n                    status = 1;", "                if status == 0 && (work[64] == 0) {\n                    status = 1;"),
+    ("fn: the shape does not skip a default", "            if op == op_cell() && prog[at + 3] >= 2 {\n                // a coalesce: the constant that follows is the default, not an operand\n                at = at + 4;\n            }", ""),
+    # the exact core: what the functions added to it
+    ("cmpv: abs keeps the sign", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = 0;", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = w[s * 12];", "cmpv"),
+    ("cmpv: a comparison of a negative and a positive is by magnitude", "    if na && !nb {\n        return -1;\n    }\n    if nb && !na {\n        return 1;\n    }\n    let c = mag_cmp(w, a, b);", "    let c = mag_cmp(w, a, b);", "cmpv"),
+    ("cmpv: two negatives compare as two positives", "    if na {\n        return -c;\n    }\n    return c;", "    return c;", "cmpv"),
+    ("cmpv: a rescale does not set the scale", "    w[s * 12 + 1] = to;\n    return fits(w, s);", "    return fits(w, s);", "cmpv"),
+    ("cmpv: a rescale is never too wide", "    return fits(w, s);\n}\n\n// A slot from an `int`", "    return true;\n}\n\n// A slot from an `int`", "cmpv"),
 ]
 
 
@@ -464,7 +699,7 @@ def fuzz_ok(cs, probe):
     got, err = run(probe, cs)
     if got is None:
         return [("probe failed", err)]
-    shape = re.compile(r"^(C ([1-9]) (\d+)|E (1\d\d|2\d\d|11|12) \d+ \d+|[^=;]*=.*)$")
+    shape = re.compile(r"^(C (1[0-5]|[1-9]) (\d+)|E (1\d\d|2\d\d|11|12) \d+ \d+|[^=;]*=.*)$")
     bad = []
     for c, g in zip(cs, got):
         m = shape.match(g)
@@ -479,13 +714,17 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--mutants", action="store_true")
     ap.add_argument("--check", action="store_true")
+    ap.add_argument("--selftest", action="store_true", help="the reference's rounding against Python's decimal module (no compiler)")
     a = ap.parse_args()
-    problems = mutlib.check([(n, "cexpr.cho", o, w) for n, o, w in MUTANTS])
+    if a.selftest:
+        print(f"{selftest(random.Random(a.seed))} rounding cases agree with decimal")
+        sys.exit(0)
+    problems = mutlib.check([(m[0], (m[3] if len(m) > 3 else "cexpr") + ".cho", m[1], m[2]) for m in MUTANTS])
     if problems or a.check:
         print("\n".join(problems) or f"{len(MUTANTS)} mutants: every pattern occurs exactly once")
         sys.exit(1 if problems else 0)
     rng = random.Random(a.seed)
-    cs = hand_cases() + lines_of(rng, a.cases if not a.mutants else 1500) + chain_hand_cases() + chain_lines(rng, 1500 if not a.mutants else 800)
+    cs = hand_cases() + lines_of(rng, a.cases if not a.mutants else 1500) + lines_coalesce(rng, 600 if not a.mutants else 300) + chain_hand_cases() + chain_lines(rng, 1500 if not a.mutants else 800)
     if not a.mutants:
         with tempfile.TemporaryDirectory() as w:
             probe, err = build(w)
@@ -503,9 +742,9 @@ def main():
             print(" ", b)
         sys.exit(1 if bad else 0)
     survivors = 0
-    for name, old, new in MUTANTS:
+    for name, old, new, *rest in MUTANTS:
         with tempfile.TemporaryDirectory() as w:
-            probe, err = build(w, ("cexpr", old, new))
+            probe, err = build(w, (rest[0] if rest else "cexpr", old, new))
             if not probe:
                 print(f"SKIP (does not build) {name}: {err[:200]}")
                 survivors += 1

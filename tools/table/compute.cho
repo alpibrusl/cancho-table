@@ -57,6 +57,15 @@ fn rule_of(status: int) -> [] &static [byte] {
     if status == 12 {
         return "compute.overflow";
     }
+    if status == 13 {
+        return "compute.unknown-function";
+    }
+    if status == 14 {
+        return "compute.arity";
+    }
+    if status == 15 {
+        return "compute.bad-literal";
+    }
     return "compute.syntax";
 }
 
@@ -91,7 +100,16 @@ fn what_of(status: int) -> [] &static [byte] {
     if status == 12 {
         return "a result of --compute is 2^127 or more in a row";
     }
-    return "--compute is not NAME=EXPR with + - * / and parentheses";
+    if status == 13 {
+        return "a call in --compute names a function that is not there";
+    }
+    if status == 14 {
+        return "a call in --compute has too few or too many arguments for its function";
+    }
+    if status == 15 {
+        return "a literal of a call in --compute is not what the function takes: a scale from 0 to 18, or a number with no more fractional digits than the column";
+    }
+    return "--compute is not NAME=EXPR with + - * / and parentheses, and calls of functions";
 }
 
 fn hint_of(status: int) -> [] &static [byte] {
@@ -124,6 +142,15 @@ fn hint_of(status: int) -> [] &static [byte] {
     }
     if status == 12 {
         return "use columns of a smaller scale or magnitude";
+    }
+    if status == 13 {
+        return "the functions are abs, sign, greatest, least, round, floor, ceil, trunc and coalesce, in lower case, with the parenthesis next to the name";
+    }
+    if status == 14 {
+        return "abs and sign take one argument, greatest and least two to eight, round, floor, ceil, trunc and coalesce two";
+    }
+    if status == 15 {
+        return "round, floor, ceil and trunc take an integer from 0 to 18 as their second argument, coalesce takes a number as its second, with no more fractional digits than its column";
     }
     return "write --compute 'total=price:dec(2)*qty:int'";
 }

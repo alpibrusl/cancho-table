@@ -89,6 +89,9 @@ LOCAL = {
     "compute.too-long": (2, "never", "bounds"),
     "compute.divide-by-zero": (8, "never", "divisor of zero"),
     "compute.overflow": (8, "never", "2^127"),
+    "compute.unknown-function": (2, "never", "function that is not there"),
+    "compute.arity": (2, "never", "too few or too many arguments"),
+    "compute.bad-literal": (2, "never", "integer from 0 to 18"),
     "compute.unsupported-combination": (2, "never", "flag that shapes rows"),
 }
 # rules whose hint is the feature's, so it varies with the detail: the summary says so and does not repeat one
@@ -251,6 +254,9 @@ class Rules(unittest.TestCase):
             ("compute.float-operand", root + ["--compute", "r=a:float+1", "ok.csv"], None),
             ("compute.scale-too-large", root + ["--compute", "r=a:dec(10)*a:dec(10)", "ok.csv"], None),
             ("compute.division-needs-scale", root + ["--compute", "r=a:int/a:int", "ok.csv"], None),
+            ("compute.unknown-function", root + ["--compute", "r=nope(1)", "ok.csv"], None),
+            ("compute.arity", root + ["--compute", "r=abs(1,2)", "ok.csv"], None),
+            ("compute.bad-literal", root + ["--compute", "r=round(1,19)", "ok.csv"], None),
             ("compute.too-long", root + ["--compute", "r=((((((a:int))))))", "ok.csv"], None),
             ("compute.divide-by-zero", root + ["--compute", "r=1/a:int@2", "zero.csv"], None),
             ("compute.overflow", root + ["--compute", "r=a:int*a:int*a:int", "huge.csv"], None),
