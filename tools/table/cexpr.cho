@@ -19,7 +19,9 @@ module cexpr;
 import std.buffer;
 import std.bytes;
 import cellnum;
+import cdate;
 import cif;
+import clit;
 import cmpv;
 import ctext;
 
@@ -219,7 +221,7 @@ fn function_id[&w](word: &w [byte]) -> [] int {
     if bytes.equal(word, "len") {
         return 19;
     }
-    return 0;
+    return cdate.function_id(word);
 }
 
 // How many operands a function takes, at least and at most (the scale of the rounding family and the default of coalesce count as the second).
@@ -334,87 +336,6 @@ fn resolve[&n, &e, &w](names: &n [byte], ends: &e [int], ncols: int, word: &w [b
         return (0, 3);
     }
     return (found, 0);
-}
-
-// A number at `from`: digits and at most one point with a digit after it, at most 18 digits. Answers (end, value, scale, status 0 or 1).
-fn number_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
-    var end = from;
-    while end < len(t) && (int_of(t[end]) >= '0' && int_of(t[end]) <= '9' || int_of(t[end]) == '.') {
-        end = end + 1;
-    }
-    var v = 0;
-    var digits = 0;
-    var scale = 0;
-    var point = false;
-    var i = from;
-    while i < end {
-        let c = int_of(t[i]);
-        if c == '.' {
-            if point {
-                return (end, 0, 0, 1);
-            }
-            point = true;
-        } else {
-            digits = digits + 1;
-            if digits > 18 {
-                return (end, 0, 0, 1);
-            }
-            v = v * 10 + (c - '0');
-            if point {
-                scale = scale + 1;
-            }
-        }
-        i = i + 1;
-    }
-    if digits == 0 || point && scale == 0 {
-        return (end, 0, 0, 1);
-    }
-    return (end, v, scale, 0);
-}
-
-// The scale literal of the rounding family, at `from`: spaces, then an integer from 0 to 18 written in digits only. Answers (where it ends, the value, status): status 0, or 15 with the place it was looked for.
-fn scale_literal[&t](t: &t [byte], from: int) -> [] (int, int, int) {
-    let p = skip_space(t, from);
-    var q = p;
-    var n = 0;
-    var digits = 0;
-    while q < len(t) && int_of(t[q]) >= '0' && int_of(t[q]) <= '9' && digits < 3 {
-        n = n * 10 + (int_of(t[q]) - '0');
-        digits = digits + 1;
-        q = q + 1;
-    }
-    if digits == 0 || n > 18 {
-        return (p, 0, 15);
-    }
-    if q < len(t) && !(is_space(int_of(t[q])) || int_of(t[q]) == ')' || int_of(t[q]) == ',') {
-        return (p, 0, 15);
-    }
-    return (q, n, 0);
-}
-
-// The default of a `coalesce`, at `from`: spaces, an optional `-`, then a number as the expressions write one. Answers (where it ends, the value, its scale, status): status 0, or 15 with the place it was looked for.
-fn default_literal[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
-    let p = skip_space(t, from);
-    var q = p;
-    var negative = false;
-    if q < len(t) && int_of(t[q]) == '-' {
-        negative = true;
-        q = q + 1;
-    }
-    if q >= len(t) || !(int_of(t[q]) >= '0' && int_of(t[q]) <= '9' || int_of(t[q]) == '.') {
-        return (p, 0, 0, 15);
-    }
-    let (ne, v, sc, ns) = number_at(t, q);
-    if ns != 0 {
-        return (p, 0, 0, 15);
-    }
-    if ne < len(t) && !(is_space(int_of(t[ne])) || int_of(t[ne]) == ')' || int_of(t[ne]) == ',') {
-        return (p, 0, 0, 15);
-    }
-    if negative {
-        return (ne, -v, sc, 0);
-    }
-    return (ne, v, sc, 0);
 }
 
 fn emit[&p](prog: &!p [int], at: int, op: int, a: int, b: int, c: int) -> [] int {
@@ -568,7 +489,13 @@ fn shape[&p, &w](prog: &p [int], work: &!w [int], first: int, end: int) -> [] (i
     var at = first;
     while at < end {
         let op = prog[at];
-        if op == op_cell() || op == op_const() || op == op_len() {
+        if op == cdate.op_dt() {
+            work[72 + sp] = 0;
+            sp = sp + 1;
+            if sp > depth {
+                depth = sp;
+            }
+        } else if op == op_cell() || op == op_const() || op == op_len() {
             if op == op_cell() {
                 work[72 + sp] = prog[at + 2];
             } else {
@@ -634,35 +561,6 @@ fn shape[&p, &w](prog: &p [int], work: &!w [int], first: int, end: int) -> [] (i
     return (work[72], depth, 0);
 }
 
-// The type written after a column: `:int` or `:dec(S)`. Answers (end, scale, kind, status): kind 0 is an int and 1 a decimal; status 0, 1 (syntax), 5 (no type), 6 (`:float`).
-fn type_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
-    if from >= len(t) || int_of(t[from]) != ':' {
-        return (from, 0, 0, 5);
-    }
-    var rest = len(t) - (from + 1);
-    let r = t[from + 1..len(t)];
-    if rest >= 3 && bytes.equal(r[0..3], "int") {
-        return (from + 4, 0, 0, 0);
-    }
-    if rest >= 5 && bytes.equal(r[0..5], "float") {
-        return (from + 6, 0, 0, 6);
-    }
-    if rest >= 5 && bytes.equal(r[0..4], "dec(") {
-        var k = 4;
-        var n = 0;
-        var digits = 0;
-        while k < rest && int_of(r[k]) >= '0' && int_of(r[k]) <= '9' && digits < 3 {
-            n = n * 10 + (int_of(r[k]) - '0');
-            digits = digits + 1;
-            k = k + 1;
-        }
-        if digits > 0 && k < rest && int_of(r[k]) == ')' && n <= 18 {
-            return (from + 1 + k + 1, n, 1, 0);
-        }
-    }
-    return (from, 0, 0, 1);
-}
-
 // The index of the earlier definition (0 .. d - 1) whose name is `word`, or -1: the operand of a chained definition (docs/computed-columns.md section 11).
 fn def_index[&h, &t, &p, &w](heap: &!h Heap, t: &t [byte], prog: &p [int], d: int, word: &w [byte]) -> [heap] int {
     var found = -1;
@@ -684,44 +582,6 @@ fn def_index[&h, &t, &p, &w](heap: &!h Heap, t: &t [byte], prog: &p [int], d: in
     return found;
 }
 
-// The string literal at `from` (a double quote), `""` inside it one quote: answers (where the text between the quotes starts, where it ends, where the literal ends, status). Status 15
-// for a literal that is not closed.
-fn string_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
-    var j = from + 1;
-    while j < len(t) {
-        if int_of(t[j]) == 34 {
-            if j + 1 < len(t) && int_of(t[j + 1]) == 34 {
-                j = j + 2;
-            } else {
-                return (from + 1, j, j + 1, 0);
-            }
-        } else {
-            j = j + 1;
-        }
-    }
-    return (from + 1, j, j, 15);
-}
-
-// An integer written in digits only at `from` (spaces first), from 0 to 999,999,999: answers (where it ends, its value, status). Status 15 for anything else, a sign and a point included.
-fn digits_at[&t](t: &t [byte], from: int) -> [] (int, int, int) {
-    let p = skip_space(t, from);
-    var q = p;
-    var n = 0;
-    var digits = 0;
-    while q < len(t) && int_of(t[q]) >= '0' && int_of(t[q]) <= '9' && digits < 10 {
-        n = n * 10 + (int_of(t[q]) - '0');
-        digits = digits + 1;
-        q = q + 1;
-    }
-    if digits == 0 || digits > 9 {
-        return (p, 0, 15);
-    }
-    if q < len(t) && !(is_space(int_of(t[q])) || int_of(t[q]) == ')' || int_of(t[q]) == ',') {
-        return (p, 0, 15);
-    }
-    return (q, n, 0);
-}
-
 // `len(` of a column or of a string literal, the argument at `from`, in a number-valued definition: the instruction is written at `cur`. Answers (where the call ends, the new `cur`, status).
 // A typed column, a call and an earlier definition are `compute.type-mismatch`; a second argument is `compute.arity`.
 fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], cur: int, d: int) -> [heap] (int, int, int) {
@@ -732,7 +592,7 @@ fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n
     var next = i;
     var cur2 = cur;
     if int_of(t[i]) == 34 {
-        let (lf, lt, le, ls) = string_at(t, i);
+        let (lf, lt, le, ls) = clit.string_at(t, i);
         if ls != 0 {
             return (i, cur, ls);
         }
@@ -800,6 +660,100 @@ fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n
     return (after + 1, cur2, 0);
 }
 
+// The arguments of a date function (`year(d:date)`, `days_between(a:date, "2026-01-01")`) after its `(`: each is a column typed `:date` or a date literal in double quotes, and the
+// instruction is one leaf (cdate.cho). Answers (where it ends, the program's new end, status): 14 for the wrong number of arguments, 15 for a literal that is not a real date, 16 for anything that
+// is not a date (a column with another type or none, a number, an earlier definition), and the status of a column that is not there.
+fn date_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], cur: int, d: int, id: int) -> [heap] (int, int, int) {
+    var i = from;
+    var a = id;
+    var v0 = 0;
+    var v1 = 0;
+    var k = 0;
+    let want = cdate.operands(id);
+    while true {
+        i = skip_space(t, i);
+        if i >= len(t) {
+            return (i, cur, 1);
+        }
+        if int_of(t[i]) == ')' || k >= want {
+            return (i, cur, 14);
+        }
+        var v = 0;
+        if int_of(t[i]) == 34 {
+            let (le, lv, ls) = cdate.literal(t, i);
+            if ls != 0 {
+                return (i, cur, ls);
+            }
+            v = lv;
+            i = le;
+            a = a + 32 + 32 * k;
+        } else if int_of(t[i]) >= '0' && int_of(t[i]) <= '9' || int_of(t[i]) == '-' || int_of(t[i]) == '.' {
+            return (i, cur, 16);
+        } else {
+            var cb = buffer.empty(heap, 32);
+            let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
+            cb = b2;
+            var status = 0;
+            if s2 != 0 {
+                status = 1;
+            } else {
+                var col = 0;
+                var rs = 0;
+                borrow cb as &cr in {
+                    let (cc, rr) = resolve(names, ends, ncols, buffer.bytes(cr), q2);
+                    col = cc;
+                    rs = rr;
+                }
+                if rs == 2 {
+                    var dk = -1;
+                    borrow cb as &cr in {
+                        dk = def_index(heap, t, prog, d, buffer.bytes(cr));
+                    }
+                    status = 2;
+                    if dk >= 0 {
+                        status = 16;
+                    }
+                } else if rs != 0 {
+                    status = rs;
+                } else {
+                    let te = cdate.type_end(t, e2);
+                    if te < 0 {
+                        status = 16;
+                    } else {
+                        v = col;
+                        i = te;
+                    }
+                }
+            }
+            buffer.drop(heap, cb);
+            if status != 0 {
+                return (i, cur, status);
+            }
+        }
+        if k == 0 {
+            v0 = v;
+        } else {
+            v1 = v;
+        }
+        k = k + 1;
+        i = skip_space(t, i);
+        if i >= len(t) {
+            return (i, cur, 1);
+        }
+        if int_of(t[i]) == ')' {
+            if k < want {
+                return (i, cur, 14);
+            }
+            return (i + 1, emit(prog, cur, cdate.op_dt(), a, v0, v1), 0);
+        }
+        if int_of(t[i]) != ',' {
+            return (i, cur, 1);
+        }
+        i = i + 1;
+    }
+    return (i, cur, 1);
+}
+
 // Whether the expression at `from` (after the `=`) is a call of a text function: a word, the parenthesis next to it, and a name from 11 to 18.
 fn is_text_call[&h, &t](heap: &!h Heap, t: &t [byte], from: int) -> [heap] bool {
     let p = skip_space(t, from);
@@ -857,7 +811,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
             if i >= len(t) {
                 status = 1;
             } else if int_of(t[i]) == 34 {
-                let (lf, lt, le, ls) = string_at(t, i);
+                let (lf, lt, le, ls) = clit.string_at(t, i);
                 if ls != 0 {
                     status = ls;
                 } else {
@@ -977,7 +931,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                 let commas = work[32 + top] % 16;
                 if fid == 16 {
                     // substr(s, start, count): two integer literals
-                    let (e1, v1, s1) = digits_at(t, i + 1);
+                    let (e1, v1, s1) = clit.digits_at(t, i + 1);
                     if commas != 0 {
                         status = 14;
                         offset = work[192 + top];
@@ -996,7 +950,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                             status = 1;
                             offset = q1;
                         } else {
-                            let (e2, v2, s2) = digits_at(t, q1 + 1);
+                            let (e2, v2, s2) = clit.digits_at(t, q1 + 1);
                             if s2 != 0 {
                                 status = 15;
                                 offset = e2;
@@ -1029,7 +983,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                         status = 15;
                         offset = p1;
                     } else {
-                        let (f1, t1, l1, s1) = string_at(t, p1);
+                        let (f1, t1, l1, s1) = clit.string_at(t, p1);
                         if s1 != 0 || t1 == f1 {
                             status = 15;
                             offset = p1;
@@ -1051,7 +1005,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                                     status = 15;
                                     offset = p2;
                                 } else {
-                                    let (f2, t2, l2, s2) = string_at(t, p2);
+                                    let (f2, t2, l2, s2) = clit.string_at(t, p2);
                                     if s2 != 0 {
                                         status = 15;
                                         offset = p2;
@@ -1211,7 +1165,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                     i = i + 1;
                 }
             } else if c >= '0' && c <= '9' || c == '.' {
-                let (ne2, v, sc, ns2) = number_at(t, i);
+                let (ne2, v, sc, ns2) = clit.number_at(t, i);
                 if ns2 != 0 {
                     status = 1;
                 } else {
@@ -1251,6 +1205,16 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                             work[96 + top] = 0;
                             work[64] = top + 1;
                             i = e2 + 1;
+                        }
+                    } else if fid >= 21 {
+                        let (le, dcur, dst) = date_at(heap, t, e2 + 1, names, ends, ncols, prog, cur, d, fid);
+                        if dst != 0 {
+                            status = dst;
+                            offset = le;
+                        } else {
+                            cur = dcur;
+                            i = le;
+                            expect = false;
                         }
                     } else if fid == 19 {
                         let (le, lcur, lst) = len_at(heap, t, e2 + 1, names, ends, ncols, prog, cur, d);
@@ -1311,7 +1275,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                     } else if rs != 0 {
                         status = rs;
                     } else {
-                        let (te, ts, tk, tstat) = type_at(t, e2);
+                        let (te, ts, tk, tstat) = clit.type_at(t, e2);
                         if tstat != 0 {
                             status = tstat;
                             offset = e2;
@@ -1395,7 +1359,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                     let commas = work[32 + top] % 16;
                     if fid >= 5 && fid <= 8 {
                         // round, floor, ceil, trunc: the second argument is an integer literal from 0 to 18, read here and not as an operand
-                        let (le, n, ls) = scale_literal(t, i + 1);
+                        let (le, n, ls) = clit.scale_literal(t, i + 1);
                         if commas != 0 {
                             status = 14;
                             offset = work[192 + top];
@@ -1422,7 +1386,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                         if commas != 0 || cur - start != 4 || prog[start] != op_cell() || prog[start + 3] >= 2 {
                             status = 1;
                         } else {
-                            let (le, v, sc, ls) = default_literal(t, i + 1);
+                            let (le, v, sc, ls) = clit.default_literal(t, i + 1);
                             if ls != 0 || sc > prog[start + 2] {
                                 status = 15;
                                 offset = skip_space(t, i + 1);
@@ -1662,6 +1626,12 @@ pub fn has[&p](prog: &p [int], d: int, what: int) -> [] bool {
         if what == 1 && op == op_div() {
             return true;
         }
+        if what == 5 && op == cdate.op_dt() {
+            let a = prog[at + 1];
+            if a / 32 % 2 == 0 || a / 64 % 2 == 0 && cdate.operands(a % 32) == 2 {
+                return true;
+            }
+        }
         if what == 4 && op == ctext.op_call() && prog[at + 1] == 16 {
             return true;
         }
@@ -1832,6 +1802,12 @@ pub fn eval[&p, &dd, &c, &w](prog: &p [int], d: int, record: &dd [byte], cells: 
             }
             if kind >= 2 {
                 at = at + 4;
+            }
+            sp = sp + 1;
+        } else if op == cdate.op_dt() {
+            let (dst, dcol) = cdate.eval(prog, at, record, cells, w, sp);
+            if dst != 0 {
+                return (dst, dcol);
             }
             sp = sp + 1;
         } else if op == op_len() {

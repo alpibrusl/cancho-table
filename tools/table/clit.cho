@@ -1,0 +1,168 @@
+edition 5;
+
+module clit;
+
+// The readers of `--compute` that look at the text of a definition and nothing else: a number, a scale, a default, the type written after a column, a string literal and an integer of digits
+// (docs/computed-columns.md section 2, docs/functions.md sections 3.2 and 3.3). They were in cexpr.cho, which the limit of 2,000 lines left no room in.
+
+import std.bytes;
+
+fn is_space(c: int) -> [] bool {
+    return c == ' ' || c == 9;
+}
+
+fn skip_space[&t](t: &t [byte], from: int) -> [] int {
+    var i = from;
+    while i < len(t) && is_space(int_of(t[i])) {
+        i = i + 1;
+    }
+    return i;
+}
+
+// A number at `from`: digits and at most one point with a digit after it, at most 18 digits. Answers (end, value, scale, status 0 or 1).
+pub fn number_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
+    var end = from;
+    while end < len(t) && (int_of(t[end]) >= '0' && int_of(t[end]) <= '9' || int_of(t[end]) == '.') {
+        end = end + 1;
+    }
+    var v = 0;
+    var digits = 0;
+    var scale = 0;
+    var point = false;
+    var i = from;
+    while i < end {
+        let c = int_of(t[i]);
+        if c == '.' {
+            if point {
+                return (end, 0, 0, 1);
+            }
+            point = true;
+        } else {
+            digits = digits + 1;
+            if digits > 18 {
+                return (end, 0, 0, 1);
+            }
+            v = v * 10 + (c - '0');
+            if point {
+                scale = scale + 1;
+            }
+        }
+        i = i + 1;
+    }
+    if digits == 0 || point && scale == 0 {
+        return (end, 0, 0, 1);
+    }
+    return (end, v, scale, 0);
+}
+
+// The scale literal of the rounding family, at `from`: spaces, then an integer from 0 to 18 written in digits only. Answers (where it ends, the value, status): status 0, or 15 with the place it was looked for.
+pub fn scale_literal[&t](t: &t [byte], from: int) -> [] (int, int, int) {
+    let p = skip_space(t, from);
+    var q = p;
+    var n = 0;
+    var digits = 0;
+    while q < len(t) && int_of(t[q]) >= '0' && int_of(t[q]) <= '9' && digits < 3 {
+        n = n * 10 + (int_of(t[q]) - '0');
+        digits = digits + 1;
+        q = q + 1;
+    }
+    if digits == 0 || n > 18 {
+        return (p, 0, 15);
+    }
+    if q < len(t) && !(is_space(int_of(t[q])) || int_of(t[q]) == ')' || int_of(t[q]) == ',') {
+        return (p, 0, 15);
+    }
+    return (q, n, 0);
+}
+
+// The default of a `coalesce`, at `from`: spaces, an optional `-`, then a number as the expressions write one. Answers (where it ends, the value, its scale, status): status 0, or 15 with the place it was looked for.
+pub fn default_literal[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
+    let p = skip_space(t, from);
+    var q = p;
+    var negative = false;
+    if q < len(t) && int_of(t[q]) == '-' {
+        negative = true;
+        q = q + 1;
+    }
+    if q >= len(t) || !(int_of(t[q]) >= '0' && int_of(t[q]) <= '9' || int_of(t[q]) == '.') {
+        return (p, 0, 0, 15);
+    }
+    let (ne, v, sc, ns) = number_at(t, q);
+    if ns != 0 {
+        return (p, 0, 0, 15);
+    }
+    if ne < len(t) && !(is_space(int_of(t[ne])) || int_of(t[ne]) == ')' || int_of(t[ne]) == ',') {
+        return (p, 0, 0, 15);
+    }
+    if negative {
+        return (ne, -v, sc, 0);
+    }
+    return (ne, v, sc, 0);
+}
+
+// The type written after a column: `:int` or `:dec(S)`. Answers (end, scale, kind, status): kind 0 is an int and 1 a decimal; status 0, 1 (syntax), 5 (no type), 6 (`:float`).
+pub fn type_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
+    if from >= len(t) || int_of(t[from]) != ':' {
+        return (from, 0, 0, 5);
+    }
+    var rest = len(t) - (from + 1);
+    let r = t[from + 1..len(t)];
+    if rest >= 3 && bytes.equal(r[0..3], "int") {
+        return (from + 4, 0, 0, 0);
+    }
+    if rest >= 5 && bytes.equal(r[0..5], "float") {
+        return (from + 6, 0, 0, 6);
+    }
+    if rest >= 5 && bytes.equal(r[0..4], "dec(") {
+        var k = 4;
+        var n = 0;
+        var digits = 0;
+        while k < rest && int_of(r[k]) >= '0' && int_of(r[k]) <= '9' && digits < 3 {
+            n = n * 10 + (int_of(r[k]) - '0');
+            digits = digits + 1;
+            k = k + 1;
+        }
+        if digits > 0 && k < rest && int_of(r[k]) == ')' && n <= 18 {
+            return (from + 1 + k + 1, n, 1, 0);
+        }
+    }
+    return (from, 0, 0, 1);
+}
+
+// The string literal at `from` (a double quote), `""` inside it one quote: answers (where the text between the quotes starts, where it ends, where the literal ends, status). Status 15
+// for a literal that is not closed.
+pub fn string_at[&t](t: &t [byte], from: int) -> [] (int, int, int, int) {
+    var j = from + 1;
+    while j < len(t) {
+        if int_of(t[j]) == 34 {
+            if j + 1 < len(t) && int_of(t[j + 1]) == 34 {
+                j = j + 2;
+            } else {
+                return (from + 1, j, j + 1, 0);
+            }
+        } else {
+            j = j + 1;
+        }
+    }
+    return (from + 1, j, j, 15);
+}
+
+// An integer written in digits only at `from` (spaces first), from 0 to 999,999,999: answers (where it ends, its value, status). Status 15 for anything else, a sign and a point included.
+pub fn digits_at[&t](t: &t [byte], from: int) -> [] (int, int, int) {
+    let p = skip_space(t, from);
+    var q = p;
+    var n = 0;
+    var digits = 0;
+    while q < len(t) && int_of(t[q]) >= '0' && int_of(t[q]) <= '9' && digits < 10 {
+        n = n * 10 + (int_of(t[q]) - '0');
+        digits = digits + 1;
+        q = q + 1;
+    }
+    if digits == 0 || digits > 9 {
+        return (p, 0, 15);
+    }
+    if q < len(t) && !(is_space(int_of(t[q])) || int_of(t[q]) == ')' || int_of(t[q]) == ',') {
+        return (p, 0, 15);
+    }
+    return (q, n, 0);
+}
