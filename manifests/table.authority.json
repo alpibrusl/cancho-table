@@ -598,6 +598,7 @@
     "ok",
     "one_word",
     "op_add",
+    "op_add_days",
     "op_call",
     "op_cell",
     "op_cmp",
@@ -786,6 +787,7 @@
     "s_on",
     "s_order_count",
     "s_orders",
+    "s_out_of_range",
     "s_pair_count",
     "s_pairs",
     "s_pairs",
@@ -978,5 +980,5 @@
   ],
   "folded_operators": 400,
   "folded_calls": 0,
-  "functions": 1643
+  "functions": 1646
 }
