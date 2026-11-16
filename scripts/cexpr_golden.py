@@ -577,7 +577,7 @@ DT_HAND = [
     ('r=year("2026-02-30")', "C 15"), ('r=year("2026-1-01")', "C 15"), ('r=year("2026-11-16)', "C 15"), ("r=year(a:int)", "C 16"), ("r=year(a)", "C 16"), ("r=year(a:dec(2))", "C 16"),
     ("r=year(1)", "C 16"), ("r=year()", "C 14"), ("r=year(a:date, b:date)", "C 14"), ("r=days_between(a:date)", "C 14"), ("r=days_between(a:date, b:date, c:date)", "C 14"),
     ("r=year(z:date)", "C 2"), ("r=year(a:date", "C 1"), ("r=year (a:date)", "C 2"), ("r=a:date", "C 1"), ("r=a:date + 1", "C 1"),
-    ("r=Year(a:date)", "C 13"), ("r=add_days(a:date, 1)", "C 16"), ("r=year(a:date);s=year(r)", "C 16"),
+    ("r=Year(a:date)", "C 13"), ("r=1+add_days(a:date, 1)", "C 16"), ("r=add_days(a:date, 1)+1", "C 16"), ("r=year(a:date);s=year(r)", "C 16"),
 ]
 # a cell that is not a date (the status is the reader's, from 1000: the column and the definition are the tool's)
 DT_CELL_CASES = [
