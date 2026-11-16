@@ -1,0 +1,142 @@
+edition 5;
+
+module clex;
+
+// The lexical half of the compiler of `--compute` (docs/computed-columns.md section 2): spaces, a word with its escapes and quotes, the column a word names, an earlier definition, and the end of the
+// program being written. They were in cexpr.cho, which the limit of 2,000 lines left no room in for the comparisons of texts.
+
+import std.buffer;
+import std.bytes;
+
+pub fn is_space(c: int) -> [] bool {
+    return c == ' ' || c == 9;
+}
+
+pub fn stops_word(c: int) -> [] bool {
+    return is_space(c) || c == 39 || c == '(' || c == ')' || c == '+' || c == '-' || c == '*' || c == '/' || c == ';' || c == ':' || c == '@' || c == ',' || c == '=';
+}
+
+pub fn skip_space[&t](t: &t [byte], from: int) -> [] int {
+    var i = from;
+    while i < len(t) && is_space(int_of(t[i])) {
+        i = i + 1;
+    }
+    return i;
+}
+
+// The word at `from`, unescaped into `out`: answers (where it ends, whether it was quoted, status). Status 1: nothing there, or a quote not closed.
+pub fn word_at[&h, &t](heap: &!h Heap, out: buffer.Buffer, t: &t [byte], from: int) -> [heap] (buffer.Buffer, int, bool, int) {
+    var o = out;
+    var i = from;
+    if i >= len(t) {
+        return (o, i, false, 1);
+    }
+    if int_of(t[i]) == 39 {
+        i = i + 1;
+        while i < len(t) {
+            if int_of(t[i]) == 39 {
+                if i + 1 < len(t) && int_of(t[i + 1]) == 39 {
+                    o = buffer.push(heap, o, byte_of(39));
+                    i = i + 2;
+                } else {
+                    return (o, i + 1, true, 0);
+                }
+            } else {
+                o = buffer.push(heap, o, t[i]);
+                i = i + 1;
+            }
+        }
+        return (o, i, true, 1);
+    }
+    while i < len(t) && !stops_word(int_of(t[i])) {
+        if int_of(t[i]) == 92 {
+            if i + 1 >= len(t) {
+                return (o, i, false, 1);
+            }
+            i = i + 1;
+        }
+        o = buffer.push(heap, o, t[i]);
+        i = i + 1;
+    }
+    if i == from {
+        return (o, i, false, 1);
+    }
+    return (o, i, false, 0);
+}
+
+// A name against the header: the column index, or a status (2 unknown, 3 ambiguous) with the index 0. `names` is the header's names one after the other and `ends` where each stops.
+pub fn resolve[&n, &e, &w](names: &n [byte], ends: &e [int], ncols: int, word: &w [byte], quoted: bool) -> [] (int, int) {
+    if !quoted && len(word) > 1 && int_of(word[0]) == '#' {
+        var n = 0;
+        var k = 1;
+        var digits = true;
+        while k < len(word) {
+            let d = int_of(word[k]) - '0';
+            if d < 0 || d > 9 || n > 100000 {
+                digits = false;
+                k = len(word);
+            } else {
+                n = n * 10 + d;
+                k = k + 1;
+            }
+        }
+        if digits {
+            if n >= 1 && n <= ncols {
+                return (n - 1, 0);
+            }
+            return (0, 2);
+        }
+    }
+    var found = -1;
+    var count = 0;
+    var c = 0;
+    while c < ncols {
+        var start = 0;
+        if c > 0 {
+            start = ends[c - 1];
+        }
+        if bytes.equal(names[start..ends[c]], word) {
+            if count == 0 {
+                found = c;
+            }
+            count = count + 1;
+        }
+        c = c + 1;
+    }
+    if count == 0 {
+        return (0, 2);
+    }
+    if count > 1 {
+        return (0, 3);
+    }
+    return (found, 0);
+}
+
+// The index of the earlier definition (0 .. d - 1) whose name is `word`, or -1: the operand of a chained definition (docs/computed-columns.md section 11).
+pub fn def_index[&h, &t, &p, &w](heap: &!h Heap, t: &t [byte], prog: &p [int], d: int, word: &w [byte]) -> [heap] int {
+    var found = -1;
+    var k = 0;
+    while k < d {
+        var other = buffer.empty(heap, 32);
+        let (ob, oe, oq, os) = word_at(heap, other, t, prog[1 + 5 * k + 3]);
+        other = ob;
+        var same = false;
+        borrow other as &orr in {
+            same = bytes.equal(buffer.bytes(orr), word);
+        }
+        buffer.drop(heap, other);
+        if same {
+            found = k;
+        }
+        k = k + 1;
+    }
+    return found;
+}
+
+pub fn emit[&p](prog: &!p [int], at: int, op: int, a: int, b: int, c: int) -> [] int {
+    prog[at] = op;
+    prog[at + 1] = a;
+    prog[at + 2] = b;
+    prog[at + 3] = c;
+    return at + 4;
+}

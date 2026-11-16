@@ -30,6 +30,54 @@ pub fn op_add_days() -> [] int {
     return 26;
 }
 
+// The comparison of two texts in a condition (docs/functions.md section 3.4, slice K7b1): `op_tld` loads one operand into a register of the evaluator, `a` the register (0 the left, 1 the right) plus 2
+// when the operand is a literal, `b` and `c` the column (`b`) or the bytes of the literal in the text of the definitions (from `b` to `c`); `op_tcmp` compares the two, `a` the operator, and leaves
+// a verdict that the jumps of `cif` read.
+pub fn op_tld() -> [] int {
+    return 27;
+}
+
+pub fn op_tcmp() -> [] int {
+    return 28;
+}
+
+// The sign of `x[xf..xl]` against `y[yf..yl]`, byte by byte, the shorter first when one is the start of the other: -1, 0 or 1. A span flagged `doubled` is a quoted cell or a literal: a quote
+// followed by a quote in it is one byte.
+pub fn compare[&x, &y](x: &x [byte], xf: int, xl: int, xd: int, y: &y [byte], yf: int, yl: int, yd: int) -> [] int {
+    var i = xf;
+    var j = yf;
+    while true {
+        if i >= xl && j >= yl {
+            return 0;
+        }
+        if i >= xl {
+            return -1;
+        }
+        if j >= yl {
+            return 1;
+        }
+        let bx = int_of(x[i]);
+        let by = int_of(y[j]);
+        if bx != by {
+            if bx < by {
+                return -1;
+            }
+            return 1;
+        }
+        if xd == 1 && bx == 34 && i + 1 < xl && int_of(x[i + 1]) == 34 {
+            i = i + 2;
+        } else {
+            i = i + 1;
+        }
+        if yd == 1 && by == 34 && j + 1 < yl && int_of(y[j + 1]) == 34 {
+            j = j + 2;
+        } else {
+            j = j + 1;
+        }
+    }
+    return 0;
+}
+
 // A date past 0001-01-01 to 9999-12-31 after the addition (a row's status).
 pub fn s_out_of_range() -> [] int {
     return 21;

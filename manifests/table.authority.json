@@ -181,6 +181,7 @@
     "columns_of",
     "compare",
     "compare",
+    "compare",
     "compare_field",
     "compare_keys",
     "compare_means",
@@ -355,6 +356,7 @@
     "hint_of",
     "hint_of",
     "hold_of",
+    "holds",
     "holds",
     "holds_columns",
     "holds_date",
@@ -617,8 +619,10 @@
     "op_of",
     "op_scale",
     "op_sub",
+    "op_tcmp",
     "op_text",
     "op_text",
+    "op_tld",
     "operand_count",
     "operand_days",
     "operand_index",
@@ -978,7 +982,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 400,
+  "folded_operators": 401,
   "folded_calls": 0,
-  "functions": 1646
+  "functions": 1652
 }

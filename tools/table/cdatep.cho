@@ -1,0 +1,175 @@
+edition 5;
+
+module cdatep;
+
+// The arguments of the date functions in a definition of `--compute` (docs/functions.md section 3.5): `date_at` reads `year(d:date)`, `days_between(a:date, "2026-01-01")` and `add_days(d, n)`
+// after their `(`, and emits the one instruction of the call; `days_at` reads the count of `add_days`. They were in cexpr.cho.
+
+import std.buffer;
+import cdate;
+import clex;
+import clit;
+import ctext;
+
+// The count of `add_days(d, n)` at `from`: an integer literal (digits, a minus sign first if it is negative) or a column typed `:int`. Answers (where it ends, the value or the column, status, whether
+// it is a literal); status 15 for a literal that is not an integer, 16 for anything else that is not one (a text, a decimal, an earlier definition), 2 for a column that is not there.
+pub fn days_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &p [int], d: int) -> [heap] (int, int, int, bool) {
+    let c = int_of(t[from]);
+    if c >= '0' && c <= '9' || c == '-' {
+        var sign = 1;
+        var at = from;
+        if c == '-' {
+            sign = -1;
+            at = from + 1;
+        }
+        let (le, v, ls) = clit.digits_at(t, at);
+        if ls != 0 {
+            return (from, 0, ls, true);
+        }
+        return (le, sign * v, 0, true);
+    }
+    var cb = buffer.empty(heap, 32);
+    let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, from);
+    cb = b2;
+    var status = 0;
+    var col = 0;
+    var end = from;
+    if s2 != 0 {
+        status = 1;
+    } else {
+        var rs = 0;
+        borrow cb as &cr in {
+            let (cc, rr) = clex.resolve(names, ends, ncols, buffer.bytes(cr), q2);
+            col = cc;
+            rs = rr;
+        }
+        if rs == 2 {
+            var dk = -1;
+            borrow cb as &cr in {
+                dk = clex.def_index(heap, t, prog, d, buffer.bytes(cr));
+            }
+            status = 2;
+            if dk >= 0 {
+                status = 16;
+            }
+        } else if rs != 0 {
+            status = rs;
+        } else {
+            let (te, ts, tk, tst) = clit.type_at(t, e2);
+            if tst != 0 || tk != 0 {
+                status = 16;
+            }
+            end = te;
+        }
+    }
+    buffer.drop(heap, cb);
+    return (end, col, status, false);
+}
+
+// The arguments of a date function (`year(d:date)`, `days_between(a:date, "2026-01-01")`) after its `(`: each is a column typed `:date` or a date literal in double quotes, and the
+// instruction is one leaf (cdate.cho). Answers (where it ends, the program's new end, status): 14 for the wrong number of arguments, 15 for a literal that is not a real date, 16 for anything that
+// is not a date (a column with another type or none, a number, an earlier definition), and the status of a column that is not there.
+pub fn date_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], cur: int, d: int, id: int) -> [heap] (int, int, int) {
+    var i = from;
+    var a = id;
+    var v0 = 0;
+    var v1 = 0;
+    var k = 0;
+    let want = cdate.operands(id);
+    while true {
+        i = clex.skip_space(t, i);
+        if i >= len(t) {
+            return (i, cur, 1);
+        }
+        if int_of(t[i]) == ')' || k >= want {
+            return (i, cur, 14);
+        }
+        var v = 0;
+        if id == 26 && k == 1 {
+            let (ie, iv, ist, lit) = days_at(heap, t, i, names, ends, ncols, prog, d);
+            if ist != 0 {
+                return (i, cur, ist);
+            }
+            v = iv;
+            i = ie;
+            if lit {
+                a = a + 64;
+            }
+        } else if int_of(t[i]) == 34 {
+            let (le, lv, ls) = cdate.literal(t, i);
+            if ls != 0 {
+                return (i, cur, ls);
+            }
+            v = lv;
+            i = le;
+            a = a + 32 + 32 * k;
+        } else if int_of(t[i]) >= '0' && int_of(t[i]) <= '9' || int_of(t[i]) == '-' || int_of(t[i]) == '.' {
+            return (i, cur, 16);
+        } else {
+            var cb = buffer.empty(heap, 32);
+            let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);
+            cb = b2;
+            var status = 0;
+            if s2 != 0 {
+                status = 1;
+            } else {
+                var col = 0;
+                var rs = 0;
+                borrow cb as &cr in {
+                    let (cc, rr) = clex.resolve(names, ends, ncols, buffer.bytes(cr), q2);
+                    col = cc;
+                    rs = rr;
+                }
+                if rs == 2 {
+                    var dk = -1;
+                    borrow cb as &cr in {
+                        dk = clex.def_index(heap, t, prog, d, buffer.bytes(cr));
+                    }
+                    status = 2;
+                    if dk >= 0 {
+                        status = 16;
+                    }
+                } else if rs != 0 {
+                    status = rs;
+                } else {
+                    let te = cdate.type_end(t, e2);
+                    if te < 0 {
+                        status = 16;
+                    } else {
+                        v = col;
+                        i = te;
+                    }
+                }
+            }
+            buffer.drop(heap, cb);
+            if status != 0 {
+                return (i, cur, status);
+            }
+        }
+        if k == 0 {
+            v0 = v;
+        } else {
+            v1 = v;
+        }
+        k = k + 1;
+        i = clex.skip_space(t, i);
+        if i >= len(t) {
+            return (i, cur, 1);
+        }
+        if int_of(t[i]) == ')' {
+            if k < want {
+                return (i, cur, 14);
+            }
+            var op = cdate.op_dt();
+            if id == 26 {
+                op = ctext.op_add_days();
+            }
+            return (i + 1, clex.emit(prog, cur, op, a, v0, v1), 0);
+        }
+        if int_of(t[i]) != ',' {
+            return (i, cur, 1);
+        }
+        i = i + 1;
+    }
+    return (i, cur, 1);
+}

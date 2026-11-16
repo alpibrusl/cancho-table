@@ -20,8 +20,11 @@ import std.buffer;
 import std.bytes;
 import cellnum;
 import cdate;
+import cdatep;
 import cif;
+import clex;
 import clit;
+import ctcmp;
 import cmpv;
 import ctext;
 
@@ -154,14 +157,6 @@ pub fn s_cell_dec() -> [] int {
     return 200;
 }
 
-fn is_space(c: int) -> [] bool {
-    return c == ' ' || c == 9;
-}
-
-fn stops_word(c: int) -> [] bool {
-    return is_space(c) || c == 39 || c == '(' || c == ')' || c == '+' || c == '-' || c == '*' || c == '/' || c == ';' || c == ':' || c == '@' || c == ',' || c == '=';
-}
-
 // The numeric function a call names (`name(`): 1 abs, 2 sign, 3 greatest, 4 least, 5 round, 6 floor, 7 ceil, 8 trunc, 9 coalesce; 0 when there is none. Case matters.
 fn function_id[&w](word: &w [byte]) -> [] int {
     if bytes.equal(word, "abs") {
@@ -242,110 +237,6 @@ fn arity_max(id: int) -> [] int {
     return 2;
 }
 
-fn skip_space[&t](t: &t [byte], from: int) -> [] int {
-    var i = from;
-    while i < len(t) && is_space(int_of(t[i])) {
-        i = i + 1;
-    }
-    return i;
-}
-
-// The word at `from`, unescaped into `out`: answers (where it ends, whether it was quoted, status). Status 1: nothing there, or a quote not closed.
-fn word_at[&h, &t](heap: &!h Heap, out: buffer.Buffer, t: &t [byte], from: int) -> [heap] (buffer.Buffer, int, bool, int) {
-    var o = out;
-    var i = from;
-    if i >= len(t) {
-        return (o, i, false, 1);
-    }
-    if int_of(t[i]) == 39 {
-        i = i + 1;
-        while i < len(t) {
-            if int_of(t[i]) == 39 {
-                if i + 1 < len(t) && int_of(t[i + 1]) == 39 {
-                    o = buffer.push(heap, o, byte_of(39));
-                    i = i + 2;
-                } else {
-                    return (o, i + 1, true, 0);
-                }
-            } else {
-                o = buffer.push(heap, o, t[i]);
-                i = i + 1;
-            }
-        }
-        return (o, i, true, 1);
-    }
-    while i < len(t) && !stops_word(int_of(t[i])) {
-        if int_of(t[i]) == 92 {
-            if i + 1 >= len(t) {
-                return (o, i, false, 1);
-            }
-            i = i + 1;
-        }
-        o = buffer.push(heap, o, t[i]);
-        i = i + 1;
-    }
-    if i == from {
-        return (o, i, false, 1);
-    }
-    return (o, i, false, 0);
-}
-
-// A name against the header: the column index, or a status (2 unknown, 3 ambiguous) with the index 0. `names` is the header's names one after the other and `ends` where each stops.
-fn resolve[&n, &e, &w](names: &n [byte], ends: &e [int], ncols: int, word: &w [byte], quoted: bool) -> [] (int, int) {
-    if !quoted && len(word) > 1 && int_of(word[0]) == '#' {
-        var n = 0;
-        var k = 1;
-        var digits = true;
-        while k < len(word) {
-            let d = int_of(word[k]) - '0';
-            if d < 0 || d > 9 || n > 100000 {
-                digits = false;
-                k = len(word);
-            } else {
-                n = n * 10 + d;
-                k = k + 1;
-            }
-        }
-        if digits {
-            if n >= 1 && n <= ncols {
-                return (n - 1, 0);
-            }
-            return (0, 2);
-        }
-    }
-    var found = -1;
-    var count = 0;
-    var c = 0;
-    while c < ncols {
-        var start = 0;
-        if c > 0 {
-            start = ends[c - 1];
-        }
-        if bytes.equal(names[start..ends[c]], word) {
-            if count == 0 {
-                found = c;
-            }
-            count = count + 1;
-        }
-        c = c + 1;
-    }
-    if count == 0 {
-        return (0, 2);
-    }
-    if count > 1 {
-        return (0, 3);
-    }
-    return (found, 0);
-}
-
-fn emit[&p](prog: &!p [int], at: int, op: int, a: int, b: int, c: int) -> [] int {
-    prog[at] = op;
-    prog[at + 1] = a;
-    prog[at + 2] = b;
-    prog[at + 3] = c;
-    return at + 4;
-}
-
 // Pops the operator on top of the stack of `work` (codes at 0.., scales at 32..; the depth at 64) into the program at `at`. Answers the new `at`, or -1 for a division with no scale.
 fn pop_op[&p, &w](prog: &!p [int], work: &!w [int], at: int) -> [] int {
     let top = work[64] - 1;
@@ -356,18 +247,18 @@ fn pop_op[&p, &w](prog: &!p [int], work: &!w [int], at: int) -> [] int {
         if n < 0 {
             return -1;
         }
-        return emit(prog, at, op_div(), n, 0, 0);
+        return clex.emit(prog, at, op_div(), n, 0, 0);
     }
     if code == 1 {
-        return emit(prog, at, op_add(), 0, 0, 0);
+        return clex.emit(prog, at, op_add(), 0, 0, 0);
     }
     if code == 2 {
-        return emit(prog, at, op_sub(), 0, 0, 0);
+        return clex.emit(prog, at, op_sub(), 0, 0, 0);
     }
     if code == 3 {
-        return emit(prog, at, op_mul(), 0, 0, 0);
+        return clex.emit(prog, at, op_mul(), 0, 0, 0);
     }
-    return emit(prog, at, op_neg(), 0, 0, 0);
+    return clex.emit(prog, at, op_neg(), 0, 0, 0);
 }
 
 // Binding strength: * and / 2, + and - 1, a negation 3, a parenthesis 0.
@@ -406,11 +297,14 @@ fn if_connective[&p, &w](prog: &!p [int], work: &!w [int], cur: int, top: int, i
     if ncmp + 1 >= cif.max_comparisons() {
         return (cur, 20);
     }
-    var at = emit(prog, cur, cif.op_cmp(), pending, 0, 0);
+    var at = cur;
+    if pending != 7 {
+        at = clex.emit(prog, at, cif.op_cmp(), pending, 0, 0);
+    }
     if is_or {
-        at = emit(prog, at, cif.op_jt(), -1, 0, 0);
+        at = clex.emit(prog, at, cif.op_jt(), -1, 0, 0);
     } else {
-        at = emit(prog, at, cif.op_jf(), -1, 0, 0);
+        at = clex.emit(prog, at, cif.op_jf(), -1, 0, 0);
     }
     work[32 + top] = (ncmp + 1) * 32 + want * 8;
     return (at, 0);
@@ -428,8 +322,11 @@ fn if_comma[&p, &w](prog: &!p [int], work: &!w [int], cur: int, top: int) -> [] 
         if pending == 0 {
             return (cur, 1);
         }
-        var at = emit(prog, cur, cif.op_cmp(), pending, 0, 0);
-        at = emit(prog, at, cif.op_jf(), -1, 0, 0);
+        var at = cur;
+        if pending != 7 {
+            at = clex.emit(prog, at, cif.op_cmp(), pending, 0, 0);
+        }
+        at = clex.emit(prog, at, cif.op_jf(), -1, 0, 0);
         var q = work[160 + top];
         while q < at {
             if prog[q] == cif.op_jt() && prog[q + 1] == -1 {
@@ -442,9 +339,9 @@ fn if_comma[&p, &w](prog: &!p [int], work: &!w [int], cur: int, top: int) -> [] 
         return (at, 0);
     }
     if commas == 1 {
-        var at = emit(prog, cur, cif.op_scale(), -1, 0, 0);
+        var at = clex.emit(prog, cur, cif.op_scale(), -1, 0, 0);
         work[96 + top] = at;
-        at = emit(prog, at, cif.op_jmp(), -1, 0, 0);
+        at = clex.emit(prog, at, cif.op_jmp(), -1, 0, 0);
         var q = work[160 + top];
         while q < work[224 + top] {
             if prog[q] == cif.op_jf() && prog[q + 1] == -1 {
@@ -477,7 +374,7 @@ fn if_close[&p, &w](prog: &!p [int], work: &!w [int], cur: int, top: int) -> [] 
         target = sb;
     }
     prog[jmp - 4 + 1] = target;
-    let at = emit(prog, cur, cif.op_scale(), target, 0, 0);
+    let at = clex.emit(prog, cur, cif.op_scale(), target, 0, 0);
     prog[jmp + 1] = cif.skip(jmp, at);
     return (at, 0);
 }
@@ -513,6 +410,8 @@ fn shape[&p, &w](prog: &p [int], work: &!w [int], first: int, end: int) -> [] (i
             sp = sp;
         } else if op == cif.op_cmp() {
             sp = sp - 2;
+        } else if op == ctext.op_tld() || op == ctext.op_tcmp() {
+            sp = sp;
         } else if op == cif.op_jf() || op == cif.op_jt() {
             sp = sp;
         } else if op == cif.op_scale() {
@@ -561,31 +460,10 @@ fn shape[&p, &w](prog: &p [int], work: &!w [int], first: int, end: int) -> [] (i
     return (work[72], depth, 0);
 }
 
-// The index of the earlier definition (0 .. d - 1) whose name is `word`, or -1: the operand of a chained definition (docs/computed-columns.md section 11).
-fn def_index[&h, &t, &p, &w](heap: &!h Heap, t: &t [byte], prog: &p [int], d: int, word: &w [byte]) -> [heap] int {
-    var found = -1;
-    var k = 0;
-    while k < d {
-        var other = buffer.empty(heap, 32);
-        let (ob, oe, oq, os) = word_at(heap, other, t, prog[1 + 5 * k + 3]);
-        other = ob;
-        var same = false;
-        borrow other as &orr in {
-            same = bytes.equal(buffer.bytes(orr), word);
-        }
-        buffer.drop(heap, other);
-        if same {
-            found = k;
-        }
-        k = k + 1;
-    }
-    return found;
-}
-
 // `len(` of a column or of a string literal, the argument at `from`, in a number-valued definition: the instruction is written at `cur`. Answers (where the call ends, the new `cur`, status).
 // A typed column, a call and an earlier definition are `compute.type-mismatch`; a second argument is `compute.arity`.
 fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], cur: int, d: int) -> [heap] (int, int, int) {
-    let i = skip_space(t, from);
+    let i = clex.skip_space(t, from);
     if i >= len(t) {
         return (i, cur, 1);
     }
@@ -606,11 +484,11 @@ fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n
                 k = k + 1;
             }
         }
-        cur2 = emit(prog, cur, op_const(), bytes_in, 0, 0);
+        cur2 = clex.emit(prog, cur, op_const(), bytes_in, 0, 0);
         next = le;
     } else {
         var cb = buffer.empty(heap, 32);
-        let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
+        let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);
         cb = b2;
         var status = 0;
         if s2 != 0 {
@@ -621,14 +499,14 @@ fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n
             var col = 0;
             var rs = 0;
             borrow cb as &cr in {
-                let (cc, rr) = resolve(names, ends, ncols, buffer.bytes(cr), q2);
+                let (cc, rr) = clex.resolve(names, ends, ncols, buffer.bytes(cr), q2);
                 col = cc;
                 rs = rr;
             }
             if rs == 2 {
                 var dk = -1;
                 borrow cb as &cr in {
-                    dk = def_index(heap, t, prog, d, buffer.bytes(cr));
+                    dk = clex.def_index(heap, t, prog, d, buffer.bytes(cr));
                 }
                 if dk >= 0 {
                     status = 16;
@@ -638,7 +516,7 @@ fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n
             } else if rs != 0 {
                 status = rs;
             } else {
-                cur2 = emit(prog, cur, op_len(), col, 0, 0);
+                cur2 = clex.emit(prog, cur, op_len(), col, 0, 0);
                 next = e2;
             }
         }
@@ -647,7 +525,7 @@ fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n
             return (i, cur, status);
         }
     }
-    let after = skip_space(t, next);
+    let after = clex.skip_space(t, next);
     if after >= len(t) {
         return (after, cur, 1);
     }
@@ -660,177 +538,14 @@ fn len_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n
     return (after + 1, cur2, 0);
 }
 
-// The count of `add_days(d, n)` at `from`: an integer literal (digits, a minus sign first if it is negative) or a column typed `:int`. Answers (where it ends, the value or the column, status, whether
-// it is a literal); status 15 for a literal that is not an integer, 16 for anything else that is not one (a text, a decimal, an earlier definition), 2 for a column that is not there.
-fn days_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &p [int], d: int) -> [heap] (int, int, int, bool) {
-    let c = int_of(t[from]);
-    if c >= '0' && c <= '9' || c == '-' {
-        var sign = 1;
-        var at = from;
-        if c == '-' {
-            sign = -1;
-            at = from + 1;
-        }
-        let (le, v, ls) = clit.digits_at(t, at);
-        if ls != 0 {
-            return (from, 0, ls, true);
-        }
-        return (le, sign * v, 0, true);
-    }
-    var cb = buffer.empty(heap, 32);
-    let (b2, e2, q2, s2) = word_at(heap, cb, t, from);
-    cb = b2;
-    var status = 0;
-    var col = 0;
-    var end = from;
-    if s2 != 0 {
-        status = 1;
-    } else {
-        var rs = 0;
-        borrow cb as &cr in {
-            let (cc, rr) = resolve(names, ends, ncols, buffer.bytes(cr), q2);
-            col = cc;
-            rs = rr;
-        }
-        if rs == 2 {
-            var dk = -1;
-            borrow cb as &cr in {
-                dk = def_index(heap, t, prog, d, buffer.bytes(cr));
-            }
-            status = 2;
-            if dk >= 0 {
-                status = 16;
-            }
-        } else if rs != 0 {
-            status = rs;
-        } else {
-            let (te, ts, tk, tst) = clit.type_at(t, e2);
-            if tst != 0 || tk != 0 {
-                status = 16;
-            }
-            end = te;
-        }
-    }
-    buffer.drop(heap, cb);
-    return (end, col, status, false);
-}
-
-// The arguments of a date function (`year(d:date)`, `days_between(a:date, "2026-01-01")`) after its `(`: each is a column typed `:date` or a date literal in double quotes, and the
-// instruction is one leaf (cdate.cho). Answers (where it ends, the program's new end, status): 14 for the wrong number of arguments, 15 for a literal that is not a real date, 16 for anything that
-// is not a date (a column with another type or none, a number, an earlier definition), and the status of a column that is not there.
-fn date_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], cur: int, d: int, id: int) -> [heap] (int, int, int) {
-    var i = from;
-    var a = id;
-    var v0 = 0;
-    var v1 = 0;
-    var k = 0;
-    let want = cdate.operands(id);
-    while true {
-        i = skip_space(t, i);
-        if i >= len(t) {
-            return (i, cur, 1);
-        }
-        if int_of(t[i]) == ')' || k >= want {
-            return (i, cur, 14);
-        }
-        var v = 0;
-        if id == 26 && k == 1 {
-            let (ie, iv, ist, lit) = days_at(heap, t, i, names, ends, ncols, prog, d);
-            if ist != 0 {
-                return (i, cur, ist);
-            }
-            v = iv;
-            i = ie;
-            if lit {
-                a = a + 64;
-            }
-        } else if int_of(t[i]) == 34 {
-            let (le, lv, ls) = cdate.literal(t, i);
-            if ls != 0 {
-                return (i, cur, ls);
-            }
-            v = lv;
-            i = le;
-            a = a + 32 + 32 * k;
-        } else if int_of(t[i]) >= '0' && int_of(t[i]) <= '9' || int_of(t[i]) == '-' || int_of(t[i]) == '.' {
-            return (i, cur, 16);
-        } else {
-            var cb = buffer.empty(heap, 32);
-            let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
-            cb = b2;
-            var status = 0;
-            if s2 != 0 {
-                status = 1;
-            } else {
-                var col = 0;
-                var rs = 0;
-                borrow cb as &cr in {
-                    let (cc, rr) = resolve(names, ends, ncols, buffer.bytes(cr), q2);
-                    col = cc;
-                    rs = rr;
-                }
-                if rs == 2 {
-                    var dk = -1;
-                    borrow cb as &cr in {
-                        dk = def_index(heap, t, prog, d, buffer.bytes(cr));
-                    }
-                    status = 2;
-                    if dk >= 0 {
-                        status = 16;
-                    }
-                } else if rs != 0 {
-                    status = rs;
-                } else {
-                    let te = cdate.type_end(t, e2);
-                    if te < 0 {
-                        status = 16;
-                    } else {
-                        v = col;
-                        i = te;
-                    }
-                }
-            }
-            buffer.drop(heap, cb);
-            if status != 0 {
-                return (i, cur, status);
-            }
-        }
-        if k == 0 {
-            v0 = v;
-        } else {
-            v1 = v;
-        }
-        k = k + 1;
-        i = skip_space(t, i);
-        if i >= len(t) {
-            return (i, cur, 1);
-        }
-        if int_of(t[i]) == ')' {
-            if k < want {
-                return (i, cur, 14);
-            }
-            var op = cdate.op_dt();
-            if id == 26 {
-                op = ctext.op_add_days();
-            }
-            return (i + 1, emit(prog, cur, op, a, v0, v1), 0);
-        }
-        if int_of(t[i]) != ',' {
-            return (i, cur, 1);
-        }
-        i = i + 1;
-    }
-    return (i, cur, 1);
-}
-
 // Whether the expression at `from` (after the `=`) is a call of a text function: a word, the parenthesis next to it, and a name from 11 to 18.
 fn is_text_call[&h, &t](heap: &!h Heap, t: &t [byte], from: int) -> [heap] bool {
-    let p = skip_space(t, from);
+    let p = clex.skip_space(t, from);
     if p >= len(t) {
         return false;
     }
     var cb = buffer.empty(heap, 32);
-    let (b2, e2, q2, s2) = word_at(heap, cb, t, p);
+    let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, p);
     cb = b2;
     var fid = 0;
     if s2 == 0 && !q2 && e2 < len(t) && int_of(t[e2]) == '(' {
@@ -872,7 +587,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
     work[64] = 0;
     work[65] = 0;
     while status == 0 && !done {
-        i = skip_space(t, i);
+        i = clex.skip_space(t, i);
         offset = i;
         if cur - first > text_limit() {
             status = 9;
@@ -884,7 +599,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                 if ls != 0 {
                     status = ls;
                 } else {
-                    cur = emit(prog, cur, ctext.op_lit(), lf, lt, 0);
+                    cur = clex.emit(prog, cur, ctext.op_lit(), lf, lt, 0);
                     i = le;
                     expect = false;
                 }
@@ -892,7 +607,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                 status = 16;
             } else {
                 var cb = buffer.empty(heap, 32);
-                let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
+                let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);
                 cb = b2;
                 if s2 != 0 {
                     status = 1;
@@ -904,7 +619,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                     if fid == 0 {
                         status = 13;
                     } else if fid == 26 {
-                        let (le, dcur, dst) = date_at(heap, t, e2 + 1, names, ends, ncols, prog, cur, d, fid);
+                        let (le, dcur, dst) = cdatep.date_at(heap, t, e2 + 1, names, ends, ncols, prog, cur, d, fid);
                         if dst != 0 {
                             status = dst;
                             offset = le;
@@ -935,14 +650,14 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                     var col = 0;
                     var rs = 0;
                     borrow cb as &cr in {
-                        let (cc, rr) = resolve(names, ends, ncols, buffer.bytes(cr), q2);
+                        let (cc, rr) = clex.resolve(names, ends, ncols, buffer.bytes(cr), q2);
                         col = cc;
                         rs = rr;
                     }
                     if rs == 2 {
                         var dk = -1;
                         borrow cb as &cr in {
-                            dk = def_index(heap, t, prog, d, buffer.bytes(cr));
+                            dk = clex.def_index(heap, t, prog, d, buffer.bytes(cr));
                         }
                         if dk < 0 {
                             status = 2;
@@ -957,7 +672,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                     } else if rs != 0 {
                         status = rs;
                     } else {
-                        cur = emit(prog, cur, ctext.op_col(), col, 0, 0);
+                        cur = clex.emit(prog, cur, ctext.op_col(), col, 0, 0);
                         i = e2;
                         expect = false;
                     }
@@ -995,7 +710,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                     if fid == 16 {
                         take = 1;
                     }
-                    cur = emit(prog, cur, ctext.op_call(), fid, take, work[224 + top]);
+                    cur = clex.emit(prog, cur, ctext.op_call(), fid, take, work[224 + top]);
                     work[64] = top;
                     work[65] = work[65] - 1;
                     i = i + 1;
@@ -1018,7 +733,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                         status = 15;
                         offset = e1;
                     } else {
-                        let q1 = skip_space(t, e1);
+                        let q1 = clex.skip_space(t, e1);
                         if q1 >= len(t) {
                             status = 1;
                             offset = q1;
@@ -1034,7 +749,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                                 status = 15;
                                 offset = e2;
                             } else {
-                                let q2 = skip_space(t, e2);
+                                let q2 = clex.skip_space(t, e2);
                                 if q2 >= len(t) {
                                     status = 1;
                                     offset = q2;
@@ -1054,7 +769,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                     }
                 } else if fid == 18 {
                     // replace(s, from, to): two string literals, the first not empty
-                    let p1 = skip_space(t, i + 1);
+                    let p1 = clex.skip_space(t, i + 1);
                     if commas != 0 {
                         status = 14;
                         offset = work[192 + top];
@@ -1067,8 +782,8 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                             status = 15;
                             offset = p1;
                         } else {
-                            cur = emit(prog, cur, ctext.op_lit(), f1, t1, 0);
-                            let q1 = skip_space(t, l1);
+                            cur = clex.emit(prog, cur, ctext.op_lit(), f1, t1, 0);
+                            let q1 = clex.skip_space(t, l1);
                             if q1 >= len(t) {
                                 status = 1;
                                 offset = q1;
@@ -1079,7 +794,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                                 status = 1;
                                 offset = q1;
                             } else {
-                                let p2 = skip_space(t, q1 + 1);
+                                let p2 = clex.skip_space(t, q1 + 1);
                                 if p2 >= len(t) || int_of(t[p2]) != 34 {
                                     status = 15;
                                     offset = p2;
@@ -1089,8 +804,8 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                                         status = 15;
                                         offset = p2;
                                     } else {
-                                        cur = emit(prog, cur, ctext.op_lit(), f2, t2, 0);
-                                        let q2 = skip_space(t, l2);
+                                        cur = clex.emit(prog, cur, ctext.op_lit(), f2, t2, 0);
+                                        let q2 = clex.skip_space(t, l2);
                                         if q2 >= len(t) {
                                             status = 1;
                                             offset = q2;
@@ -1120,7 +835,7 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
                     }
                 } else {
                     // a function of one argument: an empty argument is a syntax error, a second one is the wrong arity
-                    let q = skip_space(t, i + 1);
+                    let q = clex.skip_space(t, i + 1);
                     if q < len(t) && int_of(t[q]) == ')' {
                         status = 1;
                     } else {
@@ -1149,13 +864,13 @@ fn text_define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, 
 // One definition from `from` to the `;` or the end: its program is written at `prog[at ..]` and its header at slot `d`. Answers (end of the definition in the text, the new `at`, status, offset).
 fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], work: &!w [int], d: int, at: int) -> [heap] (int, int, int, int) {
     var wb = buffer.empty(heap, 32);
-    var i = skip_space(t, from);
+    var i = clex.skip_space(t, from);
     let name_first = i;
     var status = 0;
     var offset = i;
     var out_at = at;
     var i_end = i;
-    let (nb, ne, nq, ns) = word_at(heap, wb, t, i);
+    let (nb, ne, nq, ns) = clex.word_at(heap, wb, t, i);
     wb = nb;
     i = ne;
     if ns != 0 {
@@ -1171,7 +886,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
     // the name is not a column of the input nor one of the definitions before
     if status == 0 {
         borrow wb as &wr in {
-            let (c0, cs) = resolve(names, ends, ncols, buffer.bytes(wr), true);
+            let (c0, cs) = clex.resolve(names, ends, ncols, buffer.bytes(wr), true);
             if cs == 0 {
                 status = 4;
             }
@@ -1182,7 +897,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
         var k = 0;
         while k < d && status == 0 {
             var other = buffer.empty(heap, 32);
-            let (ob, oe, oq, os) = word_at(heap, other, t, prog[1 + 5 * k + 3]);
+            let (ob, oe, oq, os) = clex.word_at(heap, other, t, prog[1 + 5 * k + 3]);
             other = ob;
             var same = false;
             borrow wb as &wr in {
@@ -1199,7 +914,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
     }
     buffer.drop(heap, wb);
     if status == 0 {
-        i = skip_space(t, i);
+        i = clex.skip_space(t, i);
         if i >= len(t) || int_of(t[i]) != '=' {
             status = 1;
             offset = i;
@@ -1220,15 +935,37 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
     let first = at;
     var cur = at;
     while status == 0 && !done {
-        i = skip_space(t, i);
+        i = clex.skip_space(t, i);
         offset = i;
-        if cur - first > 4 * 128 {
+        var texted = false;
+        if expect && work[64] > 0 && work[work[64] - 1] == 8 && work[32 + work[64] - 1] / 256 == 0 && work[32 + work[64] - 1] % 8 == 0 && cur - first <= 4 * 128 && i < len(t) {
+            // the start of a comparison in the condition of an `if`: one of texts is read whole (docs/functions.md section 3.4, K7b1)
+            let (te, tcur, tst, handled) = ctcmp.text_cmp_at(heap, t, i, names, ends, ncols, prog, cur, d);
+            if handled {
+                texted = true;
+                if tst != 0 {
+                    status = tst;
+                    offset = te;
+                } else {
+                    cur = tcur;
+                    i = te;
+                    expect = false;
+                    work[32 + work[64] - 1] = work[32 + work[64] - 1] + 7;
+                }
+            }
+        }
+        if texted {
+            offset = i;
+        } else if cur - first > 4 * 128 {
             status = 9;
         } else if i >= len(t) || int_of(t[i]) == ';' && work[65] == 0 {
             done = true;
         } else if expect {
             let c = int_of(t[i]);
-            if c == '-' {
+            if c == 34 {
+                // a string literal in a number: no conversion either way
+                status = 16;
+            } else if c == '-' {
                 work[work[64]] = 5;
                 work[32 + work[64]] = -1;
                 work[64] = work[64] + 1;
@@ -1248,13 +985,13 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                 if ns2 != 0 {
                     status = 1;
                 } else {
-                    cur = emit(prog, cur, op_const(), v, sc, 0);
+                    cur = clex.emit(prog, cur, op_const(), v, sc, 0);
                     i = ne2;
                     expect = false;
                 }
             } else {
                 var cb = buffer.empty(heap, 32);
-                let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
+                let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);
                 cb = b2;
                 if s2 != 0 {
                     status = 1;
@@ -1289,7 +1026,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                         // add_days makes a text: no conversion either way
                         status = 16;
                     } else if fid >= 21 {
-                        let (le, dcur, dst) = date_at(heap, t, e2 + 1, names, ends, ncols, prog, cur, d, fid);
+                        let (le, dcur, dst) = cdatep.date_at(heap, t, e2 + 1, names, ends, ncols, prog, cur, d, fid);
                         if dst != 0 {
                             status = dst;
                             offset = le;
@@ -1327,14 +1064,14 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                     var col = 0;
                     var rs = 0;
                     borrow cb as &cr in {
-                        let (cc, rr) = resolve(names, ends, ncols, buffer.bytes(cr), q2);
+                        let (cc, rr) = clex.resolve(names, ends, ncols, buffer.bytes(cr), q2);
                         col = cc;
                         rs = rr;
                     }
                     var dk = -1;
                     if rs == 2 {
                         borrow cb as &cr in {
-                            dk = def_index(heap, t, prog, d, buffer.bytes(cr));
+                            dk = clex.def_index(heap, t, prog, d, buffer.bytes(cr));
                         }
                     }
                     if dk >= 0 && prog[1 + 5 * dk + 2] < 0 {
@@ -1362,7 +1099,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                             status = tstat;
                             offset = e2;
                         } else {
-                            cur = emit(prog, cur, op_cell(), col, ts, tk);
+                            cur = clex.emit(prog, cur, op_cell(), col, ts, tk);
                             i = te;
                             expect = false;
                         }
@@ -1400,10 +1137,10 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                                 status = 14;
                                 offset = work[192 + top];
                             } else if fid <= 4 {
-                                cur = emit(prog, cur, op_fn(), fid, nargs, 0);
+                                cur = clex.emit(prog, cur, op_fn(), fid, nargs, 0);
                             } else if fid <= 8 {
                                 // the scale of the rounding family is a literal of the instruction, not an operand: one value comes off the stack
-                                cur = emit(prog, cur, op_fn(), fid, 1, work[224 + top]);
+                                cur = clex.emit(prog, cur, op_fn(), fid, 1, work[224 + top]);
                             }
                         }
                         if status == 0 {
@@ -1449,7 +1186,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                             status = 15;
                             offset = le;
                         } else {
-                            let after = skip_space(t, le);
+                            let after = clex.skip_space(t, le);
                             if after < len(t) && int_of(t[after]) == ',' {
                                 status = 14;
                                 offset = work[192 + top];
@@ -1471,9 +1208,9 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                             let (le, v, sc, ls) = clit.default_literal(t, i + 1);
                             if ls != 0 || sc > prog[start + 2] {
                                 status = 15;
-                                offset = skip_space(t, i + 1);
+                                offset = clex.skip_space(t, i + 1);
                             } else {
-                                let after = skip_space(t, le);
+                                let after = clex.skip_space(t, le);
                                 if after < len(t) && int_of(t[after]) == ',' {
                                     status = 14;
                                     offset = work[192 + top];
@@ -1482,7 +1219,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                                     offset = after;
                                 } else {
                                     prog[start + 3] = prog[start + 3] + 2;
-                                    cur = emit(prog, cur, op_const(), v, sc, 0);
+                                    cur = clex.emit(prog, cur, op_const(), v, sc, 0);
                                     work[32 + top] = fid * 16 + 1;
                                     i = after;
                                 }
@@ -1558,7 +1295,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
             } else if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
                 // `and` or `or`, between two comparisons of an `if`
                 var cb = buffer.empty(heap, 8);
-                let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
+                let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);
                 cb = b2;
                 var is_and = false;
                 var is_or = false;
@@ -1687,7 +1424,7 @@ pub fn scale_of[&p](prog: &p [int], d: int) -> [] int {
 
 // The name of definition `d`, unescaped, appended to `out`.
 pub fn name_of[&h, &t, &p](heap: &!h Heap, out: buffer.Buffer, t: &t [byte], prog: &p [int], d: int) -> [heap] buffer.Buffer {
-    let (o, e, q, s) = word_at(heap, out, t, prog[1 + 5 * d + 3]);
+    let (o, e, q, s) = clex.word_at(heap, out, t, prog[1 + 5 * d + 3]);
     return o;
 }
 
@@ -1854,16 +1591,62 @@ fn apply[&w](w: &!w [int], id: int, base: int, n: int, extra: int) -> [] int {
 }
 
 // Definition `d` against one row: the value is left in slot 0 of the workspace `w`. Answers (status, column of the cell that was refused).
-pub fn eval[&p, &dd, &c, &w](prog: &p [int], d: int, record: &dd [byte], cells: &c [int], w: &!w [int]) -> [] (int, int) {
+pub fn eval[&p, &tt, &dd, &c, &w](prog: &p [int], d: int, t: &tt [byte], record: &dd [byte], cells: &c [int], w: &!w [int]) -> [] (int, int) {
     var at = prog[1 + 5 * d];
     let end = prog[1 + 5 * d + 1];
     var sp = 0;
     var verdict = false;
+    // the two operands of a comparison of texts: the bytes (0 the record, 1 the text of the definitions), where they start and end, and whether they hold doubled quotes
+    var lsrc = 0;
+    var lf = 0;
+    var lt = 0;
+    var ld = 0;
+    var rsrc = 0;
+    var rf = 0;
+    var rt = 0;
+    var rd = 0;
     while at < end {
         let op = prog[at];
         if op == cif.op_cmp() {
             sp = sp - 2;
             verdict = cif.compare(w, sp, sp + 1, prog[at + 1]);
+        } else if op == ctext.op_tld() {
+            var src = 0;
+            var from = 0;
+            var to = 0;
+            var dbl = 1;
+            if prog[at + 1] / 2 == 1 {
+                src = 1;
+                from = prog[at + 2];
+                to = prog[at + 3];
+            } else {
+                from = cells[3 * prog[at + 2]];
+                to = cells[3 * prog[at + 2] + 1];
+                dbl = cells[3 * prog[at + 2] + 2];
+            }
+            if prog[at + 1] % 2 == 0 {
+                lsrc = src;
+                lf = from;
+                lt = to;
+                ld = dbl;
+            } else {
+                rsrc = src;
+                rf = from;
+                rt = to;
+                rd = dbl;
+            }
+        } else if op == ctext.op_tcmp() {
+            var sign = 0;
+            if lsrc == 0 && rsrc == 0 {
+                sign = ctext.compare(record, lf, lt, ld, record, rf, rt, rd);
+            } else if lsrc == 0 {
+                sign = ctext.compare(record, lf, lt, ld, t, rf, rt, rd);
+            } else if rsrc == 0 {
+                sign = ctext.compare(t, lf, lt, ld, record, rf, rt, rd);
+            } else {
+                sign = ctext.compare(t, lf, lt, ld, t, rf, rt, rd);
+            }
+            verdict = cif.holds(sign, prog[at + 1]);
         } else if op == cif.op_jf() {
             if !verdict {
                 at = at + 4 * prog[at + 1];
