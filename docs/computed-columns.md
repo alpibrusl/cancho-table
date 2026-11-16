@@ -170,7 +170,7 @@ definition, the column and the row number only.
 * **Whether `--compute` should later be allowed beside `--select`/`--where`** (one pass instead of two): only with G-COST, the select path measured with a
   callee at the 1.01 budget.
 * **JSON-lines input** (K3b) is built (section 8). It is a second copy of the stage's reader (`computej.cho`), because `jsonl.read` has its own loop; the day the two diverge is the day a change to one needs the other, and `scripts/compute_mutants.py` has a mutant for each of the stage's steps in both.
-* **Dates** (`ts + 1d`, differences): out; `docs/datetime.md` section 15 says why. *Reopened 2026-11-15 for day counts on `:date` only, to be confirmed before it is built: [`docs/functions.md`](functions.md) slice K8.*
+* **Dates** (`ts + 1d`, differences): out; `docs/datetime.md` section 15 says why. *Reopened 2026-11-15 for day counts on `:date` only; `year`, `month`, `day`, `weekday` and `days_between` are built (K8a, 2026-11-16): [`docs/functions.md`](functions.md) slice K8.*
 * **Rounding functions** (`round`, `floor`): out; `/ @N` is the only rounding. *Reopened 2026-11-15 and built: [`docs/functions.md`](functions.md) slice K5 (`round`, `floor`, `ceil`, `trunc` with an explicit scale, half to even).*
 
 ## 11. Chaining: a definition may name an earlier one (built 14 Nov 2026)

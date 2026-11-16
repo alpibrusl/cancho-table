@@ -8,7 +8,7 @@
 The probe (tests/conformance/cexpr_probe/main.cho) prints a value as NAME=text at its scale, `C status offset` for definitions refused before a row is read and
 `E status column definition` for a row refused. The random cases compare the value text; the refusals compare the status.
 """
-import argparse, pathlib, random, re, shutil, sys, tempfile
+import argparse, datetime, pathlib, random, re, shutil, sys, tempfile
 import procs as subprocess  # every child in a group that is reaped: tests/conformance/procs.py
 import mutlib  # the shared half of the mutation scripts: `check` says every pattern occurs exactly once
 
@@ -89,6 +89,8 @@ def ev(node, row):
         return r, sc
     if k == "lit":
         return node[1], node[2]
+    if k == "dt":
+        return dt_ev(node, row), 0
     if k == "if":
         # docs/functions.md section 3.4: only the chosen branch is evaluated, and the comparisons are evaluated left to right and stop at the first that decides
         _, conn, conds, a_node, b_node = node
@@ -149,8 +151,36 @@ def cond_holds(conn, conds, row):
     return conn != "or"
 
 
+class BadCell(Exception):
+    """a cell that is not a date, in a column read as :date: the column"""
+
+
+def dt_ev(node, row):
+    """docs/functions.md section 3.5: the date functions over Python's datetime.date (no code shared with the tool)"""
+    _, name, args = node
+    vals = []
+    for a in args:
+        if a[0] == "dcol":
+            if row[a[1]] is None:
+                raise BadCell(a[1])
+            vals.append(row[a[1]])
+        else:
+            vals.append(a[1])
+    if name == "year":
+        return vals[0].year
+    if name == "month":
+        return vals[0].month
+    if name == "day":
+        return vals[0].day
+    if name == "weekday":
+        return vals[0].isoweekday()
+    return (vals[1] - vals[0]).days
+
+
 def static_scale(node):
     k = node[0]
+    if k == "dt":
+        return 0
     if k == "if":
         for _, left, right in node[2]:
             static_scale(left)
@@ -192,11 +222,19 @@ def sp(rng):
 
 
 def atom(node):
-    return node[0] in ("col", "lit", "ref", "fn", "coal", "if")
+    return node[0] in ("col", "lit", "ref", "fn", "coal", "if", "dt")
+
+
+def render_date(a, rng):
+    if a[0] == "dcol":
+        return ("#%d:date" % (a[1] + 1)) if rng.random() < 0.15 else "%s:date" % "abcdef"[a[1]]
+    return '"%s"' % a[1].isoformat()
 
 
 def render(node, rng):
     k = node[0]
+    if k == "dt":
+        return node[1] + "(" + sp(rng) + (sp(rng) + "," + sp(rng)).join(render_date(a, rng) for a in node[2]) + sp(rng) + ")"
     if k == "if":
         _, conn, conds, a_node, b_node = node
         parts = [f"{render(l, rng)}{sp(rng)}{op}{sp(rng)}{render(r, rng)}" for op, l, r in conds]
@@ -437,6 +475,128 @@ def if_hand_cases():
     return [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_HAND] + [(HEADER, cells, defs, want) for cells, defs, want in IF_CELLS]
 
 
+# ---- dates (docs/functions.md section 3.5): G-DT-ORACLE ----------------------------------------------------------------------------------
+
+DT_SPECIAL = [datetime.date(1, 1, 1), datetime.date(9999, 12, 31), datetime.date(1969, 12, 31), datetime.date(1970, 1, 1), datetime.date(2000, 2, 29), datetime.date(1900, 2, 28),
+              datetime.date(1900, 3, 1), datetime.date(2100, 3, 1), datetime.date(2024, 2, 29), datetime.date(1600, 2, 29), datetime.date(1, 3, 1), datetime.date(4, 2, 29)]
+DT_BAD = ["2026-02-30", "2026-13-01", "", "x", "2026-1-01", "0000-01-01", "10000-01-01", "2026-02-29", "1900-02-29", "2026/01/01", " 2026-01-01", "2026-01-01T00:00:00Z"]
+
+
+def rand_date(rng):
+    if rng.random() < 0.3:
+        return rng.choice(DT_SPECIAL)
+    return datetime.date.fromordinal(rng.randint(1, 3652059))
+
+
+def make_dt_row(rng, p_bad=0.08):
+    cells, row = [], []
+    for _ in range(6):
+        if rng.random() < p_bad:
+            cells.append(rng.choice(DT_BAD))
+            row.append(None)
+        else:
+            d = rand_date(rng)
+            cells.append(d.isoformat())
+            row.append(d)
+    return ",".join(cells), row
+
+
+def gen_dt_leaf(rng):
+    name = rng.choice(["year", "month", "day", "weekday", "days_between", "days_between"])
+
+    def operand():
+        return ("dcol", rng.randrange(6)) if rng.random() < 0.7 else ("dlit", rand_date(rng))
+    return ("dt", name, [operand() for _ in range(2 if name == "days_between" else 1)])
+
+
+def gen_dt(rng, depth):
+    """a number built from the date functions: a leaf, an operator, a function of K5, or an `if` on two of them"""
+    if depth == 0 or rng.random() < 0.35:
+        return gen_dt_leaf(rng) if rng.random() < 0.85 else ("lit", rng.randint(0, 400), 0)
+    k = rng.choice(["+", "-", "*", "/", "if", "if", "fn"])
+    if k == "if":
+        conds = [(rng.choice(CMP_OPS), gen_dt(rng, depth - 1), gen_dt(rng, depth - 1))]
+        return ("if", None, conds, gen_dt(rng, depth - 1), gen_dt(rng, depth - 1))
+    if k == "fn":
+        return ("fn", "abs", [gen_dt(rng, depth - 1)], None)
+    if k == "/":
+        return ("/", gen_dt(rng, depth - 1), gen_dt(rng, depth - 1), rng.randint(0, 4))
+    return (k, gen_dt(rng, depth - 1), gen_dt(rng, depth - 1))
+
+
+def lines_dt(rng, n):
+    out = []
+    for _ in range(n):
+        cells, row = make_dt_row(rng)
+        defs, exp = [], []
+        for d in range(rng.randint(1, 3)):
+            tree = gen_dt(rng, rng.randint(0, 3))
+            for _try in range(30):
+                if size_of(tree) <= 60 and depth_of(tree) <= 8 and len(render(tree, Longest())) < 245 and paren_depth(render(tree, Longest())) <= 4:
+                    break
+                tree = gen_dt(rng, rng.randint(0, 2))
+            try:
+                v, sc = ev(tree, row)
+                exp.append(("ok", f"r{d}={text(v, sc)}"))
+            except BadCell as e:
+                exp.append(("D", e.args[0]))
+            except Overflow:
+                exp.append(("E", 12))
+            except DivZero:
+                exp.append(("E", 11))
+            defs.append(f"r{d}=" + render(tree, rng))
+        bad = [i for i, e in enumerate(exp) if e[0] in "ED"]
+        if not bad:
+            want = ";".join(e[1] for e in exp)
+        elif exp[bad[0]][0] == "D":
+            want = f"D {exp[bad[0]][1]} {bad[0]}"
+        else:
+            want = f"E {exp[bad[0]][1]} 0 {bad[0]}"
+        out.append((HEADER, cells, ";".join(defs), want))
+    return out
+
+
+DT_CELLS = "2026-11-16,1970-01-01,2000-02-29,1900-02-28,0001-01-01,9999-12-31"
+DT_HAND = [
+    # a..f: 2026-11-16 (a Monday), 1970-01-01 (a Thursday), 2000-02-29 (a Tuesday), 1900-02-28, 0001-01-01 (a Monday), 9999-12-31 (a Friday)
+    ("r=year(a:date)", "r=2026"), ("r=month(a:date)", "r=11"), ("r=day(a:date)", "r=16"), ("r=weekday(a:date)", "r=1"),
+    ("r=weekday(b:date)", "r=4"), ("r=weekday(c:date)", "r=2"), ("r=weekday(e:date)", "r=1"), ("r=weekday(f:date)", "r=5"),
+    ("r=year(e:date);m=month(e:date);dd=day(e:date)", "r=1;m=1;dd=1"),
+    ("r=year(f:date);m=month(f:date);dd=day(f:date)", "r=9999;m=12;dd=31"),
+    ("r=day(c:date)", "r=29"), ("r=day(d:date)", "r=28"),
+    ("r=days_between(b:date, c:date)", "r=11016"), ("r=days_between(c:date, b:date)", "r=-11016"), ("r=days_between(a:date, a:date)", "r=0"),
+    ("r=days_between(e:date, f:date)", "r=3652058"),
+    ('r=days_between("2000-01-01", "2000-03-01")', "r=60"), ('r=days_between(c:date, "2000-03-01")', "r=1"), ('r=days_between("1999-12-31", "2000-01-01")', "r=1"),
+    ('r=days_between("1900-02-28", "1900-03-01")', "r=1"), ('r=days_between("2100-02-28", "2100-03-01")', "r=1"), ('r=days_between("2024-02-28", "2024-03-01")', "r=2"),
+    ('r=year("2026-11-16")', "r=2026"), ('r=weekday("1970-01-01")', "r=4"),
+    ("r=year(a:date)*100+month(a:date)", "r=202611"),
+    ("r=if(days_between(b:date, a:date) > 1000, 1, 0)", "r=1"), ("r=if(weekday(a:date) = 1, year(a:date), 0)", "r=2026"),
+    ("r=year(a:date);s=r+1", "r=2026;s=2027"),
+    ("r=year( a:date )", "r=2026"), ("r=days_between( a:date , b:date )", "r=-20773"), ("r=year(#1:date)", "r=2026"),
+    # refusals of the compiler
+    ('r=year("2026-02-30")', "C 15"), ('r=year("2026-1-01")', "C 15"), ('r=year("2026-11-16)', "C 15"), ("r=year(a:int)", "C 16"), ("r=year(a)", "C 16"), ("r=year(a:dec(2))", "C 16"),
+    ("r=year(1)", "C 16"), ("r=year()", "C 14"), ("r=year(a:date, b:date)", "C 14"), ("r=days_between(a:date)", "C 14"), ("r=days_between(a:date, b:date, c:date)", "C 14"),
+    ("r=year(z:date)", "C 2"), ("r=year(a:date", "C 1"), ("r=year (a:date)", "C 2"), ("r=a:date", "C 1"), ("r=a:date + 1", "C 1"),
+    ("r=Year(a:date)", "C 13"), ("r=add_days(a:date, 1)", "C 13"), ("r=year(a:date);s=year(r)", "C 16"),
+]
+# a cell that is not a date (the status is the reader's, from 1000: the column and the definition are the tool's)
+DT_CELL_CASES = [
+    ("x,1970-01-01,2000-02-29,1900-02-28,0001-01-01,9999-12-31", "r=year(a:date)", "D 0 0"),
+    ("2026-11-16,x,2000-02-29,1900-02-28,0001-01-01,9999-12-31", "r=days_between(a:date, b:date)", "D 1 0"),
+    ("2026-11-16,2026-02-30,2000-02-29,1900-02-28,0001-01-01,9999-12-31", "r=year(a:date);s=day(b:date)", "D 1 1"),
+    # the bad cell is in the arm that is not taken, or in a comparison that is not reached
+    ("2026-11-16,x,2000-02-29,1900-02-28,0001-01-01,9999-12-31", "r=if(year(a:date) > 2000, 1, year(b:date))", "r=1"),
+    ("2026-11-16,x,2000-02-29,1900-02-28,0001-01-01,9999-12-31", "r=if(year(a:date) < 2000, 1, year(b:date))", "D 1 0"),
+    ("2026-11-16,x,2000-02-29,1900-02-28,0001-01-01,9999-12-31", "r=if(year(a:date) < 2000 and year(b:date) > 1, 1, 2)", "r=2"),
+    ("2026-11-16,,2000-02-29,1900-02-28,0001-01-01,9999-12-31", "r=year(b:date)", "D 1 0"),
+    ('"2026-11-16",1970-01-01,2000-02-29,1900-02-28,0001-01-01,9999-12-31', "r=year(a:date)", "r=2026"),
+]
+
+
+def dt_hand_cases():
+    return [(HEADER, DT_CELLS, defs, want) for defs, want in DT_HAND] + [(HEADER, cells, defs, want) for cells, defs, want in DT_CELL_CASES]
+
+
 def make_row(rng):
     cols, cells, row = [], [], []
     for _ in range(6):
@@ -494,6 +654,8 @@ def lines_of(rng, n):
 
 def size_of(node):
     k = node[0]
+    if k == "dt":
+        return 1
     if k == "if":
         return sum(size_of(l) + size_of(r) + 2 for _, l, r in node[2]) + size_of(node[3]) + size_of(node[4]) + 3
     if k in ("col", "lit"):
@@ -512,7 +674,7 @@ def size_of(node):
 def depth_of(node):
     """most operands pending at once in the postfix program of the expanded tree"""
     k = node[0]
-    if k in ("col", "lit"):
+    if k in ("col", "lit", "dt"):
         return 1
     if k == "coal":
         return 1
@@ -804,6 +966,10 @@ def run(probe, cs):
 
 
 def same(want, got):
+    if want.startswith("D "):
+        _, c, dd = want.split()
+        m = re.fullmatch(r"E (\d{4,}) %s %s" % (c, dd), got)
+        return m is not None and int(m.group(1)) >= 1015  # 1000 and the reader's status: 14 and the reason, so never less
     if want.startswith("C "):
         return got.startswith(want)  # the status; the offset is the tool's
     return got == want
@@ -822,9 +988,9 @@ MUTANTS = [
     ("a right-associative subtraction", "    while status == 0 && work[64] > 0 && prec(work[work[64] - 1]) >= prec(code) {", "    while status == 0 && work[64] > 0 && prec(work[work[64] - 1]) > prec(code) {"),
     ("the scale of a division is ignored", "        return emit(prog, at, op_div(), n, 0, 0);", "        return emit(prog, at, op_div(), 0, 0, 0);"),
     ("a division without a scale is accepted", "        if n < 0 {\n            return -1;\n        }", "        if n < -5 {\n            return -1;\n        }"),
-    ("a decimal read at scale 0", "            return (from + 1 + k + 1, n, 1, 0);", "            return (from + 1 + k + 1, 0, 1, 0);"),
-    ("a float is read as an int", "        return (from + 6, 0, 0, 6);", "        return (from + 6, 0, 0, 0);"),
-    ("no type is accepted", "        return (from, 0, 0, 5);", "        return (from, 0, 0, 0);"),
+    ("a decimal read at scale 0", "            return (from + 1 + k + 1, n, 1, 0);", "            return (from + 1 + k + 1, 0, 1, 0);", "clit"),
+    ("a float is read as an int", "        return (from + 6, 0, 0, 6);", "        return (from + 6, 0, 0, 0);", "clit"),
+    ("no type is accepted", "        return (from, 0, 0, 5);", "        return (from, 0, 0, 0);", "clit"),
     ("a position is one off", "                return (n - 1, 0);", "                return (n, 0);"),
     ("an ambiguous name is accepted", "    if count > 1 {\n        return (0, 3);", "    if count > 100 {\n        return (0, 3);"),
     ("a duplicate of a column is accepted", "            if cs == 0 {\n                status = 4;", "            if cs == 100 {\n                status = 4;"),
@@ -857,7 +1023,7 @@ MUTANTS = [
     ("fn: greatest takes the scale of its first operand", "                    if work[72 + sp - n + k] > fscale {", "                    if work[72 + sp - n + k] > 99 {"),
     ("fn: an unknown function is not refused", "                    if fid == 0 {\n                        status = 13;\n                    } else if fid >= 11 && fid <= 18 {", "                    if fid == 99 {\n                        status = 13;\n                    } else if fid >= 11 && fid <= 18 {"),
     ("fn: the arity is not checked", "                            if nargs < arity_min(fid) || nargs > arity_max(fid) {", "                            if false {"),
-    ("fn: the scale literal may be 19", "    if digits == 0 || n > 18 {\n        return (p, 0, 15);", "    if digits == 0 || n > 19 {\n        return (p, 0, 15);"),
+    ("fn: the scale literal may be 19", "    if digits == 0 || n > 18 {\n        return (p, 0, 15);", "    if digits == 0 || n > 19 {\n        return (p, 0, 15);", "clit"),
     ("fn: a call's parenthesis is not a level", "                        if work[64] > 28 || work[65] > 4 {\n                            status = 9;\n                        } else {\n                            let top = work[64];\n                            work[top] = 7;\n                            work[32 + top] = fid * 16;\n                            work[160 + top] = cur;", "                        if work[64] > 28 || work[65] > 400 {\n                            status = 9;\n                        } else {\n                            let top = work[64];\n                            work[top] = 7;\n                            work[32 + top] = fid * 16;\n                            work[160 + top] = cur;"),
     ("fn: the scale of a rounding call is taken as an operand", "cur = emit(prog, cur, op_fn(), fid, 1, work[224 + top]);", "cur = emit(prog, cur, op_fn(), fid, 2, work[224 + top]);"),
     ("fn: coalesce takes the default of a cell that is not empty", "            if kind >= 2 && cells[3 * prog[at + 1]] == cells[3 * prog[at + 1] + 1] {", "            if kind >= 2 {"),
@@ -899,6 +1065,25 @@ MUTANTS = [
     ("if: the left operand is not brought to the scale of the right", "        cmpv.mul_pow10(w, x, sy - sx);\n        cmpv.set_scale(w, x, sy);", "        cmpv.set_scale(w, x, sy);", "cif"),
     ("if: the right operand is not brought to the scale of the left", "        cmpv.mul_pow10(w, y, sx - sy);\n        cmpv.set_scale(w, y, sx);", "        cmpv.set_scale(w, y, sx);", "cif"),
     ("if: an if is not a marker the operators stop at", "                    while work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 && work[work[64] - 1] != 8 && status == 0 {", "                    while work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 && status == 0 {"),
+    # dates (docs/functions.md section 3.5): G-DT-MUT
+    ("dt: the calendar starts a day late", "dtparse.civil_from_shifted(x + 719468)", "dtparse.civil_from_shifted(x + 719469)", "cdate"),
+    ("dt: the week starts on a different day", "        var m = (x + 3) % 7;", "        var m = (x + 4) % 7;", "cdate"),
+    ("dt: the weekday of Monday is 0", "        v = m + 1;", "        v = m;", "cdate"),
+    ("dt: a date before 1970 has a weekday of a negative modulus", "        if m < 0 {\n            m = m + 7;\n        }\n", "", "cdate"),
+    ("dt: days_between has the opposite sign", "        v = y - x;", "        v = x - y;", "cdate"),
+    ("dt: the second operand is flagged as the first", "operand_days(a, 64, prog[at + 3], record, cells)", "operand_days(a, 32, prog[at + 3], record, cells)", "cdate"),
+    ("dt: a literal is read as a column", "    if prog_a / flag % 2 == 1 {", "    if prog_a / flag % 2 == 7 {", "cdate"),
+    ("dt: year is the month", "        if id == 21 {\n            v = yy;", "        if id == 21 {\n            v = mm;", "cdate"),
+    ("dt: a literal that is not a date is accepted", "    if st != 0 {\n        return (from, 0, 15);\n    }\n    return (from + 12, v, 0);", "    return (from + 12, v, 0);", "cdate"),
+    ("dt: any type is a date", "    if from + 5 <= len(t) && bytes.equal(t[from..from + 5], \":date\") {", "    if from + 5 <= len(t) {", "cdate"),
+    ("dt: the status of a cell has no reason", "        return (0, s_cell_date() + st, v);", "        return (0, s_cell_date(), v);", "cdate"),
+    ("dt: the instruction does not push", "            let (dst, dcol) = cdate.eval(prog, at, record, cells, w, sp);\n            if dst != 0 {\n                return (dst, dcol);\n            }\n            sp = sp + 1;", "            let (dst, dcol) = cdate.eval(prog, at, record, cells, w, sp);\n            if dst != 0 {\n                return (dst, dcol);\n            }"),
+    ("dt: the shape gives the leaf a scale", "        if op == cdate.op_dt() {\n            work[72 + sp] = 0;", "        if op == cdate.op_dt() {\n            work[72 + sp] = 1;"),
+    ("dt: a second argument is accepted for a one-argument function", "        if int_of(t[i]) == ')' || k >= want {", "        if int_of(t[i]) == ')' || k > want {"),
+    ("dt: one argument is accepted for days_between", "            if k < want {\n                return (i, cur, 14);\n            }\n            return (i + 1, emit(prog, cur, cdate.op_dt()", "            return (i + 1, emit(prog, cur, cdate.op_dt()"),
+    ("dt: a number is a column name", "            return (i, cur, 16);\n        } else {\n            var cb = buffer.empty(heap, 32);\n            let (b2, e2, q2, s2) = word_at(heap, cb, t, i);\n            cb = b2;\n            var status = 0;\n            if s2 != 0 {\n                status = 1;\n            } else {\n                var col = 0;", "            return (i, cur, 2);\n        } else {\n            var cb = buffer.empty(heap, 32);\n            let (b2, e2, q2, s2) = word_at(heap, cb, t, i);\n            cb = b2;\n            var status = 0;\n            if s2 != 0 {\n                status = 1;\n            } else {\n                var col = 0;"),
+    ("dt: an earlier definition is not a type mismatch", "                    status = 2;\n                    if dk >= 0 {\n                        status = 16;", "                    status = 2;\n                    if dk >= 0 {\n                        status = 2;"),
+    ("dt: the second literal is flagged as the first", "            a = a + 32 + 32 * k;", "            a = a + 32;"),
     # the exact core: what the functions added to it
     ("cmpv: abs keeps the sign", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = 0;", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = w[s * 12];", "cmpv"),
     ("cmpv: a comparison of a negative and a positive is by magnitude", "    if na && !nb {\n        return -1;\n    }\n    if nb && !na {\n        return 1;\n    }\n    let c = mag_cmp(w, a, b);", "    let c = mag_cmp(w, a, b);", "cmpv"),
@@ -934,7 +1119,7 @@ def fuzz_ok(cs, probe):
     got, err = run(probe, cs)
     if got is None:
         return [("probe failed", err)]
-    shape = re.compile(r"^(C (1\d|20|[1-9]) (\d+)|E (1\d\d|2\d\d|11|12) \d+ \d+|[^=]*=.*)$")
+    shape = re.compile(r"^(C (1\d|20|[1-9]) (\d+)|E (\d{4,}|1\d\d|2\d\d|11|12) \d+ \d+|[^=]*=.*)$")
     bad = []
     for c, g in zip(cs, got):
         m = shape.match(g)
@@ -959,7 +1144,7 @@ def main():
         print("\n".join(problems) or f"{len(MUTANTS)} mutants: every pattern occurs exactly once")
         sys.exit(1 if problems else 0)
     rng = random.Random(a.seed)
-    cs = hand_cases() + if_hand_cases() + lines_if(rng, 1200 if not a.mutants else 600) + lines_of(rng, a.cases if not a.mutants else 1500) + lines_coalesce(rng, 600 if not a.mutants else 300) + chain_hand_cases() + chain_lines(rng, 1500 if not a.mutants else 800)
+    cs = hand_cases() + if_hand_cases() + dt_hand_cases() + lines_dt(rng, 1200 if not a.mutants else 600) + lines_if(rng, 1200 if not a.mutants else 600) + lines_of(rng, a.cases if not a.mutants else 1500) + lines_coalesce(rng, 600 if not a.mutants else 300) + chain_hand_cases() + chain_lines(rng, 1500 if not a.mutants else 800)
     if not a.mutants:
         with tempfile.TemporaryDirectory() as w:
             probe, err = build(w)

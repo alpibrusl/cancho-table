@@ -15,6 +15,8 @@ import bulk;
 import cexpr;
 import cmpv;
 import ctext;
+import dtfail;
+import dtparse;
 import engine;
 import finish;
 import frame;
@@ -224,6 +226,11 @@ pub fn refuse_cell[&h, &p, &n, &d](heap: &!h Heap, e: fail.Errors, status: int, 
     if status == 102 {
         rule = "value.integer-overflow";
         what = "a cell is an integer that does not fit 64 bits";
+    } else if status >= 1000 {
+        // a cell of a `:date` column: the rule, the words and the hint are the reader's (dtparse, dtfail), as in `--where`
+        rule = dtparse.tag_of(dtparse.reason_of(status - 1000));
+        what = dtfail.message_of(dtparse.reason_of(status - 1000));
+        hint = "keep out the rows with such a cell in an earlier call, or read the column as what its cells are: a cell with a time is a :timestamp or a :datetime";
     } else if status >= 200 {
         rule = "value.not-decimal";
         what = "a cell of a :dec(S) column is not a decimal: an empty cell, an exponent, a space, a separator, a sign or a point alone";
@@ -246,6 +253,11 @@ pub fn refuse_cell[&h, &p, &n, &d](heap: &!h Heap, e: fail.Errors, status: int, 
     w = fail.detail_text(heap, w, "column", finish.name_of(names, hends, col));
     w = fail.detail_int(heap, w, "row", row);
     w = fail.detail_int(heap, w, "line", line);
+    if status >= 1000 {
+        let reason = dtparse.reason_of(status - 1000);
+        w = fail.detail_str(heap, w, "reason", dtparse.reason_text(reason));
+        w = fail.detail_int(heap, w, "offset", dtparse.extra_of(status - 1000));
+    }
     return fail.add(heap, e, w);
 }
 

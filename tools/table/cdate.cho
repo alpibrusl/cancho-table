@@ -1,0 +1,116 @@
+edition 5;
+
+module cdate;
+
+// The date functions of `--compute` (docs/functions.md section 3.5, slice K8a): `year`, `month`, `day`, `weekday` and `days_between` over `:date`, the real calendar already in `dtparse`.
+// A call is one leaf of the exact machine, an instruction `op_dt`: `a` is the function id plus 32 when its first operand is a literal and 64 when its second is; `b` and `c` are the
+// operands, each a column or, for a literal, the days since 1970-01-01. The result is a number of scale 0 pushed as an operand, so the arithmetic and the conditions around it are the
+// ones that were there. A cell is read as a `:date` only when the instruction is run, as a `:int` cell is.
+
+import std.bytes;
+import cmpv;
+import dtparse;
+
+pub fn op_dt() -> [] int {
+    return 25;
+}
+
+// The status of a cell that is not a date: 1000 plus the reader's own status (`dtparse.reason_of`, `dtparse.extra_of`).
+pub fn s_cell_date() -> [] int {
+    return 1000;
+}
+
+pub fn function_id[&w](word: &w [byte]) -> [] int {
+    if bytes.equal(word, "year") {
+        return 21;
+    }
+    if bytes.equal(word, "month") {
+        return 22;
+    }
+    if bytes.equal(word, "day") {
+        return 23;
+    }
+    if bytes.equal(word, "weekday") {
+        return 24;
+    }
+    if bytes.equal(word, "days_between") {
+        return 25;
+    }
+    return 0;
+}
+
+// How many operands a date function takes.
+pub fn operands(id: int) -> [] int {
+    if id == 25 {
+        return 2;
+    }
+    return 1;
+}
+
+// A date literal at `from`: `"YYYY-MM-DD"` in double quotes, the date a real one. Answers (where it ends, the days since 1970-01-01, status): status 15 for anything else.
+pub fn literal[&t](t: &t [byte], from: int) -> [] (int, int, int) {
+    if from + 12 > len(t) || int_of(t[from]) != 34 || int_of(t[from + 11]) != 34 {
+        return (from, 0, 15);
+    }
+    let (v, st) = dtparse.parse(t[from + 1..from + 11], 22);
+    if st != 0 {
+        return (from, 0, 15);
+    }
+    return (from + 12, v, 0);
+}
+
+// The end of `:date` at `from`, or -1 when it is not there.
+pub fn type_end[&t](t: &t [byte], from: int) -> [] int {
+    if from + 5 <= len(t) && bytes.equal(t[from..from + 5], ":date") {
+        return from + 5;
+    }
+    return -1;
+}
+
+// One operand of an instruction: its days, or the status of its cell: (days, status, column).
+fn operand_days[&r, &c](prog_a: int, flag: int, v: int, record: &r [byte], cells: &c [int]) -> [] (int, int, int) {
+    if prog_a / flag % 2 == 1 {
+        return (v, 0, 0);
+    }
+    let (days, st) = dtparse.parse(record[cells[3 * v]..cells[3 * v + 1]], 22);
+    if st != 0 {
+        return (0, s_cell_date() + st, v);
+    }
+    return (days, 0, v);
+}
+
+// The instruction at `at` against one row: the value is left in slot `sp`. Answers (status, column): status 0, or `s_cell_date()` plus the reader's status for the cell that is not a date.
+pub fn eval[&p, &r, &c, &w](prog: &p [int], at: int, record: &r [byte], cells: &c [int], w: &!w [int], sp: int) -> [] (int, int) {
+    let a = prog[at + 1];
+    let id = a % 32;
+    let (x, sx, cx) = operand_days(a, 32, prog[at + 2], record, cells);
+    if sx != 0 {
+        return (sx, cx);
+    }
+    var v = 0;
+    if id == 25 {
+        let (y, sy, cy) = operand_days(a, 64, prog[at + 3], record, cells);
+        if sy != 0 {
+            return (sy, cy);
+        }
+        v = y - x;
+    } else if id == 24 {
+        // 1970-01-01 was a Thursday, 4 in the ISO week that starts on Monday
+        var m = (x + 3) % 7;
+        if m < 0 {
+            m = m + 7;
+        }
+        v = m + 1;
+    } else {
+        let (yy, mm, dd) = dtparse.civil_from_shifted(x + 719468);
+        if id == 21 {
+            v = yy;
+        } else if id == 22 {
+            v = mm;
+        } else {
+            v = dd;
+        }
+    }
+    cmpv.set_int(w, sp, v, 0);
+    return (0, 0);
+}
