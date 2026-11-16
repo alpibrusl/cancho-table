@@ -19,6 +19,7 @@ module cexpr;
 import std.buffer;
 import std.bytes;
 import cellnum;
+import cif;
 import cmpv;
 import ctext;
 
@@ -187,6 +188,9 @@ fn function_id[&w](word: &w [byte]) -> [] int {
     }
     if bytes.equal(word, "coalesce") {
         return 9;
+    }
+    if bytes.equal(word, "if") {
+        return 10;
     }
     if bytes.equal(word, "lower") {
         return 11;
@@ -459,6 +463,104 @@ fn prec(code: int) -> [] int {
     return 0;
 }
 
+// The state of an `if` marker (work[32 + top]): the operator of the comparison being read (0 none, 1 to 6), 8 times the connective (0 none, 1 and, 2 or), 32 times the comparisons done,
+// and 256 times the commas seen. Its other cells: work[160 + top] where the condition starts, work[224 + top] where the first arm starts, work[96 + top] where its `jmp` is.
+//
+// A comparison is finished: `op_cmp` and its jump (to the else arm if false for `and` and for the last, to the first arm if true for `or`), left with `-1` for the target until it is known.
+fn if_connective[&p, &w](prog: &!p [int], work: &!w [int], cur: int, top: int, is_or: bool) -> [] (int, int) {
+    let st = work[32 + top];
+    let pending = st % 8;
+    let conn = st / 8 % 4;
+    let ncmp = st / 32 % 8;
+    var want = 1;
+    if is_or {
+        want = 2;
+    }
+    if pending == 0 || st / 256 != 0 {
+        return (cur, 1);
+    }
+    if conn != 0 && conn != want {
+        return (cur, 19);
+    }
+    if ncmp + 1 >= cif.max_comparisons() {
+        return (cur, 20);
+    }
+    var at = emit(prog, cur, cif.op_cmp(), pending, 0, 0);
+    if is_or {
+        at = emit(prog, at, cif.op_jt(), -1, 0, 0);
+    } else {
+        at = emit(prog, at, cif.op_jf(), -1, 0, 0);
+    }
+    work[32 + top] = (ncmp + 1) * 32 + want * 8;
+    return (at, 0);
+}
+
+// A comma of an `if`. The first ends the condition (the last comparison, its `jf`, and the jumps of an `or` land on the first arm); the second ends the first arm (the scale of the result, a
+// jump over the second arm, and the jumps of the condition land on the second arm); a third is an arity error.
+fn if_comma[&p, &w](prog: &!p [int], work: &!w [int], cur: int, top: int) -> [] (int, int) {
+    let st = work[32 + top];
+    let pending = st % 8;
+    let conn = st / 8 % 4;
+    let ncmp = st / 32 % 8;
+    let commas = st / 256;
+    if commas == 0 {
+        if pending == 0 {
+            return (cur, 1);
+        }
+        var at = emit(prog, cur, cif.op_cmp(), pending, 0, 0);
+        at = emit(prog, at, cif.op_jf(), -1, 0, 0);
+        var q = work[160 + top];
+        while q < at {
+            if prog[q] == cif.op_jt() && prog[q + 1] == -1 {
+                prog[q + 1] = cif.skip(q, at);
+            }
+            q = q + 4;
+        }
+        work[224 + top] = at;
+        work[32 + top] = (ncmp + 1) * 32 + conn * 8 + 256;
+        return (at, 0);
+    }
+    if commas == 1 {
+        var at = emit(prog, cur, cif.op_scale(), -1, 0, 0);
+        work[96 + top] = at;
+        at = emit(prog, at, cif.op_jmp(), -1, 0, 0);
+        var q = work[160 + top];
+        while q < work[224 + top] {
+            if prog[q] == cif.op_jf() && prog[q + 1] == -1 {
+                prog[q + 1] = cif.skip(q, at);
+            }
+            q = q + 4;
+        }
+        work[32 + top] = st + 256;
+        return (at, 0);
+    }
+    return (cur, 14);
+}
+
+// The `)` of an `if`: two commas were seen. The result has the larger of the scales of the two arms, so each arm ends with `op_scale` to it, and the first arm's jump lands after the second.
+fn if_close[&p, &w](prog: &!p [int], work: &!w [int], cur: int, top: int) -> [] (int, int) {
+    if work[32 + top] / 256 != 2 {
+        return (cur, 14);
+    }
+    let jmp = work[96 + top];
+    let (sa, da, sta) = shape(prog, work, work[224 + top], jmp - 4);
+    if sta != 0 {
+        return (cur, sta);
+    }
+    let (sb, db, stb) = shape(prog, work, jmp + 4, cur);
+    if stb != 0 {
+        return (cur, stb);
+    }
+    var target = sa;
+    if sb > sa {
+        target = sb;
+    }
+    prog[jmp - 4 + 1] = target;
+    let at = emit(prog, cur, cif.op_scale(), target, 0, 0);
+    prog[jmp + 1] = cif.skip(jmp, at);
+    return (at, 0);
+}
+
 // The scale and the most operands pending at once of the program from `first` to `end`: (scale, depth, status). A product past scale 18 is status 7.
 fn shape[&p, &w](prog: &p [int], work: &!w [int], first: int, end: int) -> [] (int, int, int) {
     var sp = 0;
@@ -482,6 +584,15 @@ fn shape[&p, &w](prog: &p [int], work: &!w [int], first: int, end: int) -> [] (i
             }
         } else if op == op_neg() {
             sp = sp;
+        } else if op == cif.op_cmp() {
+            sp = sp - 2;
+        } else if op == cif.op_jf() || op == cif.op_jt() {
+            sp = sp;
+        } else if op == cif.op_scale() {
+            work[72 + sp - 1] = prog[at + 1];
+        } else if op == cif.op_jmp() {
+            // the arm that follows pushes its own value where this one's was
+            sp = sp - 1;
         } else if op == op_fn() {
             let id = prog[at + 1];
             let n = prog[at + 2];
@@ -1125,6 +1236,22 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                     } else if fid >= 11 && fid <= 18 {
                         // a text function in the middle of a number expression: no conversion either way
                         status = 16;
+                    } else if fid == 10 {
+                        // `if(`: a marker of its own (8) with its state; the condition, the two arms and the jumps are made by if_comma, if_connective and if_close
+                        work[65] = work[65] + 1;
+                        if work[64] > 28 || work[65] > 4 {
+                            status = 9;
+                        } else {
+                            let top = work[64];
+                            work[top] = 8;
+                            work[32 + top] = 0;
+                            work[160 + top] = cur;
+                            work[192 + top] = i;
+                            work[224 + top] = 0;
+                            work[96 + top] = 0;
+                            work[64] = top + 1;
+                            i = e2 + 1;
+                        }
                     } else if fid == 19 {
                         let (le, lcur, lst) = len_at(heap, t, e2 + 1, names, ends, ncols, prog, cur, d);
                         if lst != 0 {
@@ -1203,7 +1330,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                 if work[65] == 0 {
                     status = 1;
                 } else {
-                    while work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 && status == 0 {
+                    while work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 && work[work[64] - 1] != 8 && status == 0 {
                         cur = pop_op(prog, work, cur);
                         if cur < 0 {
                             status = 8;
@@ -1211,6 +1338,15 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                     }
                     if status == 0 {
                         let top = work[64] - 1;
+                        if work[top] == 8 {
+                            let (ncur, cst) = if_close(prog, work, cur, top);
+                            if cst != 0 {
+                                status = cst;
+                                offset = work[192 + top];
+                            } else {
+                                cur = ncur;
+                            }
+                        }
                         if work[top] == 7 {
                             let fid = work[32 + top] / 16;
                             let nargs = work[32 + top] % 16 + 1;
@@ -1233,14 +1369,26 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                 }
             } else if c == ',' {
                 // the next argument of a call: the operators of this one are popped back to the call's marker
-                while status == 0 && work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 {
+                while status == 0 && work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 && work[work[64] - 1] != 8 {
                     cur = pop_op(prog, work, cur);
                     if cur < 0 {
                         status = 8;
                     }
                 }
-                if status == 0 && (work[64] == 0 || work[work[64] - 1] != 7) {
+                if status == 0 && (work[64] == 0 || work[work[64] - 1] != 7 && work[work[64] - 1] != 8) {
                     status = 1;
+                } else if status == 0 && work[work[64] - 1] == 8 {
+                    let (ncur, cst) = if_comma(prog, work, cur, work[64] - 1);
+                    if cst != 0 {
+                        status = cst;
+                        if cst == 14 {
+                            offset = work[192 + work[64] - 1];
+                        }
+                    } else {
+                        cur = ncur;
+                        expect = true;
+                        i = i + 1;
+                    }
                 } else if status == 0 {
                     let top = work[64] - 1;
                     let fid = work[32 + top] / 16;
@@ -1329,6 +1477,68 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
                         i = i + 1;
                     }
                 }
+            } else if c == '=' || c == '<' || c == '>' || c == '!' {
+                // a comparison, in the condition of an `if` only
+                var code = 1;
+                var width = 1;
+                if c == '!' {
+                    code = 2;
+                } else if c == '<' {
+                    code = 3;
+                } else if c == '>' {
+                    code = 5;
+                }
+                if c != '=' && i + 1 < len(t) && int_of(t[i + 1]) == '=' {
+                    width = 2;
+                    if c == '<' {
+                        code = 4;
+                    } else if c == '>' {
+                        code = 6;
+                    }
+                }
+                while status == 0 && work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 && work[work[64] - 1] != 8 {
+                    cur = pop_op(prog, work, cur);
+                    if cur < 0 {
+                        status = 8;
+                    }
+                }
+                if status == 0 && (c == '!' && width == 1 || work[64] == 0 || work[work[64] - 1] != 8 || work[32 + work[64] - 1] % 8 != 0 || work[32 + work[64] - 1] / 256 != 0) {
+                    status = 1;
+                } else if status == 0 {
+                    work[32 + work[64] - 1] = work[32 + work[64] - 1] + code;
+                    expect = true;
+                    i = i + width;
+                }
+            } else if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' {
+                // `and` or `or`, between two comparisons of an `if`
+                var cb = buffer.empty(heap, 8);
+                let (b2, e2, q2, s2) = word_at(heap, cb, t, i);
+                cb = b2;
+                var is_and = false;
+                var is_or = false;
+                borrow cb as &cr in {
+                    is_and = bytes.equal(buffer.bytes(cr), "and");
+                    is_or = bytes.equal(buffer.bytes(cr), "or");
+                }
+                buffer.drop(heap, cb);
+                while status == 0 && work[64] > 0 && work[work[64] - 1] != 6 && work[work[64] - 1] != 7 && work[work[64] - 1] != 8 {
+                    cur = pop_op(prog, work, cur);
+                    if cur < 0 {
+                        status = 8;
+                    }
+                }
+                if status == 0 && (s2 != 0 || q2 || !is_and && !is_or || work[64] == 0 || work[work[64] - 1] != 8) {
+                    status = 1;
+                } else if status == 0 {
+                    let (ncur, cst) = if_connective(prog, work, cur, work[64] - 1, is_or);
+                    if cst != 0 {
+                        status = cst;
+                    } else {
+                        cur = ncur;
+                        expect = true;
+                        i = e2;
+                    }
+                }
             } else if c == '@' {
                 while work[64] > 0 && work[work[64] - 1] == 5 {
                     cur = pop_op(prog, work, cur);
@@ -1361,7 +1571,7 @@ fn define[&h, &t, &n, &e, &p, &w](heap: &!h Heap, t: &t [byte], from: int, names
         status = 1;
     }
     while status == 0 && work[64] > 0 {
-        if work[work[64] - 1] == 6 || work[work[64] - 1] == 7 {
+        if work[work[64] - 1] == 6 || work[work[64] - 1] == 7 || work[work[64] - 1] == 8 {
             status = 1;
         } else {
             cur = pop_op(prog, work, cur);
@@ -1587,9 +1797,27 @@ pub fn eval[&p, &dd, &c, &w](prog: &p [int], d: int, record: &dd [byte], cells: 
     var at = prog[1 + 5 * d];
     let end = prog[1 + 5 * d + 1];
     var sp = 0;
+    var verdict = false;
     while at < end {
         let op = prog[at];
-        if op == op_cell() {
+        if op == cif.op_cmp() {
+            sp = sp - 2;
+            verdict = cif.compare(w, sp, sp + 1, prog[at + 1]);
+        } else if op == cif.op_jf() {
+            if !verdict {
+                at = at + 4 * prog[at + 1];
+            }
+        } else if op == cif.op_jt() {
+            if verdict {
+                at = at + 4 * prog[at + 1];
+            }
+        } else if op == cif.op_jmp() {
+            at = at + 4 * prog[at + 1];
+        } else if op == cif.op_scale() {
+            if !cmpv.rescale(w, sp - 1, prog[at + 1]) {
+                return (12, 0);
+            }
+        } else if op == op_cell() {
             let kind = prog[at + 3];
             if kind >= 2 && cells[3 * prog[at + 1]] == cells[3 * prog[at + 1] + 1] {
                 // a coalesce and an empty cell: the default that follows, at the column's scale

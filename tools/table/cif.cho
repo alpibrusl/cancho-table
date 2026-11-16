@@ -1,0 +1,72 @@
+edition 5;
+
+module cif;
+
+// Conditions in `--compute` (docs/functions.md section 3.4): the instructions of `if(cond, a, b)` that are not arithmetic, and the exact comparison. The program is still one flat array run once
+// from the first instruction to the last, with forward skips: a comparison (`op_cmp`) takes the two operands on the stack and leaves a verdict, `op_jf` and `op_jt` skip `a` instructions
+// when the verdict is false or true, `op_jmp` skips always, and `op_scale` brings the value on top of the stack to the scale `a` (the larger scale of the two arms, so the result of an
+// `if` has one scale whichever arm ran). Only the instructions that are run are evaluated, so a zero divisor, an overflow or a cell that is not a number in the arm not taken is not an error.
+
+import cmpv;
+
+// `a` is the operator: 1 `=`, 2 `!=`, 3 `<`, 4 `<=`, 5 `>`, 6 `>=`.
+pub fn op_cmp() -> [] int {
+    return 20;
+}
+
+pub fn op_jf() -> [] int {
+    return 21;
+}
+
+pub fn op_jt() -> [] int {
+    return 22;
+}
+
+pub fn op_jmp() -> [] int {
+    return 23;
+}
+
+pub fn op_scale() -> [] int {
+    return 24;
+}
+
+// The most comparisons joined in one condition (a choice of the design).
+pub fn max_comparisons() -> [] int {
+    return 4;
+}
+
+// Whether `x op y` for the two values in slots `x` and `y`, compared exactly: the one at the smaller scale is brought to the larger first. That cannot overflow: a value is under 2^127, a
+// scale differs by at most 18 digits, and the limbs hold 270 bits (`cmpv.cmp`), so it is not checked with `fits`, which is for an operand. The slots are consumed.
+pub fn compare[&w](w: &!w [int], x: int, y: int, op: int) -> [] bool {
+    let sx = cmpv.scale_of(w, x);
+    let sy = cmpv.scale_of(w, y);
+    if sx < sy {
+        cmpv.mul_pow10(w, x, sy - sx);
+        cmpv.set_scale(w, x, sy);
+    } else if sy < sx {
+        cmpv.mul_pow10(w, y, sx - sy);
+        cmpv.set_scale(w, y, sx);
+    }
+    let c = cmpv.cmp(w, x, y);
+    if op == 1 {
+        return c == 0;
+    }
+    if op == 2 {
+        return c != 0;
+    }
+    if op == 3 {
+        return c < 0;
+    }
+    if op == 4 {
+        return c <= 0;
+    }
+    if op == 5 {
+        return c > 0;
+    }
+    return c >= 0;
+}
+
+// The skip count that makes a jump at `from` land on `to` (both are positions in the program; an instruction is four ints, and the skip is counted after the jump itself).
+pub fn skip(from: int, to: int) -> [] int {
+    return (to - (from + 4)) / 4;
+}

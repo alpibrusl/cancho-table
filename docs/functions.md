@@ -1,6 +1,6 @@
 # Functions in `--compute`: a design (slices K5 to K8)
 
-> **Status: design; K5a (`--explain` for the stage, section 3.1), K5 (the numeric functions, section 3.2) and K6 (the text functions, section 3.3) are built; K7 (conditions, section 3.4) and K8 (dates, section 3.5) are designed, not built.** Every claim is a **choice**, a **read** (file), **measured** (with the command), or **open**. A measurement replaces its line, in place, when it exists.
+> **Status: design; K5a (`--explain` for the stage, section 3.1), K5 (the numeric functions, section 3.2) and K6 (the text functions, section 3.3) and K7a (conditions on numbers, section 3.4) are built; K7b (text conditions) and K8 (dates, section 3.5) are not.** Every claim is a **choice**, a **read** (file), **measured** (with the command), or **open**. A measurement replaces its line, in place, when it exists.
 > Written 2026-11-15 after the maintainer's direction (relayed in the working session): *unblock functions without affecting performance or the first principles.*
 > It amends item 14 of `docs/backlog.md` (the decision of 2026-11-09) and reopens two lines of `docs/computed-columns.md` section 10 ("Rounding functions: out", "Dates: out"); both are corrected in place and point here.
 
@@ -148,9 +148,9 @@ The signature table is **one static table** that the parser, `introspect`, the s
 
 **Not measured:** the cost of a text function (G-COST). No speed is claimed.
 
-### 3.4 K7: conditions (design, 2026-11-15)
+### 3.4 K7: conditions (design 2026-11-15; K7a built 2026-11-15)
 
-> **Status: design, not built.** Every line is a **choice** (recommended, to confirm), a **read** (file) or **open**. Nothing here was timed.
+> **Status: K7a, the numbers, is built (the as-built block at the end of this section); K7b, the texts, is not.** Every line is a **choice**, a **read** (file) or **open**. Nothing here was timed.
 
 **The problem it must solve first (reasoned, to be measured by G-IF-LAZY).** The use that justifies K7 is a guard: `if(qty != 0, total / qty, 0)`. A machine that computed both branches and then picked one would refuse `compute.divide-by-zero` on the rows that the guard was written for. So **only the chosen branch is evaluated**, exactly as `--where` evaluates left to right and reads a typed cell only when its condition is reached (**read**: `docs/or-and-columns.md` section 0, row "evaluation"). A bad cell, an overflow or a zero divisor in the branch that is not taken is not an error.
 
@@ -184,6 +184,20 @@ table --compute 'r=if(qty != 0, total / qty, 0);tag=if(name = "", "none", upper(
 * The surface gates of section 5 (G-EXPLAIN, G-SURFACE, G-NOPANIC), with `if` in the fuzz.
 
 **Not claimed.** No cost: G-COST for `if` is measured after K7 exists and before it is described as anything but correct.
+
+**K7a as built (2026-11-15).** The design is built as written for numbers, in two slices: **K7a, `if` over numbers** (the condition compares two numbers, the arms are numbers) is done; **K7b, comparing two texts and an `if` whose arms are texts** is not (a text arm is `compute.type-mismatch` today, and a text is not a comparison operand: the number reading of a column with no type is `compute.untyped-operand`, as before). *Corrected in place:* the design said one file, `cif.cho`; it holds the opcodes, the exact comparison and the skip arithmetic, while the parser's three hooks (`if_connective`, `if_comma`, `if_close`) are in `cexpr.cho`, which they need (`emit`, `shape`). `cexpr.cho` is 1,876 lines after K7a.
+
+* **The program.** Five new opcodes: `op_cmp` (the operator in `a`), `op_jf`, `op_jt`, `op_jmp` (a skip counted after the jump) and `op_scale` (the value on top, brought to the scale `a`). `if(c1 and c2, A, B)` is `c1 cmp jf(else) c2 cmp jf(else) A scale jmp(end) else: B scale`; an `or` list is `jt(then)` for all but the last comparison. The target of a jump is not known when it is written: it is left as `-1` and patched at the comma that ends the part it jumps over, and `if_close` takes the scales of the two arms with `shape` over each range and writes the larger into both `op_scale`s. A skip is relative, so the instructions of an earlier definition copied into a later one carry their jumps unchanged. `shape` follows the program in one pass: `op_jmp` puts the stack back where the first arm started, so the second arm pushes in its place.
+* **The comparison** brings the operand at the smaller scale to the larger by `cmpv.mul_pow10` and compares the two limbs; it cannot overflow (a value is under 2^127, the scales differ by at most 18, the limbs hold 270 bits), so it does not use `rescale`, which refuses 2^127. `op_scale` does use `rescale`: a result that does not fit is `compute.overflow`, as everywhere.
+* **The syntax, as it came out.** A comparison operator is read where an operator is read, so `a:int<b:int` needs no spaces (a type, a number or a `)` ends the operand); `and` and `or` are words and need a space or a `)` before them. A comparison operator is only valid directly in the condition of an `if` (anywhere else, `compute.syntax`); `<` where an operand is expected is read as a column name, as `--where` reads it, so `if(< 1, ...)` is `compute.unknown-column`. A column called `and` or `or` is an ordinary column in an operand position. `@N` takes its digits right after the `@` (`/ a:int @2`, never `@ 2`), as before.
+* **New statuses** (compile): 19 `compute.mixed-and-or`, 20 `compute.too-many-conditions`; their rules, hints, registry entries and fixtures in `test_rules`. **The hints of `compute.unknown-function` and `compute.arity` were corrected in place**: the first listed only the functions of K5, and now lists all of them with `if` (the K6 functions were missing; found while adding `if`), the second adds `if three`.
+* **Gates, as run** (compiler `119bcfe`, 15 Nov 2026).
+  * *G-IF-ORACLE.* `scripts/cexpr_golden.py` gained `if` nodes (`gen_if`, `lines_if`, 62 hand cases and 8 cell cases in `IF_HAND`/`IF_CELLS`): the reference evaluates the chosen arm only and the comparisons left to right, and it is checked against the probe over `cexpr` on the whole of its cases: **6,523 cases at each of three seeds (1,200 of them random `if` definitions), 0 differences**, and the fuzz of 3,000 inputs with no trap. Through the binary, `tests/conformance/test_compute_if.py` (11 tests) repeats it on random files, as CSV and as JSON.
+  * *G-IF-LAZY.* The hand cases of the arm not taken (a zero divisor, an overflow, a cell that is not a number, a comparison after the one that decided) run, and the same in the arm taken refuses with its rule and its row.
+  * *G-IF-MUT.* 31 mutants of the `if` code were added to the 54 of `cexpr_golden.py`: **85 of 85 killed**, in a run with nothing else touching the sources.
+  * *G-IF-COMPAT.* The earlier 54 mutants and the earlier cases of the file pass unchanged; `fmt`, `build`, `manifest`, `schemas`, `mcp`, `site` and every `*_mutants.py --check` are current.
+* **Found by the gates:** the first run had 7 differences, all my hand cases writing `@ 2` with a space (never the syntax of a scale: the tool was right), and the next run one more, `or and b:int < 1`, where I expected a syntax error and `and` is a column (the tool was right). Two more of my hand cases I corrected by reading the code before the first run: a guard whose arms have scales 2 and 0 prints `-1.00`, not `-1`, and a literal of more than 18 digits is `compute.syntax`, not an overflow. **One mutant had to be restated**: the pattern of an older mutant ("a comma outside a call is accepted") named the markers it knew, and now names the three.
+* **Not measured:** the cost of `if` (G-COST); no speed is claimed. K7b, `if` in a text-valued definition, and the explain's instruction counts for a text `if` come with it.
 
 ### 3.5 K8: dates (design, 2026-11-15)
 

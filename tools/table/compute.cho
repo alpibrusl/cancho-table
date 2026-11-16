@@ -76,6 +76,12 @@ fn rule_of(status: int) -> [] &static [byte] {
     if status == 18 {
         return "compute.not-utf8-boundary";
     }
+    if status == 19 {
+        return "compute.mixed-and-or";
+    }
+    if status == 20 {
+        return "compute.too-many-conditions";
+    }
     return "compute.syntax";
 }
 
@@ -128,6 +134,12 @@ fn what_of(status: int) -> [] &static [byte] {
     if status == 18 {
         return "substr cuts a text between a byte and a continuation byte in a row: a half of a character is not a text";
     }
+    if status == 19 {
+        return "the condition of an if in --compute joins comparisons with both and and or";
+    }
+    if status == 20 {
+        return "the condition of an if in --compute has more than 4 comparisons";
+    }
     return "--compute is not NAME=EXPR with + - * / and parentheses, and calls of functions";
 }
 
@@ -163,10 +175,10 @@ fn hint_of(status: int) -> [] &static [byte] {
         return "use columns of a smaller scale or magnitude";
     }
     if status == 13 {
-        return "the functions are abs, sign, greatest, least, round, floor, ceil, trunc and coalesce, in lower case, with the parenthesis next to the name";
+        return "the functions are abs, sign, greatest, least, round, floor, ceil, trunc, coalesce, if, lower, upper, trim, ltrim, rtrim, substr, concat, replace and len, in lower case, with the parenthesis next to the name";
     }
     if status == 14 {
-        return "abs and sign take one argument, greatest and least two to eight, round, floor, ceil, trunc and coalesce two";
+        return "abs and sign take one argument, greatest and least two to eight, round, floor, ceil, trunc and coalesce two, if three";
     }
     if status == 15 {
         return "round, floor, ceil and trunc take an integer from 0 to 18 as their second argument, coalesce takes a number as its second, with no more fractional digits than its column";
@@ -179,6 +191,12 @@ fn hint_of(status: int) -> [] &static [byte] {
     }
     if status == 18 {
         return "cut at a character: start and count in bytes, at the first byte of a character";
+    }
+    if status == 19 {
+        return "join the comparisons with and only or with or only, and nest a second if for the other: if(a < 1 or b < 2, X, Y) or if(a < 1, X, if(b < 2, X, Y))";
+    }
+    if status == 20 {
+        return "use at most 4 comparisons in one if, and nest another if for more";
     }
     return "write --compute 'total=price:dec(2)*qty:int'";
 }
