@@ -47,7 +47,11 @@ pub fn compare[&w](w: &!w [int], x: int, y: int, op: int) -> [] bool {
         cmpv.mul_pow10(w, y, sx - sy);
         cmpv.set_scale(w, y, sx);
     }
-    let c = cmpv.cmp(w, x, y);
+    return holds(cmpv.cmp(w, x, y), op);
+}
+
+// Whether the sign `c` of a comparison (-1, 0 or 1: the left against the right) satisfies the operator `op` (1 `=`, 2 `!=`, 3 `<`, 4 `<=`, 5 `>`, 6 `>=`).
+pub fn holds(c: int, op: int) -> [] bool {
     if op == 1 {
         return c == 0;
     }

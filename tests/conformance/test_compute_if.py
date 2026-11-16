@@ -124,6 +124,47 @@ class Conditions(unittest.TestCase):
             checked += 1
         self.assertGreater(checked, 25)
 
+    # K7b1: a comparison of texts in a condition (docs/functions.md section 3.4)
+    def test_a_text_comparison_in_a_condition(self):
+        self.s.write("s.csv", "status,amount\npaid,10\nopen,20\npaid,5\n")
+        rows = self.csv('r=if(status = "paid", amount:int, 0)', "s.csv")
+        self.assertEqual([r[2] for r in rows], ["r", "10", "0", "5"])
+        rows = self.csv('r=if(status != "paid" and amount:int > 10, 1, 0);o=if(status < "p" or amount:int = 5, 1, 0)', "s.csv")
+        self.assertEqual([r[2:] for r in rows[1:]], [["0", "0"], ["1", "1"], ["0", "1"]])
+
+    def test_text_comparisons_equal_pythons_bytes_over_hostile_cells(self):
+        rng = random.Random(21)
+        pool = ["", "a", "ab", "b", "A", "a,b", 'a"b', 'a""b', "a\nb", "é", "e", "z", "\u00e9a", " ", "1", "10", "2", "\x00"]
+        values = [(rng.choice(pool), rng.choice(pool)) for _ in range(400)]
+        buf = io.StringIO()
+        csv.writer(buf, lineterminator="\n").writerows([["x", "y"]] + [list(v) for v in values])
+        self.s.write("h.csv", buf.getvalue())
+        ops = {"=": lambda a, b: a == b, "!=": lambda a, b: a != b, "<": lambda a, b: a < b, "<=": lambda a, b: a <= b, ">": lambda a, b: a > b, ">=": lambda a, b: a >= b}
+        lits = ["", "a", 'a"b', "é", "a,b", "10"]
+        defs, cols = [], []
+        for i, (op, f) in enumerate(ops.items()):
+            defs.append(f"c{i}=if(x {op} y, 1, 0)")
+            cols.append(lambda xy, f=f: f(xy[0].encode(), xy[1].encode()))
+            lit = lits[i]
+            q = '"' + lit.replace('"', '""') + '"'
+            defs.append(f"l{i}=if({q} {op} y, 1, 0)")
+            cols.append(lambda xy, f=f, lit=lit: f(lit.encode(), xy[1].encode()))
+        for lo in (0, 6):  # at most 8 definitions in a call
+            out = self.csv(";".join(defs[lo:lo + 6]), "h.csv")
+            self.assertEqual(out[0], ["x", "y"] + [d.split("=")[0] for d in defs[lo:lo + 6]])
+            for xy, row in zip(values, out[1:]):
+                self.assertEqual(row[:2], list(xy))
+                self.assertEqual(row[2:], ["1" if c(xy) else "0" for c in cols[lo:lo + 6]], xy)
+
+    def test_the_refusals_of_a_text_comparison(self):
+        self.s.write("c.csv", "a,b\n1,2\n")
+        for defs, rule in [("r=if(a = 1, 1, 0)", "compute.type-mismatch"), ('r=if(a:int = "x", 1, 0)', "compute.type-mismatch"), ("r=if(a = b:int, 1, 0)", "compute.type-mismatch"),
+                           ('r=if(lower(a) = "x", 1, 0)', "compute.type-mismatch"), ('r=if(a = "x", "y", 1)', "compute.type-mismatch"), ("r=if(a, 1, 2)", "compute.syntax"),
+                           ('r=if(a = "x" "y", 1, 2)', "compute.syntax"), ('r=if(a="x" and a="y" or a="z", 1, 2)', "compute.mixed-and-or"), ('r=if(z = "x", 1, 0)', "compute.unknown-column"),
+                           ('r=if(a = "x, 1, 0)', "compute.bad-literal"), ('r=a = "x"', "compute.untyped-operand")]:
+            r = run("--root", self.s.dir, "--compute", defs, "c.csv")
+            self.assertEqual(r.first_rule(), rule, defs)
+
     @staticmethod
     def _shift_positions(defs):
         import re

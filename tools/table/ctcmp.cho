@@ -1,0 +1,126 @@
+edition 5;
+
+module ctcmp;
+
+// A comparison of two texts in the condition of an `if` of `--compute` (docs/functions.md section 3.4, slice K7b1): `status = "paid"`, `"x" != name`, `a < b`. An operand is a column with no type or a string
+// literal in double quotes. The compiler asks `text_cmp_at` at the start of every comparison of a condition: a comparison that starts with a text operand is read here (the operand, the operator,
+// the operand, and the three instructions: two loads and the comparison), and one that does not is left to the numbers.
+
+import std.buffer;
+import clex;
+import clit;
+import ctext;
+
+// An operand at `from`: answers (where it ends, 0 a column or 1 a literal, the column or the first byte of the literal, 0 or its last byte, status). Status 100 says that it is not a text, which
+// is a question for the left operand (the comparison is the numbers') and a refusal (16) for the right one; 15 is a literal that is not closed, 2 a column that is not there.
+fn operand[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &p [int], d: int, left: bool) -> [heap] (int, int, int, int, int) {
+    var no = 16;
+    if left {
+        no = 100;
+    }
+    let i = clex.skip_space(t, from);
+    if i >= len(t) {
+        return (i, 0, 0, 0, no);
+    }
+    let c = int_of(t[i]);
+    if c == 34 {
+        let (lf, lt, le, ls) = clit.string_at(t, i);
+        if ls != 0 {
+            return (i, 0, 0, 0, ls);
+        }
+        return (le, 1, lf, lt, 0);
+    }
+    if c >= '0' && c <= '9' || c == '-' || c == '.' || c == '(' || c == ',' || c == ')' {
+        return (i, 0, 0, 0, no);
+    }
+    var cb = buffer.empty(heap, 32);
+    let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);
+    cb = b2;
+    var status = 0;
+    var col = 0;
+    if s2 != 0 {
+        status = no;
+        if !left {
+            status = 1;
+        }
+    } else if e2 < len(t) && (int_of(t[e2]) == ':' || int_of(t[e2]) == '(') {
+        status = no;
+    } else {
+        var rs = 0;
+        borrow cb as &cr in {
+            let (cc, rr) = clex.resolve(names, ends, ncols, buffer.bytes(cr), q2);
+            col = cc;
+            rs = rr;
+        }
+        if rs == 2 {
+            var dk = -1;
+            borrow cb as &cr in {
+                dk = clex.def_index(heap, t, prog, d, buffer.bytes(cr));
+            }
+            status = 2;
+            if dk >= 0 {
+                status = 16;
+            }
+            if left {
+                status = 100;
+            }
+        } else if rs != 0 {
+            status = rs;
+            if left {
+                status = 100;
+            }
+        }
+    }
+    buffer.drop(heap, cb);
+    if status != 0 {
+        return (i, 0, 0, 0, status);
+    }
+    return (e2, 0, col, 0, 0);
+}
+
+// The comparison at `from`, if it is one of texts: answers (where it ends, the program's new end, status, whether it was read here). Not read here (false) is not a refusal: the numbers read it.
+pub fn text_cmp_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], cur: int, d: int) -> [heap] (int, int, int, bool) {
+    let (e1, k1, a1, b1, s1) = operand(heap, t, from, names, ends, ncols, prog, d, true);
+    if s1 == 100 {
+        return (from, cur, 0, false);
+    }
+    if s1 != 0 {
+        return (e1, cur, s1, true);
+    }
+    var i = clex.skip_space(t, e1);
+    if i >= len(t) {
+        return (i, cur, 1, true);
+    }
+    let c = int_of(t[i]);
+    var op = 0;
+    var width = 1;
+    if c == '=' {
+        op = 1;
+    } else if c == '!' && i + 1 < len(t) && int_of(t[i + 1]) == '=' {
+        op = 2;
+        width = 2;
+    } else if c == '<' {
+        op = 3;
+        if i + 1 < len(t) && int_of(t[i + 1]) == '=' {
+            op = 4;
+            width = 2;
+        }
+    } else if c == '>' {
+        op = 5;
+        if i + 1 < len(t) && int_of(t[i + 1]) == '=' {
+            op = 6;
+            width = 2;
+        }
+    }
+    if op == 0 {
+        return (i, cur, 1, true);
+    }
+    let (e2, k2, a2, b2, s2) = operand(heap, t, i + width, names, ends, ncols, prog, d, false);
+    if s2 != 0 {
+        return (e2, cur, s2, true);
+    }
+    var at = clex.emit(prog, cur, ctext.op_tld(), 2 * k1, a1, b1);
+    at = clex.emit(prog, at, ctext.op_tld(), 1 + 2 * k2, a2, b2);
+    at = clex.emit(prog, at, ctext.op_tcmp(), op, 0, 0);
+    return (e2, at, 0, true);
+}

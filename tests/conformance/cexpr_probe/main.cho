@@ -98,7 +98,7 @@ fn run[&h, &i, &g](heap: &!h Heap, io: &!i Io, args: &g Args) -> [heap, io_write
                 borrow mut wsb as &!ws in {
                     borrow progb as &pr in {
                         borrow cellb as &cr in {
-                            let (s2, c2) = @MODULE@.eval(contents(pr), d, row, contents(cr), contents(ws));
+                            let (s2, c2) = @MODULE@.eval(contents(pr), d, defs, row, contents(cr), contents(ws));
                             es = s2;
                             ecol = c2;
                         }

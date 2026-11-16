@@ -140,10 +140,22 @@ def compare(op, x, sx, y, sy):
     return {"=": x == y, "!=": x != y, "<": x < y, "<=": x <= y, ">": x > y, ">=": x >= y}[op]
 
 
+def text_of(node, row):
+    """the bytes of a text operand of a condition (docs/functions.md section 3.4, K7b1): a cell as written without quotes, or a literal"""
+    if node[0] == "tcol":
+        v, sc = row[node[1]]
+        return text(v, sc).encode()
+    return node[1].encode()
+
+
 def cond_holds(conn, conds, row):
     for i, (op, left, right) in enumerate(conds):
-        (x, sx), (y, sy) = ev(left, row), ev(right, row)
-        t = compare(op, x, sx, y, sy)
+        if left[0] in ("tcol", "tlit"):
+            x, y = text_of(left, row), text_of(right, row)
+            t = {"=": x == y, "!=": x != y, "<": x < y, "<=": x <= y, ">": x > y, ">=": x >= y}[op]
+        else:
+            (x, sx), (y, sy) = ev(left, row), ev(right, row)
+            t = compare(op, x, sx, y, sy)
         if conn == "or" and t:
             return True
         if conn != "or" and not t:
@@ -179,7 +191,7 @@ def dt_ev(node, row):
 
 def static_scale(node):
     k = node[0]
-    if k == "dt":
+    if k in ("dt", "tcol", "tlit"):
         return 0
     if k == "if":
         for _, left, right in node[2]:
@@ -233,11 +245,16 @@ def render_date(a, rng):
 
 def render(node, rng):
     k = node[0]
+    if k == "tcol":
+        return "abcdef"[node[1]]
+    if k == "tlit":
+        return '"' + node[1].replace('"', '""') + '"'
     if k == "dt":
         return node[1] + "(" + sp(rng) + (sp(rng) + "," + sp(rng)).join(render_date(a, rng) for a in node[2]) + sp(rng) + ")"
     if k == "if":
         _, conn, conds, a_node, b_node = node
-        parts = [f"{render(l, rng)}{sp(rng)}{op}{sp(rng)}{render(r, rng)}" for op, l, r in conds]
+        # a comparison of texts has a space before its operator: `<`, `>` and `!` do not end a bare word
+        parts = [f"{render(l, rng)}{' ' if l[0] in ('tcol', 'tlit') else sp(rng)}{op}{sp(rng)}{render(r, rng)}" for op, l, r in conds]
         glue = " " + (conn or "and") + " "
         return "if(" + sp(rng) + glue.join(parts) + sp(rng) + "," + sp(rng) + render(a_node, rng) + sp(rng) + "," + sp(rng) + render(b_node, rng) + sp(rng) + ")"
     if k == "coal":
@@ -317,13 +334,33 @@ def gen(rng, depth, cols, fns=True):
     return (k, gen(rng, depth - 1, cols, fns), gen(rng, depth - 1, cols, fns))
 
 
-def gen_if(rng, depth, cols):
+TEXT_POOL = ["0", "1", "10", "1.5", "-1", "123", "é", 'a"b', "", " ", "2", "a,b"]
+
+
+def gen_text_operand(rng, texts):
+    if rng.random() < 0.55:
+        return ("tcol", rng.randrange(6))
+    pool = TEXT_POOL + (texts or [])
+    t = rng.choice(pool)
+    if texts and rng.random() < 0.3:
+        t = rng.choice(texts)[:rng.randint(0, 3)]   # a prefix of a cell
+    return ("tlit", t)
+
+
+def gen_if(rng, depth, cols, texts=None):
     """an `if` of docs/functions.md section 3.4: one to three comparisons joined by one connective; half of the time the guard of a division by the column it tests"""
     conn = rng.choice(["and", "or"])
     n = rng.choice([1, 1, 2, 3])
     conds = []
     for _ in range(n):
-        conds.append((rng.choice(CMP_OPS), gen(rng, max(depth - 1, 0), cols, True), gen(rng, max(depth - 1, 0), cols, True)))
+        if rng.random() < 0.3:
+            left = gen_text_operand(rng, texts)
+            right = gen_text_operand(rng, texts)
+            if left[0] == "tlit" and right[0] == "tlit" and rng.random() < 0.7:
+                right = ("tcol", rng.randrange(6))
+            conds.append((rng.choice(CMP_OPS), left, right))
+        else:
+            conds.append((rng.choice(CMP_OPS), gen(rng, max(depth - 1, 0), cols, True), gen(rng, max(depth - 1, 0), cols, True)))
     if rng.random() < 0.5:
         c = rng.randrange(6)
         kind, sc = cols[c]
@@ -332,7 +369,7 @@ def gen_if(rng, depth, cols):
         div = ("/", gen(rng, 1, cols, False), col, rng.randint(0, 6))
         a_node, b_node = (div, ("lit", 0, 0)) if conds[0][0] in ("!=", ">", "<") else (("lit", 0, 0), div)
     else:
-        arm = (lambda: gen_if(rng, depth - 1, cols)) if depth > 1 and rng.random() < 0.3 else (lambda: gen(rng, max(depth - 1, 0), cols, True))
+        arm = (lambda: gen_if(rng, depth - 1, cols, texts)) if depth > 1 and rng.random() < 0.3 else (lambda: gen(rng, max(depth - 1, 0), cols, True))
         a_node, b_node = arm(), arm()
     return ("if", conn if n > 1 else None, conds, a_node, b_node)
 
@@ -346,7 +383,7 @@ def lines_if(rng, n):
         for d in range(rng.randint(1, 3)):
             tree = None
             for _try in range(30):
-                t = gen_if(rng, rng.randint(1, 3), cols)
+                t = gen_if(rng, rng.randint(1, 3), cols, [text(v, sc) for v, sc in row])
                 if rng.random() < 0.3:
                     t = (rng.choice(["+", "-", "*"]), t, gen(rng, 1, cols, False))
                 if size_of(t) <= 100 and depth_of(t) <= 9 and len(render(t, Longest())) < 245:
@@ -458,6 +495,42 @@ IF_HAND = [
 ]
 
 
+IF_TEXT = [
+    # a..f are the cells 10,20,30,40,50,60 read as texts (docs/functions.md section 3.4, K7b1): bytewise, no collation, no number
+    ('r=if(a = "10", 1, 0)', "r=1"), ('r=if(a = "1", 1, 0)', "r=0"), ('r=if(a != "1", 1, 0)', "r=1"), ('r=if(a < "2", 1, 0)', "r=1"),
+    ('r=if(a > "2", 1, 0)', "r=0"), ('r=if(a <= "10", 1, 0)', "r=1"), ('r=if(a >= "10", 1, 0)', "r=1"), ('r=if(a > "1", 1, 0)', "r=1"), ('r=if(a < "100", 1, 0)', "r=1"),
+    ('r=if("10" = a, 1, 0)', "r=1"), ('r=if("9" > a, 1, 0)', "r=1"), ('r=if(a < b, 1, 0)', "r=1"), ('r=if(a = a, 1, 0)', "r=1"), ('r=if(b >= a and b < c, 1, 0)', "r=1"),
+    ('r=if(a = "", 1, 0)', "r=0"), ('r=if("x" = "x", 1, 2)', "r=1"), ('r=if("x" < "y", 1, 2)', "r=1"), ('r=if("" < "a", 1, 2)', "r=1"),
+    ('r=if(a="10", 1, 0)', "r=1"), ('r=if(a ="10", 1, 0)', "r=1"), ('r=if( a  =  "10" , 1, 0)', "r=1"),
+    # mixed with a comparison of numbers, joined by one connective, lazily
+    ('r=if(a = "10" and b:int > 5, 1, 0)', "r=1"), ('r=if(a = "11" or b:int > 5, 1, 0)', "r=1"), ('r=if(b:int > 5 and a = "11", 1, 0)', "r=0"),
+    ('r=if(a = "11" and 1 / (a:int - 10) @0 > 0, 1, 0)', "r=0"), ('r=if(a = "10" or 1 / (a:int - 10) @0 > 0, 1, 0)', "r=1"), ('r=if(a = "10" and 1 / (a:int - 10) @0 > 0, 1, 0)', "E 11 0 0"),
+    ('r=if(a = "10", 1.5, 2)', "r=1.5"), ('r=if(a != "10", 1, 2.50)', "r=2.50"), ('r=1 + if(a = "10", 10, 20) * 2', "r=21"), ('x=a:int*2;r=if(a = "10", x, 0)', "x=20;r=20"),
+    # nesting
+    ('r=if(a = "10", if(b = "20", 1, 2), 3)', "r=1"), ('r=if(a = "11", 1, if(b = "20", 2, 3))', "r=2"),
+    # a text against a number, a call as an operand, a column that is not there, no operator, a second operator
+    ("r=if(a = 1, 1, 0)", "C 16"), ('r=if(a:int = "x", 1, 0)', "C 16"), ("r=if(a = b:int, 1, 0)", "C 16"), ('r=if(1 = "1", 1, 0)', "C 16"), ('r=if("1" = 1, 1, 0)', "C 16"),
+    ('r=if(a = lower(b), 1, 0)', "C 16"), ('r=if(lower(a) = "x", 1, 0)', "C 16"), ('r=if(z = "x", 1, 0)', "C 2"), ('r=if(a, 1, 2)', "C 1"), ('r=if("x", 1, 2)', "C 1"),
+    ('r=if(a = , 1, 2)', "C 1"), ('r=if(a = "x" "y", 1, 2)', "C 1"), ('r=if(a == "x", 1, 2)', "C 1"), ('r=if(a ! "x", 1, 2)', "C 1"), ('r=if(a = "x, 1, 2)', "C 15"),
+    ('r=if(a="x" and a="y" or a="z", 1, 2)', "C 19"), ('r=if(a="1" and a="2" and a="3" and a="4" and a="5", 1, 2)', "C 20"),
+    # a comparison operator after an untyped column with no space is a word: the limit the design names
+    ('r=if(a<"2", 1, 0)', "C 2"), ('r=if(a>"2", 1, 0)', "C 2"),
+    # a text outside a condition is not a number
+    ('r=a = "10"', "C 5"), ('r=if(a = "10", a, 1)', "C 5"), ('r=if(a = "10", "x", 1)', "C 16"),
+]
+# cells that are quoted, with doubled quotes, commas, empty, UTF-8
+IF_TEXT_CELLS = [
+    ('"a""b",x,3,4,5,6', 'r=if(a = "a""b", 1, 0)', "r=1"), ('"a""b",x,3,4,5,6', 'r=if(a = "a\"b", 1, 0)', "C 1"), ('"a""b",x,3,4,5,6', 'r=if(a = "ab", 1, 0)', "r=0"),
+    ('"a""b",x,3,4,5,6', 'r=if(a < "a#", 1, 0)', "r=1"), ('"a""b",x,3,4,5,6', 'r=if(a > "a!", 1, 0)', "r=1"),
+    ('"a,b",x,3,4,5,6', 'r=if(a = "a,b", 1, 0)', "r=1"), ('"a,b",x,3,4,5,6', 'r=if(a > "a", 1, 0)', "r=1"),
+    (',x,3,4,5,6', 'r=if(a = "", 1, 0)', "r=1"), (',x,3,4,5,6', 'r=if(a < b, 1, 0)', "r=1"), ('"",x,3,4,5,6', 'r=if(a = "", 1, 0)', "r=1"),
+    ('é,e,3,4,5,6', 'r=if(a = "é", 1, 0)', "r=1"), ('é,e,3,4,5,6', 'r=if(a > b, 1, 0)', "r=1"), ('é,e,3,4,5,6', 'r=if(a > "z", 1, 0)', "r=1"),
+    ('é,e,3,4,5,6', 'r=if("é" = "é", 1, 0)', "r=1"), ('"é",e,3,4,5,6', 'r=if(a = "é", 1, 0)', "r=1"),
+    ('10,x,3,4,5,6', 'r=if(a = "10" and b:int > 1, 1, 0)', "E 101 1 0"), ('10,x,3,4,5,6', 'r=if(a = "11" and b:int > 1, 1, 0)', "r=0"),
+    ('10,x,3,4,5,6', 'r=if(a = "11" or b:int > 1, 1, 0)', "E 101 1 0"), ('10,x,3,4,5,6', 'r=if(a = "10" or b:int > 1, 1, 0)', "r=1"),
+]
+
+
 IF_CELLS = [
     # a cell that is not a number, in the arm that is taken and in the one that is not
     ("10,x,3,4,5,6", "r=if(a:int > 0, 1, b:int)", "r=1"),
@@ -472,7 +545,7 @@ IF_CELLS = [
 
 
 def if_hand_cases():
-    return [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_HAND] + [(HEADER, cells, defs, want) for cells, defs, want in IF_CELLS]
+    return [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_TEXT] + [(HEADER, cells, defs, want) for cells, defs, want in IF_TEXT_CELLS] + [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_HAND] + [(HEADER, cells, defs, want) for cells, defs, want in IF_CELLS]
 
 
 # ---- dates (docs/functions.md section 3.5): G-DT-ORACLE ----------------------------------------------------------------------------------
@@ -654,7 +727,7 @@ def lines_of(rng, n):
 
 def size_of(node):
     k = node[0]
-    if k == "dt":
+    if k in ("dt", "tcol", "tlit"):
         return 1
     if k == "if":
         return sum(size_of(l) + size_of(r) + 2 for _, l, r in node[2]) + size_of(node[3]) + size_of(node[4]) + 3
@@ -674,6 +747,8 @@ def size_of(node):
 def depth_of(node):
     """most operands pending at once in the postfix program of the expanded tree"""
     k = node[0]
+    if k in ("tcol", "tlit"):
+        return 0
     if k in ("col", "lit", "dt"):
         return 1
     if k == "coal":
@@ -986,13 +1061,13 @@ MUTANTS = [
     ("a product binds as a sum", "    if code == 3 || code == 4 {\n        return 2;", "    if code == 3 || code == 4 {\n        return 1;"),
     ("a negation binds loosely", "    if code == 5 {\n        return 3;", "    if code == 5 {\n        return 0;"),
     ("a right-associative subtraction", "    while status == 0 && work[64] > 0 && prec(work[work[64] - 1]) >= prec(code) {", "    while status == 0 && work[64] > 0 && prec(work[work[64] - 1]) > prec(code) {"),
-    ("the scale of a division is ignored", "        return emit(prog, at, op_div(), n, 0, 0);", "        return emit(prog, at, op_div(), 0, 0, 0);"),
+    ("the scale of a division is ignored", "        return clex.emit(prog, at, op_div(), n, 0, 0);", "        return clex.emit(prog, at, op_div(), 0, 0, 0);"),
     ("a division without a scale is accepted", "        if n < 0 {\n            return -1;\n        }", "        if n < -5 {\n            return -1;\n        }"),
     ("a decimal read at scale 0", "            return (from + 1 + k + 1, n, 1, 0);", "            return (from + 1 + k + 1, 0, 1, 0);", "clit"),
     ("a float is read as an int", "        return (from + 6, 0, 0, 6);", "        return (from + 6, 0, 0, 0);", "clit"),
     ("no type is accepted", "        return (from, 0, 0, 5);", "        return (from, 0, 0, 0);", "clit"),
-    ("a position is one off", "                return (n - 1, 0);", "                return (n, 0);"),
-    ("an ambiguous name is accepted", "    if count > 1 {\n        return (0, 3);", "    if count > 100 {\n        return (0, 3);"),
+    ("a position is one off", "                return (n - 1, 0);", "                return (n, 0);", "clex"),
+    ("an ambiguous name is accepted", "    if count > 1 {\n        return (0, 3);", "    if count > 100 {\n        return (0, 3);", "clex"),
     ("a duplicate of a column is accepted", "            if cs == 0 {\n                status = 4;", "            if cs == 100 {\n                status = 4;"),
     ("a duplicate of a definition is accepted", "            if same {\n                status = 4;", "            if same && false {\n                status = 4;"),
     ("a product past scale 18 is accepted", "                if scale > 18 {\n                    return (0, 0, s_scale());", "                if scale > 99 {\n                    return (0, 0, s_scale());"),
@@ -1004,7 +1079,7 @@ MUTANTS = [
     ("chain: a reference is never found", "                    if rs == 2 {\n                        borrow cb as &cr in {", "                    if rs == 99 {\n                        borrow cb as &cr in {"),
     ("chain: one instruction too few copied", "                        while q < n_ints {", "                        while q < n_ints - 4 {"),
     ("chain: one instruction too many copied", "let n_ints = prog[1 + 5 * dk + 1] - from_at;", "let n_ints = prog[1 + 5 * dk + 1] - from_at + 4;"),
-    ("chain: the loop's size check is off", "        if cur - first > 4 * 128 {\n            status = 9;", "        if cur - first > 4 * 12800 {\n            status = 9;"),
+    ("chain: the loop's size check is off", "        } else if cur - first > 4 * 128 {\n            status = 9;", "        } else if cur - first > 4 * 12800 {\n            status = 9;"),
     ("chain: always the first definition", "let from_at = prog[1 + 5 * dk];\n                        let n_ints", "let from_at = prog[1 + 5 * 0];\n                        let n_ints"),
     ("chain: the operand is not closed", "                        cur = cur + n_ints;\n                        i = e2;\n                        expect = false;", "                        cur = cur + n_ints;\n                        i = e2;"),
     ("an empty expression is accepted", "    if status == 0 && (expect || work[65] != 0) {", "    if status == 0 && (work[65] != 0) {"),
@@ -1025,7 +1100,7 @@ MUTANTS = [
     ("fn: the arity is not checked", "                            if nargs < arity_min(fid) || nargs > arity_max(fid) {", "                            if false {"),
     ("fn: the scale literal may be 19", "    if digits == 0 || n > 18 {\n        return (p, 0, 15);", "    if digits == 0 || n > 19 {\n        return (p, 0, 15);", "clit"),
     ("fn: a call's parenthesis is not a level", "                        if work[64] > 28 || work[65] > 4 {\n                            status = 9;\n                        } else {\n                            let top = work[64];\n                            work[top] = 7;\n                            work[32 + top] = fid * 16;\n                            work[160 + top] = cur;", "                        if work[64] > 28 || work[65] > 400 {\n                            status = 9;\n                        } else {\n                            let top = work[64];\n                            work[top] = 7;\n                            work[32 + top] = fid * 16;\n                            work[160 + top] = cur;"),
-    ("fn: the scale of a rounding call is taken as an operand", "cur = emit(prog, cur, op_fn(), fid, 1, work[224 + top]);", "cur = emit(prog, cur, op_fn(), fid, 2, work[224 + top]);"),
+    ("fn: the scale of a rounding call is taken as an operand", "cur = clex.emit(prog, cur, op_fn(), fid, 1, work[224 + top]);", "cur = clex.emit(prog, cur, op_fn(), fid, 2, work[224 + top]);"),
     ("fn: coalesce takes the default of a cell that is not empty", "            if kind >= 2 && cells[3 * prog[at + 1]] == cells[3 * prog[at + 1] + 1] {", "            if kind >= 2 {"),
     ("fn: the default is not brought to the column's scale", "                cmpv.mul_pow10(w, sp, prog[at + 2] - prog[at + 6]);", "                cmpv.mul_pow10(w, sp, 0);"),
     ("fn: the default is also an operand", "            if kind >= 2 {\n                at = at + 4;\n            }\n            sp = sp + 1;", "            sp = sp + 1;"),
@@ -1042,14 +1117,14 @@ MUTANTS = [
     ("if: a comparison consumes one operand", "            sp = sp - 2;\n            verdict = cif.compare", "            sp = sp - 1;\n            verdict = cif.compare"),
     ("if: the shape does not return to the first arm's depth", "            // the arm that follows pushes its own value where this one's was\n            sp = sp - 1;", "            sp = sp;"),
     ("if: the shape ignores the scale of an arm", "            work[72 + sp - 1] = prog[at + 1];\n        } else if op == cif.op_jmp() {", "        } else if op == cif.op_jmp() {"),
-    ("if: an or is an and", "    if is_or {\n        at = emit(prog, at, cif.op_jt(), -1, 0, 0);", "    if false {\n        at = emit(prog, at, cif.op_jt(), -1, 0, 0);"),
+    ("if: an or is an and", "    if is_or {\n        at = clex.emit(prog, at, cif.op_jt(), -1, 0, 0);", "    if false {\n        at = clex.emit(prog, at, cif.op_jt(), -1, 0, 0);"),
     ("if: the jumps of an or land one instruction late", "            if prog[q] == cif.op_jt() && prog[q + 1] == -1 {\n                prog[q + 1] = cif.skip(q, at);", "            if prog[q] == cif.op_jt() && prog[q + 1] == -1 {\n                prog[q + 1] = cif.skip(q, at + 4);"),
     ("if: the jumps of the condition land one instruction late", "            if prog[q] == cif.op_jf() && prog[q + 1] == -1 {\n                prog[q + 1] = cif.skip(q, at);", "            if prog[q] == cif.op_jf() && prog[q + 1] == -1 {\n                prog[q + 1] = cif.skip(q, at + 4);"),
     ("if: a skip is counted from the jump, not after it", "    return (to - (from + 4)) / 4;", "    return (to - from) / 4;", "cif"),
     ("if: the mix of and and or is accepted", "    if conn != 0 && conn != want {\n        return (cur, 19);", "    if false {\n        return (cur, 19);"),
     ("if: a fifth comparison is accepted", "    if ncmp + 1 >= cif.max_comparisons() {", "    if ncmp + 1 > cif.max_comparisons() {"),
     ("if: the limit of comparisons is five", "pub fn max_comparisons() -> [] int {\n    return 4;", "pub fn max_comparisons() -> [] int {\n    return 5;", "cif"),
-    ("if: a condition with no comparison is accepted", "        if pending == 0 {\n            return (cur, 1);\n        }\n        var at = emit(prog, cur, cif.op_cmp(), pending, 0, 0);", "        var at = emit(prog, cur, cif.op_cmp(), pending, 0, 0);"),
+    ("if: a condition with no comparison is accepted", "        if pending == 0 {\n            return (cur, 1);\n        }\n        var at = cur;", "        var at = cur;"),
     ("if: a connective with no comparison before it is accepted", "    if pending == 0 || st / 256 != 0 {\n        return (cur, 1);", "    if st / 256 != 0 {\n        return (cur, 1);"),
     ("if: two arguments are accepted", "    if work[32 + top] / 256 != 2 {\n        return (cur, 14);", "    if work[32 + top] / 256 < 1 {\n        return (cur, 14);"),
     ("if: a third comma is accepted", "        work[32 + top] = st + 256;\n        return (at, 0);\n    }\n    return (cur, 14);", "        work[32 + top] = st + 256;\n        return (at, 0);\n    }\n    return (cur, 0);"),
@@ -1079,11 +1154,33 @@ MUTANTS = [
     ("dt: the status of a cell has no reason", "        return (0, s_cell_date() + st, v);", "        return (0, s_cell_date(), v);", "cdate"),
     ("dt: the instruction does not push", "            let (dst, dcol) = cdate.eval(prog, at, record, cells, w, sp);\n            if dst != 0 {\n                return (dst, dcol);\n            }\n            sp = sp + 1;", "            let (dst, dcol) = cdate.eval(prog, at, record, cells, w, sp);\n            if dst != 0 {\n                return (dst, dcol);\n            }"),
     ("dt: the shape gives the leaf a scale", "        if op == cdate.op_dt() {\n            work[72 + sp] = 0;", "        if op == cdate.op_dt() {\n            work[72 + sp] = 1;"),
-    ("dt: a second argument is accepted for a one-argument function", "        if int_of(t[i]) == ')' || k >= want {", "        if int_of(t[i]) == ')' || k > want {"),
-    ("dt: one argument is accepted for days_between", "            if k < want {\n                return (i, cur, 14);\n            }\n            var op = cdate.op_dt();", "            var op = cdate.op_dt();"),
-    ("dt: a number is a column name", "            return (i, cur, 16);\n        } else {\n            var cb = buffer.empty(heap, 32);\n            let (b2, e2, q2, s2) = word_at(heap, cb, t, i);\n            cb = b2;\n            var status = 0;\n            if s2 != 0 {\n                status = 1;\n            } else {\n                var col = 0;", "            return (i, cur, 2);\n        } else {\n            var cb = buffer.empty(heap, 32);\n            let (b2, e2, q2, s2) = word_at(heap, cb, t, i);\n            cb = b2;\n            var status = 0;\n            if s2 != 0 {\n                status = 1;\n            } else {\n                var col = 0;"),
-    ("dt: an earlier definition is not a type mismatch", "                    status = 2;\n                    if dk >= 0 {\n                        status = 16;", "                    status = 2;\n                    if dk >= 0 {\n                        status = 2;"),
-    ("dt: the second literal is flagged as the first", "            a = a + 32 + 32 * k;", "            a = a + 32;"),
+    ("dt: a second argument is accepted for a one-argument function", "        if int_of(t[i]) == ')' || k >= want {", "        if int_of(t[i]) == ')' || k > want {", "cdatep"),
+    ("dt: one argument is accepted for days_between", "            if k < want {\n                return (i, cur, 14);\n            }\n            var op = cdate.op_dt();", "            var op = cdate.op_dt();", "cdatep"),
+    ("dt: a number is a column name", "            return (i, cur, 16);\n        } else {\n            var cb = buffer.empty(heap, 32);\n            let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);\n            cb = b2;\n            var status = 0;\n            if s2 != 0 {\n                status = 1;\n            } else {\n                var col = 0;", "            return (i, cur, 2);\n        } else {\n            var cb = buffer.empty(heap, 32);\n            let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);\n            cb = b2;\n            var status = 0;\n            if s2 != 0 {\n                status = 1;\n            } else {\n                var col = 0;", "cdatep"),
+    ("dt: an earlier definition is not a type mismatch", "                    status = 2;\n                    if dk >= 0 {\n                        status = 16;", "                    status = 2;\n                    if dk >= 0 {\n                        status = 2;", "cdatep"),
+    ("dt: the second literal is flagged as the first", "            a = a + 32 + 32 * k;", "            a = a + 32;", "cdatep"),
+    # a comparison of texts (docs/functions.md section 3.4, slice K7b1): G-IFT-MUT
+    ("ift: a text that is the start of the other is equal to it", "        if i >= xl {\n            return -1;\n        }", "        if i >= xl {\n            return 0;\n        }", "ctext"),
+    ("ift: the shorter text is the greater", "        if i >= xl {\n            return -1;\n        }\n        if j >= yl {\n            return 1;\n        }", "        if i >= xl {\n            return 1;\n        }\n        if j >= yl {\n            return -1;\n        }", "ctext"),
+    ("ift: the first byte that differs decides the other way", "            if bx < by {\n                return -1;\n            }\n            return 1;", "            if bx < by {\n                return 1;\n            }\n            return -1;", "ctext"),
+    ("ift: two equal texts are the greater", "        if i >= xl && j >= yl {\n            return 0;", "        if i >= xl && j >= yl {\n            return 1;", "ctext"),
+    ("ift: the doubled quotes of the left are not undone", "if xd == 1 && bx == 34", "if xd == 7 && bx == 34", "ctext"),
+    ("ift: the doubled quotes of the right are not undone", "if yd == 1 && by == 34", "if yd == 7 && by == 34", "ctext"),
+    ("ift: != is =", "        op = 2;\n        width = 2;", "        op = 1;\n        width = 2;", "ctcmp"),
+    ("ift: <= is <", "            op = 4;\n            width = 2;", "            op = 3;\n            width = 2;", "ctcmp"),
+    ("ift: >= is >", "            op = 6;\n            width = 2;", "            op = 5;\n            width = 2;", "ctcmp"),
+    ("ift: a right operand that is not a text is not refused as one", "    var no = 16;", "    var no = 100;", "ctcmp"),
+    ("ift: a typed column starts a comparison of texts", "} else if e2 < len(t) && (int_of(t[e2]) == ':' || int_of(t[e2]) == '(') {\n        status = no;", "} else if e2 < len(t) && int_of(t[e2]) == '(' {\n        status = no;", "ctcmp"),
+    ("ift: both operands are loaded into the right register", "    var at = clex.emit(prog, cur, ctext.op_tld(), 2 * k1, a1, b1);", "    var at = clex.emit(prog, cur, ctext.op_tld(), 1 + 2 * k1, a1, b1);", "ctcmp"),
+    ("ift: a literal is read as a column", "            if prog[at + 1] / 2 == 1 {", "            if prog[at + 1] / 2 == 7 {"),
+    ("ift: a cell has no doubled quotes", "                dbl = cells[3 * prog[at + 2] + 2];", "                dbl = 0;"),
+    ("ift: a cell is compared with the text of the definitions", "                sign = ctext.compare(record, lf, lt, ld, t, rf, rt, rd);", "                sign = ctext.compare(record, lf, lt, ld, record, rf, rt, rd);"),
+    ("ift: a text comparison is followed by the comparison of numbers", "    if pending != 7 {\n        at = clex.emit(prog, at, cif.op_cmp(), pending, 0, 0);\n    }\n    if is_or {", "    if pending != 99 {\n        at = clex.emit(prog, at, cif.op_cmp(), pending, 0, 0);\n    }\n    if is_or {"),
+    ("ift: the last text comparison is followed by the comparison of numbers", "        if pending != 7 {\n            at = clex.emit(prog, at, cif.op_cmp(), pending, 0, 0);\n        }\n        at = clex.emit(prog, at, cif.op_jf(), -1, 0, 0);", "        if pending != 99 {\n            at = clex.emit(prog, at, cif.op_cmp(), pending, 0, 0);\n        }\n        at = clex.emit(prog, at, cif.op_jf(), -1, 0, 0);"),
+    ("ift: a text comparison is read in an arm", "work[32 + work[64] - 1] / 256 == 0 && work[32 + work[64] - 1] % 8 == 0 && cur - first <= 4 * 128", "work[32 + work[64] - 1] / 256 >= 0 && work[32 + work[64] - 1] % 8 == 0 && cur - first <= 4 * 128"),
+    ("ift: a string literal in a number is not a type mismatch", "            if c == 34 {\n                // a string literal in a number: no conversion either way\n                status = 16;", "            if c == 34 {\n                // a string literal in a number: no conversion either way\n                status = 2;"),
+    ("ift: the shape counts the loads as operands", "        } else if op == ctext.op_tld() || op == ctext.op_tcmp() {\n            sp = sp;", "        } else if op == ctext.op_tld() || op == ctext.op_tcmp() {\n            sp = sp + 1;"),
+    ("ift: a text operand is compared as the left whatever its register", "            if prog[at + 1] % 2 == 0 {\n                lsrc = src;", "            if prog[at + 1] % 2 == 7 {\n                lsrc = src;"),
     # the exact core: what the functions added to it
     ("cmpv: abs keeps the sign", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = 0;", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = w[s * 12];", "cmpv"),
     ("cmpv: a comparison of a negative and a positive is by magnitude", "    if na && !nb {\n        return -1;\n    }\n    if nb && !na {\n        return 1;\n    }\n    let c = mag_cmp(w, a, b);", "    let c = mag_cmp(w, a, b);", "cmpv"),

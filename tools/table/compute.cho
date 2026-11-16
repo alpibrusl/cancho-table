@@ -337,7 +337,7 @@ pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a, &x](heap: &!h Heap, io: &!i I
             }
         } else {
             borrow cells2 as &cr in {
-                let (s1, c1) = cexpr.eval(prog, d, line, contents(cr), ws);
+                let (s1, c1) = cexpr.eval(prog, d, text, line, contents(cr), ws);
                 st = s1;
                 cc = c1;
             }
