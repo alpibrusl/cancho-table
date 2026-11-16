@@ -78,6 +78,9 @@ fn rule_of(status: int) -> [] &static [byte] {
     if status == 18 {
         return "compute.not-utf8-boundary";
     }
+    if status == 21 {
+        return "compute.date-out-of-range";
+    }
     if status == 19 {
         return "compute.mixed-and-or";
     }
@@ -136,6 +139,9 @@ fn what_of(status: int) -> [] &static [byte] {
     if status == 18 {
         return "substr cuts a text between a byte and a continuation byte in a row: a half of a character is not a text";
     }
+    if status == 21 {
+        return "an add_days of --compute leaves the years 0001 to 9999 in a row: a date is never wrapped";
+    }
     if status == 19 {
         return "the condition of an if in --compute joins comparisons with both and and or";
     }
@@ -193,6 +199,9 @@ fn hint_of(status: int) -> [] &static [byte] {
     }
     if status == 18 {
         return "cut at a character: start and count in bytes, at the first byte of a character";
+    }
+    if status == 21 {
+        return "keep out the rows whose date or count takes the result outside 0001-01-01 to 9999-12-31 in an earlier call";
     }
     if status == 19 {
         return "join the comparisons with and only or with or only, and nest a second if for the other: if(a < 1 or b < 2, X, Y) or if(a < 1, X, if(b < 2, X, Y))";
@@ -292,6 +301,10 @@ pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a, &x](heap: &!h Heap, io: &!i I
             }
             if ts != 0 {
                 st = ts;
+                if ts >= 100 {
+                    // a cell that was refused: its column is the first value of the stack
+                    cc = tb;
+                }
             } else {
                 var tstart = 0;
                 borrow copy2 as &kr in {

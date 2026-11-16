@@ -9,6 +9,8 @@ module ctext;
 // trim and substr only narrow a range. Nothing here is a float, and nothing is a locale: `lower` and `upper` change the 26 ASCII letters, `trim` removes the space and the tab.
 
 import std.buffer;
+import cellnum;
+import dtparse;
 
 pub fn op_col() -> [] int {
     return 16;
@@ -20,6 +22,17 @@ pub fn op_lit() -> [] int {
 
 pub fn op_call() -> [] int {
     return 18;
+}
+
+// `add_days(d, n)` (docs/functions.md section 3.5, slice K8b), a leaf that makes a text: `a` is 26 plus 32 when the date is a literal and 64 when the count is; `b` the date's column or its days
+// since 1970-01-01; `c` the count's column or the count. The date is written `YYYY-MM-DD` into the arena.
+pub fn op_add_days() -> [] int {
+    return 26;
+}
+
+// A date past 0001-01-01 to 9999-12-31 after the addition (a row's status).
+pub fn s_out_of_range() -> [] int {
+    return 21;
 }
 
 // The two statuses of a row: a text longer than the line limit, and a cut inside a character.
@@ -123,6 +136,56 @@ pub fn eval[&h, &p, &t, &r, &c](heap: &!h Heap, prog: &p [int], d: int, t: &t [b
                 contents(sw)[2 * sp + 1] = e0;
             }
             sp = sp + 1;
+        } else if op == op_add_days() {
+            let a = prog[at + 1];
+            var days = prog[at + 2];
+            var amount = prog[at + 3];
+            var col = 0;
+            if a / 32 % 2 == 0 {
+                let (dv, dst) = dtparse.parse(record[cells[3 * days]..cells[3 * days + 1]], 22);
+                if dst != 0 {
+                    status = 1000 + dst;
+                    col = days;
+                } else {
+                    days = dv;
+                }
+            }
+            if status == 0 && a / 64 % 2 == 0 {
+                let (nv, nst) = cellnum.parse_int(record[cells[3 * amount]..cells[3 * amount + 1]]);
+                if nst != 0 {
+                    status = 100 + nst;
+                    col = amount;
+                } else {
+                    amount = nv;
+                }
+            }
+            if status == 0 && (days + amount < -719162 || days + amount > 2932896) {
+                status = s_out_of_range();
+            }
+            if status == 0 {
+                var s0 = 0;
+                borrow arena as &ar in {
+                    s0 = buffer.size(ar);
+                }
+                arena = dtparse.put(heap, arena, days + amount, 22);
+                var e0 = 0;
+                borrow arena as &ar in {
+                    e0 = buffer.size(ar);
+                }
+                if e0 - s0 > cap {
+                    status = 17;
+                }
+                borrow mut stk as &!sw in {
+                    contents(sw)[2 * sp] = s0;
+                    contents(sw)[2 * sp + 1] = e0;
+                }
+                sp = sp + 1;
+            } else {
+                // the column of a cell that was refused is the first value of the stack, which nothing else reads on a refusal
+                borrow mut stk as &!sw in {
+                    contents(sw)[0] = col;
+                }
+            }
         } else {
             let id = prog[at + 1];
             let n = prog[at + 2];

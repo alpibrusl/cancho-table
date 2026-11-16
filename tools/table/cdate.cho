@@ -36,12 +36,15 @@ pub fn function_id[&w](word: &w [byte]) -> [] int {
     if bytes.equal(word, "days_between") {
         return 25;
     }
+    if bytes.equal(word, "add_days") {
+        return 26;
+    }
     return 0;
 }
 
 // How many operands a date function takes.
 pub fn operands(id: int) -> [] int {
-    if id == 25 {
+    if id >= 25 {
         return 2;
     }
     return 1;

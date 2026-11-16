@@ -51,6 +51,7 @@ pub fn plan[&h, &t, &n, &e](heap: &!h Heap, text0: &t [byte], names: &n buffer.B
         var int_cells = false;
         var dec_cells = false;
         var date_cells = false;
+        var adds = false;
         var operators = false;
         var divisions = false;
         var texts = false;
@@ -93,6 +94,9 @@ pub fn plan[&h, &t, &n, &e](heap: &!h Heap, text0: &t [byte], names: &n buffer.B
                 if cexpr.has(contents(pr), d, 5) {
                     date_cells = true;
                 }
+                if cexpr.has(contents(pr), d, 6) {
+                    adds = true;
+                }
                 if cexpr.has(contents(pr), d, 0) {
                     operators = true;
                 }
@@ -107,6 +111,9 @@ pub fn plan[&h, &t, &n, &e](heap: &!h Heap, text0: &t [byte], names: &n buffer.B
         stage = buffer.push(heap, stage, byte_of('}'));
         if date_cells {
             rules = put_rule(heap, rules, "value.not-date");
+        }
+        if adds {
+            rules = put_rule(heap, rules, "compute.date-out-of-range");
         }
         if int_cells {
             rules = put_rule(heap, rules, "value.not-integer");
