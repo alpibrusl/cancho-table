@@ -623,6 +623,7 @@
     "op_text",
     "op_text",
     "op_tld",
+    "op_tsel",
     "operand_count",
     "operand_days",
     "operand_index",
@@ -815,6 +816,7 @@
     "s_star",
     "s_tokens",
     "s_type",
+    "s_type_mismatch",
     "s_where",
     "same",
     "same_letters",
@@ -982,7 +984,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 401,
+  "folded_operators": 402,
   "folded_calls": 0,
-  "functions": 1652
+  "functions": 1655
 }

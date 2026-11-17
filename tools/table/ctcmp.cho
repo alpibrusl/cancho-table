@@ -78,6 +78,19 @@ fn operand[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &
     return (e2, 0, col, 0, 0);
 }
 
+// A leaf of a text `if` at `from`: a column with no type or a string literal. Answers (where it ends, the program's new end, status, whether it was read here); not read here is not a refusal, the
+// numbers read it (a number, a typed column, a call, a name that is not a column).
+pub fn leaf_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], cur: int, d: int) -> [heap] (int, int, int, bool) {
+    let (e1, k1, a1, b1, s1) = operand(heap, t, from, names, ends, ncols, prog, d, true);
+    if s1 == 100 {
+        return (from, cur, 0, false);
+    }
+    if s1 != 0 {
+        return (e1, cur, s1, true);
+    }
+    return (e1, clex.emit(prog, cur, ctext.op_tsel(), k1, a1, b1), 0, true);
+}
+
 // The comparison at `from`, if it is one of texts: answers (where it ends, the program's new end, status, whether it was read here). Not read here (false) is not a refusal: the numbers read it.
 pub fn text_cmp_at[&h, &t, &n, &e, &p](heap: &!h Heap, t: &t [byte], from: int, names: &n [byte], ends: &e [int], ncols: int, prog: &!p [int], cur: int, d: int) -> [heap] (int, int, int, bool) {
     let (e1, k1, a1, b1, s1) = operand(heap, t, from, names, ends, ncols, prog, d, true);

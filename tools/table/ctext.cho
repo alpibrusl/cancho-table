@@ -41,6 +41,12 @@ pub fn op_tcmp() -> [] int {
     return 28;
 }
 
+// A leaf of a text `if` (docs/functions.md section 3.4, slice K7b2): `a` is 0 for a column (`b` the column) and 1 for a literal (`b` and `c` its bytes in the text of the definitions). Running it
+// selects the bytes the definition's value is; nothing is copied until the row is written.
+pub fn op_tsel() -> [] int {
+    return 29;
+}
+
 // The sign of `x[xf..xl]` against `y[yf..yl]`, byte by byte, the shorter first when one is the start of the other: -1, 0 or 1. A span flagged `doubled` is a quoted cell or a literal: a quote
 // followed by a quote in it is one byte.
 pub fn compare[&x, &y](x: &x [byte], xf: int, xl: int, xd: int, y: &y [byte], yf: int, yl: int, yd: int) -> [] int {

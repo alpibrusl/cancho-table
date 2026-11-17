@@ -165,6 +165,65 @@ class Conditions(unittest.TestCase):
             r = run("--root", self.s.dir, "--compute", defs, "c.csv")
             self.assertEqual(r.first_rule(), rule, defs)
 
+    # K7b2: an `if` whose arms are leaf texts (docs/functions.md section 3.4)
+    def test_a_text_if(self):
+        self.s.write("t.csv", "status,amount\npaid,10\nopen,20\npaid,5\n")
+        rows = self.csv('r=if(amount:int > 9, "big", "small");s=if(status = "paid", status, "other")', "t.csv")
+        self.assertEqual([r[2:] for r in rows], [["r", "s"], ["big", "paid"], ["big", "other"], ["small", "paid"]])
+        rows = self.csv('n=amount:int*2;r=if(n > 15, "big", if(n > 5, "mid", "low"))', "t.csv")
+        self.assertEqual([r[3] for r in rows[1:]], ["big", "big", "mid"])
+
+    def test_a_text_if_writes_the_leaf_as_a_cell_of_the_csv_and_the_json(self):
+        rng = random.Random(33)
+        pool = ["", "a", "a,b", 'a"b', 'a""b', "a\nb", "é", " x ", "1", "\x00"]
+        values = [rng.choice(pool) for _ in range(300)]
+        buf = io.StringIO()
+        csv.writer(buf, lineterminator="\n").writerows([["x", "n"]] + [[v, str(i)] for i, v in enumerate(values)])
+        self.s.write("w.csv", buf.getvalue())
+        j = run("--root", self.s.dir, "--compute", 'r=if(n:int > 149, x, "z")', "--limit", "1000", "w.csv").data()["rows"]
+        for i, (v, row) in enumerate(zip(values, j)):
+            self.assertEqual(row[2], v if i > 149 else "z", (i, v))
+        rows = self.csv('r=if(n:int > 149, x, "z")', "w.csv")
+        for i, (v, row) in enumerate(zip(values, rows[1:])):
+            self.assertEqual(row[2], v if i > 149 else "z", (i, v))
+        # a literal with a quote and a comma is one cell, whichever arm it is
+        rows = self.csv('r=if(n:int > 149, "a""b,c", x)', "w.csv")
+        for i, (v, row) in enumerate(zip(values, rows[1:])):
+            self.assertEqual(row[2], 'a"b,c' if i > 149 else v, (i, v))
+
+    def test_the_refusals_of_a_text_if(self):
+        self.s.write("c.csv", "a,b\n1,2\n")
+        for defs, rule in [('r=if(a:int > 0, "x", 1)', "compute.type-mismatch"), ("r=if(a:int > 0, 1, b)", "compute.type-mismatch"), ('r=1 + if(a:int > 0, "x", "y")', "compute.type-mismatch"),
+                           ('r=abs(if(a:int > 0, "x", "y"))', "compute.type-mismatch"), ('r=if(a:int > 0, "x", "y");s=upper(r)', "compute.type-mismatch"),
+                           ('r=if(a:int > 0, "x", "y");s=r+1', "compute.type-mismatch"), ('r=if(a:int > 0, upper(a), "y")', "compute.type-mismatch"), ('r=if(a:int > 0, "x" + 1, "y")', "compute.type-mismatch"),
+                           ('r=if(a:int > 0, "x")', "compute.arity"), ('r=if(a:int > 0, "x", z)', "compute.unknown-column")]:
+            r = run("--root", self.s.dir, "--compute", defs, "c.csv")
+            self.assertEqual(r.first_rule(), rule, defs)
+
+    def test_a_text_if_is_a_text_in_the_explain_and_obeys_the_line_limit(self):
+        self.s.write("x.csv", "a\n1\n")
+        e = run("--root", self.s.dir, "--compute", 'r=if(a:int > 0, "xxxxxxxxxx", "y")', "--explain", "x.csv").data()["explain"]
+        d = e["stage"]["definitions"][0]
+        self.assertEqual((d["name"], d["kind"]), ("r", "text"))
+        self.assertNotIn("scale", d)
+        possible = [x if isinstance(x, str) else x.get("rule") for x in e["refusals"]["possible"]]
+        self.assertIn("compute.result-too-long", possible)
+        self.assertIn("value.not-integer", possible)
+        r = run("--root", self.s.dir, "--compute", 'r=if(a:int > 0, "xxxxxxxxxx", "y")', "--max-line-bytes", "8", "x.csv")
+        self.assertEqual(r.first_rule(), "compute.result-too-long")
+        self.assertEqual(self.csv('r=if(a:int > 0, "xxxxxxxxxx", "y")', "x.csv")[1], ["1", "xxxxxxxxxx"])
+
+    def test_a_cell_refused_in_the_condition_of_a_text_if_names_its_column(self):
+        self.s.write("r.csv", "a,b\n9,x\n")
+        r = run("--root", self.s.dir, "--compute", 'r=if(a:int > 5 and b:int > 1, "y", "n")', "r.csv")
+        d = r.error()["detail"]
+        self.assertEqual((r.first_rule(), d["column"], d["row"], d["context"]), ("value.not-integer", "b", 1, "compute"))
+
+    def test_the_arm_not_taken_and_a_condition_not_reached_are_not_read(self):
+        self.s.write("l.csv", "a,b\n0,x\n2,3\n")
+        rows = self.csv('r=if(a:int != 0 and 10 / a:int @0 > 1, "big", "other")', "l.csv")
+        self.assertEqual([r[2] for r in rows[1:]], ["other", "big"])
+
     @staticmethod
     def _shift_positions(defs):
         import re

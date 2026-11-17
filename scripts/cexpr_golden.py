@@ -193,6 +193,11 @@ def static_scale(node):
     k = node[0]
     if k in ("dt", "tcol", "tlit"):
         return 0
+    if k == "tif":
+        for _, left, right in node[2]:
+            static_scale(left)
+            static_scale(right)
+        return 0
     if k == "if":
         for _, left, right in node[2]:
             static_scale(left)
@@ -234,7 +239,7 @@ def sp(rng):
 
 
 def atom(node):
-    return node[0] in ("col", "lit", "ref", "fn", "coal", "if", "dt")
+    return node[0] in ("col", "lit", "ref", "fn", "coal", "if", "dt", "tif")
 
 
 def render_date(a, rng):
@@ -251,7 +256,7 @@ def render(node, rng):
         return '"' + node[1].replace('"', '""') + '"'
     if k == "dt":
         return node[1] + "(" + sp(rng) + (sp(rng) + "," + sp(rng)).join(render_date(a, rng) for a in node[2]) + sp(rng) + ")"
-    if k == "if":
+    if k in ("if", "tif"):
         _, conn, conds, a_node, b_node = node
         # a comparison of texts has a space before its operator: `<`, `>` and `!` do not end a bare word
         parts = [f"{render(l, rng)}{' ' if l[0] in ('tcol', 'tlit') else sp(rng)}{op}{sp(rng)}{render(r, rng)}" for op, l, r in conds]
@@ -372,6 +377,84 @@ def gen_if(rng, depth, cols, texts=None):
         arm = (lambda: gen_if(rng, depth - 1, cols, texts)) if depth > 1 and rng.random() < 0.3 else (lambda: gen(rng, max(depth - 1, 0), cols, True))
         a_node, b_node = arm(), arm()
     return ("if", conn if n > 1 else None, conds, a_node, b_node)
+
+
+def tev(node, row):
+    """the bytes of a text `if` (docs/functions.md section 3.4, K7b2): the leaf of the arm taken; the condition is lazy as in `ev`"""
+    if node[0] in ("tcol", "tlit"):
+        return text_of(node, row)
+    _, conn, conds, a_node, b_node = node
+    return tev(a_node if cond_holds(conn, conds, row) else b_node, row)
+
+
+def gen_tif(rng, depth, cols, texts=None):
+    """a text `if`: one to three comparisons (numbers or texts) joined by one connective, leaf arms or another text `if`"""
+    conn = rng.choice(["and", "or"])
+    n = rng.choice([1, 1, 2, 3])
+    conds = []
+    for _ in range(n):
+        if rng.random() < 0.4:
+            left, right = gen_text_operand(rng, texts), gen_text_operand(rng, texts)
+            if left[0] == "tlit" and right[0] == "tlit":
+                right = ("tcol", rng.randrange(6))
+            conds.append((rng.choice(CMP_OPS), left, right))
+        else:
+            conds.append((rng.choice(CMP_OPS), gen(rng, max(depth - 1, 0), cols, True), gen(rng, max(depth - 1, 0), cols, True)))
+    if rng.random() < 0.4:
+        # the guard of a division in the condition
+        c = rng.randrange(6)
+        kind, sc = cols[c]
+        col = ("col", c, kind, 0 if kind == "int" else sc)
+        conds = [("!=", col, ("lit", 0, 0)), (">", ("/", gen(rng, 1, cols, False), col, rng.randint(0, 6)), ("lit", 0, 0))]
+        conn = "and"
+
+    def arm():
+        if depth > 1 and rng.random() < 0.3:
+            return gen_tif(rng, depth - 1, cols, texts)
+        return gen_text_operand(rng, texts)
+    return ("tif", conn if len(conds) > 1 else None, conds, arm(), arm())
+
+
+def lines_tif(rng, n):
+    """G-IFT-ORACLE for K7b2: definitions that are text `if`s, with number definitions beside them; the first refusal decides, as in lines_of"""
+    out = []
+    for _ in range(n):
+        cols, cells, row = make_row(rng)
+        texts = [text(v, sc) for v, sc in row]
+        defs, exp = [], []
+        for d in range(rng.randint(1, 3)):
+            if rng.random() < 0.7:
+                tree = gen_tif(rng, rng.randint(1, 3), cols, texts)
+                for _try in range(30):
+                    if size_of(tree) <= 100 and depth_of(tree) <= 9 and len(render(tree, Longest())) < 245 and paren_depth(render(tree, Longest())) <= 4:
+                        break
+                    tree = gen_tif(rng, rng.randint(1, 2), cols, texts)
+            else:
+                tree = gen(rng, rng.randint(1, 2), cols)
+            try:
+                static_scale(tree)
+                if tree[0] == "tif":
+                    exp.append(("ok", f"r{d}=" + tev(tree, row).decode()))
+                else:
+                    v, sc = ev(tree, row)
+                    exp.append(("ok", f"r{d}={text(v, sc)}"))
+            except BadScale:
+                exp.append(("C", 7))
+            except Overflow:
+                exp.append(("E", 12))
+            except DivZero:
+                exp.append(("E", 11))
+            rendered = render(tree, rng)
+            if paren_depth(rendered) > 4:
+                exp[-1] = ("C", 9)
+            defs.append(f"r{d}=" + rendered)
+        if any(e[0] == "C" for e in exp):
+            want = "C %d" % [e[1] for e in exp if e[0] == "C"][0]
+        else:
+            bad = [i for i, e in enumerate(exp) if e[0] == "E"]
+            want = f"E {exp[bad[0]][1]} 0 {bad[0]}" if bad else ";".join(e[1] for e in exp)
+        out.append((HEADER, cells, ";".join(defs), want))
+    return out
 
 
 def lines_if(rng, n):
@@ -516,7 +599,7 @@ IF_TEXT = [
     # a comparison operator after an untyped column with no space is a word: the limit the design names
     ('r=if(a<"2", 1, 0)', "C 2"), ('r=if(a>"2", 1, 0)', "C 2"),
     # a text outside a condition is not a number
-    ('r=a = "10"', "C 5"), ('r=if(a = "10", a, 1)', "C 5"), ('r=if(a = "10", "x", 1)', "C 16"),
+    ('r=a = "10"', "C 5"), ('r=if(a = "10", a, 1)', "C 16"), ('r=if(a = "10", "x", 1)', "C 16"),
 ]
 # cells that are quoted, with doubled quotes, commas, empty, UTF-8
 IF_TEXT_CELLS = [
@@ -528,6 +611,34 @@ IF_TEXT_CELLS = [
     ('é,e,3,4,5,6', 'r=if("é" = "é", 1, 0)', "r=1"), ('"é",e,3,4,5,6', 'r=if(a = "é", 1, 0)', "r=1"),
     ('10,x,3,4,5,6', 'r=if(a = "10" and b:int > 1, 1, 0)', "E 101 1 0"), ('10,x,3,4,5,6', 'r=if(a = "11" and b:int > 1, 1, 0)', "r=0"),
     ('10,x,3,4,5,6', 'r=if(a = "11" or b:int > 1, 1, 0)', "E 101 1 0"), ('10,x,3,4,5,6', 'r=if(a = "10" or b:int > 1, 1, 0)', "r=1"),
+]
+
+
+IF_TIF = [
+    # a text `if` (docs/functions.md section 3.4, K7b2): the leaf of the arm taken; a..f are 10,20,30,40,50,60
+    ('r=if(a:int > 5, "big", "small")', "r=big"), ('r=if(a:int < 5, "big", "small")', "r=small"), ('r=if(a = "10", "ten", "other")', "r=ten"), ('r=if(a != "10", "ten", "other")', "r=other"),
+    ('r=if(a = "10", b, c)', "r=20"), ('r=if(a = "11", b, c)', "r=30"), ('r=if(a:int > 5, "", "x")', "r="), ('r=if(a:int > 5, "a""b", "z")', 'r=a"b'),
+    ('r=if(a:int > 100, "x", if(a:int > 5, "mid", "low"))', "r=mid"), ('r=if(a:int > 5, if(b:int > 5, "bb", "ba"), "n")', "r=bb"), ('r=if(a:int > 5, if(b:int > 50, "bb", "ba"), "n")', "r=ba"),
+    ('r=if(a:int > 5 and b:int > 5, "both", "no")', "r=both"), ('r=if(a:int > 50 or b:int > 5, "some", "no")', "r=some"), ('r=if(a:int > 50 or b:int > 50, "some", "no")', "r=no"),
+    ('r=if(a:int > 5 and a = "10", "y", "n")', "r=y"), ('r=if(a = "11" and 1 / (a:int - 10) @0 > 0, "y", "n")', "r=n"), ('r=if(a = "10" and 1 / (a:int - 10) @0 > 0, "y", "n")', "E 11 0 0"),
+    ('r=if(a:int != 0 and 100 / a:int @0 > 5, "y", "n")', "r=y"), ('r=if("x" = "x", "yes", "no")', "r=yes"), ('r=if(a = a, a, b)', "r=10"),
+    ('n=a:int+1;r=if(n > 5, "yes", "no")', "n=11;r=yes"), ('r=if(a:int > 5, "yes", "no");n=a:int+1', "r=yes;n=11"),
+    # a text and a number in one `if`, a text `if` where a number or a text function is, an operator after a leaf, a call as an arm
+    ('r=if(a:int > 5, "x", 1)', "C 16"), ('r=if(a:int > 5, 1, "x")', "C 16"), ('r=if(a:int > 5, a, 1)', "C 16"), ('r=if(a:int > 5, 1, b)', "C 16"),
+    ('r=1 + if(a:int > 5, "x", "y")', "C 16"), ('r=if(a:int > 5, "x", "y") + 1', "C 16"), ('r=abs(if(a:int > 5, "x", "y"))', "C 16"), ('r=-if(a:int > 5, "x", "y")', "C 16"),
+    ('r=if(if(a:int > 5, "x", "y") = "x", 1, 2)', "C 16"), ('r=if(1 = if(a:int > 5, "x", "y"), 1, 2)', "C 16"), ('r=greatest(if(a:int > 5, "x", "y"), 1)', "C 16"),
+    ('r=if(a:int > 5, "x" + 1, "y")', "C 16"), ('r=if(a:int > 5, a * 2, "y")', "C 16"), ('r=if(a:int > 5, upper(a), "y")', "C 16"), ('r=if(a:int > 5, "x", len(a))', "C 16"),
+    ('r=if(a:int > 5, "x", "y");s=r+1', "C 16"), ('r=if(a:int > 5, "x", "y");u=upper(r)', "C 16"), ('r=if(a:int > 5, "x", "y");u=if(r = "x", 1, 2)', "C 16"),
+    ('r=if(a:int > 5, "x")', "C 14"), ('r=if(a:int > 5, "x", "y", "z")', "C 14"), ('r=if(a:int > 5, , "y")', "C 1"), ('r=if(a:int > 5, "x", "y"', "C 1"), ('r=if(a:int > 5, "x", z)', "C 2"),
+    ('r=if(a:int > 5, "x, "y")', "C 1"),
+]
+IF_TIF_CELLS = [
+    # quoted cells, empty cells and UTF-8 as leaves: the doubled quotes of a quoted cell are undone
+    ('"x""y",2,3,4,5,6', 'r=if(b:int > 1, a, "z")', 'r=x"y'), ('"x""y",2,3,4,5,6', 'r=if(b:int > 5, a, "z")', "r=z"), ('"x,y",2,3,4,5,6', 'r=if(b:int > 1, a, "z")', "r=x,y"),
+    (',2,3,4,5,6', 'r=if(b:int > 1, a, "z")', "r="), ('"",2,3,4,5,6', 'r=if(b:int > 1, a, "z")', "r="), ('é,2,3,4,5,6', 'r=if(b:int > 1, a, "z")', "r=é"), ('"é",2,3,4,5,6', 'r=if(a = "é", "same", "diff")', "r=same"),
+    ('0,2,3,4,5,6', 'r=if(a:int != 0 and 100 / a:int @0 > 5, "y", "n")', "r=n"), ('x,2,3,4,5,6', 'r=if(b:int > 1, "ok", a:int)', "C 16"), ('x,2,3,4,5,6', 'r=if(b:int > 1, "ok", "no")', "r=ok"),
+    # a number read in the condition that is not one is refused as ever; one not reached is not read
+    ('1,x,3,4,5,6', 'r=if(a:int > 5 and b:int > 1, "y", "n")', "r=n"), ('9,x,3,4,5,6', 'r=if(a:int > 5 and b:int > 1, "y", "n")', "E 101 1 0"),
 ]
 
 
@@ -545,7 +656,7 @@ IF_CELLS = [
 
 
 def if_hand_cases():
-    return [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_TEXT] + [(HEADER, cells, defs, want) for cells, defs, want in IF_TEXT_CELLS] + [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_HAND] + [(HEADER, cells, defs, want) for cells, defs, want in IF_CELLS]
+    return [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_TIF] + [(HEADER, cells, defs, want) for cells, defs, want in IF_TIF_CELLS] + [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_TEXT] + [(HEADER, cells, defs, want) for cells, defs, want in IF_TEXT_CELLS] + [(HEADER, "10,20,30,40,50,60", defs, want) for defs, want in IF_HAND] + [(HEADER, cells, defs, want) for cells, defs, want in IF_CELLS]
 
 
 # ---- dates (docs/functions.md section 3.5): G-DT-ORACLE ----------------------------------------------------------------------------------
@@ -729,7 +840,7 @@ def size_of(node):
     k = node[0]
     if k in ("dt", "tcol", "tlit"):
         return 1
-    if k == "if":
+    if k in ("if", "tif"):
         return sum(size_of(l) + size_of(r) + 2 for _, l, r in node[2]) + size_of(node[3]) + size_of(node[4]) + 3
     if k in ("col", "lit"):
         return 1
@@ -753,7 +864,7 @@ def depth_of(node):
         return 1
     if k == "coal":
         return 1
-    if k == "if":
+    if k in ("if", "tif"):
         return max([max(depth_of(l), 1 + depth_of(r)) for _, l, r in node[2]] + [depth_of(node[3]), depth_of(node[4])])
     if k == "fn":
         return max(i + depth_of(a) for i, a in enumerate(node[2]))
@@ -1071,8 +1182,8 @@ MUTANTS = [
     ("a duplicate of a column is accepted", "            if cs == 0 {\n                status = 4;", "            if cs == 100 {\n                status = 4;"),
     ("a duplicate of a definition is accepted", "            if same {\n                status = 4;", "            if same && false {\n                status = 4;"),
     ("a product past scale 18 is accepted", "                if scale > 18 {\n                    return (0, 0, s_scale());", "                if scale > 99 {\n                    return (0, 0, s_scale());"),
-    ("a zero divisor is a value", "                if st == 1 {\n                    return (11, 0);\n                }", "                if st == 11 {\n                    return (11, 0);\n                }"),
-    ("an overflow is a value", "            if !ok {\n                return (12, 0);", "            if false {\n                return (12, 0);"),
+    ("a zero divisor is a value", "                if st == 1 {\n                    return (11, 0, 0, 0, 0, 0);\n                }", "                if st == 11 {\n                    return (11, 0, 0, 0, 0, 0);\n                }"),
+    ("an overflow is a value", "            if !ok {\n                return (12, 0, 0, 0, 0, 0);", "            if false {\n                return (12, 0, 0, 0, 0, 0);"),
     ("the literal's scale is dropped", "            cmpv.set_int(w, sp, prog[at + 1], prog[at + 2]);", "            cmpv.set_int(w, sp, prog[at + 1], 0);"),
     ("negation does nothing", "            cmpv.negate(w, sp - 1);", "            sp = sp;"),
     ("parentheses are unlimited", "                if work[65] > 4 || work[64] > 28 {", "                if work[65] > 400 || work[64] > 28 {"),
@@ -1112,7 +1223,7 @@ MUTANTS = [
     ("if: a false condition does not skip the first arm", "        } else if op == cif.op_jf() {\n            if !verdict {", "        } else if op == cif.op_jf() {\n            if false {"),
     ("if: a true verdict does not skip at a jt", "        } else if op == cif.op_jt() {\n            if verdict {", "        } else if op == cif.op_jt() {\n            if !verdict {"),
     ("if: the jump over the second arm does not skip", "        } else if op == cif.op_jmp() {\n            at = at + 4 * prog[at + 1];", "        } else if op == cif.op_jmp() {\n            at = at + 0;"),
-    ("if: the result is not brought to the scale of the arms", "            if !cmpv.rescale(w, sp - 1, prog[at + 1]) {\n                return (12, 0);", "            if false {\n                return (12, 0);"),
+    ("if: the result is not brought to the scale of the arms", "            if prog[at + 1] >= 0 && !cmpv.rescale(w, sp - 1, prog[at + 1]) {\n                return (12, 0, 0, 0, 0, 0);", "            if false {\n                return (12, 0, 0, 0, 0, 0);"),
     ("if: the scale of the result is the first arm's", "    if sb > sa {\n        target = sb;\n    }", ""),
     ("if: a comparison consumes one operand", "            sp = sp - 2;\n            verdict = cif.compare", "            sp = sp - 1;\n            verdict = cif.compare"),
     ("if: the shape does not return to the first arm's depth", "            // the arm that follows pushes its own value where this one's was\n            sp = sp - 1;", "            sp = sp;"),
@@ -1152,8 +1263,8 @@ MUTANTS = [
     ("dt: a literal that is not a date is accepted", "    if st != 0 {\n        return (from, 0, 15);\n    }\n    return (from + 12, v, 0);", "    return (from + 12, v, 0);", "cdate"),
     ("dt: any type is a date", "    if from + 5 <= len(t) && bytes.equal(t[from..from + 5], \":date\") {", "    if from + 5 <= len(t) {", "cdate"),
     ("dt: the status of a cell has no reason", "        return (0, s_cell_date() + st, v);", "        return (0, s_cell_date(), v);", "cdate"),
-    ("dt: the instruction does not push", "            let (dst, dcol) = cdate.eval(prog, at, record, cells, w, sp);\n            if dst != 0 {\n                return (dst, dcol);\n            }\n            sp = sp + 1;", "            let (dst, dcol) = cdate.eval(prog, at, record, cells, w, sp);\n            if dst != 0 {\n                return (dst, dcol);\n            }"),
-    ("dt: the shape gives the leaf a scale", "        if op == cdate.op_dt() {\n            work[72 + sp] = 0;", "        if op == cdate.op_dt() {\n            work[72 + sp] = 1;"),
+    ("dt: the instruction does not push", "            let (dst, dcol) = cdate.eval(prog, at, record, cells, w, sp);\n            if dst != 0 {\n                return (dst, dcol, 0, 0, 0, 0);\n            }\n            sp = sp + 1;", "            let (dst, dcol) = cdate.eval(prog, at, record, cells, w, sp);\n            if dst != 0 {\n                return (dst, dcol, 0, 0, 0, 0);\n            }"),
+    ("dt: the shape gives the leaf a scale", "        } else if op == cdate.op_dt() {\n            work[72 + sp] = 0;", "        } else if op == cdate.op_dt() {\n            work[72 + sp] = 1;"),
     ("dt: a second argument is accepted for a one-argument function", "        if int_of(t[i]) == ')' || k >= want {", "        if int_of(t[i]) == ')' || k > want {", "cdatep"),
     ("dt: one argument is accepted for days_between", "            if k < want {\n                return (i, cur, 14);\n            }\n            var op = cdate.op_dt();", "            var op = cdate.op_dt();", "cdatep"),
     ("dt: a number is a column name", "            return (i, cur, 16);\n        } else {\n            var cb = buffer.empty(heap, 32);\n            let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);\n            cb = b2;\n            var status = 0;\n            if s2 != 0 {\n                status = 1;\n            } else {\n                var col = 0;", "            return (i, cur, 2);\n        } else {\n            var cb = buffer.empty(heap, 32);\n            let (b2, e2, q2, s2) = clex.word_at(heap, cb, t, i);\n            cb = b2;\n            var status = 0;\n            if s2 != 0 {\n                status = 1;\n            } else {\n                var col = 0;", "cdatep"),
@@ -1181,6 +1292,19 @@ MUTANTS = [
     ("ift: a string literal in a number is not a type mismatch", "            if c == 34 {\n                // a string literal in a number: no conversion either way\n                status = 16;", "            if c == 34 {\n                // a string literal in a number: no conversion either way\n                status = 2;"),
     ("ift: the shape counts the loads as operands", "        } else if op == ctext.op_tld() || op == ctext.op_tcmp() {\n            sp = sp;", "        } else if op == ctext.op_tld() || op == ctext.op_tcmp() {\n            sp = sp + 1;"),
     ("ift: a text operand is compared as the left whatever its register", "            if prog[at + 1] % 2 == 0 {\n                lsrc = src;", "            if prog[at + 1] % 2 == 7 {\n                lsrc = src;"),
+    # a text `if` (docs/functions.md section 3.4, slice K7b2): G-IFT2-MUT
+    ("ift2: a literal leaf is read as a column", "            if prog[at + 1] == 1 {\n                selsrc = 1;", "            if prog[at + 1] == 7 {\n                selsrc = 1;"),
+    ("ift2: a cell leaf has no doubled quotes", "                seldbl = cells[3 * prog[at + 2] + 2];", "                seldbl = 0;"),
+    ("ift2: a literal leaf has no doubled quotes", "                selto = prog[at + 3];\n                seldbl = 1;", "                selto = prog[at + 3];\n                seldbl = 0;"),
+    ("ift2: the leaf selected is not the value", "        return (0, 0, selsrc, selfrom, selto, seldbl);", "        return (0, 0, 0, 0, 0, 0);"),
+    ("ift2: a text arm and a number arm are accepted", "    if sa < 0 != sb < 0 {", "    if false {"),
+    ("ift2: a text is an operand of an operator", "            if right < 0 || left < 0 {", "            if false {"),
+    ("ift2: a text is negated", "        } else if op == op_neg() {\n            if work[72 + sp - 1] < 0 {", "        } else if op == op_neg() {\n            if false {"),
+    ("ift2: a text is compared as a number", "            if work[72 + sp - 1] < 0 || work[72 + sp - 2] < 0 {", "            if false {"),
+    ("ift2: a text is the argument of a function", "                if work[72 + sp - n + kk] < 0 {", "                if false {"),
+    ("ift2: a text `if` is copied into a text definition", "                        } else if prog[1 + 5 * dk + 2] != -1 {", "                        } else if prog[1 + 5 * dk + 2] >= 0 {"),
+    ("ift2: the arms of a text `if` are brought to a scale", "            if prog[at + 1] >= 0 && !cmpv.rescale(w, sp - 1, prog[at + 1]) {", "            if !cmpv.rescale(w, sp - 1, prog[at + 1]) {"),
+    ("ift2: the shape gives a leaf a scale", "        if op == ctext.op_tsel() {\n            work[72 + sp] = -1;", "        if op == ctext.op_tsel() {\n            work[72 + sp] = 0;"),
     # the exact core: what the functions added to it
     ("cmpv: abs keeps the sign", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = 0;", "pub fn abs[&w](w: &!w [int], s: int) -> [] int {\n    w[s * 12] = w[s * 12];", "cmpv"),
     ("cmpv: a comparison of a negative and a positive is by magnitude", "    if na && !nb {\n        return -1;\n    }\n    if nb && !na {\n        return 1;\n    }\n    let c = mag_cmp(w, a, b);", "    let c = mag_cmp(w, a, b);", "cmpv"),
@@ -1241,7 +1365,7 @@ def main():
         print("\n".join(problems) or f"{len(MUTANTS)} mutants: every pattern occurs exactly once")
         sys.exit(1 if problems else 0)
     rng = random.Random(a.seed)
-    cs = hand_cases() + if_hand_cases() + dt_hand_cases() + lines_dt(rng, 1200 if not a.mutants else 600) + lines_if(rng, 1200 if not a.mutants else 600) + lines_of(rng, a.cases if not a.mutants else 1500) + lines_coalesce(rng, 600 if not a.mutants else 300) + chain_hand_cases() + chain_lines(rng, 1500 if not a.mutants else 800)
+    cs = hand_cases() + if_hand_cases() + dt_hand_cases() + lines_dt(rng, 1200 if not a.mutants else 600) + lines_if(rng, 1200 if not a.mutants else 600) + lines_tif(rng, 800 if not a.mutants else 400) + lines_of(rng, a.cases if not a.mutants else 1500) + lines_coalesce(rng, 600 if not a.mutants else 300) + chain_hand_cases() + chain_lines(rng, 1500 if not a.mutants else 800)
     if not a.mutants:
         with tempfile.TemporaryDirectory() as w:
             probe, err = build(w)
