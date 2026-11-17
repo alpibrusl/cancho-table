@@ -106,7 +106,7 @@ The signature table is **one static table** that the parser, `introspect`, the s
 * *Through the binary* (`tests/conformance/test_compute.py`, `Functions`, 8 tests, and the random trees of `Compute`, which now draw calls): the values in CSV, `greatest` and `least` across scales, `coalesce` of an empty cell and of a bad one, JSON lines with `--absent empty`, the three new rules with their exit status and offset, overflow as a refusal, and a function name that is still a column name.
 * *Explain* (`test_compute_explain.py`): a call that can overflow lists `compute.overflow` and `abs` and `sign` do not; `coalesce` adds no rule beyond its cell's; the scale of a call is in `stage.definitions`; a call that does not compile is refused as the run refuses it.
 
-**Not measured:** the cost of a call (G-COST). No speed is claimed for the functions; the baseline of section 5 stands.
+**Cost:** measured in section 5 (G-COST), as bands on one machine.
 
 ### 3.3 K6: the text functions, exactly (built 2026-11-15)
 
@@ -146,7 +146,7 @@ The signature table is **one static table** that the parser, `introspect`, the s
 
 **Found by the gates:** `substr` took three operands off the stack where it has one (the start and the count are literals), a trap on the first run; and my hand case for `substr` over `\x80\x80` expected a value where the rule of the design refuses (the cut is before a continuation byte): the tool was right and the hand case wrong.
 
-**Not measured:** the cost of a text function (G-COST). No speed is claimed.
+**Cost:** measured in section 5 (G-COST): a text function costs about what a product does, or less.
 
 ### 3.4 K7: conditions (design 2026-11-15; K7a built 2026-11-15)
 
@@ -183,7 +183,7 @@ table --compute 'r=if(qty != 0, total / qty, 0);tag=if(name = "", "none", upper(
 * **G-IF-COMPAT.** The existing numeric (`cexpr_golden.py`, 54 mutants) and text (`ctext_ref.py`, 37 mutants) gates pass unchanged, and a definition without `if` compiles to the same program as before (a test on `--explain` instruction counts).
 * The surface gates of section 5 (G-EXPLAIN, G-SURFACE, G-NOPANIC), with `if` in the fuzz.
 
-**Not claimed.** No cost: G-COST for `if` is measured after K7 exists and before it is described as anything but correct.
+**Cost:** measured in section 5 (G-COST) once K7 existed.
 
 **K7a as built (2026-11-15).** The design is built as written for numbers, in two slices: **K7a, `if` over numbers** (the condition compares two numbers, the arms are numbers) is done; **K7b, comparing two texts and an `if` whose arms are texts** is not (a text arm is `compute.type-mismatch` today, and a text is not a comparison operand: the number reading of a column with no type is `compute.untyped-operand`, as before). *Corrected in place:* the design said one file, `cif.cho`; it holds the opcodes, the exact comparison and the skip arithmetic, while the parser's three hooks (`if_connective`, `if_comma`, `if_close`) are in `cexpr.cho`, which they need (`emit`, `shape`). `cexpr.cho` is 1,876 lines after K7a.
 
@@ -197,7 +197,7 @@ table --compute 'r=if(qty != 0, total / qty, 0);tag=if(name = "", "none", upper(
   * *G-IF-MUT.* 31 mutants of the `if` code were added to the 54 of `cexpr_golden.py`: **85 of 85 killed**, in a run with nothing else touching the sources.
   * *G-IF-COMPAT.* The earlier 54 mutants and the earlier cases of the file pass unchanged; `fmt`, `build`, `manifest`, `schemas`, `mcp`, `site` and every `*_mutants.py --check` are current.
 * **Found by the gates:** the first run had 7 differences, all my hand cases writing `@ 2` with a space (never the syntax of a scale: the tool was right), and the next run one more, `or and b:int < 1`, where I expected a syntax error and `and` is a column (the tool was right). Two more of my hand cases I corrected by reading the code before the first run: a guard whose arms have scales 2 and 0 prints `-1.00`, not `-1`, and a literal of more than 18 digits is `compute.syntax`, not an overflow. **One mutant had to be restated**: the pattern of an older mutant ("a comma outside a call is accepted") named the markers it knew, and now names the three.
-* **Not measured:** the cost of `if` (G-COST); no speed is claimed. K7b, `if` in a text-valued definition, and the explain's instruction counts for a text `if` come with it.
+* **Cost:** measured in section 5 (G-COST). K7b, `if` in a text-valued definition, and the explain's instruction counts for a text `if` came with K7b2.
 
 **K7b: texts in a condition, and an `if` that gives a text (design 2026-11-16).** K7a left two things, which are not one thing: **a text as a comparison operand** (`if(status = "paid", amount, 0)`), and **an `if` whose arms are texts** (`if(qty > 0, "in stock", "sold out")`). Read first (`tools/table/cexpr.cho`, `ctext.cho`, `compute.cho`, 16 Nov 2026): the number evaluator is `cexpr.eval(prog, d, record, cells, w)`, with no heap and no arena, and it is called from `compute.cho`, `computej.cho`, the probes and the oracle; the text evaluator, `ctext.eval(heap, prog, d, t, record, cells, arena, cap)`, has the arena and no number slots; a definition is one or the other (`prog[1 + 5 * d + 2] < 0` is a text). Two slices, then, each with its own gates, in this order (**choice**, recommended):
 
@@ -223,7 +223,7 @@ table --compute 'r=if(qty != 0, total / qty, 0);tag=if(name = "", "none", upper(
 * **G-IFT-MUT.** Mutants: an operator swapped, a prefix compared as equal, the shorter text the greater, the doubled quotes of a cell not undone (a cell `"a""b"` against `a"b`), a literal read with its doubled quotes, `and` as `or`, no jump, both arms evaluated, a number arm beside a text arm accepted.
 * **G-IFT-COMPAT.** The 103 numeric and the 37 text mutants and their cases pass unchanged; a definition without a text comparison or a text `if` compiles to the same program as before.
 
-**Not claimed.** No cost; G-COST is still open for every function.
+**Cost:** measured in section 5 (G-COST), after the build.
 
 **K7b1 as built (2026-11-16).** A comparison of two texts in the condition of an `if` with number arms is built as designed: `if(status = "paid", amount:int, 0)`, `if("x" != name, ...)`, `if(a < b and n:int > 1, ...)`. An operand is a column with no type or a string literal in double quotes; the operators are `= != < <= > >=`, bytewise, the shorter text first. *Corrected in place:* the design said no new signature; the literal's bytes are in the text of the definitions, which the number evaluator did not have, so **`cexpr.eval` takes it** (`eval(prog, d, t, record, cells, w)`; its two callers, `compute.cho` and the probe, pass it).
 
@@ -234,7 +234,7 @@ table --compute 'r=if(qty != 0, total / qty, 0);tag=if(name = "", "none", upper(
 * **Gates, as run** (compiler `119bcfe`, 16 Nov 2026).
   * *G-IFT-ORACLE.* Python's `bytes` compare as the reference in `scripts/cexpr_golden.py` over the probe: 55 hand cases and 19 cases with quoted, empty and UTF-8 cells (equal, a prefix, shorter and longer, doubled quotes in a cell and in a literal, a comma, empty, UTF-8, the mix with number comparisons, laziness, nesting, every refusal), and random `if` definitions in which 30% of the comparisons are of texts (cells and literals, prefixes of cells): **6,359 cases at each of three seeds, 0 differences**. Through the binary, `tests/conformance/test_compute_if.py` (14 tests): 400 random pairs of hostile texts (a comma, a quote, a line feed, UTF-8, empty, NUL) against Python's `bytes` for every operator, a column and a literal on the left; and the compile refusals.
   * *G-IFT-MUT.* 21 mutants of the comparison, its parser and its use in the evaluator added to the 103: **124 of 124 killed**, in a run with nothing else touching the sources.
-* **Not measured:** the cost of a comparison of texts; no speed is claimed. K7b2 is next; a call as an operand stays out, as designed.
+* **Cost:** a comparison of texts is in the table of section 5 (G-COST). K7b2 followed; a call as an operand stays out, as designed.
 
 **K7b2 as built (2026-11-16).** `if(cond, a, b)` with **leaf text arms** is built as the corrected paragraph says: `if(qty:int > 0, "in stock", "sold out")`, `if(status = "paid", name, "n/a")`, `if(a:int > 100, "big", if(a:int > 5, "mid", "low"))`. An arm is a column with no type, a string literal or another such `if`; the condition is K7a's and K7b1's; only the arm taken is selected and a condition that is not reached reads no cell. The row writes the leaf as a quoted cell (doubled quotes of a quoted cell and of a literal kept, undone for the oracle).
 
@@ -244,7 +244,7 @@ table --compute 'r=if(qty != 0, total / qty, 0);tag=if(name = "", "none", upper(
 * **Gates, as run** (compiler `119bcfe`, 16 Nov 2026).
   * *G-IFT-ORACLE.* In `scripts/cexpr_golden.py` the reference gained text `if` nodes (`tev`, `gen_tif`, `lines_tif`: random trees with leaf or nested arms, conditions of numbers and texts, the guard of a division, number definitions beside them) and 58 hand cases (the arms, nesting, `and`, `or`, laziness, a quoted cell, empty, UTF-8, every refusal above): **7,217 cases at each of three seeds, 0 differences**. It failed first. Through the binary, `tests/conformance/test_compute_if.py` (19 tests): 300 hostile leaves (a comma, a quote, a line feed, UTF-8, empty, NUL) as CSV and as JSON against Python, a literal with a quote and a comma, the explain (`kind: "text"`, no scale, `compute.result-too-long` and the cell rules), the line limit, and the refusals.
   * *G-IFT2-MUT.* 12 mutants in `scripts/cexpr_golden.py` (**136 of 136 killed** with the earlier 124) and 6 in the new `scripts/cif_mutants.py`, what only the row decides (**6 of 6 killed**), each in a run with nothing else touching the sources. The first run of the six left one alive, the column of a cell refused inside a text `if`: it has its test now.
-* **Not measured:** the cost; no speed is claimed. **Open and unchanged:** a call or `add_days` as an arm, a text `if` as an argument of a text function, `text(x)`, a date comparison: each is two stages, until the two machines are one loop.
+* **Cost:** in the table of section 5 (G-COST). **Open and unchanged:** a call or `add_days` as an arm, a text `if` as an argument of a text function, `text(x)`, a date comparison: each is two stages, until the two machines are one loop.
 
 ### 3.5 K8: dates (design 2026-11-15; K8a and K8b built 2026-11-16)
 
@@ -282,7 +282,7 @@ A date literal is `"YYYY-MM-DD"` in double quotes (the string literal of K6), va
   * *G-DT-MUT.* 18 mutants of the date code (the epoch constant, the first day of the week, Sunday as 0, no positive modulus before 1970, the sign, the flag of the second operand, a literal read as a column, year as month, an invalid literal accepted, any type accepted, a status with no reason, no push, the leaf's scale, the two arities, a number as a column name, an earlier definition, the second literal's flag) on top of the 85: **103 of 103 killed**, in a run with nothing else touching the sources.
   * *G-DT-WRITE.* Not applicable to K8a: the result is a number.
 * **Found by the gates:** two of my hand cases were wrong and the tool right (a definition named `d` is a column's name, `compute.duplicate-name`; and the days between 2026-11-16 and 1970-01-01 are 20,773, not 20,408), and one expected value of a test (`9757 / 7` is `1393.86`).
-* **Not measured:** the cost of a date function; no speed is claimed.
+* **Cost:** in the table of section 5 (G-COST).
 
 **K8b as built (2026-11-16): `add_days(d, n)`.** The date is `NAME:date` or a date literal in double quotes; the count is an integer literal (digits, with a minus sign first if it is negative: at most nine digits) or a column `NAME:int`. It is a **text** (the date written `YYYY-MM-DD`, a quoted cell like every text of K6), so a definition may be `add_days(...)` alone or any text function around it (`concat(add_days(d:date, 30), " due")`, `substr(add_days(d:date, 1), 1, 4)`), and in a number it is `compute.type-mismatch` (`add_days(...)+1`, `len(add_days(...))`: `len` takes a column or a literal, as K6 chose). *Corrected in place:* K8a's line saying a call of `add_days` was `compute.unknown-function` until then is now `compute.type-mismatch` in a number and a value in a text.
 
@@ -293,7 +293,7 @@ A date literal is `"YYYY-MM-DD"` in double quotes (the string literal of K6), va
   * *G-DT-ORACLE.* `tests/conformance/test_compute_adddays.py` (9 tests, all dates a day on each side) against Python's `datetime.date` and `timedelta`: **every date from 0001-01-02 to 9999-12-30, a day later and a day earlier (3,652,056 dates, two columns), 0 differences**; 20,000 random pairs with a count column, a literal and a negative count, 0 differences; the two ends accepted and the day past either refused with the row (five cases, one with a count of three million); the text functions and `if`-free expressions around it; JSON writes a string; the compile refusals (a text, a decimal, a missing or extra argument, `1.5`, an invalid literal, a number context, an unknown name).
   * *G-DT-MUT.* `scripts/cadddays_mutants.py`, 22 mutants (the addition off by one, each bound off by one in both directions, the range check off, the flags of the date and the count, a status with no reason, a decimal count, the column of a refused cell, the line limit, the sign of a literal, a number context, the arity, the explain's three lists): **22 of 22 killed**, in a run with nothing else touching the sources. The first run left one alive (the evaluator's own line limit for a date was shadowed by the row's: it needed an intermediate date past the limit that is then cut short), and my first assertion of the reader's offset was wrong (8, where the bad day begins, not 9).
   * *Also corrected:* `ctext_mutants.py` was not in the list of scripts that CI checks still apply (K6 omitted it); it and the new one are in it now.
-* **Not measured:** the cost; no speed is claimed.
+* **Cost:** in the table of section 5 (G-COST).
 
 ## 4. Rules (every refusal has a tag)
 
@@ -305,7 +305,42 @@ New: `compute.unknown-function` (the name, the table of names in `detail`) · `c
 * **G-FN-MUT.** `scripts/compute_fn_mutants.py`: per function, mutants the oracle must kill (half-even to half-up, `trim` of one side only, a cut inside a character allowed, an off-by-one `substr`, `lower` of a non-letter, `coalesce` of a non-empty bad cell, the result bound off by one, an argument swapped). A survivor is explained or the gate is extended.
 * **G-COMPAT.** The corpus md5 of `scripts/corpus.py` and the instruction counts of the select loops (callgrind, budget 1.01) equal those of `main`: no byte of the existing paths changes (`docs/computed-columns.md` section 7).
 * **G-FLAT.** Peak resident memory of one definition of each function class is flat in the rows (the repository's `maxrss` launcher), as `test_compute.test_memory_is_flat_in_the_rows` holds for the arithmetic.
-* **G-COST.** Per function, wall time per row on the repository's 1,000,000-row file, next to the numbers of the stage as it is. **No speed is claimed before this table exists.** Baseline, **measured** (`docs/computed-columns.md` section 7, 4-core container): `--select id,price,qty` 93 ns a row; `--compute 't=price:dec(2)*qty:int'` 279 ns; a product and a division 555 ns.
+* **G-COST (measured 2026-11-17).** `python3 scripts/bench_compute.py` (seeded file of 1,000,000 rows and 39.5 MB: `id,price,qty,name,status,day`, one `qty` in twenty zero; read from the page cache, CSV written to `/dev/null`, 25 plans interleaved in rotating order, the minimum of 5 rounds a plan; **three runs** of the script on one 4-core cloud container, load average 0.8 to 0.9, `build/table` of `main` at `b027501`). The table gives the lowest and the highest of the three runs; the times of the last two columns are taken in each run against that run's own `--select` and product, and then the lowest and the highest.
+
+| group | plan | ns a row, 3 runs (low to high) | times `--select` | times the product |
+|---|---|---|---|---|
+| reference | `--select id,price,qty` | 113 to 118 | 1.0 | 0.31 to 0.39 |
+| reference | `t=price:dec(2)*qty:int` (the product) | 288 to 375 | 2.5 to 3.2 | 1.00 |
+| reference | `h=if(qty != 0, price/qty@4, 0)` (a division behind a guard) | 402 to 492 | 3.4 to 4.3 | 1.11 to 1.68 |
+| numbers K5 | `abs(price)` | 257 to 308 | 2.2 to 2.7 | 0.71 to 1.05 |
+| numbers K5 | `sign(qty)` | 250 to 308 | 2.1 to 2.6 | 0.67 to 1.03 |
+| numbers K5 | `greatest(price, qty)` | 343 to 370 | 3.0 to 3.1 | 0.95 to 1.19 |
+| numbers K5 | `round(price*qty, 1)` | 382 to 483 | 3.4 to 4.1 | 1.22 to 1.34 |
+| numbers K5 | `floor(price, 0)` | 366 to 475 | 3.1 to 4.0 | 0.98 to 1.44 |
+| numbers K5 | `coalesce(qty, 0)` | 219 to 277 | 1.9 to 2.3 | 0.58 to 0.78 |
+| texts K6 | `upper(name)` | 225 to 294 | 1.9 to 2.5 | 0.60 to 0.95 |
+| texts K6 | `lower(name)` | 228 to 292 | 1.9 to 2.5 | 0.61 to 0.95 |
+| texts K6 | `trim(name)` | 210 to 212 | 1.8 to 1.9 | 0.57 to 0.73 |
+| texts K6 | `substr(name, 1, 3)` | 252 to 274 | 2.1 to 2.3 | 0.67 to 0.88 |
+| texts K6 | `concat(name, "-", status)` | 258 to 288 | 2.3 to 2.4 | 0.71 to 0.90 |
+| texts K6 | `replace(name, "a", "b")` | 257 to 314 | 2.2 to 2.7 | 0.69 to 1.05 |
+| texts K6 | `len(name)` | 206 to 270 | 1.8 to 2.3 | 0.71 to 0.72 |
+| texts K6 | `upper(trim(name))` (two calls) | 253 to 311 | 2.2 to 2.6 | 0.81 to 0.88 |
+| conditions K7 | `if(qty > 50, price, 0)` | 353 to 371 | 3.1 | 0.96 to 1.23 |
+| conditions K7 | `if(status = "paid", 1, 0)` | 296 to 309 | 2.5 to 2.7 | 0.79 to 1.05 |
+| conditions K7 | `if(qty > 50, "big", "small")` | 226 to 267 | 1.9 to 2.4 | 0.60 to 0.93 |
+| conditions K7 | `if(status = "paid", name, "n/a")` | 183 to 217 | 1.6 to 1.9 | 0.49 to 0.75 |
+| dates K8 | `year(day)` | 300 to 309 | 2.5 to 2.7 | 0.80 to 1.05 |
+| dates K8 | `weekday(day)` | 228 to 288 | 1.9 to 2.5 | 0.61 to 1.00 |
+| dates K8 | `days_between(day, "2026-01-01")` | 293 to 313 | 2.5 to 2.7 | 0.82 to 1.02 |
+| dates K8 | `add_days(day, 30)` | 251 to 284 | 2.1 to 2.4 | 0.67 to 0.95 |
+
+  **What the table supports, and nothing else:**
+  1. **Every function plan costs between 1.6 and 4.3 times the `--select` path, 183 to 492 ns a row here, and no more than 1.7 times the product of two columns** that the stage had before functions (the plan of section 7 of `docs/computed-columns.md`).
+  2. **A text function, a condition and a date function cost about what a product does, or less** (0.49 to 1.23 times it). The text functions did not turn out expensive: the expectation that a text operation that makes a buffer would be slower than arithmetic was not borne out by this measurement.
+  3. **The rounding family (`round`, `floor`) and a division behind a guard are the dearest** (up to about 1.4 and 1.7 times the product), as the 128-bit division is the dearest of the arithmetic (section 7 of `docs/computed-columns.md`).
+  4. **The noise is large.** The same plan varies by up to about 25% between two runs (`h`, `floor`, `upper`, `coalesce`), and the ratio to the product moves with it. So the table is a set of bands: **no ranking inside 25%, no figure to three digits, and no claim about another machine.** The figures of section 7 (93 and 279 ns) were taken on another machine and file and are not mixed with these: the claims above are within this table.
+  **Not measured here, so not claimed:** the select path's instruction count after the functions (G-COMPAT, `callgrind`, was not re-taken. **What was read:** `git diff --stat e740411^..HEAD -- tools/table` lists, since K5, the modules of the stage (`cexpr`, `cdate`, `cdatep`, `cif`, `clex`, `clit`, `ctcmp`, `ctext`, `cmpv`, `compute`, `computej`, `computex`) and one changed line each in `finish.cho` and `table.cho` (the rule registry); no module of another plan's loop is in it); memory (G-FLAT) for the functions; parallel or pipe inputs; a file that is not in the page cache.
 * **G-EXPLAIN.** The explain of a stage lists exactly the definitions that run, with their kinds; a corpus of stages is run with and without `--explain`, and every refusal that the explain calls certain is the one the run gives.
 * **G-SURFACE.** `introspect`, `skill`, the MCP schema and AGENTS.md are regenerated from the signature table, and every example in them is run.
 * **G-NOPANIC.** A fuzz of function names, arities, literals and cell bytes: no input reaches a panic.

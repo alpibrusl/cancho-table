@@ -135,6 +135,11 @@ jobs:
         working-directory: table
         run: python3 scripts/bench_datetime.py --rows 20000 --runs 1 --no-count --file build/dt/data.csv
 
+      # The cost table of the functions of --compute (docs/functions.md section 5, G-COST): the script only has to keep working here, every plan answering; the numbers are one machine's.
+      - name: The functions' cost script runs
+        working-directory: table
+        run: python3 scripts/bench_compute.py --rows 20000 --runs 1 --file build/bench_compute_ci.csv
+
       # The README's example and the project pages' terminals, authority row, rules
       # and counts are written from the built binary; this fails if they differ.
       - name: The README and the project pages say what the binary says
