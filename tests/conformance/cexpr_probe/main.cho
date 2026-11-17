@@ -95,17 +95,29 @@ fn run[&h, &i, &g](heap: &!h Heap, io: &!i Io, args: &g Args) -> [heap, io_write
             while d < made && !failed {
                 var es = 0;
                 var ecol = 0;
+                var esrc = 0;
+                var efrom = 0;
+                var eto = 0;
+                var edbl = 0;
                 borrow mut wsb as &!ws in {
                     borrow progb as &pr in {
                         borrow cellb as &cr in {
-                            let (s2, c2) = @MODULE@.eval(contents(pr), d, defs, row, contents(cr), contents(ws));
+                            let (s2, c2, ts2, tf2, tt2, td2) = @MODULE@.eval(contents(pr), d, defs, row, contents(cr), contents(ws));
                             es = s2;
                             ecol = c2;
+                            esrc = ts2;
+                            efrom = tf2;
+                            eto = tt2;
+                            edbl = td2;
                         }
                     }
                 }
                 var scale_ok = true;
-                if es == 0 {
+                var is_text = false;
+                borrow progb as &pr in {
+                    is_text = @MODULE@.scale_of(contents(pr), d) < 0;
+                }
+                if es == 0 && !is_text {
                     borrow progb as &pr in {
                         borrow wsb as &wr in {
                             scale_ok = @MODULE@.scale_of(contents(pr), d) == cmpv.scale_of(contents(wr), 0);
@@ -146,8 +158,26 @@ fn run[&h, &i, &g](heap: &!h Heap, io: &!i Io, args: &g Args) -> [heap, io_write
                         o = @MODULE@.name_of(heap, o, defs, contents(pr), d);
                     }
                     o = buffer.push(heap, o, byte_of('='));
-                    borrow mut wsb as &!ws in {
-                        o = cmpv.put(heap, o, contents(ws), 0);
+                    if is_text {
+                        // the text of a definition that is a text `if`: the leaf it selected, the doubled quotes of a quoted cell or a literal undone
+                        var k = efrom;
+                        while k < eto {
+                            var b = 0;
+                            if esrc == 0 {
+                                b = int_of(row[k]);
+                            } else {
+                                b = int_of(defs[k]);
+                            }
+                            o = buffer.push(heap, o, byte_of(b));
+                            if b == 34 && edbl == 1 && k + 1 < eto {
+                                k = k + 1;
+                            }
+                            k = k + 1;
+                        }
+                    } else {
+                        borrow mut wsb as &!ws in {
+                            o = cmpv.put(heap, o, contents(ws), 0);
+                        }
                     }
                     borrow o as &orr in {
                         line = buffer.append(heap, line, buffer.bytes(orr));

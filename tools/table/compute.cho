@@ -287,7 +287,55 @@ pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a, &x](heap: &!h Heap, io: &!i I
     while d < nd && status == 0 {
         var st = 0;
         var cc = 0;
-        if cexpr.scale_of(prog, d) < 0 {
+        if cexpr.scale_of(prog, d) == -2 {
+            // a text `if` (docs/functions.md section 3.4, K7b2): the number machine selects a leaf, written here as a quoted cell, its quotes doubled (those of a quoted cell and of a literal already are)
+            var sel_src = 0;
+            var sel_from = 0;
+            var sel_to = 0;
+            var sel_dbl = 0;
+            borrow cells2 as &cr in {
+                let (s1, c1, ts1, tf1, tt1, td1) = cexpr.eval(prog, d, text, line, contents(cr), ws);
+                st = s1;
+                cc = c1;
+                sel_src = ts1;
+                sel_from = tf1;
+                sel_to = tt1;
+                sel_dbl = td1;
+            }
+            if st == 0 {
+                var tstart = 0;
+                borrow copy2 as &kr in {
+                    tstart = buffer.size(kr);
+                }
+                var k = sel_from;
+                while k < sel_to {
+                    var b = 0;
+                    if sel_src == 0 {
+                        b = int_of(line[k]);
+                    } else {
+                        b = int_of(text[k]);
+                    }
+                    copy2 = buffer.push(heap, copy2, byte_of(b));
+                    if b == 34 && sel_dbl == 0 {
+                        copy2 = buffer.push(heap, copy2, byte_of(b));
+                    }
+                    k = k + 1;
+                }
+                var tend = 0;
+                borrow copy2 as &kr in {
+                    tend = buffer.size(kr);
+                }
+                if tend > cap {
+                    st = 17;
+                } else {
+                    borrow mut cells2 as &!cw3 in {
+                        contents(cw3)[3 * (ncols + d)] = tstart;
+                        contents(cw3)[3 * (ncols + d) + 1] = tend;
+                        contents(cw3)[3 * (ncols + d) + 2] = 1;
+                    }
+                }
+            }
+        } else if cexpr.scale_of(prog, d) < 0 {
             // a text-valued definition (docs/functions.md section 3.3): written as a quoted cell, its quotes doubled, so that the writers quote it where they must
             var ts = 0;
             var tb = 0;
@@ -337,7 +385,7 @@ pub fn row_out[&h, &i, &l, &p, &w, &q, &c, &s, &a, &x](heap: &!h Heap, io: &!i I
             }
         } else {
             borrow cells2 as &cr in {
-                let (s1, c1) = cexpr.eval(prog, d, text, line, contents(cr), ws);
+                let (s1, c1, ts1, tf1, tt1, td1) = cexpr.eval(prog, d, text, line, contents(cr), ws);
                 st = s1;
                 cc = c1;
             }
