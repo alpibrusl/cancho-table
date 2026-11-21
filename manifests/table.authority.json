@@ -330,6 +330,7 @@
     "has",
     "has_between",
     "has_columns",
+    "has_control",
     "has_dates",
     "has_dotdot",
     "has_hash",
@@ -349,6 +350,8 @@
     "hex_digit",
     "hex_digit",
     "hex_digit",
+    "hex_digit",
+    "hex_value",
     "hex_value",
     "hint",
     "hint",
@@ -984,7 +987,7 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 402,
+  "folded_operators": 403,
   "folded_calls": 0,
-  "functions": 1655
+  "functions": 1660
 }
