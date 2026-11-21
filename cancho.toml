@@ -8,52 +8,52 @@ cancho = "119bcfe9b985ef5ebd9dafc3ff3b2bbd05f22653"   # the compiler these sourc
 
 [dependencies.atomic]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.atomic"
 
 [dependencies.cli]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.cli"
 
 [dependencies.describe]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.describe"
 
 [dependencies.fail]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.fail"
 
 [dependencies.limit]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.limit"
 
 [dependencies.lines]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.lines"
 
 [dependencies.out]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.out"
 
 [dependencies.path]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.path"
 
 [dependencies.place]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.place"
 
 [dependencies.text]
 git = "https://github.com/alpibrusl/cancho-tools"
-rev = "c7131fded4518b6a7782b9f97b90b5c2618c7a6d"
+rev = "6085e63a2bc6d91d2f91fa4d6eb72362c4944fe9"
 path = ".cancho-vcs/toolbox.text"
 
 [[bin]]
