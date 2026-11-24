@@ -303,7 +303,7 @@ class Algorithm(unittest.TestCase):
         if not exe:
             self.skipTest("no compiler: set CANCHO, or put the cancho named in cancho.toml on PATH")
         root = pathlib.Path(__file__).resolve().parents[2]
-        pin = re.search(r'^cancho\s*=\s*"([0-9a-f]+)"', (root / "cancho.toml").read_text(), re.M).group(1)
+        pin = re.search(r'^cancho\s*=\s*"([0-9a-f.]+)"', (root / "cancho.toml").read_text(), re.M).group(1)
         scratch = pathlib.Path(tempfile.mkdtemp(prefix="dtprobe-"))
         self.addCleanup(shutil.rmtree, scratch, True)
         (scratch / "src").mkdir()

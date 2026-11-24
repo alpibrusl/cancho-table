@@ -30,10 +30,11 @@ def compiler(src):
     exe = os.environ.get("CANCHO") or shutil.which("cancho")
     if not exe:
         raise SystemExit("no compiler: set CANCHO, or put the cancho named in cancho.toml on PATH")
-    pin = re.search(r'^cancho\s*=\s*"([0-9a-f]+)"', open(os.path.join(src, "cancho.toml")).read(), re.M)
+    pin = re.search(r'^cancho\s*=\s*"([0-9a-f.]+)"', open(os.path.join(src, "cancho.toml")).read(), re.M)
     got = subprocess.run([exe, "--version"], stdout=subprocess.PIPE, text=True, check=True).stdout
     rev = re.search(r"rev ([0-9a-f]+)", got)
-    if not pin or not rev or rev.group(1) != pin.group(1):
+    release = re.search(r"^cancho ([0-9.]+) \(", got, re.M)
+    if not pin or not rev or pin.group(1) not in (rev.group(1), release and release.group(1)):
         raise SystemExit(f"{exe} is {rev.group(1) if rev else got.strip()}, cancho.toml pins {pin.group(1) if pin else '?'}")
     return exe
 

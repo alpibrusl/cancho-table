@@ -53,7 +53,8 @@
     {
       "name": "fs_read",
       "argument": "",
-      "bounded": true
+      "bounded": true,
+      "confinement": "lexical"
     },
     {
       "name": "heap",
@@ -984,7 +985,5 @@
     "y_semi",
     "y_star"
   ],
-  "folded_operators": 402,
-  "folded_calls": 0,
   "functions": 1655
 }

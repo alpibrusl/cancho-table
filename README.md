@@ -72,14 +72,13 @@ A SQL `NULL` is a JSON `null`, and `table` refuses a missing value unless `--abs
 
 ## Two-minute quick start
 
-You need `git`, Rust, `clang` and `python3`. The first build downloads the compiler's and the tool's dependencies, so allow a few minutes the first time.
+You need `git`, `clang` and `python3`. The first build downloads the compiler's and the tool's dependencies, so allow a few minutes the first time.
 
 ```sh
-git clone https://github.com/alpibrusl/cancho                           # the compiler
 git clone https://github.com/alpibrusl/cancho-table && cd cancho-table
-REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)        # the compiler these sources need
-(cd ../cancho && git fetch -q origin && git checkout "$REV" && cargo build --release -p cancho)
-export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
+REV=$(sed -n 's/^cancho *= *"\([0-9a-f.]*\)".*/\1/p' cancho.toml)        # the compiler release these sources need
+curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh -s "$REV"   # into ~/.local/bin
+export PATH=$HOME/.local/bin:$PWD/build:$PATH
 cancho build                                                            # builds build/table
 
 cat > orders.csv <<'EOF'
