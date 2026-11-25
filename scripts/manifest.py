@@ -172,7 +172,8 @@ def main():
     check = "--check" in argv
     against = None
     if "--against" in argv:
-        against = pathlib.Path(argv[argv.index("--against") + 1])
+        # absolute: cancho 0.1.1 refuses a source path that starts with `..` (alpibrusl/cancho#833); drop `.resolve()` once that is fixed
+        against = pathlib.Path(argv[argv.index("--against") + 1]).resolve()
     proj = project()
     pin = proj["package"]["cancho"]
     ceiling_file = pathlib.Path(argv[argv.index("--ceiling") + 1]) if "--ceiling" in argv else ROOT / "tools.toml"

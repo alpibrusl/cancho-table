@@ -82,7 +82,8 @@ jobs:
 
       - name: The authority from the installed package is the one from cancho-tools' sources
         working-directory: table
-        run: python3 scripts/manifest.py --check --against ../cancho-tools/contract
+        # an absolute path: cancho 0.1.1 refuses a source path that starts with `..` (alpibrusl/cancho#833); the relative path can come back once that is fixed
+        run: python3 scripts/manifest.py --check --against "$GITHUB_WORKSPACE/cancho-tools/contract"
 
       # The MCP server (docs/mcp.md): its tool definition and its authority row are generated (from `table
       # introspect` and from the compiler), embedded in generated/mcp/tools.cho and manifests/mcp.authority.json,
