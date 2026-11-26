@@ -13,34 +13,18 @@ jobs:
         with:
           path: table
 
-      # The compiler is whichever commit cancho.toml says these sources were
-      # written for: one place, which the compiler itself checks.
+      # The compiler is whichever release cancho.toml says these sources were
+      # written for: one place, which the compiler itself checks. Installed prebuilt.
       - name: Read the pins from cancho.toml
         id: pin
         run: |
-          echo "rev=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' table/cancho.toml)" >> "$GITHUB_OUTPUT"
+          echo "rev=$(sed -n 's/^cancho *= *"\([0-9a-f.]*\)".*/\1/p' table/cancho.toml)" >> "$GITHUB_OUTPUT"
           echo "contract=$(sed -n 's/^rev *= *"\([0-9a-f]*\)".*/\1/p' table/cancho.toml | sort -u)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
-        with:
-          repository: alpibrusl/cancho
-          ref: ${{ steps.pin.outputs.rev }}
-          path: cancho
-
-      - name: Cache the compiler
-        id: compiler
-        uses: actions/cache@v4
-        with:
-          path: cancho/target/release/cancho
-          key: cancho-${{ steps.pin.outputs.rev }}
-
-      - name: Build cancho
-        if: steps.compiler.outputs.cache-hit != 'true'
-        working-directory: cancho
-        run: cargo build --release -p cancho
-
-      - name: Put the compiler on PATH
-        run: echo "$GITHUB_WORKSPACE/cancho/target/release" >> "$GITHUB_PATH"
+      - name: Install the pinned compiler
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh -s "${{ steps.pin.outputs.rev }}"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       # The sources the contract package was published from, at the pinned
       # revision: only to check that the package says what they say.
@@ -98,7 +82,8 @@ jobs:
 
       - name: The authority from the installed package is the one from cancho-tools' sources
         working-directory: table
-        run: python3 scripts/manifest.py --check --against ../cancho-tools/contract
+        # an absolute path: cancho 0.1.1 refuses a source path that starts with `..` (alpibrusl/cancho#833); the relative path can come back once that is fixed
+        run: python3 scripts/manifest.py --check --against "$GITHUB_WORKSPACE/cancho-tools/contract"
 
       # The MCP server (docs/mcp.md): its tool definition and its authority row are generated (from `table
       # introspect` and from the compiler), embedded in generated/mcp/tools.cho and manifests/mcp.authority.json,

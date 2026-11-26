@@ -885,7 +885,7 @@ status,count
 <!-- gen:agentio -->
 <pre class="code" tabindex="0">$ table introspect          # one JSON document; excerpts, long lines cut
 
-tool        table 0.3.0   (compiler 119bcfe9)
+tool        table 0.3.0   (compiler 0.1.1)
 flags       53, for example
   --root     path  resolve FILE relative to this directory and refuse paths outs…
   --select   text  the columns to return, a list: header names separated by comm…
@@ -966,13 +966,12 @@ table    args, conc, dir_read, dir_write, err_write, file_read, file_write, fs_r
 
 <section id="try"><div class="wrap">
   <h2>Try it</h2>
-  <p class="lead">You need Rust, <code>git</code>, <code>clang</code> and Python 3. The first build downloads the compiler&rsquo;s and the tool&rsquo;s dependencies, so allow a few minutes the first time.</p>
+  <p class="lead">You need <code>git</code>, <code>clang</code> and Python 3. The first build downloads the compiler&rsquo;s and the tool&rsquo;s dependencies, so allow a few minutes the first time.</p>
   <div class="narrowcol">
-  <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/cancho
-git clone https://github.com/alpibrusl/cancho-table &amp;&amp; cd cancho-table
-REV=$(sed -n 's/^cancho *= *"\([0-9a-f]*\)".*/\1/p' cancho.toml)
-(cd ../cancho &amp;&amp; git fetch -q origin &amp;&amp; git checkout "$REV" &amp;&amp; cargo build --release -p cancho)
-export PATH=$PWD/../cancho/target/release:$PWD/build:$PATH
+  <pre class="code" tabindex="0"><code>git clone https://github.com/alpibrusl/cancho-table &amp;&amp; cd cancho-table
+REV=$(sed -n 's/^cancho *= *"\([0-9a-f.]*\)".*/\1/p' cancho.toml)
+curl -fsSL https://raw.githubusercontent.com/alpibrusl/cancho/main/scripts/install.sh | sh -s "$REV"
+export PATH=$HOME/.local/bin:$PWD/build:$PATH
 cancho build                       # builds build/table
 
 cat &gt; orders.csv &lt;&lt;'EOF'

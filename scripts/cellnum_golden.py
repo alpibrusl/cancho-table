@@ -158,9 +158,10 @@ def compiler():
     exe = os.environ.get("CANCHO") or shutil.which("cancho")
     if not exe:
         raise SystemExit("no compiler: set CANCHO, or put the cancho named in cancho.toml on PATH")
-    pin = re.search(r'^cancho\s*=\s*"([0-9a-f]+)"', (ROOT / "cancho.toml").read_text(), re.M).group(1)
+    pin = re.search(r'^cancho\s*=\s*"([0-9a-f.]+)"', (ROOT / "cancho.toml").read_text(), re.M).group(1)
     got = re.search(r"rev ([0-9a-f]+)", run([exe, "--version"]).stdout)
-    if not got or got.group(1) != pin:
+    release = re.search(r"^cancho ([0-9.]+) \(", got.string, re.M) if got else None
+    if not got or pin not in (got.group(1), release and release.group(1)):
         raise SystemExit(f"{exe} is not the compiler cancho.toml pins ({pin})")
     return exe, pin
 

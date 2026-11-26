@@ -4,6 +4,7 @@ edition 5;
 // Must NOT compile with the Rust compiler (CANCHO_COMPILER=rust): the gate (tests/conformance/test_join_j8.py `Premise`) pins its first error,
 //     the value overwritten here is `res` (`JTab`), so it cannot be discarded; name the function that consumes it
 // [corrected 2026-11-07] The compiler written in cancho, the default of 119bcfe, ACCEPTS this program: it lacks that check (docs/join-redesign.md section 1). `main` spawns the worker so that
+// [corrected, release 0.1.1] There is no Rust compiler in the release; the one compiler it has accepts this program (cancho#733), and the gate pins that until the gap is closed.
 // the program is complete for either compiler: a `main` that declares [conc] and never performs it is refused first by the default one (`effect-declared-not-performed`).
 
 import std.io;

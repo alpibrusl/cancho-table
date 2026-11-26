@@ -867,19 +867,25 @@ class Premise(unittest.TestCase):
     """A table cannot be handed back by a worker (docs/joins.md section 24.2, reading 1): the two programs of scripts/spikes/join/s8 do not compile with the Rust compiler (CANCHO_COMPILER=rust, the reference
     checks), with the messages quoted there. If it accepts one, the partitions need not be copied back as integers and bytes, and the design can be reconsidered: this test then fails on purpose.
     [corrected, compiler 119bcfe] The default compiler, the one written in cancho, accepts n1 (it lacks the check that refuses `w.tab = t`): that is a gap of that compiler (docs/join-redesign.md section 1), not
-    a capability, so the gate asks the Rust compiler and does not pin what the default one does."""
+    a capability, so the gate asks the Rust compiler and does not pin what the default one does.
+    [corrected, compiler release 0.1.1] The release has no Rust compiler: `CANCHO_COMPILER=rust` is not read, and the one compiler there is accepts n1 (cancho#733, open). The gate cannot ask a
+    compiler that does not exist, so it pins what the pinned compiler does: n2 is refused (rule `thread-payload-type`, the sentence below), and n1 COMPILES, which is the gap and not the language. The
+    design does not rest on n1 either way (docs/join-redesign.md section 1). When cancho#733 is closed n1 is refused again and this test fails on purpose: put the refusal and its sentence back."""
 
     @unittest.skipUnless(shutil.which("cancho"), "needs the pinned compiler on PATH")
     def test_a_table_cannot_cross_back_from_a_thread(self):
         import tempfile
-        want = {"n1_table_into_job": "the value overwritten here is `res` (`JTab`), so it cannot be discarded", "n2_table_as_result": "`body` returns `JTab`, which cannot cross back from a real thread yet"}
-        env = dict(os.environ, CANCHO_COMPILER="rust")
+
+        def build(d, name):
+            return subprocess.run(["cancho", "build", str(ROOT / "scripts" / "spikes" / "join" / "s8" / (name + ".cho")), str(ROOT / "tools" / "table" / "jtab.cho"), str(ROOT / "tools" / "table" / "gmap.cho"), "--std", "-o", os.path.join(d, name)],
+                                  capture_output=True, text=True, timeout=300)
+
         with tempfile.TemporaryDirectory() as d:
-            for name, message in want.items():
-                p = subprocess.run(["cancho", "build", str(ROOT / "scripts" / "spikes" / "join" / "s8" / (name + ".cho")), str(ROOT / "tools" / "table" / "jtab.cho"), str(ROOT / "tools" / "table" / "gmap.cho"), "--std", "-o", os.path.join(d, name)],
-                                   capture_output=True, text=True, timeout=300, env=env)
-                self.assertNotEqual(p.returncode, 0, "%s compiled: the refusal it records is gone" % name)
-                self.assertIn(message, p.stdout + p.stderr, name)
+            p = build(d, "n2_table_as_result")
+            self.assertNotEqual(p.returncode, 0, "n2_table_as_result compiled: the refusal it records is gone")
+            self.assertIn("`spawn`'s payload and `body`'s return type must each cross to a real OS thread as one pointer-width value", p.stdout + p.stderr)
+            p = build(d, "n1_table_into_job")
+            self.assertEqual(p.returncode, 0, "n1_table_into_job is refused: cancho#733 is closed in the pinned compiler, so pin the refusal again (its sentence was: the value overwritten here is `res` (`JTab`), so it cannot be discarded)\n" + p.stdout + p.stderr)
 
 
 # ---- I: no input reaches a panic ----------------------------------------------------------------------------------------------------------------------------------
